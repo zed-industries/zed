@@ -66,8 +66,8 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
-    RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -4291,6 +4291,13 @@ impl AcpThreadView {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
                 }
             }))
             .p_2()

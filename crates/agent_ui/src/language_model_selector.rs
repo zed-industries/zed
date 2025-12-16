@@ -249,6 +249,41 @@ impl LanguageModelPickerDelegate {
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
         (self.get_active_model)(cx)
     }
+
+    pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.all_models.favorites.is_empty() {
+            return;
+        }
+
+        let active_model = (self.get_active_model)(cx);
+        let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
+        let active_model_id = active_model.as_ref().map(|m| m.model.id());
+
+        let current_index = self
+            .all_models
+            .favorites
+            .iter()
+            .position(|info| {
+                Some(info.model.provider_id()) == active_provider_id
+                    && Some(info.model.id()) == active_model_id
+            })
+            .unwrap_or(usize::MAX);
+
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % self.all_models.favorites.len()
+        };
+
+        let next_model = self.all_models.favorites[next_index].model.clone();
+
+        (self.on_model_changed)(next_model, cx);
+
+        // Align the picker selection with the newly-active model
+        let new_index =
+            Self::get_active_model_index(&self.filtered_entries, (self.get_active_model)(cx));
+        self.set_selected_index(new_index, window, cx);
+    }
 }
 
 struct GroupedModels {

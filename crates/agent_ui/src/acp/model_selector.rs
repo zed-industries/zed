@@ -119,6 +119,67 @@ impl AcpModelPickerDelegate {
     pub fn active_model(&self) -> Option<&AgentModelInfo> {
         self.selected_model.as_ref()
     }
+
+    pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if !self.selector.supports_favorites() {
+            return;
+        }
+
+        let favorites = AgentSettings::get_global(cx).favorite_model_ids();
+
+        if favorites.is_empty() {
+            return;
+        }
+
+        let Some(models) = self.models.clone() else {
+            return;
+        };
+
+        let all_models: Vec<AgentModelInfo> = match models {
+            AgentModelList::Flat(list) => list,
+            AgentModelList::Grouped(index_map) => index_map
+                .into_values()
+                .flatten()
+                .collect::<Vec<AgentModelInfo>>(),
+        };
+
+        let favorite_models = all_models
+            .iter()
+            .filter(|model| favorites.contains(&model.id))
+            .unique_by(|model| &model.id)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let current_id = self.selected_model.as_ref().map(|m| m.id.clone());
+
+        let current_index_in_favorites = current_id
+            .as_ref()
+            .and_then(|id| favorite_models.iter().position(|m| &m.id == id))
+            .unwrap_or(usize::MAX);
+
+        let next_index = if current_index_in_favorites == usize::MAX {
+            0
+        } else {
+            (current_index_in_favorites + 1) % favorite_models.len()
+        };
+
+        let next_model = favorite_models[next_index].clone();
+
+        self.selector
+            .select_model(next_model.id.clone(), cx)
+            .detach_and_log_err(cx);
+
+        self.selected_model = Some(next_model);
+
+        // Keep the picker selection aligned with the newly-selected model
+        if let Some(new_index) = self.filtered_entries.iter().position(|entry| {
+            matches!(entry, AcpModelPickerEntry::Model(model_info, _) if self.selected_model.as_ref().is_some_and(|selected| model_info.id == selected.id))
+        }) {
+            self.set_selected_index(new_index, window, cx);
+        } else {
+            cx.notify();
+        }
+    }
 }
 
 impl PickerDelegate for AcpModelPickerDelegate {

@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use acp_thread::{AgentModelInfo, AgentModelSelector};
 use agent_servers::AgentServer;
+use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
-use ui::{
-    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, TintColor, Tooltip, Window,
-    prelude::*,
-};
+use settings::Settings as _;
+use ui::{ButtonLike, KeyBinding, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
+use crate::CycleFavoriteModels;
 use crate::acp::{AcpModelSelector, model_selector::acp_model_selector};
 
 pub struct AcpModelSelectorPopover {
@@ -54,6 +54,12 @@ impl AcpModelSelectorPopover {
     pub fn active_model<'a>(&self, cx: &'a App) -> Option<&'a AgentModelInfo> {
         self.selector.read(cx).delegate.active_model()
     }
+
+    pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.selector.update(cx, |selector, cx| {
+            selector.delegate.cycle_favorite_models(window, cx);
+        });
+    }
 }
 
 impl Render for AcpModelSelectorPopover {
@@ -74,6 +80,46 @@ impl Render for AcpModelSelectorPopover {
             (Color::Muted, IconName::ChevronDown)
         };
 
+        let tooltip = Tooltip::element({
+            move |_, cx| {
+                let focus_handle = focus_handle.clone();
+                let should_show_cycle_row = !AgentSettings::get_global(cx)
+                    .favorite_model_ids()
+                    .is_empty();
+
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(Label::new("Change Model"))
+                            .child(KeyBinding::for_action_in(
+                                &ToggleModelSelector,
+                                &focus_handle,
+                                cx,
+                            )),
+                    )
+                    .when(should_show_cycle_row, |this| {
+                        this.child(
+                            h_flex()
+                                .pt_1()
+                                .gap_2()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .justify_between()
+                                .child(Label::new("Cycle Favorited Models"))
+                                .child(KeyBinding::for_action_in(
+                                    &CycleFavoriteModels,
+                                    &focus_handle,
+                                    cx,
+                                )),
+                        )
+                    })
+                    .into_any()
+            }
+        });
+
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
@@ -88,9 +134,7 @@ impl Render for AcpModelSelectorPopover {
                         .ml_0p5(),
                 )
                 .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
-            move |_window, cx| {
-                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
-            },
+            tooltip,
             gpui::Corner::BottomRight,
             cx,
         )
