@@ -914,8 +914,7 @@ impl GitPanel {
             if dir_entry.expanded {
                 self.select_next(&SelectNext, window, cx);
             } else {
-                let key = dir_entry.key.clone();
-                self.toggle_directory(&key, window, cx);
+                self.toggle_directory(&dir_entry.key, window, cx);
             }
         } else {
             self.select_next(&SelectNext, window, cx);
@@ -934,8 +933,7 @@ impl GitPanel {
 
         if let GitListEntry::Directory(dir_entry) = entry {
             if dir_entry.expanded {
-                let key = dir_entry.key.clone();
-                self.toggle_directory(&key, window, cx);
+                self.toggle_directory(&dir_entry.key, window, cx);
             } else {
                 self.select_previous(&SelectPrevious, window, cx);
             }
