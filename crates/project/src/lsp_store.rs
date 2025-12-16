@@ -14077,8 +14077,9 @@ mod tests {
 
     #[test]
     fn test_trailing_newline_in_completion_documentation() {
-        let doc =
-            lsp::Documentation::String("Inappropriate argument value (of correct type).\n".to_string());
+        let doc = lsp::Documentation::String(
+            "Inappropriate argument value (of correct type).\n".to_string(),
+        );
         let completion_doc: CompletionDocumentation = doc.into();
         assert!(
             matches!(completion_doc, CompletionDocumentation::SingleLine(s) if s == "Inappropriate argument value (of correct type).")
@@ -14090,6 +14091,5 @@ mod tests {
             completion_doc,
             CompletionDocumentation::SingleLine(s) if s == "some value"
         ));
-
     }
 }
