@@ -2,7 +2,8 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1002,6 +1003,8 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
+        self.add_tool(SaveFileTool::new(self.project.clone()));
+        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
@@ -1964,6 +1967,12 @@ impl Thread {
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
+    }
+
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
     fn build_request_messages(
