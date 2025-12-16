@@ -20,6 +20,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
+use futures::channel::oneshot::Canceled;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
@@ -52,6 +53,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -98,6 +100,9 @@ actions!(
         ToggleSortByPath,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
+        /// Updates git's configuration, adding a directory to the list of safe
+        /// directories.
+        AddSafeDirectory,
     ]
 );
 
@@ -598,6 +603,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -710,7 +716,8 @@ impl GitPanel {
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::GlobalConfigurationUpdated => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -767,6 +774,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -2633,7 +2641,7 @@ impl GitPanel {
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+            let prompt_answer = match fs.git_clone(path.as_path(), &repo).await {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
@@ -2920,6 +2928,42 @@ impl GitPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    /// Updates git's configuration, adding the directory of the current
+    /// worktree to the `safe.directory` config, ensuring that, even if the user
+    /// that's running the application is not the owner of `.git/`, it can still
+    /// read the repository's contents.
+    fn add_safe_directory(
+        &mut self,
+        _: &AddSafeDirectory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_repository) = &self.active_repository else {
+            return;
+        };
+
+        let path = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        if let Some(path_str) = path.to_str() {
+            let path_arg = String::from(path_str);
+            let args = vec![
+                String::from("--global"),
+                String::from("--add"),
+                String::from("safe.directory"),
+                path_arg,
+            ];
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                git_panel.update(cx, |git_panel, cx| {
+                    git_panel.project.read(cx).git_config(path, args, cx)
+                })
+            })
+            .detach();
+        }
     }
 
     fn askpass_delegate(
@@ -3241,10 +3285,36 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
         self.max_width_item_index = None;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                // When the user does not own the `.git` folder, the
+                // `GitStore.spawn_local_git_worker` will fail to create the
+                // receiver for Git jobs, so this access check will be
+                // cancelled.
+                //
+                // We assume `GitAccess::No` on cancellation. I believe this is
+                // imprecise, other failures could also cause cancellation, but
+                // the consequence is just showing the "unsafe repo" UI, which
+                // seems acceptable for this edge case.
+                let access = match access.await {
+                    Ok(access) => access,
+                    Err(Canceled) => GitAccess::No,
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = access;
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -3894,6 +3964,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if matches!(self.git_access, GitAccess::No) {
+            return None;
+        }
+
         self.active_repository.as_ref()?;
 
         let (text, action, stage, tooltip) =
@@ -4284,38 +4358,99 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let children = match (self.git_access, &self.active_repository) {
+            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, None) => self.render_uninitialized_ui(cx),
+            (_, Some(_)) => self.render_no_changes_ui(),
+        };
+
         h_flex().h_full().flex_grow().justify_center().child(
             v_flex()
                 .gap_2()
-                .child(h_flex().w_full().justify_around().child(
-                    if self.active_repository.is_some() {
-                        "No changes to commit"
-                    } else {
-                        "No Git repositories"
-                    },
+                .max_w_full()
+                .px_4()
+                .text_ui_sm(cx)
+                .whitespace_normal()
+                .text_center()
+                .mx_auto()
+                .text_color(Color::Placeholder.color(cx))
+                .children(children),
+        )
+    }
+
+    fn render_no_changes_ui(&self) -> Vec<AnyElement> {
+        vec!["No changes to commit".into_any_element()]
+    }
+
+    fn render_unsafe_repo_ui(
+        &self,
+        active_repository: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let directory = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        let message = format!(
+            "Detected dubious ownership in repository at {}. This happens when the .git/ directory is not owned by the current user. If you want to learn more about safe directories, visit git's documentation.",
+            directory.display()
+        );
+
+        vec![
+            message.into_any_element(),
+            self.render_unsafe_repo_buttons(directory)
+                .into_any_element(),
+        ]
+    }
+
+    fn render_unsafe_repo_buttons(&self, directory: Arc<Path>) -> Div {
+        h_flex()
+            .max_w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                panel_filled_button("Trust Directory")
+                .icon(IconName::Check)
+                .tooltip(Tooltip::for_action_title_in(
+                    format!("git config --global --add safe.directory {}", directory.display()),
+                    &AddSafeDirectory,
+                    &self.focus_handle,
                 ))
-                .children({
-                    let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-                    (worktree_count > 0 && self.active_repository.is_none()).then(|| {
-                        h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
+                .on_click(move |_, _, cx| {
+                    cx.defer(move |cx| {
+                        cx.dispatch_action(&AddSafeDirectory);
                     })
                 })
-                .text_ui_sm(cx)
-                .mx_auto()
-                .text_color(Color::Placeholder.color(cx)),
         )
+        .child(
+            panel_filled_button("Learn More")
+                .icon(IconName::Link)
+                .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
+                .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+        )
+    }
+
+    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if worktree_count > 0 && self.active_repository.is_none() {
+            vec![
+                "No Git Repositories".into_any_element(),
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    })
+                    .into_any_element(),
+            ]
+        } else {
+            vec![]
+        }
     }
 
     fn render_buffer_header_controls(
@@ -5280,6 +5415,7 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::add_safe_directory))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
