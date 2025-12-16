@@ -65,14 +65,14 @@ impl ContextServerRegistry {
         let Some(client) = server.client() else {
             return;
         };
-        
+
         if !client.capable(context_server::protocol::ServerCapability::Tools) {
             return;
         }
 
         let server_id = server.id();
         let this = cx.entity().downgrade();
-        
+
         client.on_notification(
             "notifications/tools/list_changed",
             Box::new(move |_params, cx: AsyncApp| {
@@ -80,7 +80,10 @@ impl ContextServerRegistry {
                 let this = this.clone();
                 cx.spawn(async move |cx| {
                     this.update(cx, |this, cx| {
-                        log::info!("Received tools/list_changed notification for server {}", server_id);
+                        log::info!(
+                            "Received tools/list_changed notification for server {}",
+                            server_id
+                        );
                         this.reload_tools_for_server(server_id, cx);
                     })
                 })
@@ -144,7 +147,9 @@ impl ContextServerRegistry {
                 match status {
                     ContextServerStatus::Starting => {}
                     ContextServerStatus::Running => {
-                        if let Some(server) = self.server_store.read(cx).get_running_server(server_id) {
+                        if let Some(server) =
+                            self.server_store.read(cx).get_running_server(server_id)
+                        {
                             self.reload_tools_for_server(server_id.clone(), cx);
                             self.register_tools_list_changed_handler(&server, cx);
                         }
