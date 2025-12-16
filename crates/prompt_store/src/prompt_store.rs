@@ -85,20 +85,6 @@ impl PromptId {
         }
     }
 
-    pub fn can_delete(&self) -> bool {
-        match self {
-            Self::User { .. } => true,
-            Self::EditWorkflow | Self::CommitMessage => false,
-        }
-    }
-
-    pub fn can_rename(&self) -> bool {
-        match self {
-            Self::User { .. } => true,
-            Self::EditWorkflow | Self::CommitMessage => false,
-        }
-    }
-
     pub fn default_content(&self) -> Option<&'static str> {
         match self {
             Self::User { .. } | Self::EditWorkflow => None,
@@ -489,7 +475,7 @@ impl PromptStore {
     ) -> Task<Result<()>> {
         let mut cache = self.metadata_cache.write();
 
-        if !id.can_rename() {
+        if !id.can_edit() {
             title = cache
                 .metadata_by_id
                 .get(&id)
