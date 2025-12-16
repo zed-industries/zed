@@ -57,7 +57,9 @@ impl LiveKitStream {
                         let queued = queue_input.append(samples);
 
                         if queued > 10 && last_print.elapsed().as_secs() > 5 {
-                            log::warn!("More then 10 audio frames queued in the input, total: {queued}");
+                            log::warn!(
+                                "More then 10 audio frames queued in the input, total: {queued}"
+                            );
                             last_print = std::time::Instant::now();
                         }
                     }
