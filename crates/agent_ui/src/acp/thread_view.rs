@@ -693,7 +693,7 @@ impl AcpThreadView {
                         this.new_server_version_available = Some(new_version.into());
                         cx.notify();
                     })
-                    .log_err();
+                    .ok();
                 }
             }
         })
@@ -4863,6 +4863,32 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let entries = thread.read(cx).entries();
+        if entries.is_empty() {
+            return;
+        }
+
+        // Find the most recent user message and scroll it to the top of the viewport.
+        // (Fallback: if no user message exists, scroll to the bottom.)
+        if let Some(ix) = entries
+            .iter()
+            .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
+        } else {
+            self.scroll_to_bottom(cx);
+        }
+    }
+
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.thread() {
             let entry_count = thread.read(cx).entries().len();
@@ -5081,6 +5107,16 @@ impl AcpThreadView {
                 }
             }));
 
+        let scroll_to_recent_user_prompt =
+            IconButton::new("scroll_to_recent_user_prompt", IconName::ForwardArrow)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_most_recent_user_prompt(cx);
+                }));
+
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -5157,6 +5193,7 @@ impl AcpThreadView {
 
         container
             .child(open_as_markdown)
+            .child(scroll_to_recent_user_prompt)
             .child(scroll_to_top)
             .into_any_element()
     }
@@ -6786,6 +6823,70 @@ pub(crate) mod tests {
                 assert!(entry_view_state.entry(2).is_none());
                 assert!(entry_view_state.entry(3).is_none());
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        // Each user prompt will result in a user message entry plus an agent message entry.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 1".into()),
+        )]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 1", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 2".into()),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 2", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Move somewhere else first so we're not trivially already on the last user prompt.
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+        });
+        cx.run_until_parked();
+
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            // Entries layout is: [User1, Assistant1, User2, Assistant2]
+            assert_eq!(scroll_top.item_ix, 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt_falls_back_to_bottom_without_user_messages(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // With no entries, scrolling should be a no-op and must not panic.
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(scroll_top.item_ix, 0);
         });
     }
 
