@@ -47,7 +47,7 @@ use ui::{
     LabelLike, LabelSize, ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*,
     rems_from_px,
 };
-use workspace::{ModalView, Workspace, item::PreviewTabsSettings};
+use workspace::{ActivatePane, ModalView, Workspace, item::PreviewTabsSettings, pane};
 
 pub(crate) const MIN_QUERY_LEN: usize = 2;
 const RESULTS_BATCH_SIZE: usize = 1024;
@@ -205,6 +205,40 @@ impl QuickSearch {
                 cx.propagate();
             }
         });
+        workspace.register_action(move |workspace, action: &pane::ActivateItem, window, cx| {
+            if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
+                active.update(cx, |qs, cx| qs.handle_activate_item(action, window, cx));
+            } else {
+                cx.propagate();
+            }
+        });
+        workspace.register_action(move |workspace, action: &pane::ActivateNextItem, window, cx| {
+            if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
+                active.update(cx, |qs, cx| qs.handle_activate_next_item(action, window, cx));
+            } else {
+                cx.propagate();
+            }
+        });
+
+        workspace.register_action(
+            move |workspace, action: &pane::ActivatePreviousItem, window, cx| {
+                if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
+                    active.update(cx, |qs, cx| {
+                        qs.handle_activate_previous_item(action, window, cx)
+                    });
+                } else {
+                    cx.propagate();
+                }
+            },
+        );
+
+        workspace.register_action(move |workspace, action: &ActivatePane, window, cx| {
+            if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
+                active.update(cx, |qs, cx| qs.handle_activate_pane(action, window, cx));
+            } else {
+                cx.propagate();
+            }
+        });
     }
 
     fn new(
@@ -313,6 +347,71 @@ impl QuickSearch {
             picker.refresh(window, cx);
         });
     }
+
+    fn cycle_search_source(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let sources = self.source_registry.available_sources();
+        if sources.is_empty() {
+            return;
+        }
+
+        let active_source = self.picker.read(cx).delegate.search_engine.active_source.clone();
+        let len = sources.len() as isize;
+        let active_ix = sources
+            .iter()
+            .position(|s| s.spec().id == active_source)
+            .unwrap_or(0) as isize;
+        let next_ix = (active_ix + delta).rem_euclid(len) as usize;
+        let next_source = sources[next_ix].spec().id.clone();
+        self.set_search_source(next_source, window, cx);
+    }
+
+    fn handle_activate_item(
+        &mut self,
+        action: &pane::ActivateItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sources = self.source_registry.available_sources();
+        let index = action.0;
+        if index >= sources.len() {
+            return;
+        }
+        let source_id = sources[index].spec().id.clone();
+        self.set_search_source(source_id, window, cx);
+    }
+
+    fn handle_activate_next_item(
+        &mut self,
+        _: &pane::ActivateNextItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_search_source(1, window, cx);
+    }
+
+    fn handle_activate_previous_item(
+        &mut self,
+        _: &pane::ActivatePreviousItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_search_source(-1, window, cx);
+    }
+
+    fn handle_activate_pane(
+        &mut self,
+        action: &ActivatePane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sources = self.source_registry.available_sources();
+        let index = action.0;
+        if index >= sources.len() {
+            return;
+        }
+        let source_id = sources[index].spec().id.clone();
+        self.set_search_source(source_id, window, cx);
+    }
 }
 
 impl ModalView for QuickSearch {}
@@ -376,6 +475,10 @@ impl Render for QuickSearch {
             .overflow_hidden()
             .elevation_3(cx)
             .key_context("QuickSearch")
+            .on_action(cx.listener(Self::handle_activate_item))
+            .on_action(cx.listener(Self::handle_activate_next_item))
+            .on_action(cx.listener(Self::handle_activate_previous_item))
+            .on_action(cx.listener(Self::handle_activate_pane))
             .bg(cx.theme().colors().panel_background)
             .border_1()
             .border_color(cx.theme().colors().border)

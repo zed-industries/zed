@@ -1012,7 +1012,6 @@ fn build_preview_editor(
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_runnables(false, cx);
         editor.set_show_breakpoints(false, cx);
-        editor.set_show_horizontal_scrollbar(false, cx);
         editor.set_show_gutter(true, cx);
         editor.set_show_scrollbars(true, cx);
         editor.disable_expand_excerpt_buttons(cx);
