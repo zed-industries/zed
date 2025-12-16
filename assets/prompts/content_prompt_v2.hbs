@@ -1,0 +1,43 @@
+{{#if language_name}}
+Here's a file of {{language_name}} that the user is going to ask you to make an edit to.
+{{else}}
+Here's a file of text that the user is going to ask you to make an edit to.
+{{/if}}
+
+The section you'll need to rewrite is marked with <rewrite_this></rewrite_this> tags.
+
+<document>
+{{{document_content}}}
+</document>
+
+{{#if is_truncated}}
+The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.
+{{/if}}
+
+{{#if rewrite_section}}
+And here's the section to rewrite based on that prompt again for reference:
+
+<rewrite_this>
+{{{rewrite_section}}}
+</rewrite_this>
+
+{{#if diagnostic_errors}}
+Below are the diagnostic errors visible to the user.  If the user requests problems to be fixed, use this information, but do not try to fix these errors if the user hasn't asked you to.
+
+{{#each diagnostic_errors}}
+<diagnostic_error>
+    <line_number>{{line_number}}</line_number>
+    <error_message>{{error_message}}</error_message>
+    <code_content>{{code_content}}</code_content>
+</diagnostic_error>
+{{/each}}
+{{/if}}
+
+{{/if}}
+
+Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {{content_type}} will be preserved.
+
+Start at the indentation level in the original file in the rewritten {{content_type}}.
+
+IMPORTANT: You MUST use one of the provided tools to make the rewrite or to provide an explanation as to why the user's request cannot be fulfilled. You MUST NOT send back unstructured text. If you need to make a statement or ask a question you MUST use one of the tools to do so.
+It is an error if you try to make a change that cannot be made simply by editing the rewrite_section.

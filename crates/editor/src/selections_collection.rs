@@ -136,7 +136,13 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if should_merge(
+                        pending.start,
+                        pending.end,
+                        next_selection.start,
+                        next_selection.end,
+                        false,
+                    ) {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -236,7 +242,13 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if should_merge(
+                        pending.start,
+                        pending.end,
+                        next_selection.start,
+                        next_selection.end,
+                        false,
+                    ) {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -419,22 +431,30 @@ impl SelectionsCollection {
             mutable_collection.disjoint.iter().for_each(|selection| {
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}",
+                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
             });
             if let Some(pending) = &mutable_collection.pending {
                 let selection = &pending.selection;
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "pending selection start is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.start.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "pending selection end is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.end.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
             }
         }
@@ -532,11 +552,18 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         };
 
         if filtered_selections.is_empty() {
-            let default_anchor = self.snapshot.anchor_before(MultiBufferOffset(0));
+            let buffer_snapshot = self.snapshot.buffer_snapshot();
+            let anchor = buffer_snapshot
+                .excerpts()
+                .find(|(_, buffer, _)| buffer.remote_id() == buffer_id)
+                .and_then(|(excerpt_id, _, range)| {
+                    buffer_snapshot.anchor_in_excerpt(excerpt_id, range.context.start)
+                })
+                .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
             self.collection.disjoint = Arc::from([Selection {
                 id: post_inc(&mut self.collection.next_selection_id),
-                start: default_anchor,
-                end: default_anchor,
+                start: anchor,
+                end: anchor,
                 reversed: false,
                 goal: SelectionGoal::None,
             }]);
@@ -651,10 +678,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             })
             .collect::<Vec<_>>();
         selections.sort_unstable_by_key(|s| s.start);
-        // Merge overlapping selections.
+
         let mut i = 1;
         while i < selections.len() {
-            if selections[i].start <= selections[i - 1].end {
+            let prev = &selections[i - 1];
+            let current = &selections[i];
+
+            if should_merge(prev.start, prev.end, current.start, current.end, true) {
                 let removed = selections.remove(i);
                 if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
@@ -1124,7 +1154,13 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
     iter::from_fn(move || {
         let mut selection = selections.next()?;
         while let Some(next_selection) = selections.peek() {
-            if selection.end >= next_selection.start {
+            if should_merge(
+                selection.start,
+                selection.end,
+                next_selection.start,
+                next_selection.end,
+                true,
+            ) {
                 if selection.reversed == next_selection.reversed {
                     selection.end = cmp::max(selection.end, next_selection.end);
                     selections.next();
@@ -1145,4 +1181,36 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
         );
         Some(selection)
     })
+}
+
+/// Determines whether two selections should be merged into one.
+///
+/// Two selections should be merged when:
+/// 1. They overlap: the selections share at least one position
+/// 2. They have the same start position: one contains or equals the other
+/// 3. A cursor touches a selection boundary: a zero-width selection (cursor) at the
+///    start or end of another selection should be absorbed into it
+///
+/// Note: two selections that merely touch (one ends exactly where the other begins)
+/// but don't share any positions remain separate, see: https://github.com/zed-industries/zed/issues/24748
+fn should_merge<T: Ord + Copy>(a_start: T, a_end: T, b_start: T, b_end: T, sorted: bool) -> bool {
+    let is_overlapping = if sorted {
+        // When sorted, `a` starts before or at `b`, so overlap means `b` starts before `a` ends
+        b_start < a_end
+    } else {
+        a_start < b_end && b_start < a_end
+    };
+
+    // Selections starting at the same position should always merge (one contains the other)
+    let same_start = a_start == b_start;
+
+    // A cursor (zero-width selection) touching another selection's boundary should merge.
+    // This handles cases like a cursor at position X merging with a selection that
+    // starts or ends at X.
+    let is_cursor_a = a_start == a_end;
+    let is_cursor_b = b_start == b_end;
+    let cursor_at_boundary = (is_cursor_a && (a_start == b_start || a_end == b_end))
+        || (is_cursor_b && (b_start == a_start || b_end == a_end));
+
+    is_overlapping || same_start || cursor_at_boundary
 }

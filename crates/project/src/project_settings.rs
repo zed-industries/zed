@@ -792,13 +792,20 @@ impl SettingsObserver {
         event: &WorktreeStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
-            cx.subscribe(worktree, |this, worktree, event, cx| {
-                if let worktree::Event::UpdatedEntries(changes) = event {
-                    this.update_local_worktree_settings(&worktree, changes, cx)
-                }
-            })
-            .detach()
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
+                .subscribe(worktree, |this, worktree, event, cx| {
+                    if let worktree::Event::UpdatedEntries(changes) = event {
+                        this.update_local_worktree_settings(&worktree, changes, cx)
+                    }
+                })
+                .detach(),
+            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.clear_local_settings(*worktree_id, cx).log_err();
+                });
+            }
+            _ => {}
         }
     }
 

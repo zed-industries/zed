@@ -161,7 +161,7 @@ impl Render for ModeSelector {
             .map(|mode| mode.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let this = cx.entity();
+        let this = cx.weak_entity();
 
         let icon = if self.menu_handle.is_deployed() {
             IconName::ChevronUp
@@ -222,7 +222,8 @@ impl Render for ModeSelector {
                 y: px(-2.0),
             })
             .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                this.update(cx, |this, cx| this.build_context_menu(window, cx))
+                    .ok()
             })
     }
 }

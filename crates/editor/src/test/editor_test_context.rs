@@ -283,8 +283,7 @@ impl EditorTestContext {
                 .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
-                .style()
-                .unwrap()
+                .style(cx)
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);

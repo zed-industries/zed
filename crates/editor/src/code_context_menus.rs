@@ -206,6 +206,13 @@ impl CodeContextMenu {
             CodeContextMenu::CodeActions(_) => (),
         }
     }
+
+    pub fn primary_scroll_handle(&self) -> UniformListScrollHandle {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.scroll_handle.clone(),
+            CodeContextMenu::CodeActions(menu) => menu.scroll_handle.clone(),
+        }
+    }
 }
 
 pub enum ContextMenuOrigin {
@@ -303,6 +310,7 @@ impl CompletionsMenu {
         is_incomplete: bool,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        scroll_handle: Option<UniformListScrollHandle>,
         display_options: CompletionDisplayOptions,
         snippet_sort_order: SnippetSortOrder,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -332,7 +340,7 @@ impl CompletionsMenu {
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: scroll_handle.unwrap_or_else(UniformListScrollHandle::new),
             scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
@@ -354,6 +362,7 @@ impl CompletionsMenu {
         choices: &Vec<String>,
         selection: Range<Anchor>,
         buffer: Entity<Buffer>,
+        scroll_handle: Option<UniformListScrollHandle>,
         snippet_sort_order: SnippetSortOrder,
     ) -> Self {
         let completions = choices
@@ -404,7 +413,7 @@ impl CompletionsMenu {
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: scroll_handle.unwrap_or_else(UniformListScrollHandle::new),
             scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
@@ -835,36 +844,38 @@ impl CompletionsMenu {
                                     FontWeight::BOLD.into(),
                                 )
                             }),
-                            styled_runs_for_code_label(&completion.label, &style.syntax).map(
-                                |(range, mut highlight)| {
-                                    // Ignore font weight for syntax highlighting, as we'll use it
-                                    // for fuzzy matches.
-                                    highlight.font_weight = None;
-                                    if completion
-                                        .source
-                                        .lsp_completion(false)
-                                        .and_then(|lsp_completion| {
-                                            match (lsp_completion.deprecated, &lsp_completion.tags)
-                                            {
-                                                (Some(true), _) => Some(true),
-                                                (_, Some(tags)) => Some(
-                                                    tags.contains(&CompletionItemTag::DEPRECATED),
-                                                ),
-                                                _ => None,
+                            styled_runs_for_code_label(
+                                &completion.label,
+                                &style.syntax,
+                                &style.local_player,
+                            )
+                            .map(|(range, mut highlight)| {
+                                // Ignore font weight for syntax highlighting, as we'll use it
+                                // for fuzzy matches.
+                                highlight.font_weight = None;
+                                if completion
+                                    .source
+                                    .lsp_completion(false)
+                                    .and_then(|lsp_completion| {
+                                        match (lsp_completion.deprecated, &lsp_completion.tags) {
+                                            (Some(true), _) => Some(true),
+                                            (_, Some(tags)) => {
+                                                Some(tags.contains(&CompletionItemTag::DEPRECATED))
                                             }
-                                        })
-                                        .unwrap_or(false)
-                                    {
-                                        highlight.strikethrough = Some(StrikethroughStyle {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        });
-                                        highlight.color = Some(cx.theme().colors().text_muted);
-                                    }
+                                            _ => None,
+                                        }
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    highlight.strikethrough = Some(StrikethroughStyle {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    });
+                                    highlight.color = Some(cx.theme().colors().text_muted);
+                                }
 
-                                    (range, highlight)
-                                },
-                            ),
+                                (range, highlight)
+                            }),
                         );
 
                         let completion_label = StyledText::new(completion.label.text.clone())

@@ -33,7 +33,8 @@ use gpui::{
 use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
+    WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
@@ -50,18 +51,6 @@ pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<project::telemetry_snapshot::TelemetryWorktreeSnapshot>,
     pub timestamp: DateTime<Utc>,
 }
-
-const RULES_FILE_NAMES: [&str; 9] = [
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "CLAUDE.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "GEMINI.md",
-];
 
 pub struct RulesLoadingError {
     pub message: SharedString,
@@ -170,7 +159,7 @@ impl LanguageModels {
     }
 
     fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
-        acp::ModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
+        acp::ModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -789,28 +778,12 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::AgentText(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                            meta: None,
-                                        }),
-                                        false,
-                                        cx,
-                                    )
+                                    thread.push_assistant_content_block(text.into(), false, cx)
                                 })?;
                             }
                             ThreadEvent::AgentThinking(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                            meta: None,
-                                        }),
-                                        true,
-                                        cx,
-                                    )
+                                    thread.push_assistant_content_block(text.into(), true, cx)
                                 })?;
                             }
                             ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
@@ -824,8 +797,9 @@ impl NativeAgentConnection {
                                     )
                                 })??;
                                 cx.background_spawn(async move {
-                                    if let acp::RequestPermissionOutcome::Selected { option_id } =
-                                        outcome_task.await
+                                    if let acp::RequestPermissionOutcome::Selected(
+                                        acp::SelectedPermissionOutcome { option_id, .. },
+                                    ) = outcome_task.await
                                     {
                                         response
                                             .send(option_id)
@@ -852,10 +826,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse {
-                                    stop_reason,
-                                    meta: None,
-                                });
+                                return Ok(acp::PromptResponse::new(stop_reason));
                             }
                         }
                     }
@@ -867,10 +838,7 @@ impl NativeAgentConnection {
             }
 
             log::debug!("Response stream completed");
-            anyhow::Ok(acp::PromptResponse {
-                stop_reason: acp::StopReason::EndTurn,
-                meta: None,
-            })
+            anyhow::Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
         })
     }
 }
@@ -968,8 +936,8 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
+    fn telemetry_id(&self) -> SharedString {
+        "zed".into()
     }
 
     fn new_thread(
@@ -1240,6 +1208,15 @@ impl TerminalHandle for AcpTerminalHandle {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
     }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1374,7 +1351,7 @@ mod internal_tests {
             IndexMap::from_iter([(
                 AgentModelGroupName("Fake".into()),
                 vec![AgentModelInfo {
-                    id: acp::ModelId("fake/fake".into()),
+                    id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
                     icon: Some(ui::IconName::ZedAssistant),
@@ -1435,7 +1412,7 @@ mod internal_tests {
 
         // Select a model
         let selector = connection.model_selector(&session_id).unwrap();
-        let model_id = acp::ModelId("fake/fake".into());
+        let model_id = acp::ModelId::new("fake/fake");
         cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
@@ -1521,20 +1498,14 @@ mod internal_tests {
             thread.send(
                 vec![
                     "What does ".into(),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        name: "b.md".into(),
-                        uri: MentionUri::File {
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                        "b.md",
+                        MentionUri::File {
                             abs_path: path!("/a/b.md").into(),
                         }
                         .to_uri()
                         .to_string(),
-                        annotations: None,
-                        description: None,
-                        mime_type: None,
-                        size: None,
-                        title: None,
-                        meta: None,
-                    }),
+                    )),
                     " mean?".into(),
                 ],
                 cx,
