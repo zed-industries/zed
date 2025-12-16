@@ -78,6 +78,7 @@ impl settings::Settings for AllLanguageModelSettings {
             },
             ollama: OllamaSettings {
                 api_url: ollama.api_url.unwrap(),
+                auto_discover: ollama.auto_discover.unwrap_or(true),
                 available_models: ollama.available_models.unwrap_or_default(),
             },
             open_router: OpenRouterSettings {

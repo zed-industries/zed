@@ -3,7 +3,7 @@ mod zed;
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -130,6 +130,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
@@ -162,7 +163,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
-
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
@@ -240,6 +240,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -249,6 +250,7 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -595,6 +597,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -1154,7 +1157,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
                 },
             )
         })?

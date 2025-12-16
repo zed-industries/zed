@@ -33,7 +33,8 @@ use gpui::{
 use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
+    WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
@@ -50,18 +51,6 @@ pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<project::telemetry_snapshot::TelemetryWorktreeSnapshot>,
     pub timestamp: DateTime<Utc>,
 }
-
-const RULES_FILE_NAMES: [&str; 9] = [
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "CLAUDE.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "GEMINI.md",
-];
 
 pub struct RulesLoadingError {
     pub message: SharedString,
@@ -947,8 +936,8 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
+    fn telemetry_id(&self) -> SharedString {
+        "zed".into()
     }
 
     fn new_thread(
@@ -1218,6 +1207,15 @@ impl TerminalHandle for AcpTerminalHandle {
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
+    }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
     }
 }
 

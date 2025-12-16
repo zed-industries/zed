@@ -24,7 +24,7 @@ use rpc::{
 
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -620,9 +620,7 @@ impl LocalBufferStore {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
             let path = path.clone();
-            let buffer = match load_file.await.with_context(|| {
-                format!("Could not open path: {}", path.display(PathStyle::local()))
-            }) {
+            let buffer = match load_file.await {
                 Ok(loaded) => {
                     let reservation = cx.reserve_entity::<Buffer>()?;
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
@@ -1129,7 +1127,7 @@ impl BufferStore {
                     })
                     .log_err();
             }
-            BufferEvent::LanguageChanged => {}
+            BufferEvent::LanguageChanged(_) => {}
             _ => {}
         }
     }

@@ -1,6 +1,7 @@
 use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -30,7 +31,8 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -53,6 +55,7 @@ pub struct SshConnectionOptions {
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+    pub connection_timeout: Option<u16>,
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
@@ -69,6 +72,7 @@ impl From<settings::SshConnection> for SshConnectionOptions {
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
+            connection_timeout: val.connection_timeout,
         }
     }
 }
@@ -114,7 +118,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
+        master_process.arg(format!("ControlPath={}", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
@@ -668,6 +672,13 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        let connection_timeout = self
+            .socket
+            .connection_options
+            .connection_timeout
+            .unwrap_or(10)
+            .to_string();
+
         match self
             .socket
             .run_command(
@@ -676,6 +687,8 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
+                    "--connect-timeout",
+                    &connection_timeout,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -701,7 +714,15 @@ impl SshRemoteConnection {
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
+                        &[
+                            "--connect-timeout",
+                            &connection_timeout,
+                            "--tries",
+                            "1",
+                            url,
+                            "-O",
+                            &tmp_path_gz.display(self.path_style()),
+                        ],
                         true,
                     )
                     .await
@@ -1060,66 +1081,17 @@ impl SshSocket {
     }
 
     async fn shell(&self) -> String {
+        const DEFAULT_SHELL: &str = "sh";
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
         {
-            Ok(output) => parse_shell(&output),
+            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
             Err(e) => {
-                log::error!("Failed to get shell: {e}");
+                log::error!("Failed to detect remote shell: {e}");
                 DEFAULT_SHELL.to_owned()
             }
         }
-    }
-}
-
-const DEFAULT_SHELL: &str = "sh";
-
-/// Parses the output of `uname -sm` to determine the remote platform.
-/// Takes the last line to skip possible shell initialization output.
-fn parse_platform(output: &str) -> Result<RemotePlatform> {
-    let output = output.trim();
-    let uname = output.rsplit_once('\n').map_or(output, |(_, last)| last);
-    let Some((os, arch)) = uname.split_once(" ") else {
-        anyhow::bail!("unknown uname: {uname:?}")
-    };
-
-    let os = match os {
-        "Darwin" => "macos",
-        "Linux" => "linux",
-        _ => anyhow::bail!(
-            "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-        ),
-    };
-
-    // exclude armv5,6,7 as they are 32-bit.
-    let arch = if arch.starts_with("armv8")
-        || arch.starts_with("armv9")
-        || arch.starts_with("arm64")
-        || arch.starts_with("aarch64")
-    {
-        "aarch64"
-    } else if arch.starts_with("x86") {
-        "x86_64"
-    } else {
-        anyhow::bail!(
-            "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-        )
-    };
-
-    Ok(RemotePlatform { os, arch })
-}
-
-/// Parses the output of `echo $SHELL` to determine the remote shell.
-/// Takes the last line to skip possible shell initialization output.
-fn parse_shell(output: &str) -> String {
-    let output = output.trim();
-    let shell = output.rsplit_once('\n').map_or(output, |(_, last)| last);
-    if shell.is_empty() {
-        log::error!("$SHELL is not set, falling back to {DEFAULT_SHELL}");
-        DEFAULT_SHELL.to_owned()
-    } else {
-        shell.to_owned()
     }
 }
 
@@ -1261,6 +1233,7 @@ impl SshConnectionOptions {
             password: None,
             nickname: None,
             upload_binary_over_ssh: false,
+            connection_timeout: None,
         })
     }
 
@@ -1286,6 +1259,10 @@ impl SshConnectionOptions {
 
     pub fn additional_args(&self) -> Vec<String> {
         let mut args = self.additional_args_for_scp();
+
+        if let Some(timeout) = self.connection_timeout {
+            args.extend(["-o".to_string(), format!("ConnectTimeout={}", timeout)]);
+        }
 
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
@@ -1398,6 +1375,8 @@ fn build_command(
     } else {
         write!(exec, "{ssh_shell} -l")?;
     };
+    let (command, command_args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
+        .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);
@@ -1408,7 +1387,9 @@ fn build_command(
     }
 
     args.push("-t".into());
-    args.push(exec);
+    args.push(command);
+    args.extend(command_args);
+
     Ok(CommandTemplate {
         program: "ssh".into(),
         args,
@@ -1447,6 +1428,9 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1479,6 +1463,9 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );
@@ -1522,60 +1509,5 @@ mod tests {
                 "StrictHostKeyChecking=no".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn test_parse_platform() {
-        let result = parse_platform("Linux x86_64\n").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
-
-        let result = parse_platform("Darwin arm64\n").unwrap();
-        assert_eq!(result.os, "macos");
-        assert_eq!(result.arch, "aarch64");
-
-        let result = parse_platform("Linux x86_64").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
-
-        let result = parse_platform("some shell init output\nLinux aarch64\n").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "aarch64");
-
-        let result = parse_platform("some shell init output\nLinux aarch64").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "aarch64");
-
-        assert_eq!(parse_platform("Linux armv8l\n").unwrap().arch, "aarch64");
-        assert_eq!(parse_platform("Linux aarch64\n").unwrap().arch, "aarch64");
-        assert_eq!(parse_platform("Linux x86_64\n").unwrap().arch, "x86_64");
-
-        let result = parse_platform(
-            r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
-        )
-        .unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
-
-        assert!(parse_platform("Windows x86_64\n").is_err());
-        assert!(parse_platform("Linux armv7l\n").is_err());
-    }
-
-    #[test]
-    fn test_parse_shell() {
-        assert_eq!(parse_shell("/bin/bash\n"), "/bin/bash");
-        assert_eq!(parse_shell("/bin/zsh\n"), "/bin/zsh");
-
-        assert_eq!(parse_shell("/bin/bash"), "/bin/bash");
-        assert_eq!(
-            parse_shell("some shell init output\n/bin/bash\n"),
-            "/bin/bash"
-        );
-        assert_eq!(
-            parse_shell("some shell init output\n/bin/bash"),
-            "/bin/bash"
-        );
-        assert_eq!(parse_shell(""), "sh");
-        assert_eq!(parse_shell("\n"), "sh");
     }
 }

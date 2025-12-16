@@ -19,6 +19,7 @@ pub struct CreaseMap {
 }
 
 impl CreaseMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(snapshot: &MultiBufferSnapshot) -> Self {
         CreaseMap {
             snapshot: CreaseSnapshot::new(snapshot),
@@ -40,11 +41,13 @@ impl CreaseSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn creases(&self) -> impl Iterator<Item = (CreaseId, &Crease<Anchor>)> {
         self.creases.iter().map(|item| (item.id, &item.crease))
     }
 
     /// Returns the first Crease starting on the specified buffer row.
+    #[ztracing::instrument(skip_all)]
     pub fn query_row<'a>(
         &'a self,
         row: MultiBufferRow,
@@ -69,6 +72,7 @@ impl CreaseSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn creases_in_range<'a>(
         &'a self,
         range: Range<MultiBufferRow>,
@@ -95,6 +99,7 @@ impl CreaseSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn crease_items_with_offsets(
         &self,
         snapshot: &MultiBufferSnapshot,
@@ -156,6 +161,7 @@ pub struct CreaseMetadata {
 }
 
 impl<T> Crease<T> {
+    #[ztracing::instrument(skip_all)]
     pub fn simple(range: Range<T>, placeholder: FoldPlaceholder) -> Self {
         Crease::Inline {
             range,
@@ -166,6 +172,7 @@ impl<T> Crease<T> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn block(range: Range<T>, height: u32, style: BlockStyle, render: RenderBlock) -> Self {
         Self::Block {
             range,
@@ -177,6 +184,7 @@ impl<T> Crease<T> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn inline<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<T>,
         placeholder: FoldPlaceholder,
@@ -216,6 +224,7 @@ impl<T> Crease<T> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn with_metadata(self, metadata: CreaseMetadata) -> Self {
         match self {
             Crease::Inline {
@@ -235,6 +244,7 @@ impl<T> Crease<T> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn range(&self) -> &Range<T> {
         match self {
             Crease::Inline { range, .. } => range,
@@ -242,6 +252,7 @@ impl<T> Crease<T> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn metadata(&self) -> Option<&CreaseMetadata> {
         match self {
             Self::Inline { metadata, .. } => metadata.as_ref(),
@@ -287,6 +298,7 @@ impl CreaseMap {
         self.snapshot.clone()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn insert(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,
@@ -312,6 +324,7 @@ impl CreaseMap {
         new_ids
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn remove(
         &mut self,
         ids: impl IntoIterator<Item = CreaseId>,
@@ -379,6 +392,7 @@ impl sum_tree::Summary for ItemSummary {
 impl sum_tree::Item for CreaseItem {
     type Summary = ItemSummary;
 
+    #[ztracing::instrument(skip_all)]
     fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         ItemSummary {
             range: self.crease.range().clone(),
@@ -388,12 +402,14 @@ impl sum_tree::Item for CreaseItem {
 
 /// Implements `SeekTarget` for `Range<Anchor>` to enable seeking within a `SumTree` of `CreaseItem`s.
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Range<Anchor> {
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, cursor_location: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(self, &cursor_location.range, snapshot)
     }
 }
 
 impl SeekTarget<'_, ItemSummary, ItemSummary> for Anchor {
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, other: &ItemSummary, snapshot: &MultiBufferSnapshot) -> Ordering {
         self.cmp(&other.range.start, snapshot)
     }
@@ -461,6 +477,7 @@ mod test {
     }
 
     #[gpui::test]
+    #[ztracing::instrument(skip_all)]
     fn test_creases_in_range(cx: &mut App) {
         let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7";
         let buffer = MultiBuffer::build_simple(text, cx);

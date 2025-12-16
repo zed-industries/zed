@@ -2,7 +2,7 @@ use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
         RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
-        room_participants, rust_lang,
+        room_participants,
     },
 };
 use anyhow::{Result, anyhow};
@@ -26,7 +26,7 @@ use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{Formatter, FormatterList},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
