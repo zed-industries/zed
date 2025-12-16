@@ -1,0 +1,57 @@
+[package]
+name = "quick_search"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "quick_search"
+path = "src/quick_search.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+any_vec.workspace = true
+async-channel = "2.5"
+bitflags.workspace = true
+buffer_diff.workspace = true
+collections.workspace = true
+editor.workspace = true
+file_icons.workspace = true
+futures.workspace = true
+fuzzy.workspace = true
+git.workspace = true
+git_ui.workspace = true
+git2.workspace = true
+gpui.workspace = true
+time.workspace = true
+time_format.workspace = true
+indexmap.workspace = true
+itertools.workspace = true
+language.workspace = true
+log.workspace = true
+menu.workspace = true
+multi_buffer.workspace = true
+picker.workspace = true
+project.workspace = true
+schemars.workspace = true
+search.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+text.workspace = true
+theme.workspace = true
+tracing.workspace = true
+ui.workspace = true
+util.workspace = true
+util_macros.workspace = true
+workspace.workspace = true
+ztracing.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

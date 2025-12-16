@@ -170,6 +170,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
                 MenuItem::action("Find in Project", workspace::DeploySearch::find()),
+                MenuItem::action("Quick Search...", workspace::ToggleQuickSearch),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",

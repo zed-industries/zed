@@ -608,6 +608,7 @@
       "shift-alt-0": "workspace::ResetOpenDocksSize",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "ctrl-alt-k": "quick_search::Toggle",
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",

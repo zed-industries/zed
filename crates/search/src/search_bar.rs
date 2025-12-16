@@ -39,7 +39,7 @@ pub(super) fn render_action_button(
     })
 }
 
-pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div) -> Div {
+pub fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div) -> Div {
     h_flex()
         .map(map)
         .min_w_32()
@@ -51,7 +51,7 @@ pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div
         .rounded_md()
 }
 
-pub(crate) fn render_text_input(
+pub fn render_text_input(
     editor: &Entity<Editor>,
     color_override: Option<Color>,
     app: &App,

@@ -58,6 +58,7 @@ assets.workspace = true
 command_palette = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 git_ui.workspace = true
+quick_search.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }

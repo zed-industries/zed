@@ -125,6 +125,7 @@ reqwest.workspace = true
 reqwest_client.workspace = true
 rope.workspace = true
 search.workspace = true
+quick_search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 session.workspace = true

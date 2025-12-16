@@ -148,6 +148,7 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
+    "crates/quick_search",
     "crates/session",
     "crates/settings",
     "crates/settings_json",
@@ -375,6 +376,7 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
+quick_search = { path = "crates/quick_search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_json = { path = "crates/settings_json" }

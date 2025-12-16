@@ -389,6 +389,12 @@ pub struct ToggleFileFinder {
     pub separate_history: bool,
 }
 
+/// Toggles the Quick Search modal.
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = quick_search, name = "Toggle")]
+#[serde(deny_unknown_fields)]
+pub struct ToggleQuickSearch;
+
 /// Increases size of a currently focused dock by a given amount of pixels.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
