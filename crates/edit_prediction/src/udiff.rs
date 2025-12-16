@@ -14,69 +14,32 @@ use anyhow::anyhow;
 use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSnapshot};
-use project::Project;
+use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot};
+use project::{Project, ProjectPath};
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 
-pub async fn parse_diff<'a>(
-    diff_str: &'a str,
-    get_buffer: impl Fn(&Path) -> Option<(&'a BufferSnapshot, &'a [Range<Anchor>])> + Send,
-) -> Result<(&'a BufferSnapshot, Vec<(Range<Anchor>, Arc<str>)>)> {
-    let mut diff = DiffParser::new(diff_str);
-    let mut edited_buffer = None;
-    let mut edits = Vec::new();
-
-    while let Some(event) = diff.next()? {
-        match event {
-            DiffEvent::Hunk {
-                path: file_path,
-                hunk,
-            } => {
-                let (buffer, ranges) = match edited_buffer {
-                    None => {
-                        edited_buffer = get_buffer(&Path::new(file_path.as_ref()));
-                        edited_buffer
-                            .as_ref()
-                            .context("Model tried to edit a file that wasn't included")?
-                    }
-                    Some(ref current) => current,
-                };
-
-                edits.extend(
-                    resolve_hunk_edits_in_buffer(hunk, &buffer.text, ranges)
-                        .with_context(|| format!("Diff:\n{diff_str}"))?,
-                );
-            }
-            DiffEvent::FileEnd { renamed_to } => {
-                let (buffer, _) = edited_buffer
-                    .take()
-                    .context("Got a FileEnd event before an Hunk event")?;
-
-                if renamed_to.is_some() {
-                    anyhow::bail!("edit predictions cannot rename files");
-                }
-
-                if diff.next()?.is_some() {
-                    anyhow::bail!("Edited more than one file");
-                }
-
-                return Ok((buffer, edits));
-            }
-        }
-    }
-
-    Err(anyhow::anyhow!("No EOF"))
-}
-
-#[derive(Debug)]
-pub struct OpenedBuffers<'a>(#[allow(unused)] HashMap<Cow<'a, str>, Entity<Buffer>>);
+#[derive(Clone, Debug)]
+pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
 
 #[must_use]
-pub async fn apply_diff<'a>(
-    diff_str: &'a str,
+pub async fn apply_diff(
+    diff_str: &str,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
-) -> Result<OpenedBuffers<'a>> {
+) -> Result<OpenedBuffers> {
     let mut included_files = HashMap::default();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        anyhow::Ok(
+            project
+                .visible_worktrees(cx)
+                .next()
+                .context("no worktrees")?
+                .read(cx)
+                .id(),
+        )
+    })??;
 
     for line in diff_str.lines() {
         let diff_line = DiffLine::parse(line);
@@ -84,17 +47,15 @@ pub async fn apply_diff<'a>(
         if let DiffLine::OldPath { path } = diff_line {
             let buffer = project
                 .update(cx, |project, cx| {
-                    let project_path =
-                        project
-                            .find_project_path(path.as_ref(), cx)
-                            .with_context(|| {
-                                format!("Failed to find worktree for new path: {}", path)
-                            })?;
+                    let project_path = ProjectPath {
+                        worktree_id,
+                        path: RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc(),
+                    };
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
                 .await?;
 
-            included_files.insert(path, buffer);
+            included_files.insert(path.to_string(), buffer);
         }
     }
 
@@ -113,7 +74,7 @@ pub async fn apply_diff<'a>(
                 let (buffer, ranges) = match current_file {
                     None => {
                         let buffer = included_files
-                            .get_mut(&file_path)
+                            .get_mut(file_path.as_ref())
                             .expect("Opened all files in diff");
 
                         current_file = Some((buffer, ranges.as_slice()));
@@ -165,6 +126,29 @@ pub async fn apply_diff<'a>(
     }
 
     Ok(OpenedBuffers(included_files))
+}
+
+pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    let mut diff = DiffParser::new(diff_str);
+
+    let mut text = text.to_string();
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk { hunk, .. } => {
+                let hunk_offset = text
+                    .find(&hunk.context)
+                    .ok_or_else(|| anyhow!("couldn't resolve hunk {:?}", hunk.context))?;
+                for edit in hunk.edits.iter().rev() {
+                    let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+                    text.replace_range(range, &edit.text);
+                }
+            }
+            DiffEvent::FileEnd { .. } => {}
+        }
+    }
+
+    Ok(text)
 }
 
 struct PatchFile<'a> {
@@ -492,7 +476,6 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::Point;
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -754,38 +737,38 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three
             +3
              four
              five
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              3
             -four
             -five
             +4
             +5
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
             -one
             -two
              3
              4
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
             +5
              six
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              seven
             +7.5
              eight
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              ten
             +11
         "#};
@@ -815,137 +798,6 @@ mod tests {
         buffer_2.read_with(cx, |buffer, _cx| {
             assert_eq!(buffer.text(), buffer_2_text_final);
         });
-    }
-
-    #[gpui::test]
-    async fn test_apply_diff_non_unique(cx: &mut TestAppContext) {
-        let fs = init_test(cx);
-
-        let buffer_1_text = indoc! {r#"
-            one
-            two
-            three
-            four
-            five
-            one
-            two
-            three
-            four
-            five
-        "# };
-
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "file1": buffer_1_text,
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer(path!("/root/file1"), cx)
-            })
-            .await
-            .unwrap();
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-        let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
-             one
-             two
-            -three
-            +3
-             four
-             five
-        "#};
-
-        let final_text = indoc! {r#"
-            one
-            two
-            three
-            four
-            five
-            one
-            two
-            3
-            four
-            five
-        "#};
-
-        apply_diff(diff, &project, &mut cx.to_async())
-            .await
-            .expect_err("Non-unique edits should fail");
-
-        let ranges = [buffer_snapshot.anchor_before(Point::new(1, 0))
-            ..buffer_snapshot.anchor_after(buffer_snapshot.max_point())];
-
-        let (edited_snapshot, edits) = parse_diff(diff, |_path| Some((&buffer_snapshot, &ranges)))
-            .await
-            .unwrap();
-
-        assert_eq!(edited_snapshot.remote_id(), buffer_snapshot.remote_id());
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, None, cx);
-            assert_eq!(buffer.text(), final_text);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_parse_diff_with_edits_within_line(cx: &mut TestAppContext) {
-        let fs = init_test(cx);
-
-        let buffer_1_text = indoc! {r#"
-            one two three four
-            five six seven eight
-            nine ten eleven twelve
-        "# };
-
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "file1": buffer_1_text,
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer(path!("/root/file1"), cx)
-            })
-            .await
-            .unwrap();
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-        let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
-             one two three four
-            -five six seven eight
-            +five SIX seven eight!
-             nine ten eleven twelve
-        "#};
-
-        let (buffer, edits) = parse_diff(diff, |_path| {
-            Some((&buffer_snapshot, &[(Anchor::MIN..Anchor::MAX)] as &[_]))
-        })
-        .await
-        .unwrap();
-
-        let edits = edits
-            .into_iter()
-            .map(|(range, text)| (range.to_point(&buffer), text))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            edits,
-            &[
-                (Point::new(1, 5)..Point::new(1, 8), "SIX".into()),
-                (Point::new(1, 20)..Point::new(1, 20), "!".into())
-            ]
-        );
     }
 
     #[gpui::test]
@@ -985,8 +837,8 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three

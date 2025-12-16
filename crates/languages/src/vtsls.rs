@@ -296,9 +296,9 @@ impl LspAdapter for VtslsLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("TypeScript"), "typescript".into()),
-            (LanguageName::new("JavaScript"), "javascript".into()),
-            (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new_static("TypeScript"), "typescript".into()),
+            (LanguageName::new_static("JavaScript"), "javascript".into()),
+            (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
     }
 }

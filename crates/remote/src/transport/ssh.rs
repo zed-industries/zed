@@ -31,7 +31,8 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -54,6 +55,7 @@ pub struct SshConnectionOptions {
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+    pub connection_timeout: Option<u16>,
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
@@ -70,6 +72,7 @@ impl From<settings::SshConnection> for SshConnectionOptions {
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
+            connection_timeout: val.connection_timeout,
         }
     }
 }
@@ -115,7 +118,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
+        master_process.arg(format!("ControlPath={}", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
@@ -669,7 +672,12 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
-        const CONNECT_TIMEOUT_SECS: &str = "10";
+        let connection_timeout = self
+            .socket
+            .connection_options
+            .connection_timeout
+            .unwrap_or(10)
+            .to_string();
 
         match self
             .socket
@@ -680,7 +688,7 @@ impl SshRemoteConnection {
                     "-f",
                     "-L",
                     "--connect-timeout",
-                    CONNECT_TIMEOUT_SECS,
+                    &connection_timeout,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -708,7 +716,7 @@ impl SshRemoteConnection {
                         "wget",
                         &[
                             "--connect-timeout",
-                            CONNECT_TIMEOUT_SECS,
+                            &connection_timeout,
                             "--tries",
                             "1",
                             url,
@@ -1225,6 +1233,7 @@ impl SshConnectionOptions {
             password: None,
             nickname: None,
             upload_binary_over_ssh: false,
+            connection_timeout: None,
         })
     }
 
@@ -1250,6 +1259,10 @@ impl SshConnectionOptions {
 
     pub fn additional_args(&self) -> Vec<String> {
         let mut args = self.additional_args_for_scp();
+
+        if let Some(timeout) = self.connection_timeout {
+            args.extend(["-o".to_string(), format!("ConnectTimeout={}", timeout)]);
+        }
 
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
@@ -1362,6 +1375,8 @@ fn build_command(
     } else {
         write!(exec, "{ssh_shell} -l")?;
     };
+    let (command, command_args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
+        .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);
@@ -1372,7 +1387,9 @@ fn build_command(
     }
 
     args.push("-t".into());
-    args.push(exec);
+    args.push(command);
+    args.extend(command_args);
+
     Ok(CommandTemplate {
         program: "ssh".into(),
         args,
@@ -1411,6 +1428,9 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1443,6 +1463,9 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );

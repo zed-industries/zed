@@ -20,6 +20,18 @@ use util::{
 
 use crate::UserPromptId;
 
+pub const RULES_FILE_NAMES: &[&str] = &[
+    ".rules",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    ".github/copilot-instructions.md",
+    "CLAUDE.md",
+    "AGENT.md",
+    "AGENTS.md",
+    "GEMINI.md",
+];
+
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
@@ -286,7 +298,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_inline_transformation_prompt_v2(
+    pub fn generate_inline_transformation_prompt_tools(
         &self,
         language_name: Option<&LanguageName>,
         buffer: BufferSnapshot,
