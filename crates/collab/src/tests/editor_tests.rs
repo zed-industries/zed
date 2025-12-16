@@ -1,3 +1,5 @@
+// TODO kb have semantic tokens tests: refresh and regular updates
+
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
 use editor::{
