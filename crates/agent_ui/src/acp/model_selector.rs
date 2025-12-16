@@ -16,14 +16,14 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use ui::{
-    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, KeyBinding, ListItem,
-    ListItemSpacing, Tooltip, prelude::*,
-};
+use ui::{DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::HoldForDefault;
+use crate::ui::{
+    HoldForDefault, ModelSelectorFavoriteAction, ModelSelectorFooter, ModelSelectorHeader,
+    ModelSelectorListItem,
+};
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
@@ -63,27 +63,6 @@ impl AcpModelPickerEntryAction {
             Self::Unfavorite
         } else {
             Self::Favorite
-        }
-    }
-
-    fn icon_name(&self) -> IconName {
-        match self {
-            Self::Favorite => IconName::Star,
-            Self::Unfavorite => IconName::StarFilled,
-        }
-    }
-
-    fn icon_color(&self) -> Color {
-        match self {
-            Self::Favorite => Color::Default,
-            Self::Unfavorite => Color::Accent,
-        }
-    }
-
-    fn tooltip(&self) -> SharedString {
-        match self {
-            Self::Favorite => "Favorite Model".into(),
-            Self::Unfavorite => "Unfavorite Model".into(),
         }
     }
 }
@@ -291,33 +270,15 @@ impl PickerDelegate for AcpModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
-            AcpModelPickerEntry::Separator(title) => Some(
-                div()
-                    .px_2()
-                    .pb_1()
-                    .when(ix > 1, |this| {
-                        this.mt_1()
-                            .pt_2()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                    })
-                    .child(
-                        Label::new(title)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .into_any_element(),
-            ),
+            AcpModelPickerEntry::Separator(title) => {
+                Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
+            }
             AcpModelPickerEntry::Model(model_info, action) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
-                let model_icon_color = if is_selected {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                };
+                let supports_favorites = self.selector.supports_favorites();
 
                 let handle_action_click = {
                     let action = *action;
@@ -342,59 +303,38 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     }
                 };
 
+                let favorite_action = match action {
+                    AcpModelPickerEntryAction::Favorite => ModelSelectorFavoriteAction::Favorite,
+                    AcpModelPickerEntryAction::Unfavorite => {
+                        ModelSelectorFavoriteAction::Unfavorite
+                    }
+                };
+
                 Some(
                     div()
                         .id(("model-picker-menu-child", ix))
                         .when_some(model_info.description.clone(), |this, description| {
-                            this
-                                .on_hover(cx.listener(move |menu, hovered, _, cx| {
-                                    if *hovered {
-                                        menu.delegate.selected_description = Some((ix, description.clone(), is_default));
-                                    } else if matches!(menu.delegate.selected_description, Some((id, _, _)) if id == ix) {
-                                        menu.delegate.selected_description = None;
-                                    }
-                                    cx.notify();
-                                }))
+                            this.on_hover(cx.listener(move |menu, hovered, _, cx| {
+                                if *hovered {
+                                    menu.delegate.selected_description =
+                                        Some((ix, description.clone(), is_default));
+                                } else if matches!(menu.delegate.selected_description, Some((id, _, _)) if id == ix) {
+                                    menu.delegate.selected_description = None;
+                                }
+                                cx.notify();
+                            }))
                         })
                         .child(
-                            ListItem::new(ix)
-                                .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
-                                .toggle_state(selected)
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_1p5()
-                                        .when_some(model_info.icon, |this, icon| {
-                                            this.child(
-                                                Icon::new(icon)
-                                                    .color(model_icon_color)
-                                                    .size(IconSize::Small)
-                                            )
-                                        })
-                                        .child(Label::new(model_info.name.clone()).truncate()),
-                                )
-                                .end_slot(div().pr_2().when(is_selected, |this| {
-                                    this.child(
-                                        Icon::new(IconName::Check)
-                                            .color(Color::Accent)
-                                            .size(IconSize::Small),
-                                    )
-                                }))
-                                .end_hover_slot(
-                                    div().pr_2().when(self.selector.supports_favorites(), |this| {
-                                        this.child(
-                                            IconButton::new(("toggle-favorite", ix), action.icon_name())
-                                                .layer(ui::ElevationIndex::ElevatedSurface)
-                                                .icon_color(action.icon_color())
-                                                .icon_size(IconSize::Small)
-                                                .tooltip(Tooltip::text(action.tooltip()))
-                                                .on_click(move |_, _, cx| handle_action_click(cx)),
-                                        )
-                                    }),
-                                )
+                            ModelSelectorListItem::new(ix, model_info.name.clone())
+                                .when_some(model_info.icon, |this, icon| this.icon(icon))
+                                .is_selected(is_selected)
+                                .is_focused(selected)
+                                .when(supports_favorites, |this| {
+                                    this.favorite_action(favorite_action)
+                                        .on_favorite_action_click(handle_action_click)
+                                }),
                         )
-                        .into_any_element()
+                        .into_any_element(),
                 )
             }
         }
@@ -428,7 +368,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn render_footer(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
@@ -436,26 +376,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
             return None;
         }
 
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("configure", "Configure")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
-                        }),
-                )
-                .into_any(),
-        )
+        Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
     }
 }
 
@@ -708,15 +629,9 @@ mod tests {
 
         let entries = info_list_to_picker_entries(models, favorites).collect_vec();
 
-        let mut in_favorites_section = false;
         for entry in &entries {
             match entry {
-                AcpModelPickerEntry::Separator(s) if s == "Favorite" => {
-                    in_favorites_section = true;
-                }
-                AcpModelPickerEntry::Separator(_) => {
-                    in_favorites_section = false;
-                }
+                AcpModelPickerEntry::Separator(_) => {}
                 AcpModelPickerEntry::Model(info, action) if info.id.0.as_ref() == "zed/claude" => {
                     assert!(matches!(action, AcpModelPickerEntryAction::Unfavorite));
                 }
