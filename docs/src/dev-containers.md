@@ -22,7 +22,7 @@ When you open a project that contains the `.devcontainer/devcontainer.json` dire
 ### Manual open
 
 If you dismiss the prompt or want to reopen the project inside a container later, you can use Zed's command palette to run the "Project: Open Remote" command and select the option to open the project in a dev container.
-Alternatively, you can reach for the Remote Projects modal (through the {#kb project::Open Remote} binding) and choose the "Connect Dev Container" option.
+Alternatively, you can reach for the Remote Projects modal (through the {#kb projects::OpenRemote} binding) and choose the "Connect Dev Container" option.
 
 ## Editing the dev container configuration
 
