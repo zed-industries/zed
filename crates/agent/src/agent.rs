@@ -5,12 +5,11 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod templates;
+mod tests;
 mod thread;
 mod tools;
 
-#[cfg(test)]
-mod tests;
-
+use context_server::ContextServerId;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
@@ -801,6 +800,89 @@ impl NativeAgent {
             history.update(cx, |history, cx| history.reload(cx)).ok();
         });
     }
+
+    fn send_mcp_prompt(
+        &self,
+        session_id: agent_client_protocol::SessionId,
+        prompt_name: String,
+        server_id: ContextServerId,
+        arguments: HashMap<String, String>,
+        original_content: Vec<acp::ContentBlock>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        let server_store = self.context_server_registry.read(cx).server_store().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+
+        cx.spawn(async move |this, cx| {
+            let prompt =
+                crate::get_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
+
+            let (acp_thread, thread) = this.update(cx, |this, _cx| {
+                let session = this
+                    .sessions
+                    .get(&session_id)
+                    .context("Failed to get session")?;
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
+            })??;
+
+            if original_content.len() > 1 {
+                thread.update(cx, |thread, cx| {
+                    let id = acp_thread::UserMessageId::new();
+                    thread.push_acp_user_block(
+                        id,
+                        original_content.into_iter().skip(1),
+                        path_style,
+                        cx,
+                    );
+                })?;
+            }
+
+            for message in prompt.messages {
+                let context_server::types::PromptMessage { role, content } = message;
+                let block = mcp_message_content_to_acp_content_block(content);
+
+                acp_thread.update(cx, |acp_thread, cx| {
+                    match role {
+                        context_server::types::Role::User => {
+                            acp_thread.push_user_content_block(None, block.clone(), cx);
+                        }
+                        context_server::types::Role::Assistant => {
+                            acp_thread.push_assistant_content_block(block.clone(), false, cx);
+                        }
+                    }
+                    anyhow::Ok(())
+                })??;
+
+                thread.update(cx, |thread, cx| {
+                    match role {
+                        context_server::types::Role::User => {
+                            let id = acp_thread::UserMessageId::new();
+                            thread.push_acp_user_block(id, [block], path_style, cx);
+                        }
+                        context_server::types::Role::Assistant => {
+                            thread.push_acp_agent_block(block, cx);
+                        }
+                    }
+
+                    anyhow::Ok(())
+                })??;
+            }
+
+            let response_stream = thread.update(cx, |thread, cx| {
+                if matches!(thread.last_message(), Some(Message::User(_))) {
+                    thread.send_existing(cx)
+                } else {
+                    // Resume if MCP prompt did not end with a user message
+                    thread.resume(cx)
+                }
+            })??;
+
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(response_stream, acp_thread, cx)
+            })?
+            .await
+        })
+    }
 }
 
 /// Wrapper struct that implements the AgentConnection trait
@@ -955,117 +1037,17 @@ impl NativeAgentConnection {
         })
     }
 
-    fn run_turn_with_prompt(
-        &self,
-        session_id: acp::SessionId,
-        id: acp_thread::UserMessageId,
-        expanded_prompt: Vec<acp::ContentBlock>,
-        path_style: util::paths::PathStyle,
-        cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        self.run_turn(session_id, cx, move |thread, cx| {
-            let content: Vec<UserMessageContent> = expanded_prompt
-                .into_iter()
-                .map(|block| UserMessageContent::from_content_block(block, path_style))
-                .collect::<Vec<_>>();
-            log::debug!("Converted prompt to message: {} chars", content.len());
-            log::debug!("Message id: {:?}", id);
-            log::debug!("Message content: {:?}", content);
-
-            thread.update(cx, |thread, cx| thread.send(id, content, cx))
-        })
-    }
-
-    fn expand_mcp_prompt(
-        &self,
-        mut prompt: Vec<acp::ContentBlock>,
-        cx: &mut App,
-    ) -> Task<Result<Vec<acp::ContentBlock>>> {
-        let registry = self.0.read(cx).context_server_registry.clone();
-        let server_store = registry.read(cx).server_store().clone();
-
-        cx.spawn(async move |mut cx| {
-            for block in prompt.iter_mut() {
-                if let acp::ContentBlock::Text(text_content) = &block {
-                    if let Some(expanded) = Self::try_expand_mcp_prompt(
-                        &text_content.text,
-                        &registry,
-                        &server_store,
-                        &mut cx,
-                    )
-                    .await?
-                    {
-                        *block = acp::ContentBlock::Text(acp::TextContent {
-                            text: expanded,
-                            annotations: text_content.annotations.clone(),
-                            meta: text_content.meta.clone(),
-                        });
-                    }
-                    break;
-                }
-            }
-
-            Ok(prompt)
-        })
-    }
-
-    async fn try_expand_mcp_prompt(
-        text: &str,
-        registry: &Entity<ContextServerRegistry>,
-        server_store: &Entity<project::context_server_store::ContextServerStore>,
-        cx: &mut AsyncApp,
-    ) -> Result<Option<String>> {
-        let text = text.trim();
-        let Some(command) = text.strip_prefix('/') else {
-            return Ok(None);
+    fn get_command_in_prompt(prompt: &[acp::ContentBlock]) -> Option<(&str, &str)> {
+        let acp::ContentBlock::Text(text_content) = prompt.first()? else {
+            return None;
         };
-
-        let (command_name, argument) =
-            if let Some((command, arg)) = command.split_once(char::is_whitespace) {
-                (command.to_string(), Some(arg.trim().to_string()))
-            } else {
-                (command.to_string(), None)
-            };
-
-        // todo! move to get_prompt?
-        let prompt_info = cx.update(|cx| {
-            registry.read(cx).prompts().find_map(|p| {
-                if p.prompt.name == command_name {
-                    let argument_name = p
-                        .prompt
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.first())
-                        .map(|arg| arg.name.clone());
-                    Some((p.server_id.clone(), p.prompt.name.clone(), argument_name))
-                } else {
-                    None
-                }
-            })
-        })?;
-
-        let Some((server_id, prompt_name, argument_name)) = prompt_info else {
-            return Ok(None);
-        };
-
-        log::info!(
-            "Expanding MCP prompt '{}' from server '{}'",
-            command_name,
-            server_id
+        let text = text_content.text.trim();
+        let command = text.strip_prefix('/')?;
+        return Some(
+            command
+                .split_once(char::is_whitespace)
+                .unwrap_or((command, "")),
         );
-
-        let mut arguments = HashMap::default();
-        match (argument, argument_name) {
-            (Some(arg), Some(arg_name)) => {
-                arguments.insert(arg_name, arg);
-            }
-            _ => {}
-        }
-
-        let expanded =
-            crate::get_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
-
-        Ok(Some(expanded))
     }
 }
 
@@ -1234,19 +1216,60 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
+
+        if let Some((prompt_name, arg_value)) = Self::get_command_in_prompt(&params.prompt) {
+            let session_id = session_id.clone();
+
+            if let Some(prompt) = self
+                .0
+                .read(cx)
+                .context_server_registry
+                .read(cx)
+                .prompt_by_name(prompt_name)
+            {
+                let arguments = if !arg_value.is_empty()
+                    && let Some(arg_name) = prompt
+                        .prompt
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .map(|arg| arg.name.clone())
+                {
+                    HashMap::from_iter([(arg_name.to_string(), arg_value.to_string())])
+                } else {
+                    Default::default()
+                };
+
+                let prompt_name = prompt.prompt.name.clone();
+                let server_id = prompt.server_id.clone();
+
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_mcp_prompt(
+                        session_id.clone(),
+                        prompt_name,
+                        server_id,
+                        arguments,
+                        params.prompt,
+                        cx,
+                    )
+                });
+            };
+        };
+
         let path_style = self.0.read(cx).project.read(cx).path_style(cx);
 
-        let mcp_prompt_expansion = self.expand_mcp_prompt(params.prompt, cx);
-        let connection = self.clone();
+        self.run_turn(session_id, cx, move |thread, cx| {
+            let content: Vec<UserMessageContent> = params
+                .prompt
+                .into_iter()
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
+                .collect::<Vec<_>>();
+            log::debug!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Message id: {:?}", id);
+            log::debug!("Message content: {:?}", content);
 
-        let turn_task = cx.spawn(async move |cx| {
-            let expanded_prompt = mcp_prompt_expansion.await?;
-            cx.update(|cx| {
-                connection.run_turn_with_prompt(session_id, id, expanded_prompt, path_style, cx)
-            })
-        });
-
-        cx.spawn(async move |_| turn_task.await?.await)
+            thread.update(cx, |thread, cx| thread.send(id, content, cx))
+        })
     }
 
     fn resume(
@@ -1824,5 +1847,53 @@ mod internal_tests {
 
             LanguageModelRegistry::test(cx);
         });
+    }
+}
+
+fn mcp_message_content_to_acp_content_block(
+    content: context_server::types::MessageContent,
+) -> acp::ContentBlock {
+    match content {
+        context_server::types::MessageContent::Text {
+            text,
+            annotations: _,
+        } => acp::ContentBlock::Text(acp::TextContent {
+            text,
+            annotations: None,
+            meta: None,
+        }),
+        context_server::types::MessageContent::Image {
+            data,
+            mime_type,
+            annotations: _,
+        } => acp::ContentBlock::Image(acp::ImageContent {
+            data,
+            mime_type,
+            annotations: None,
+            meta: None,
+            uri: None,
+        }),
+        context_server::types::MessageContent::Audio {
+            data: _,
+            mime_type: _,
+            annotations: _,
+        } => acp::ContentBlock::Text(acp::TextContent {
+            text: "[audio]".to_string(),
+            annotations: None,
+            meta: None,
+        }),
+        context_server::types::MessageContent::Resource {
+            resource,
+            annotations: _,
+        } => acp::ContentBlock::ResourceLink(acp::ResourceLink {
+            uri: resource.uri.to_string(),
+            name: resource.uri.to_string(),
+            annotations: None,
+            description: None,
+            mime_type: resource.mime_type,
+            size: None,
+            title: None,
+            meta: None,
+        }),
     }
 }

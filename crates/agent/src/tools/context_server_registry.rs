@@ -88,6 +88,12 @@ impl ContextServerRegistry {
             .flat_map(|server| server.prompts.values())
     }
 
+    pub fn prompt_by_name(&self, name: &str) -> Option<&ContextServerPrompt> {
+        self.registered_servers
+            .values()
+            .find_map(|server| server.prompts.get(name))
+    }
+
     pub fn server_store(&self) -> &Entity<ContextServerStore> {
         &self.server_store
     }
@@ -361,7 +367,7 @@ pub fn get_prompt(
     prompt_name: &str,
     arguments: HashMap<String, String>,
     cx: &mut AsyncApp,
-) -> Task<Result<String>> {
+) -> Task<Result<context_server::types::PromptsGetResponse>> {
     let server = match cx.update(|cx| server_store.read(cx).get_running_server(server_id)) {
         Ok(server) => server,
         Err(error) => return Task::ready(Err(error)),
@@ -391,26 +397,6 @@ pub fn get_prompt(
             )
             .await?;
 
-        anyhow::ensure!(
-            response
-                .messages
-                .iter()
-                .all(|msg| matches!(msg.role, context_server::types::Role::User)),
-            "Prompt contains non-user roles, which is not supported"
-        );
-
-        let mut prompt = response
-            .messages
-            .into_iter()
-            .filter_map(|msg| match msg.content {
-                context_server::types::MessageContent::Text { text, .. } => Some(text),
-                _ => None,
-            })
-            .collect::<Vec<String>>()
-            .join("\n\n");
-
-        text::LineEnding::normalize(&mut prompt);
-
-        Ok(prompt)
+        Ok(response)
     })
 }
