@@ -16,25 +16,45 @@ actions!(
     ]
 );
 
-async fn is_user_admin() -> bool {
-    let output = smol::process::Command::new("groups").output().await.ok();
-    if let Some(output) = output {
-        if output.status.success() {
-            let groups = String::from_utf8_lossy(&output.stdout);
-            return groups.split_whitespace().any(|g| g == "admin");
-        }
+async fn add_path_to_zshrc() -> Result<bool> {
+    let home_dir = std::env::var("HOME").context("Failed to get HOME environment variable")?;
+    let zshrc_path = PathBuf::from(&home_dir).join(".zshrc");
+    let path_export = r#"export PATH="$HOME/.local/bin:$PATH""#;
+
+    // Read existing .zshrc content if it exists
+    let existing_content = smol::fs::read_to_string(&zshrc_path)
+        .await
+        .unwrap_or_default();
+
+    // Check if the PATH export already exists
+    if existing_content.contains(path_export) || existing_content.contains("$HOME/.local/bin") {
+        return Ok(false);
     }
-    false
+
+    // Append the PATH export to .zshrc
+    let new_content = if existing_content.is_empty() {
+        format!("{}\n", path_export)
+    } else if existing_content.ends_with('\n') {
+        format!("{}{}\n", existing_content, path_export)
+    } else {
+        format!("{}\n{}\n", existing_content, path_export)
+    };
+
+    smol::fs::write(&zshrc_path, new_content)
+        .await
+        .context("Failed to write to ~/.zshrc")?;
+
+    Ok(true)
 }
 
-async fn install_to_local_bin(cx: &AsyncApp) -> Result<PathBuf> {
+async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let home_dir = std::env::var("HOME").context("Failed to get HOME environment variable")?;
-    let local_bin = PathBuf::from(home_dir).join(".local/bin");
-    let link_path = local_bin.join("zed");
+    let link_path = Path::new(&home_dir).join(".local/bin/zed");
+    let bin_dir_path = link_path.parent().unwrap();
 
     // Ensure ~/.local/bin directory exists
-    smol::fs::create_dir_all(&local_bin)
+    smol::fs::create_dir_all(&bin_dir_path)
         .await
         .context("Failed to create ~/.local/bin directory")?;
 
@@ -43,80 +63,13 @@ async fn install_to_local_bin(cx: &AsyncApp) -> Result<PathBuf> {
         return Ok(link_path);
     }
 
-    // Remove old symlink if exists
+    // If the symlink is not there or is outdated, first try replacing it.
     smol::fs::remove_file(&link_path).await.log_err();
-
-    // Create new symlink
     smol::fs::unix::symlink(&cli_path, &link_path)
         .await
         .context("Failed to create symlink to ~/.local/bin/zed")?;
 
     Ok(link_path)
-}
-
-async fn install_to_system_bin(cx: &AsyncApp) -> Result<PathBuf> {
-    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
-    let link_path = Path::new("/usr/local/bin/zed");
-    let bin_dir_path = link_path.parent().unwrap();
-
-    // Don't re-create symlink if it points to the same CLI binary.
-    if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
-        return Ok(link_path.into());
-    }
-
-    // If the symlink is not there or is outdated, first try replacing it
-    // without escalating.
-    smol::fs::remove_file(link_path).await.log_err();
-    if smol::fs::unix::symlink(&cli_path, link_path)
-        .await
-        .log_err()
-        .is_some()
-    {
-        return Ok(link_path.into());
-    }
-
-    // The symlink could not be created, so use osascript with admin privileges
-    // to create it.
-    let status = smol::process::Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            &format!(
-                "do shell script \" \
-                    mkdir -p \'{}\' && \
-                    ln -sf \'{}\' \'{}\' \
-                \" with administrator privileges",
-                bin_dir_path.to_string_lossy(),
-                cli_path.to_string_lossy(),
-                link_path.to_string_lossy(),
-            ),
-        ])
-        .stdout(smol::process::Stdio::inherit())
-        .stderr(smol::process::Stdio::inherit())
-        .output()
-        .await?
-        .status;
-
-    anyhow::ensure!(status.success(), "error running osascript");
-    Ok(link_path.into())
-}
-
-async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
-    let has_admin = is_user_admin().await;
-
-    if !has_admin {
-        return install_to_local_bin(cx).await;
-    }
-
-    match install_to_system_bin(cx).await {
-        Ok(path) => Ok(path),
-        Err(err) => {
-            eprintln!(
-                "Failed to install to system bin: {}. Falling back to local bin.",
-                err
-            );
-            install_to_local_bin(cx).await
-        }
-    }
 }
 
 pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
@@ -137,28 +90,27 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
             .await
             .context("error creating CLI symlink")?;
 
+        // Add PATH to ~/.zshrc
+        let added_to_zshrc = add_path_to_zshrc().await.unwrap_or(false);
+
         workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledZedCli;
 
-            let message = if path.starts_with("/usr/local/bin") {
-                format!(
-                    "Installed `zed` to {}. You can launch {} from your terminal.",
-                    path.to_string_lossy(),
-                    ReleaseChannel::global(cx).display_name()
-                )
+            let shell_note = if added_to_zshrc {
+                "\n\nAdded ~/.local/bin to PATH in ~/.zshrc. If you use a different shell (bash, fish, etc.), please add the following to your shell config:\nexport PATH=\"$HOME/.local/bin:$PATH\""
             } else {
-                format!(
-                    "Installed `zed` to {}. Make sure {} is in your PATH to launch from your terminal.",
-                    path.to_string_lossy(),
-                    path.parent().unwrap().to_string_lossy()
-                )
+                "\n\nIf you use a shell other than zsh, please add the following to your shell config:\nexport PATH=\"$HOME/.local/bin:$PATH\""
             };
-
 
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<InstalledZedCli>(),
-                    message,
+                    format!(
+                        "Installed `zed` to {}. You can launch {} from your terminal.{}",
+                        path.to_string_lossy(),
+                        ReleaseChannel::global(cx).display_name(),
+                        shell_note
+                    ),
                 ),
                 cx,
             )
