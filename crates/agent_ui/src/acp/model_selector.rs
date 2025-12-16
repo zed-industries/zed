@@ -55,7 +55,6 @@ enum AcpModelPickerEntry {
 enum AcpModelPickerEntryAction {
     Favorite,
     Unfavorite,
-    RemoveFromFavorites,
 }
 
 impl AcpModelPickerEntryAction {
@@ -71,14 +70,20 @@ impl AcpModelPickerEntryAction {
         match self {
             Self::Favorite => IconName::Star,
             Self::Unfavorite => IconName::StarFilled,
-            Self::RemoveFromFavorites => IconName::Trash,
+        }
+    }
+
+    fn icon_color(&self) -> Color {
+        match self {
+            Self::Favorite => Color::Default,
+            Self::Unfavorite => Color::Accent,
         }
     }
 
     fn tooltip(&self) -> SharedString {
         match self {
-            Self::Favorite => "Add to favorites".into(),
-            Self::Unfavorite | Self::RemoveFromFavorites => "Remove from favorites".into(),
+            Self::Favorite => "Favorite Model".into(),
+            Self::Unfavorite => "Unfavorite Model".into(),
         }
     }
 }
@@ -327,8 +332,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 cx,
                             )
                         }
-                        AcpModelPickerEntryAction::Unfavorite
-                        | AcpModelPickerEntryAction::RemoveFromFavorites => {
+                        AcpModelPickerEntryAction::Unfavorite => {
                             crate::favorite_models::remove_from_settings(
                                 model_id.clone(),
                                 fs.clone(),
@@ -370,7 +374,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                         })
                                         .child(Label::new(model_info.name.clone()).truncate()),
                                 )
-                                .end_slot(div().pr_3().when(is_selected, |this| {
+                                .end_slot(div().pr_2().when(is_selected, |this| {
                                     this.child(
                                         Icon::new(IconName::Check)
                                             .color(Color::Accent)
@@ -378,10 +382,11 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                     )
                                 }))
                                 .end_hover_slot(
-                                    div().pr_3().when(self.selector.supports_favorites(), |this| {
+                                    div().pr_2().when(self.selector.supports_favorites(), |this| {
                                         this.child(
                                             IconButton::new(("toggle-favorite", ix), action.icon_name())
-                                                .icon_color(model_icon_color)
+                                                .layer(ui::ElevationIndex::ElevatedSurface)
+                                                .icon_color(action.icon_color())
                                                 .icon_size(IconSize::Small)
                                                 .tooltip(Tooltip::text(action.tooltip()))
                                                 .on_click(move |_, _, cx| handle_action_click(cx)),
@@ -469,10 +474,7 @@ fn info_list_to_picker_entries(
         .filter(|model_info| favorites.contains(&model_info.id))
         .unique_by(|model_info| &model_info.id)
         .map(|model_info| {
-            AcpModelPickerEntry::Model(
-                model_info.clone(),
-                AcpModelPickerEntryAction::RemoveFromFavorites,
-            )
+            AcpModelPickerEntry::Model(model_info.clone(), AcpModelPickerEntryAction::Unfavorite)
         })
         .collect_vec();
 
@@ -714,12 +716,6 @@ mod tests {
                 }
                 AcpModelPickerEntry::Separator(_) => {
                     in_favorites_section = false;
-                }
-                AcpModelPickerEntry::Model(_, action) if in_favorites_section => {
-                    assert!(matches!(
-                        action,
-                        AcpModelPickerEntryAction::RemoveFromFavorites
-                    ));
                 }
                 AcpModelPickerEntry::Model(info, action) if info.id.0.as_ref() == "zed/claude" => {
                     assert!(matches!(action, AcpModelPickerEntryAction::Unfavorite));

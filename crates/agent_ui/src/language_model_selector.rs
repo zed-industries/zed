@@ -292,7 +292,7 @@ impl GroupedModels {
             entries.extend(self.favorites.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::RemoveFromFavorites,
+                    LanguageModelPickerEntryAction::Unfavorite,
                 )
             }));
         }
@@ -331,13 +331,10 @@ enum LanguageModelPickerEntry {
 }
 
 /// Corresponds to the action button shown on the model in the list.
-/// `Unfavorite` and `RemoveFromFavorites` are semantically the same but
-/// correspond to different icons.
 #[derive(Copy, Clone)]
 enum LanguageModelPickerEntryAction {
     Favorite,
     Unfavorite,
-    RemoveFromFavorites,
 }
 
 impl LanguageModelPickerEntryAction {
@@ -353,14 +350,20 @@ impl LanguageModelPickerEntryAction {
         match self {
             Self::Favorite => IconName::Star,
             Self::Unfavorite => IconName::StarFilled,
-            Self::RemoveFromFavorites => IconName::Trash,
+        }
+    }
+
+    fn icon_color(&self) -> Color {
+        match self {
+            Self::Favorite => Color::Default,
+            Self::Unfavorite => Color::Accent,
         }
     }
 
     fn tooltip(&self) -> SharedString {
         match self {
-            Self::Favorite => "Add to favorites".into(),
-            Self::Unfavorite | Self::RemoveFromFavorites => "Remove from favorites".into(),
+            Self::Favorite => "Favorite Model".into(),
+            Self::Unfavorite => "Unfavorite Model".into(),
         }
     }
 }
@@ -596,8 +599,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         LanguageModelPickerEntryAction::Favorite => {
                             on_add_favorite_model(model.clone(), cx)
                         }
-                        LanguageModelPickerEntryAction::Unfavorite
-                        | LanguageModelPickerEntryAction::RemoveFromFavorites => {
+                        LanguageModelPickerEntryAction::Unfavorite => {
                             on_remove_favorite_model(model.clone(), cx)
                         }
                     }
@@ -619,7 +621,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 )
                                 .child(Label::new(model_info.model.name().0).truncate()),
                         )
-                        .end_slot(div().pr_3().when(is_selected, |this| {
+                        .end_slot(div().pr_2().when(is_selected, |this| {
                             this.child(
                                 Icon::new(IconName::Check)
                                     .color(Color::Accent)
@@ -627,9 +629,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             )
                         }))
                         .end_hover_slot(
-                            div().pr_3().child(
+                            div().pr_2().child(
                                 IconButton::new(("toggle-favorite", ix), action.icon_name())
-                                    .icon_color(model_icon_color)
+                                    .layer(ui::ElevationIndex::ElevatedSurface)
+                                    .icon_color(action.icon_color())
                                     .icon_size(IconSize::Small)
                                     .tooltip(Tooltip::text(action.tooltip()))
                                     .on_click(move |_, _, cx| handle_action_click(cx)),
@@ -981,12 +984,6 @@ mod tests {
                 }
                 LanguageModelPickerEntry::Separator(_) => {
                     in_favorites_section = false;
-                }
-                LanguageModelPickerEntry::Model(_, action) if in_favorites_section => {
-                    assert!(matches!(
-                        action,
-                        LanguageModelPickerEntryAction::RemoveFromFavorites
-                    ));
                 }
                 LanguageModelPickerEntry::Model(info, action)
                     if !in_favorites_section && info.model.telemetry_id() == "zed/claude" =>
