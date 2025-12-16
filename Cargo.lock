@@ -3336,6 +3336,7 @@ dependencies = [
  "scrypt",
  "sea-orm",
  "sea-orm-macros",
+ "sea-query",
  "semver",
  "serde",
  "serde_json",
@@ -14427,6 +14428,7 @@ dependencies = [
  "inherent",
  "ordered-float 4.6.0",
  "rust_decimal",
+ "sea-query-derive",
  "serde_json",
  "time",
  "uuid",
@@ -14446,6 +14448,20 @@ dependencies = [
  "sqlx",
  "time",
  "uuid",
+]
+
+[[package]]
+name = "sea-query-derive"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bae0cbad6ab996955664982739354128c58d16e126114fe88c2a493642502aab"
+dependencies = [
+ "darling",
+ "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

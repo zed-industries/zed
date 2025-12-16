@@ -3,6 +3,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use chrono::Utc;
 use sea_orm::sea_query::IntoCondition;
+use sea_query::extension::postgres::PgExpr;
 use util::ResultExt;
 
 use super::*;
@@ -25,7 +26,14 @@ impl Database {
                 .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
-                condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
+                condition = condition.add(
+                    Condition::any()
+                        .add(Expr::col(extension::Column::Name).ilike(&fuzzy_name_filter))
+                        .add(
+                            Expr::col(extension_version::Column::Description)
+                                .ilike(&fuzzy_name_filter),
+                        ),
+                )
             }
 
             if let Some(provides_filter) = provides_filter {
