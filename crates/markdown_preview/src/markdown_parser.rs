@@ -245,8 +245,7 @@ impl<'a> MarkdownParser<'a> {
         let mut strikethrough_depth = 0;
         let mut link: Option<Link> = None;
         let mut image: Option<Image> = None;
-        let mut region_ranges: Vec<Range<usize>> = vec![];
-        let mut regions: Vec<ParsedRegion> = vec![];
+        let mut regions: Vec<(Range<usize>, ParsedRegion)> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
         let mut link_urls: Vec<String> = vec![];
         let mut link_ranges: Vec<Range<usize>> = vec![];
@@ -291,11 +290,13 @@ impl<'a> MarkdownParser<'a> {
                     }
 
                     let last_run_len = if let Some(link) = link.clone() {
-                        region_ranges.push(prev_len..text.len());
-                        regions.push(ParsedRegion {
-                            code: false,
-                            link: Some(link),
-                        });
+                        regions.push((
+                            prev_len..text.len(),
+                            ParsedRegion {
+                                code: false,
+                                link: Some(link),
+                            },
+                        ));
                         style.link = true;
                         prev_len
                     } else {
@@ -325,13 +326,16 @@ impl<'a> MarkdownParser<'a> {
                                     ..style
                                 }),
                             ));
-                            region_ranges.push(range.clone());
-                            regions.push(ParsedRegion {
-                                code: false,
-                                link: Some(Link::Web {
-                                    url: link.as_str().to_string(),
-                                }),
-                            });
+
+                            regions.push((
+                                range.clone(),
+                                ParsedRegion {
+                                    code: false,
+                                    link: Some(Link::Web {
+                                        url: link.as_str().to_string(),
+                                    }),
+                                },
+                            ));
                             last_link_len = end;
                         }
                         last_link_len
@@ -356,21 +360,24 @@ impl<'a> MarkdownParser<'a> {
                 }
                 Event::Code(t) => {
                     text.push_str(t.as_ref());
-                    region_ranges.push(prev_len..text.len());
+                    let range = prev_len..text.len();
 
                     if link.is_some() {
                         highlights.push((
-                            prev_len..text.len(),
+                            range.clone(),
                             MarkdownHighlight::Style(MarkdownHighlightStyle {
                                 link: true,
                                 ..Default::default()
                             }),
                         ));
                     }
-                    regions.push(ParsedRegion {
-                        code: true,
-                        link: link.clone(),
-                    });
+                    regions.push((
+                        range,
+                        ParsedRegion {
+                            code: true,
+                            link: link.clone(),
+                        },
+                    ));
                 }
                 Event::Start(tag) => match tag {
                     Tag::Emphasis => italic_depth += 1,
@@ -388,7 +395,6 @@ impl<'a> MarkdownParser<'a> {
                                 source_range: source_range.clone(),
                                 contents: mem::take(&mut text).into(),
                                 highlights: mem::take(&mut highlights),
-                                region_ranges: mem::take(&mut region_ranges),
                                 regions: mem::take(&mut regions),
                             });
                             markdown_text_like.push(parsed_regions);
@@ -416,7 +422,6 @@ impl<'a> MarkdownParser<'a> {
                             if !text.is_empty() {
                                 image.set_alt_text(std::mem::take(&mut text).into());
                                 mem::take(&mut highlights);
-                                mem::take(&mut region_ranges);
                                 mem::take(&mut regions);
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
@@ -443,7 +448,6 @@ impl<'a> MarkdownParser<'a> {
                 contents: text.into(),
                 highlights,
                 regions,
-                region_ranges,
             }));
         }
         markdown_text_like
@@ -869,7 +873,6 @@ impl<'a> MarkdownParser<'a> {
                     MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
                         regions: Vec::default(),
-                        region_ranges: Vec::default(),
                         highlights: Vec::default(),
                         contents: contents.borrow().to_string().into(),
                     }),
@@ -891,7 +894,13 @@ impl<'a> MarkdownParser<'a> {
                     }
                 } else if local_name!("p") == name.local {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.parse_paragraph(source_range, node, &mut paragraph, &mut styles);
+                    self.parse_paragraph(
+                        source_range,
+                        node,
+                        &mut paragraph,
+                        &mut styles,
+                        &mut Vec::new(),
+                    );
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Paragraph(paragraph));
@@ -906,7 +915,13 @@ impl<'a> MarkdownParser<'a> {
                         | local_name!("h6")
                 ) {
                     let mut paragraph = MarkdownParagraph::new();
-                    self.consume_paragraph(source_range.clone(), node, &mut paragraph, &mut styles);
+                    self.consume_paragraph(
+                        source_range.clone(),
+                        node,
+                        &mut paragraph,
+                        &mut styles,
+                        &mut Vec::new(),
+                    );
 
                     if !paragraph.is_empty() {
                         elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
@@ -954,15 +969,15 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
         highlights: &mut Vec<MarkdownHighlight>,
+        regions: &mut Vec<(Range<usize>, ParsedRegion)>,
     ) {
-        fn add_highlight_range(
-            text: &String,
-            start: usize,
-            highlights: Vec<MarkdownHighlight>,
-        ) -> Vec<(Range<usize>, MarkdownHighlight)> {
-            highlights
+        fn items_with_range<T>(
+            range: Range<usize>,
+            items: impl IntoIterator<Item = T>,
+        ) -> Vec<(Range<usize>, T)> {
+            items
                 .into_iter()
-                .map(|style| (start..text.len(), style))
+                .map(|item| (range.clone(), item))
                 .collect()
         }
 
@@ -976,22 +991,30 @@ impl<'a> MarkdownParser<'a> {
                 }) {
                     let mut new_text = text.contents.to_string();
                     new_text.push_str(&contents.borrow());
-                    let highlights = add_highlight_range(
-                        &new_text,
-                        text.contents.len(),
-                        std::mem::take(highlights),
-                    );
 
+                    text.highlights.extend(items_with_range(
+                        text.contents.len()..new_text.len(),
+                        std::mem::take(highlights),
+                    ));
+                    text.regions.extend(items_with_range(
+                        text.contents.len()..new_text.len(),
+                        std::mem::take(regions)
+                            .into_iter()
+                            .map(|(_, region)| region),
+                    ));
                     text.contents = SharedString::from(new_text);
-                    text.highlights.extend(highlights);
                 } else {
                     let contents = contents.borrow().to_string();
                     paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
-                        highlights: add_highlight_range(&contents, 0, std::mem::take(highlights)),
-                        regions: Vec::default(),
+                        highlights: items_with_range(0..contents.len(), std::mem::take(highlights)),
+                        regions: items_with_range(
+                            0..contents.len(),
+                            std::mem::take(regions)
+                                .into_iter()
+                                .map(|(_, region)| region),
+                        ),
                         contents: contents.into(),
-                        region_ranges: Vec::default(),
                     }));
                 }
             }
@@ -1006,37 +1029,57 @@ impl<'a> MarkdownParser<'a> {
                         ..Default::default()
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 } else if local_name!("i") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         italic: true,
                         ..Default::default()
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 } else if local_name!("em") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         oblique: true,
                         ..Default::default()
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 } else if local_name!("del") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         strikethrough: true,
                         ..Default::default()
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 } else if local_name!("ins") == name.local {
                     highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
                         underline: true,
                         ..Default::default()
                     }));
 
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
+                } else if local_name!("a") == name.local {
+                    if let Some(url) = Self::attr_value(attrs, local_name!("href"))
+                        && let Some(link) =
+                            Link::identify(self.file_location_directory.clone(), url)
+                    {
+                        highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            link: true,
+                            ..Default::default()
+                        }));
+
+                        regions.push((
+                            source_range.clone(),
+                            ParsedRegion {
+                                code: false,
+                                link: Some(link),
+                            },
+                        ));
+                    }
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 } else {
-                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                    self.consume_paragraph(source_range, node, paragraph, highlights, regions);
                 }
             }
             _ => {}
@@ -1049,9 +1092,10 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         paragraph: &mut MarkdownParagraph,
         highlights: &mut Vec<MarkdownHighlight>,
+        regions: &mut Vec<(Range<usize>, ParsedRegion)>,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_paragraph(source_range.clone(), node, paragraph, highlights);
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights, regions);
         }
     }
 
@@ -1096,7 +1140,13 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 let mut children = MarkdownParagraph::new();
-                self.consume_paragraph(source_range, node, &mut children, &mut Vec::new());
+                self.consume_paragraph(
+                    source_range,
+                    node,
+                    &mut children,
+                    &mut Vec::new(),
+                    &mut Vec::new(),
+                );
 
                 let is_header = matches!(name.local, local_name!("th"));
 
@@ -1374,6 +1424,7 @@ impl<'a> MarkdownParser<'a> {
                             node,
                             &mut paragraph,
                             &mut Vec::new(),
+                            &mut Vec::new(),
                         );
                         caption = Some(paragraph);
                     }
@@ -1416,9 +1467,7 @@ mod tests {
     use ParsedMarkdownListItemType::*;
     use core::panic;
     use gpui::{AbsoluteLength, BackgroundExecutor, DefiniteLength};
-    use language::{
-        HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
-    };
+    use language::{HighlightId, LanguageRegistry};
     use pretty_assertions::assert_eq;
 
     async fn parse(input: &str) -> ParsedMarkdown {
@@ -1494,7 +1543,6 @@ mod tests {
                     source_range: 0..35,
                     contents: "Some bostrikethroughld text".into(),
                     highlights: Vec::new(),
-                    region_ranges: Vec::new(),
                     regions: Vec::new(),
                 }
             )])
@@ -1616,6 +1664,51 @@ mod tests {
             ],
             text.highlights
         );
+    }
+
+    #[gpui::test]
+    async fn test_html_href_element() {
+        let parsed =
+            parse("<p>Some text <a href=\"https://example.com\">link</a> more text</p>").await;
+
+        assert_eq!(1, parsed.children.len());
+        let chunks = if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            chunks
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(1, chunks.len());
+        let text = if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(0..65, text.source_range);
+        assert_eq!("Some text link more text", text.contents.as_str(),);
+        assert_eq!(
+            vec![(
+                10..14,
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    link: true,
+                    ..Default::default()
+                },),
+            )],
+            text.highlights
+        );
+        assert_eq!(
+            vec![(
+                10..14,
+                ParsedRegion {
+                    code: false,
+                    link: Some(Link::Web {
+                        url: "https://example.com".into()
+                    })
+                }
+            )],
+            text.regions
+        )
     }
 
     #[gpui::test]
@@ -1768,7 +1861,6 @@ mod tests {
                     source_range: 0..81,
                     contents: " Lorem Ipsum ".into(),
                     highlights: Vec::new(),
-                    region_ranges: Vec::new(),
                     regions: Vec::new(),
                 }),
                 MarkdownParagraphChunk::Image(Image {
@@ -2029,7 +2121,6 @@ mod tests {
                         source_range: 0..71,
                         contents: "Some text".into(),
                         highlights: Default::default(),
-                        region_ranges: Default::default(),
                         regions: Default::default()
                     }),
                     MarkdownParagraphChunk::Image(Image {
@@ -2045,7 +2136,6 @@ mod tests {
                         source_range: 0..71,
                         contents: " some more text".into(),
                         highlights: Default::default(),
-                        region_ranges: Default::default(),
                         regions: Default::default()
                     }),
                 ])]
@@ -2221,7 +2311,6 @@ mod tests {
                         source_range: 0..280,
                         contents: "My Table".into(),
                         highlights: Default::default(),
-                        region_ranges: Default::default(),
                         regions: Default::default()
                     })]),
                     vec![],
@@ -2385,7 +2474,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2396,7 +2484,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2407,7 +2494,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2418,7 +2504,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2429,7 +2514,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2440,7 +2524,6 @@ mod tests {
                             source_range: 0..96,
                             contents: "Heading".into(),
                             highlights: Vec::default(),
-                            region_ranges: Vec::default(),
                             regions: Vec::default()
                         })],
                     }),
@@ -2968,7 +3051,7 @@ fn main() {
     #[gpui::test]
     async fn test_code_block_with_language(executor: BackgroundExecutor) {
         let language_registry = Arc::new(LanguageRegistry::test(executor.clone()));
-        language_registry.add(rust_lang());
+        language_registry.add(language::rust_lang());
 
         let parsed = parse_markdown(
             "\
@@ -2992,21 +3075,6 @@ fn main() {
                 Some(vec![])
             )]
         );
-    }
-
-    fn rust_lang() -> Arc<Language> {
-        Arc::new(Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".into()],
-                    ..Default::default()
-                },
-                collapsed_placeholder: " /* ... */ ".to_string(),
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
     }
 
     fn h1(contents: MarkdownParagraph, source_range: Range<usize>) -> ParsedMarkdownElement {
@@ -3040,7 +3108,6 @@ fn main() {
     fn text(contents: &str, source_range: Range<usize>) -> MarkdownParagraph {
         vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
             highlights: Vec::new(),
-            region_ranges: Vec::new(),
             regions: Vec::new(),
             source_range,
             contents: contents.to_string().into(),

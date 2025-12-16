@@ -128,67 +128,61 @@ impl AddToolchainState {
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
-        let path_style = project.read(cx).path_style(cx);
-        let lister =
-            OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, path_style)
-                .show_hidden()
-                .with_footer(Arc::new(move |_, cx| {
-                    let error = weak
-                        .read_with(cx, |this, _| {
-                            if let AddState::Path { error, .. } = &this.state {
-                                error.clone()
-                            } else {
-                                None
+        let lister = OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, cx)
+            .show_hidden()
+            .with_footer(Arc::new(move |_, cx| {
+                let error = weak
+                    .read_with(cx, |this, _| {
+                        if let AddState::Path { error, .. } = &this.state {
+                            error.clone()
+                        } else {
+                            None
+                        }
+                    })
+                    .ok()
+                    .flatten();
+                let is_loading = weak
+                    .read_with(cx, |this, _| {
+                        matches!(
+                            this.state,
+                            AddState::Path {
+                                input_state: PathInputState::Resolving(_),
+                                ..
                             }
-                        })
-                        .ok()
-                        .flatten();
-                    let is_loading = weak
-                        .read_with(cx, |this, _| {
-                            matches!(
-                                this.state,
-                                AddState::Path {
-                                    input_state: PathInputState::Resolving(_),
-                                    ..
-                                }
-                            )
-                        })
-                        .unwrap_or_default();
-                    Some(
-                        v_flex()
-                            .child(Divider::horizontal())
-                            .child(
-                                h_flex()
-                                    .p_1()
-                                    .justify_between()
-                                    .gap_2()
-                                    .child(
-                                        Label::new("Select Toolchain Path")
-                                            .color(Color::Muted)
-                                            .map(|this| {
-                                                if is_loading {
-                                                    this.with_animation(
-                                                        "select-toolchain-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.4, 0.8,
-                                                            )),
-                                                        |label, delta| label.alpha(delta),
-                                                    )
-                                                    .into_any()
-                                                } else {
-                                                    this.into_any_element()
-                                                }
-                                            }),
-                                    )
-                                    .when_some(error, |this, error| {
-                                        this.child(Label::new(error).color(Color::Error))
-                                    }),
-                            )
-                            .into_any(),
-                    )
-                }));
+                        )
+                    })
+                    .unwrap_or_default();
+                Some(
+                    v_flex()
+                        .child(Divider::horizontal())
+                        .child(
+                            h_flex()
+                                .p_1()
+                                .justify_between()
+                                .gap_2()
+                                .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
+                                    |this| {
+                                        if is_loading {
+                                            this.with_animation(
+                                                "select-toolchain-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any()
+                                        } else {
+                                            this.into_any_element()
+                                        }
+                                    },
+                                ))
+                                .when_some(error, |this, error| {
+                                    this.child(Label::new(error).color(Color::Error))
+                                }),
+                        )
+                        .into_any(),
+                )
+            }));
 
         (lister, rx)
     }
@@ -588,19 +582,20 @@ impl ToolchainSelector {
             .worktree_for_id(worktree_id, cx)?
             .read(cx)
             .abs_path();
-        let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
         cx.spawn_in(window, async move |workspace, cx| {
-            let active_toolchain = workspace::WORKSPACE_DB
-                .toolchain(
-                    workspace_id,
-                    worktree_id,
-                    relative_path.clone(),
-                    language_name.clone(),
-                )
-                .await
-                .ok()
-                .flatten();
+            let active_toolchain = project
+                .read_with(cx, |this, cx| {
+                    this.active_toolchain(
+                        ProjectPath {
+                            worktree_id,
+                            path: relative_path.clone(),
+                        },
+                        language_name.clone(),
+                        cx,
+                    )
+                })?
+                .await;
             workspace
                 .update_in(cx, |this, window, cx| {
                     this.toggle_modal(window, cx, move |window, cx| {
@@ -618,6 +613,7 @@ impl ToolchainSelector {
                     });
                 })
                 .ok();
+            anyhow::Ok(())
         })
         .detach();
 
@@ -876,7 +872,7 @@ impl ToolchainSelectorDelegate {
             .strip_prefix(&worktree_root)
             .ok()
             .and_then(|suffix| suffix.to_str())
-            .map(|suffix| format!(".{}{suffix}", path_style.separator()).into())
+            .map(|suffix| format!(".{}{suffix}", path_style.primary_separator()).into())
             .unwrap_or(path)
     }
 }

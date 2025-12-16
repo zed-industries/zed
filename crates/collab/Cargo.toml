@@ -50,7 +50,6 @@ scrypt = "0.11"
 # sea-orm and sea-orm-macros versions must match exactly.
 sea-orm = { version = "=1.1.10", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 sea-orm-macros = "=1.1.10"
-semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -66,7 +65,7 @@ tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
-tracing = "0.1.40"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true

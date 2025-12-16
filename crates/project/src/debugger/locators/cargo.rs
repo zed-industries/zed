@@ -3,13 +3,10 @@ use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 use serde_json::{Value, json};
-use smol::{
-    Timer,
-    io::AsyncReadExt,
-    process::{Command, Stdio},
-};
+use smol::{Timer, io::AsyncReadExt, process::Stdio};
 use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
+use util::command::new_smol_command;
 
 pub(crate) struct CargoLocator;
 
@@ -18,7 +15,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
         return executables.first().cloned();
     }
     for executable in executables {
-        let Some(mut child) = Command::new(&executable)
+        let Some(mut child) = new_smol_command(&executable)
             .arg("--list")
             .stdout(Stdio::piped())
             .spawn()
@@ -118,18 +115,17 @@ impl DapLocator for CargoLocator {
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
-        let (program, args) = builder.build(
-            Some("cargo".into()),
-            &build_config
-                .args
-                .iter()
-                .cloned()
-                .take_while(|arg| arg != "--")
-                .chain(Some("--message-format=json".to_owned()))
-                .collect::<Vec<_>>(),
-        );
-        let mut child = util::command::new_smol_command(program)
-            .args(args)
+        let mut child = builder
+            .build_command(
+                Some("cargo".into()),
+                &build_config
+                    .args
+                    .iter()
+                    .cloned()
+                    .take_while(|arg| arg != "--")
+                    .chain(Some("--message-format=json".to_owned()))
+                    .collect::<Vec<_>>(),
+            )
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(Stdio::piped())
@@ -147,6 +143,8 @@ impl DapLocator for CargoLocator {
             .args
             .first()
             .is_some_and(|arg| arg == "test" || arg == "t");
+
+        let is_ignored = build_config.args.contains(&"--include-ignored".to_owned());
 
         let executables = output
             .lines()
@@ -205,6 +203,10 @@ impl DapLocator for CargoLocator {
         let mut args: Vec<_> = test_name.into_iter().collect();
         if is_test {
             args.push("--nocapture".to_owned());
+            if is_ignored {
+                args.push("--include-ignored".to_owned());
+                args.push("--exact".to_owned());
+            }
         }
 
         Ok(DebugRequest::Launch(task::LaunchRequest {

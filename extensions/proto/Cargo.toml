@@ -1,6 +1,6 @@
 [package]
 name = "zed_proto"
-version = "0.2.2"
+version = "0.3.0"
 edition.workspace = true
 publish.workspace = true
 license = "Apache-2.0"
@@ -13,4 +13,4 @@ path = "src/proto.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
+zed_extension_api = "0.7.0"

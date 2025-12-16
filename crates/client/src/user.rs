@@ -267,6 +267,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
@@ -777,6 +778,12 @@ impl UserStore {
     ) {
         self.edit_prediction_usage = Some(usage);
         cx.notify();
+    }
+
+    pub fn clear_plan_and_usage(&mut self) {
+        self.plan_info = None;
+        self.model_request_usage = None;
+        self.edit_prediction_usage = None;
     }
 
     fn update_authenticated_user(

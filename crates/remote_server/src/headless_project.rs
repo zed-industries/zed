@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
 
@@ -17,10 +18,11 @@ use project::{
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
     image_store::ImageId,
-    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
+    lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use rpc::{
@@ -86,6 +88,7 @@ impl HeadlessProject {
             languages,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
+        init_worktree_trust: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
@@ -96,6 +99,16 @@ impl HeadlessProject {
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
+
+        if init_worktree_trust {
+            project::trusted_worktrees::track_worktree_trust(
+                worktree_store.clone(),
+                None::<RemoteHostLocation>,
+                Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),
+                None,
+                cx,
+            );
+        }
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
@@ -264,6 +277,8 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
         session.add_entity_request_handler(Self::handle_open_image_by_path);
+        session.add_entity_request_handler(Self::handle_trust_worktrees);
+        session.add_entity_request_handler(Self::handle_restrict_worktrees);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -449,6 +464,7 @@ impl HeadlessProject {
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
+                    true,
                     &mut cx,
                 )
             })?
@@ -594,6 +610,53 @@ impl HeadlessProject {
         })
     }
 
+    pub async fn handle_trust_worktrees(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrustWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            trusted_worktrees.trust(
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(PathTrust::from_proto)
+                    .collect(),
+                None,
+                cx,
+            );
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_restrict_worktrees(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestrictWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let mut restricted_paths = envelope
+                .payload
+                .worktree_ids
+                .into_iter()
+                .map(WorktreeId::from_proto)
+                .map(PathTrust::Worktree)
+                .collect::<HashSet<_>>();
+            if envelope.payload.restrict_workspace {
+                restricted_paths.insert(PathTrust::Workspace);
+            }
+            trusted_worktrees.restrict(restricted_paths, None, cx);
+        })?;
+        Ok(proto::Ack {})
+    }
+
     pub async fn handle_open_new_buffer(
         this: Entity<Self>,
         _message: TypedEnvelope<proto::OpenNewBuffer>,
@@ -623,26 +686,28 @@ impl HeadlessProject {
     async fn handle_toggle_lsp_logs(
         _: Entity<Self>,
         envelope: TypedEnvelope<proto::ToggleLspLogs>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<()> {
         let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
-        let lsp_logs = cx
-            .update(|cx| {
-                cx.try_global::<GlobalLogStore>()
-                    .map(|lsp_logs| lsp_logs.0.clone())
-            })?
-            .context("lsp logs store is missing")?;
+        cx.update(|cx| {
+            let log_store = cx
+                .try_global::<GlobalLogStore>()
+                .map(|global_log_store| global_log_store.0.clone())
+                .context("lsp logs store is missing")?;
+            let toggled_log_kind =
+                match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                    .context("invalid log type")?
+                {
+                    proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
+                    proto::toggle_lsp_logs::LogType::Trace => LogKind::Trace,
+                    proto::toggle_lsp_logs::LogType::Rpc => LogKind::Rpc,
+                };
+            log_store.update(cx, |log_store, _| {
+                log_store.toggle_lsp_logs(server_id, envelope.payload.enabled, toggled_log_kind);
+            });
+            anyhow::Ok(())
+        })??;
 
-        lsp_logs.update(&mut cx, |lsp_logs, _| {
-            // RPC logs are very noisy and we need to toggle it on the headless server too.
-            // The rest of the logs for the ssh project are very important to have toggled always,
-            // to e.g. send language server error logs to the client before anything is toggled.
-            if envelope.payload.enabled {
-                lsp_logs.enable_rpc_trace_for_language_server(server_id);
-            } else {
-                lsp_logs.disable_rpc_trace_for_language_server(server_id);
-            }
-        })?;
         Ok(())
     }
 
@@ -710,9 +775,15 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
-            })
+            project::Search::local(
+                this.fs.clone(),
+                this.buffer_store.clone(),
+                this.worktree_store.clone(),
+                message.limit as _,
+                cx,
+            )
+            .into_handle(query, cx)
+            .matching_buffers(cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
