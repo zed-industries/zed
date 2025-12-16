@@ -17467,7 +17467,14 @@ impl Editor {
                 // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
-                        cx.update(|_, cx| cx.open_url(&url))?;
+                        cx.update(|window, cx| {
+                            if parse_zed_link(&url, cx).is_some() {
+                                window
+                                    .dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                            } else {
+                                cx.open_url(&url);
+                            }
+                        })?;
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(path)) => {
