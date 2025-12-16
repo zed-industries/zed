@@ -545,26 +545,34 @@ pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
+/// Extracts filename and row-column suffixes, supporting several formats.
+///
+/// - `filename:(...)` is used by Haskell
+/// - `filename(...)` is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
+///
+/// All have exactly three capture groups: file_name, row, and column.
+/// Valid patterns that don't contain row and/or column have empty groups in their place.
 const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
     ([^\(]+)\:(?:
-        \((\d+)[,:](\d+)\) # filename:(row,column), filename:(row:column)
+        \((\d+)[,:](\d+)\)  # filename:(row,column), filename:(row:column)
         |
-        \((\d+)\)()     # filename:(row)
+        \((\d+)\)()         # filename:(row)
     )
     |
     ([^\(]+)(?:
-        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
+        \((\d+)[,:](\d+)\)  # filename(row,column), filename(row:column)
         |
-        \((\d+)\)()     # filename(row)
-    )
+        \((\d+)\)()         # filename(row)
+    )$                      # end of string, so filenames may contain parens in the middle (e.g., `file(1).txt`)
     |
     (.+?)(?:
-        \:+(\d+)\:(\d+)\:*$  # filename:row:column
+        \:+(\d+)\:(\d+)\:*  # filename:row:column
         |
-        \:+(\d+)\:*()$       # filename:row
+        \:+(\d+)\:*()       # filename:row
         |
-        \:+()()$
-    )";
+        \:+()()
+    )$                      # end of string, so filenames may contain colons in the middle
+    ";
 
 /// A representation of a path-like string with optional row and column numbers.
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, `test.c(22)`, `test.c(22,5)`etc.
@@ -697,12 +705,6 @@ impl PathWithPosition {
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
-            .and_then(|captures| {
-                captures
-                    .get(0)
-                    .filter(|m| m.as_str() == maybe_file_name_with_row_col)
-                    .map(|_| captures)
-            })
             .map(|caps| caps.extract())
         {
             Some((_, [file_name, maybe_row, maybe_column])) => {
