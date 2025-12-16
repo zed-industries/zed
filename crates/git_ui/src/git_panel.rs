@@ -961,28 +961,44 @@ impl GitPanel {
             return;
         }
 
-        if let Some(selected_entry) = self.selected_entry {
-            let new_selected_entry = if selected_entry > 0 {
-                selected_entry - 1
-            } else {
-                selected_entry
-            };
+        let Some(selected_entry) = self.selected_entry else {
+            return;
+        };
 
-            if matches!(
-                self.entries.get(new_selected_entry),
-                Some(GitListEntry::Header(..))
-            ) {
-                if new_selected_entry > 0 {
-                    self.selected_entry = Some(new_selected_entry - 1)
-                }
-            } else {
-                self.selected_entry = Some(new_selected_entry);
+        let new_index = match &self.view_mode {
+            GitPanelViewMode::Flat => selected_entry.saturating_sub(1),
+            GitPanelViewMode::Tree(state) => {
+                let Some(current_logical_index) = state
+                    .logical_indices
+                    .iter()
+                    .position(|&i| i == selected_entry)
+                else {
+                    return;
+                };
+
+                state.logical_indices[current_logical_index.saturating_sub(1)]
             }
+        };
 
-            self.scroll_to_selected_entry(cx);
+        if selected_entry == 0 && new_index == 0 {
+            return;
         }
 
-        cx.notify();
+        if matches!(
+            self.entries.get(new_index.saturating_sub(1)),
+            Some(GitListEntry::Header(..))
+        ) && new_index == 0
+        {
+            return;
+        }
+
+        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
+            self.selected_entry = Some(new_index.saturating_sub(1));
+        } else {
+            self.selected_entry = Some(new_index);
+        }
+
+        self.scroll_to_selected_entry(cx);
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -991,25 +1007,36 @@ impl GitPanel {
             return;
         }
 
-        if let Some(selected_entry) = self.selected_entry {
-            let new_selected_entry = if selected_entry < item_count - 1 {
-                selected_entry + 1
-            } else {
-                selected_entry
-            };
-            if matches!(
-                self.entries.get(new_selected_entry),
-                Some(GitListEntry::Header(..))
-            ) {
-                self.selected_entry = Some(new_selected_entry + 1);
-            } else {
-                self.selected_entry = Some(new_selected_entry);
-            }
+        let Some(selected_entry) = self.selected_entry else {
+            return;
+        };
 
-            self.scroll_to_selected_entry(cx);
+        if selected_entry == item_count - 1 {
+            return;
         }
 
-        cx.notify();
+        let new_index = match &self.view_mode {
+            GitPanelViewMode::Flat => selected_entry.saturating_add(1),
+            GitPanelViewMode::Tree(state) => {
+                let Some(current_logical_index) = state
+                    .logical_indices
+                    .iter()
+                    .position(|&i| i == selected_entry)
+                else {
+                    return;
+                };
+
+                state.logical_indices[current_logical_index.saturating_add(1)]
+            }
+        };
+
+        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
+            self.selected_entry = Some(new_index.saturating_add(1));
+        } else {
+            self.selected_entry = Some(new_index);
+        }
+
+        self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
