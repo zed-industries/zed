@@ -351,6 +351,7 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -3251,6 +3252,9 @@ impl Project {
                 if most_recent_edit.replica_id == self.replica_id() {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
+            }
+            LspStoreEvent::WorkspaceEditApplied(transaction) => {
+                cx.emit(Event::WorkspaceEditApplied(transaction.clone()))
             }
         }
     }
