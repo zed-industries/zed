@@ -25,7 +25,6 @@ settings.workspace = true
 theme.workspace = true
 util.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -35,6 +34,7 @@ language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
+semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

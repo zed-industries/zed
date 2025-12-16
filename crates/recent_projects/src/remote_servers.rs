@@ -1,7 +1,9 @@
 use crate::{
+    dev_container::start_dev_container,
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
-        SshConnectionHeader, SshSettings, connect, connect_over_ssh, open_remote_project,
+        SshConnectionHeader, SshSettings, connect, determine_paths_with_positions,
+        open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -13,6 +15,7 @@ use gpui::{
     FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
     canvas,
 };
+use language::Point;
 use log::info;
 use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
@@ -22,7 +25,7 @@ use remote::{
     remote_client::ConnectionIdentifier,
 };
 use settings::{
-    RemoteSettingsContent, Settings as _, SettingsStore, SshProject, update_settings_file,
+    RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
     watch_config_file,
 };
 use smol::stream::StreamExt as _;
@@ -37,12 +40,13 @@ use std::{
     },
 };
 use ui::{
-    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
+    ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
     paths::{PathStyle, RemotePathBuf},
+    rel_path::RelPath,
 };
 use workspace::{
     ModalView, OpenOptions, Toast, Workspace,
@@ -80,6 +84,39 @@ impl CreateRemoteServer {
             ssh_prompt: None,
             _creating: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DevContainerCreationProgress {
+    Initial,
+    Creating,
+    Error(String),
+}
+
+#[derive(Clone)]
+struct CreateRemoteDevContainer {
+    // 3 Navigable Options
+    // - Create from devcontainer.json
+    // - Edit devcontainer.json
+    // - Go back
+    entries: [NavigableEntry; 3],
+    progress: DevContainerCreationProgress,
+}
+
+impl CreateRemoteDevContainer {
+    fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
+        let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
+        entries[0].focus_handle.focus(window);
+        Self {
+            entries,
+            progress: DevContainerCreationProgress::Initial,
+        }
+    }
+
+    fn progress(&mut self, progress: DevContainerCreationProgress) -> Self {
+        self.progress = progress;
+        self.clone()
     }
 }
 
@@ -180,14 +217,13 @@ impl ProjectPicker {
         connection: RemoteConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
-        path_style: PathStyle,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, path_style);
+        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, cx);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -204,6 +240,11 @@ impl ProjectPicker {
             },
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
+            },
+            RemoteConnectionOptions::Docker(_) => ProjectPickerData::Ssh {
+                // Not implemented as a project picker at this time
+                connection_string: "".into(),
+                nickname: None,
             },
         };
         let _path_task = cx
@@ -233,6 +274,15 @@ impl ProjectPicker {
                         .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
+                    let remote_connection = project
+                        .read_with(cx, |project, cx| {
+                            project.remote_client()?.read(cx).connection()
+                        })
+                        .ok()??;
+
+                    let (paths, paths_with_positions) =
+                        determine_paths_with_positions(&remote_connection, paths).await;
+
                     cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
                         update_settings_file(fs, cx, {
@@ -248,7 +298,7 @@ impl ProjectPicker {
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
                                     {
-                                        server.projects.insert(SshProject { paths });
+                                        server.projects.insert(RemoteProject { paths });
                                     };
                                 }
                                 ServerIndex::Wsl(index) => {
@@ -258,7 +308,7 @@ impl ProjectPicker {
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
                                     {
-                                        server.projects.insert(SshProject { paths });
+                                        server.projects.insert(RemoteProject { paths });
                                     };
                                 }
                             }
@@ -278,11 +328,37 @@ impl ProjectPicker {
                         })
                         .log_err()?;
 
-                    open_remote_project_with_existing_connection(
+                    let items = open_remote_project_with_existing_connection(
                         connection, project, paths, app_state, window, cx,
                     )
                     .await
                     .log_err();
+
+                    if let Some(items) = items {
+                        for (item, path) in items.into_iter().zip(paths_with_positions) {
+                            let Some(item) = item else {
+                                continue;
+                            };
+                            let Some(row) = path.row else {
+                                continue;
+                            };
+                            if let Some(active_editor) = item.downcast::<Editor>() {
+                                window
+                                    .update(cx, |_, window, cx| {
+                                        active_editor.update(cx, |editor, cx| {
+                                            let row = row.saturating_sub(1);
+                                            let col = path.column.unwrap_or(0).saturating_sub(1);
+                                            editor.go_to_singleton_buffer_point(
+                                                Point::new(row, col),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    })
+                                    .ok();
+                            }
+                        }
+                    }
 
                     this.update(cx, |_, cx| {
                         cx.emit(DismissEvent);
@@ -312,6 +388,7 @@ impl gpui::Render for ProjectPicker {
                     paths: Default::default(),
                     nickname: nickname.clone(),
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
                 ProjectPickerData::Wsl { distro_name } => SshConnectionHeader {
@@ -319,6 +396,7 @@ impl gpui::Render for ProjectPicker {
                     paths: Default::default(),
                     nickname: None,
                     is_wsl: true,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             })
@@ -369,7 +447,7 @@ impl From<WslServerIndex> for ServerIndex {
 enum RemoteEntry {
     Project {
         open_folder: NavigableEntry,
-        projects: Vec<(NavigableEntry, SshProject)>,
+        projects: Vec<(NavigableEntry, RemoteProject)>,
         configure: NavigableEntry,
         connection: Connection,
         index: ServerIndex,
@@ -403,6 +481,7 @@ impl RemoteEntry {
 struct DefaultState {
     scroll_handle: ScrollHandle,
     add_new_server: NavigableEntry,
+    add_new_devcontainer: NavigableEntry,
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
 }
@@ -411,6 +490,7 @@ impl DefaultState {
     fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
         let handle = ScrollHandle::new();
         let add_new_server = NavigableEntry::new(&handle, cx);
+        let add_new_devcontainer = NavigableEntry::new(&handle, cx);
         let add_new_wsl = NavigableEntry::new(&handle, cx);
 
         let ssh_settings = SshSettings::get_global(cx);
@@ -480,6 +560,7 @@ impl DefaultState {
         Self {
             scroll_handle: handle,
             add_new_server,
+            add_new_devcontainer,
             add_new_wsl,
             servers,
         }
@@ -515,6 +596,7 @@ enum Mode {
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
+    CreateRemoteDevContainer(CreateRemoteDevContainer),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
@@ -554,6 +636,27 @@ impl RemoteServerProjects {
         Self::new_inner(
             Mode::default_mode(&BTreeSet::new(), cx),
             create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
+    /// Creates a new RemoteServerProjects modal that opens directly in dev container creation mode.
+    /// Used when suggesting dev container connection from toast notification.
+    pub fn new_dev_container(
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::CreateRemoteDevContainer(
+                CreateRemoteDevContainer::new(window, cx)
+                    .progress(DevContainerCreationProgress::Creating),
+            ),
+            false,
             fs,
             window,
             workspace,
@@ -615,7 +718,6 @@ impl RemoteServerProjects {
         connection_options: remote::RemoteConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
-        path_style: PathStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
@@ -628,7 +730,6 @@ impl RemoteServerProjects {
             connection_options,
             project,
             home_dir,
-            path_style,
             workspace,
             window,
             cx,
@@ -666,14 +767,15 @@ impl RemoteServerProjects {
                 connection_options.connection_string(),
                 connection_options.nickname.clone(),
                 false,
+                false,
                 window,
                 cx,
             )
         });
 
-        let connection = connect_over_ssh(
+        let connection = connect(
             ConnectionIdentifier::setup(),
-            connection_options.clone(),
+            RemoteConnectionOptions::Ssh(connection_options.clone()),
             ssh_prompt.clone(),
             window,
             cx,
@@ -741,6 +843,7 @@ impl RemoteServerProjects {
                 connection_options.distro_name.clone(),
                 None,
                 true,
+                false,
                 window,
                 cx,
             )
@@ -757,28 +860,34 @@ impl RemoteServerProjects {
         let wsl_picker = picker.clone();
         let creating = cx.spawn_in(window, async move |this, cx| {
             match connection.await {
-                Some(Some(client)) => this
-                    .update_in(cx, |this, window, cx| {
-                        telemetry::event!("WSL Distro Added");
-                        this.retained_connections.push(client);
-                        this.add_wsl_distro(connection_options, cx);
-                        this.mode = Mode::default_mode(&BTreeSet::new(), cx);
-                        this.focus_handle(cx).focus(window);
-                        cx.notify()
-                    })
-                    .log_err(),
-                _ => this
-                    .update(cx, |this, cx| {
-                        this.mode = Mode::AddWslDistro(AddWslDistro {
-                            picker: wsl_picker,
-                            connection_prompt: None,
-                            _creating: None,
-                        });
-                        cx.notify()
-                    })
-                    .log_err(),
-            };
-            ()
+                Some(Some(client)) => this.update_in(cx, |this, window, cx| {
+                    telemetry::event!("WSL Distro Added");
+                    this.retained_connections.push(client);
+                    let Some(fs) = this
+                        .workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.project().read(cx).fs().clone()
+                        })
+                        .log_err()
+                    else {
+                        return;
+                    };
+
+                    crate::add_wsl_distro(fs, &connection_options, cx);
+                    this.mode = Mode::default_mode(&BTreeSet::new(), cx);
+                    this.focus_handle(cx).focus(window);
+                    cx.notify();
+                }),
+                _ => this.update(cx, |this, cx| {
+                    this.mode = Mode::AddWslDistro(AddWslDistro {
+                        picker: wsl_picker,
+                        connection_prompt: None,
+                        _creating: None,
+                    });
+                    cx.notify();
+                }),
+            }
+            .log_err();
         });
 
         self.mode = Mode::AddWslDistro(AddWslDistro {
@@ -815,6 +924,15 @@ impl RemoteServerProjects {
                 return;
             }
         });
+        self.focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    fn view_in_progress_dev_container(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = Mode::CreateRemoteDevContainer(
+            CreateRemoteDevContainer::new(window, cx)
+                .progress(DevContainerCreationProgress::Creating),
+        );
         self.focus_handle(cx).focus(window);
         cx.notify();
     }
@@ -882,6 +1000,7 @@ impl RemoteServerProjects {
                                 app_state.user_store.clone(),
                                 app_state.languages.clone(),
                                 app_state.fs.clone(),
+                                true,
                                 cx,
                             ),
                         )
@@ -909,7 +1028,6 @@ impl RemoteServerProjects {
                                     connection_options,
                                     project,
                                     home_dir,
-                                    path_style,
                                     window,
                                     cx,
                                     weak,
@@ -938,6 +1056,7 @@ impl RemoteServerProjects {
 
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
+            Mode::CreateRemoteDevContainer(_) => {}
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -981,14 +1100,14 @@ impl RemoteServerProjects {
         }
     }
 
-    fn render_ssh_connection(
+    fn render_remote_connection(
         &mut self,
         ix: usize,
-        ssh_server: RemoteEntry,
+        remote_server: RemoteEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection = ssh_server.connection().into_owned();
+        let connection = remote_server.connection().into_owned();
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
@@ -1001,6 +1120,9 @@ impl RemoteServerProjects {
             }
             Connection::Wsl(wsl_connection_options) => {
                 (wsl_connection_options.distro_name.clone(), None, true)
+            }
+            Connection::DevContainer(dev_container_options) => {
+                (dev_container_options.name.clone(), None, false)
             }
         };
         v_flex()
@@ -1039,7 +1161,7 @@ impl RemoteServerProjects {
                         }),
                     ),
             )
-            .child(match &ssh_server {
+            .child(match &remote_server {
                 RemoteEntry::Project {
                     open_folder,
                     projects,
@@ -1051,9 +1173,9 @@ impl RemoteServerProjects {
                     List::new()
                         .empty_message("No projects.")
                         .children(projects.iter().enumerate().map(|(pix, p)| {
-                            v_flex().gap_0p5().child(self.render_ssh_project(
+                            v_flex().gap_0p5().child(self.render_remote_project(
                                 index,
-                                ssh_server.clone(),
+                                remote_server.clone(),
                                 pix,
                                 p,
                                 window,
@@ -1179,12 +1301,12 @@ impl RemoteServerProjects {
             })
     }
 
-    fn render_ssh_project(
+    fn render_remote_project(
         &mut self,
         server_ix: ServerIndex,
         server: RemoteEntry,
         ix: usize,
-        (navigation, project): &(NavigableEntry, SshProject),
+        (navigation, project): &(NavigableEntry, RemoteProject),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1281,31 +1403,25 @@ impl RemoteServerProjects {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
-                    .when(
-                        is_from_zed && matches!(server_ix, ServerIndex::Ssh(_)),
-                        |server_list_item| {
-                            let ServerIndex::Ssh(server_ix) = server_ix else {
-                                unreachable!()
-                            };
-                            server_list_item.end_hover_slot::<AnyElement>(Some(
-                                div()
-                                    .mr_2()
-                                    .child({
-                                        let project = project.clone();
-                                        // Right-margin to offset it from the Scrollbar
-                                        IconButton::new("remove-remote-project", IconName::Trash)
-                                            .icon_size(IconSize::Small)
-                                            .shape(IconButtonShape::Square)
-                                            .size(ButtonSize::Large)
-                                            .tooltip(Tooltip::text("Delete Remote Project"))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.delete_ssh_project(server_ix, &project, cx)
-                                            }))
-                                    })
-                                    .into_any_element(),
-                            ))
-                        },
-                    ),
+                    .when(is_from_zed, |server_list_item| {
+                        server_list_item.end_hover_slot::<AnyElement>(Some(
+                            div()
+                                .mr_2()
+                                .child({
+                                    let project = project.clone();
+                                    // Right-margin to offset it from the Scrollbar
+                                    IconButton::new("remove-remote-project", IconName::Trash)
+                                        .icon_size(IconSize::Small)
+                                        .shape(IconButtonShape::Square)
+                                        .size(ButtonSize::Large)
+                                        .tooltip(Tooltip::text("Delete Remote Project"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.delete_remote_project(server_ix, &project, cx)
+                                        }))
+                                })
+                                .into_any_element(),
+                        ))
+                    }),
             )
     }
 
@@ -1332,10 +1448,26 @@ impl RemoteServerProjects {
         });
     }
 
+    fn delete_remote_project(
+        &mut self,
+        server: ServerIndex,
+        project: &RemoteProject,
+        cx: &mut Context<Self>,
+    ) {
+        match server {
+            ServerIndex::Ssh(server) => {
+                self.delete_ssh_project(server, project, cx);
+            }
+            ServerIndex::Wsl(server) => {
+                self.delete_wsl_project(server, project, cx);
+            }
+        }
+    }
+
     fn delete_ssh_project(
         &mut self,
         server: SshServerIndex,
-        project: &SshProject,
+        project: &RemoteProject,
         cx: &mut Context<Self>,
     ) {
         let project = project.clone();
@@ -1350,21 +1482,21 @@ impl RemoteServerProjects {
         });
     }
 
-    #[cfg(target_os = "windows")]
-    fn add_wsl_distro(
+    fn delete_wsl_project(
         &mut self,
-        connection_options: remote::WslConnectionOptions,
+        server: WslServerIndex,
+        project: &RemoteProject,
         cx: &mut Context<Self>,
     ) {
+        let project = project.clone();
         self.update_settings_file(cx, move |setting, _| {
-            setting
+            if let Some(server) = setting
                 .wsl_connections
-                .get_or_insert(Default::default())
-                .push(settings::WslConnection {
-                    distro_name: SharedString::from(connection_options.distro_name),
-                    user: connection_options.user,
-                    projects: BTreeSet::new(),
-                })
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server.0))
+            {
+                server.projects.remove(&project);
+            }
         });
     }
 
@@ -1394,8 +1526,345 @@ impl RemoteServerProjects {
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
+                    connection_timeout: connection_options.connection_timeout,
                 })
         });
+    }
+
+    fn edit_in_dev_container_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            cx.emit(DismissEvent);
+            cx.notify();
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+
+            let worktree = project
+                .read(cx)
+                .visible_worktrees(cx)
+                .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+
+            if let Some(worktree) = worktree {
+                let tree_id = worktree.read(cx).id();
+                let devcontainer_path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                cx.spawn_in(window, async move |workspace, cx| {
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_path(
+                                (tree_id, devcontainer_path),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                })
+                .detach();
+            } else {
+                return;
+            }
+        });
+        cx.emit(DismissEvent);
+        cx.notify();
+    }
+
+    fn open_dev_container(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(app_state) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.app_state().clone())
+            .log_err()
+        else {
+            return;
+        };
+
+        let replace_window = window.window_handle().downcast::<Workspace>();
+
+        cx.spawn_in(window, async move |entity, cx| {
+            let (connection, starting_dir) =
+                match start_dev_container(cx, app_state.node_runtime.clone()).await {
+                    Ok((c, s)) => (c, s),
+                    Err(e) => {
+                        log::error!("Failed to start dev container: {:?}", e);
+                        entity
+                            .update_in(cx, |remote_server_projects, window, cx| {
+                                remote_server_projects.mode = Mode::CreateRemoteDevContainer(
+                                    CreateRemoteDevContainer::new(window, cx).progress(
+                                        DevContainerCreationProgress::Error(format!("{:?}", e)),
+                                    ),
+                                );
+                            })
+                            .log_err();
+                        return;
+                    }
+                };
+            entity
+                .update(cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .log_err();
+
+            let result = open_remote_project(
+                connection.into(),
+                vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+                app_state,
+                OpenOptions {
+                    replace_window,
+                    ..OpenOptions::default()
+                },
+                cx,
+            )
+            .await;
+            if let Err(e) = result {
+                log::error!("Failed to connect: {e:#}");
+                cx.prompt(
+                    gpui::PromptLevel::Critical,
+                    "Failed to connect",
+                    Some(&e.to_string()),
+                    &["Ok"],
+                )
+                .await
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn render_create_dev_container(
+        &self,
+        state: &CreateRemoteDevContainer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        match &state.progress {
+            DevContainerCreationProgress::Error(message) => {
+                self.focus_handle(cx).focus(window);
+                return div()
+                    .track_focus(&self.focus_handle(cx))
+                    .size_full()
+                    .child(
+                        v_flex()
+                            .py_1()
+                            .child(
+                                ListItem::new("Error")
+                                    .inset(true)
+                                    .selectable(false)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::XCircle).color(Color::Error))
+                                    .child(Label::new("Error Creating Dev Container:"))
+                                    .child(Label::new(message).buffer_font(cx)),
+                            )
+                            .child(ListSeparator)
+                            .child(
+                                div()
+                                    .id("devcontainer-go-back")
+                                    .track_focus(&state.entries[0].focus_handle)
+                                    .on_action(cx.listener(
+                                        |this, _: &menu::Confirm, window, cx| {
+                                            this.mode =
+                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            cx.focus_self(window);
+                                            cx.notify();
+                                        },
+                                    ))
+                                    .child(
+                                        ListItem::new("li-devcontainer-go-back")
+                                            .toggle_state(
+                                                state.entries[0]
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ui::ListItemSpacing::Sparse)
+                                            .start_slot(
+                                                Icon::new(IconName::ArrowLeft).color(Color::Muted),
+                                            )
+                                            .child(Label::new("Go Back"))
+                                            .end_slot(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Cancel,
+                                                    &self.focus_handle,
+                                                    cx,
+                                                )
+                                                .size(rems_from_px(12.)),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                let state =
+                                                    CreateRemoteDevContainer::new(window, cx);
+                                                this.mode = Mode::CreateRemoteDevContainer(state);
+
+                                                cx.notify();
+                                            })),
+                                    ),
+                            ),
+                    )
+                    .into_any_element();
+            }
+            _ => {}
+        };
+
+        let mut view = Navigable::new(
+            div()
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(
+                    v_flex()
+                        .pb_1()
+                        .child(
+                            ModalHeader::new()
+                                .child(Headline::new("Dev Containers").size(HeadlineSize::XSmall)),
+                        )
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("confirm-create-from-devcontainer-json")
+                                .track_focus(&state.entries[0].focus_handle)
+                                .on_action(cx.listener({
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.open_dev_container(window, cx);
+                                        this.view_in_progress_dev_container(window, cx);
+                                    }
+                                }))
+                                .map(|this| {
+                                    if state.progress == DevContainerCreationProgress::Creating {
+                                        this.child(
+                                            ListItem::new("creating")
+                                                .inset(true)
+                                                .spacing(ui::ListItemSpacing::Sparse)
+                                                .disabled(true)
+                                                .start_slot(
+                                                    Icon::new(IconName::ArrowCircle)
+                                                        .color(Color::Muted)
+                                                        .with_rotate_animation(2),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .opacity(0.6)
+                                                        .gap_1()
+                                                        .child(Label::new("Creating From"))
+                                                        .child(
+                                                            Label::new("devcontainer.json")
+                                                                .buffer_font(cx),
+                                                        )
+                                                        .child(LoadingLabel::new("")),
+                                                ),
+                                        )
+                                    } else {
+                                        this.child(
+                                            ListItem::new(
+                                                "li-confirm-create-from-devcontainer-json",
+                                            )
+                                            .toggle_state(
+                                                state.entries[0]
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ui::ListItemSpacing::Sparse)
+                                            .start_slot(
+                                                Icon::new(IconName::Plus).color(Color::Muted),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Open or Create New From"))
+                                                    .child(
+                                                        Label::new("devcontainer.json")
+                                                            .buffer_font(cx),
+                                                    ),
+                                            )
+                                            .on_click(
+                                                cx.listener({
+                                                    move |this, _, window, cx| {
+                                                        this.open_dev_container(window, cx);
+                                                        this.view_in_progress_dev_container(
+                                                            window, cx,
+                                                        );
+                                                        cx.notify();
+                                                    }
+                                                }),
+                                            ),
+                                        )
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .id("edit-devcontainer-json")
+                                .track_focus(&state.entries[1].focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    this.edit_in_dev_container_json(window, cx);
+                                }))
+                                .child(
+                                    ListItem::new("li-edit-devcontainer-json")
+                                        .toggle_state(
+                                            state.entries[1]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                        .child(
+                                            h_flex().gap_1().child(Label::new("Edit")).child(
+                                                Label::new("devcontainer.json").buffer_font(cx),
+                                            ),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.edit_in_dev_container_json(window, cx);
+                                        })),
+                                ),
+                        )
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("devcontainer-go-back")
+                                .track_focus(&state.entries[2].focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    cx.focus_self(window);
+                                    cx.notify();
+                                }))
+                                .child(
+                                    ListItem::new("li-devcontainer-go-back")
+                                        .toggle_state(
+                                            state.entries[2]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::ArrowLeft).color(Color::Muted),
+                                        )
+                                        .child(Label::new("Go Back"))
+                                        .end_slot(
+                                            KeyBinding::for_action_in(
+                                                &menu::Cancel,
+                                                &self.focus_handle,
+                                                cx,
+                                            )
+                                            .size(rems_from_px(12.)),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.mode =
+                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            cx.focus_self(window);
+                                            cx.notify()
+                                        })),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        );
+
+        view = view.entry(state.entries[0].clone());
+        view = view.entry(state.entries[1].clone());
+        view = view.entry(state.entries[2].clone());
+
+        view.render(window, cx).into_any_element()
     }
 
     fn render_create_remote_server(
@@ -1518,6 +1987,7 @@ impl RemoteServerProjects {
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,
+                        is_devcontainer: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1526,6 +1996,7 @@ impl RemoteServerProjects {
                         paths: Default::default(),
                         nickname: None,
                         is_wsl: true,
+                        is_devcontainer: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1864,6 +2335,7 @@ impl RemoteServerProjects {
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             )
@@ -1945,7 +2417,7 @@ impl RemoteServerProjects {
             .track_focus(&state.add_new_server.focus_handle)
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
             .child(
-                ListItem::new("register-remove-server-button")
+                ListItem::new("register-remote-server-button")
                     .toggle_state(
                         state
                             .add_new_server
@@ -1955,7 +2427,7 @@ impl RemoteServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                    .child(Label::new("Connect New Server"))
+                    .child(Label::new("Connect SSH Server"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let state = CreateRemoteServer::new(window, cx);
                         this.mode = Mode::CreateRemoteServer(state);
@@ -1966,6 +2438,36 @@ impl RemoteServerProjects {
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                 let state = CreateRemoteServer::new(window, cx);
                 this.mode = Mode::CreateRemoteServer(state);
+
+                cx.notify();
+            }));
+
+        let connect_dev_container_button = div()
+            .id("connect-new-dev-container")
+            .track_focus(&state.add_new_devcontainer.focus_handle)
+            .anchor_scroll(state.add_new_devcontainer.scroll_anchor.clone())
+            .child(
+                ListItem::new("register-dev-container-button")
+                    .toggle_state(
+                        state
+                            .add_new_devcontainer
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Connect Dev Container"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let state = CreateRemoteDevContainer::new(window, cx);
+                        this.mode = Mode::CreateRemoteDevContainer(state);
+
+                        cx.notify();
+                    })),
+            )
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let state = CreateRemoteDevContainer::new(window, cx);
+                this.mode = Mode::CreateRemoteDevContainer(state);
 
                 cx.notify();
             }));
@@ -1996,13 +2498,30 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
+        let has_open_project = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .is_some()
+            })
+            .unwrap_or(false);
+
         let modal_section = v_flex()
             .track_focus(&self.focus_handle(cx))
             .id("ssh-server-list")
             .overflow_y_scroll()
             .track_scroll(&state.scroll_handle)
             .size_full()
-            .child(connect_button);
+            .child(connect_button)
+            .when(has_open_project, |this| {
+                this.child(connect_dev_container_button)
+            });
 
         #[cfg(target_os = "windows")]
         let modal_section = modal_section.child(wsl_connect_button);
@@ -2014,24 +2533,34 @@ impl RemoteServerProjects {
                 .child(
                     List::new()
                         .empty_message(
-                            v_flex()
+                            h_flex()
+                                .size_full()
+                                .p_2()
+                                .justify_center()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .child(
-                                    div().px_3().child(
-                                        Label::new("No remote servers registered yet.")
-                                            .color(Color::Muted),
-                                    ),
+                                    Label::new("No remote servers registered yet.")
+                                        .color(Color::Muted),
                                 )
                                 .into_any_element(),
                         )
                         .children(state.servers.iter().enumerate().map(|(ix, connection)| {
-                            self.render_ssh_connection(ix, connection.clone(), window, cx)
+                            self.render_remote_connection(ix, connection.clone(), window, cx)
                                 .into_any_element()
                         })),
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone())
-        .entry(state.add_new_wsl.clone());
+        .entry(state.add_new_server.clone());
+
+        if has_open_project {
+            modal_section = modal_section.entry(state.add_new_devcontainer.clone());
+        }
+
+        if cfg!(target_os = "windows") {
+            modal_section = modal_section.entry(state.add_new_wsl.clone());
+        }
 
         for server in &state.servers {
             match server {
@@ -2104,7 +2633,7 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .vertical_scrollbar_for(state.scroll_handle, window, cx),
+                        .vertical_scrollbar_for(&state.scroll_handle, window, cx),
                 ),
             )
             .into_any_element()
@@ -2143,11 +2672,9 @@ impl RemoteServerProjects {
 fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {
     let mut user_ssh_config_watcher =
         watch_config_file(cx.background_executor(), fs.clone(), user_ssh_config_file());
-    let mut global_ssh_config_watcher = watch_config_file(
-        cx.background_executor(),
-        fs,
-        global_ssh_config_file().to_owned(),
-    );
+    let mut global_ssh_config_watcher = global_ssh_config_file()
+        .map(|it| watch_config_file(cx.background_executor(), fs, it.to_owned()))
+        .unwrap_or_else(|| futures::channel::mpsc::unbounded().1);
 
     cx.spawn(async move |remote_server_projects, cx| {
         let mut global_hosts = BTreeSet::default();
@@ -2242,6 +2769,9 @@ impl Render for RemoteServerProjects {
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateRemoteServer(state) => self
                     .render_create_remote_server(state, window, cx)
+                    .into_any_element(),
+                Mode::CreateRemoteDevContainer(state) => self
+                    .render_create_dev_container(state, window, cx)
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)

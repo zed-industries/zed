@@ -6,7 +6,7 @@ use std::{
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
-use editor::{RowHighlightOptions, SelectionEffects};
+use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -48,7 +48,8 @@ pub fn toggle(
         .snapshot(cx)
         .outline(Some(cx.theme().syntax()));
 
-    if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
+    let workspace = window.root::<Workspace>().flatten();
+    if let Some((workspace, outline)) = workspace.zip(outline) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 OutlineView::new(outline, editor, window, cx)
@@ -244,7 +245,10 @@ impl PickerDelegate for OutlineViewDelegate {
 
             let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor.selections.newest::<usize>(cx).head();
+                let cursor_offset = editor
+                    .selections
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                    .head();
                 (buffer, cursor_offset)
             });
             selected_index = self
@@ -255,8 +259,8 @@ impl PickerDelegate for OutlineViewDelegate {
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
                     let distance_to_closest_endpoint = cmp::min(
-                        (range.start as isize - cursor_offset as isize).abs(),
-                        (range.end as isize - cursor_offset as isize).abs(),
+                        (range.start.0 as isize - cursor_offset.0 as isize).abs(),
+                        (range.end.0 as isize - cursor_offset.0 as isize).abs(),
                     );
                     let depth = if range.contains(&cursor_offset) {
                         Some(item.depth)
@@ -387,7 +391,6 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
-    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::{path, rel_path::rel_path};
@@ -414,7 +417,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -571,96 +576,10 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
-    }
-
-    fn rust_lang() -> Arc<Language> {
-        Arc::new(
-            Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                Some(tree_sitter_rust::LANGUAGE.into()),
-            )
-            .with_outline_query(
-                r#"(struct_item
-            (visibility_modifier)? @context
-            "struct" @context
-            name: (_) @name) @item
-
-        (enum_item
-            (visibility_modifier)? @context
-            "enum" @context
-            name: (_) @name) @item
-
-        (enum_variant
-            (visibility_modifier)? @context
-            name: (_) @name) @item
-
-        (impl_item
-            "impl" @context
-            trait: (_)? @name
-            "for"? @context
-            type: (_) @name) @item
-
-        (trait_item
-            (visibility_modifier)? @context
-            "trait" @context
-            name: (_) @name) @item
-
-        (function_item
-            (visibility_modifier)? @context
-            (function_modifiers)? @context
-            "fn" @context
-            name: (_) @name) @item
-
-        (function_signature_item
-            (visibility_modifier)? @context
-            (function_modifiers)? @context
-            "fn" @context
-            name: (_) @name) @item
-
-        (macro_definition
-            . "macro_rules!" @context
-            name: (_) @name) @item
-
-        (mod_item
-            (visibility_modifier)? @context
-            "mod" @context
-            name: (_) @name) @item
-
-        (type_item
-            (visibility_modifier)? @context
-            "type" @context
-            name: (_) @name) @item
-
-        (associated_type
-            "type" @context
-            name: (_) @name) @item
-
-        (const_item
-            (visibility_modifier)? @context
-            "const" @context
-            name: (_) @name) @item
-
-        (field_declaration
-            (visibility_modifier)? @context
-            name: (_) @name) @item
-"#,
-            )
-            .unwrap(),
-        )
     }
 
     #[track_caller]
@@ -672,7 +591,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()

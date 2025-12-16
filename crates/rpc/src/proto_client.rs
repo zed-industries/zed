@@ -59,6 +59,7 @@ pub trait ProtoClient: Send + Sync {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
 
     fn is_via_collab(&self) -> bool;
+    fn has_wsl_interop(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -226,6 +227,7 @@ impl AnyProtoClient {
     pub fn request_lsp<T>(
         &self,
         project_id: u64,
+        server_id: Option<u64>,
         timeout: Duration,
         executor: BackgroundExecutor,
         request: T,
@@ -247,6 +249,7 @@ impl AnyProtoClient {
 
         let query = proto::LspQuery {
             project_id,
+            server_id,
             lsp_request_id: new_id.0,
             request: Some(request.to_proto_query()),
         };
@@ -359,6 +362,9 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };
@@ -504,6 +510,10 @@ impl AnyProtoClient {
                 handle: entity.downgrade().into(),
             },
         );
+    }
+
+    pub fn has_wsl_interop(&self) -> bool {
+        self.0.client.has_wsl_interop()
     }
 }
 

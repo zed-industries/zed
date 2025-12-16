@@ -20,12 +20,8 @@ When using upstream services through Zed's hosted models, we require assurances 
 | Provider  | No Training Guarantee                                   | Zero-Data Retention (ZDR)                                                                                                                     |
 | --------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
-| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | **No**, in flight                                                                                                                             |
+| Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 17 and 19h                                                    |
 | OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
-
-> Zed's use of Gemini models is currently supported via [Google AI Studio](https://ai.google.dev/aistudio), which **_does not_** support ZDR. We're migrating to [Vertex AI](https://cloud.google.com/vertex-ai?hl=en), which **_does_**, and upon completion of that migration will offer ZDR to all users of Zed's hosted Google/Gemini models.
-
-> If ZDR from upstream model providers is important to you, _please do not use Gemini models at this time_. Your data will never be used for training purposes by any model providers hosted by Zed, however.
 
 When you use your own API keys or external agents, **Zed does not have control over how your data is used by that service provider.**
 You should reference your agreement with each service provider to understand what terms and conditions apply.
@@ -63,7 +59,7 @@ Zed will intentionally exclude certain files from Predictive Edits entirely, eve
 
 You can inspect this exclusion list by opening `zed: open default settings` from the command palette:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.
@@ -83,7 +79,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 
 Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/configuring-zed#edit-predictions) in their Zed settings.json:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     "disabled_globs": ["secret_dir/*", "**/*.log"]

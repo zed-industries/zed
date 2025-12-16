@@ -15,10 +15,12 @@ use util::ResultExt as _;
 use util::{
     asset_str,
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
+    schemars::AllowTrailingCommas,
 };
 
-use crate::{
-    SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
+use crate::SettingsAssets;
+use settings_json::{
+    append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
 };
 
@@ -150,6 +152,9 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
+        if content.trim().is_empty() {
+            return Ok(Self(Vec::new()));
+        }
         parse_json_with_comments::<Self>(content)
     }
 
@@ -211,11 +216,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        if content.is_empty() {
-            return KeymapFileLoadResult::Success {
-                key_bindings: Vec::new(),
-            };
-        }
         let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
@@ -303,19 +303,21 @@ impl KeymapFile {
         if errors.is_empty() {
             KeymapFileLoadResult::Success { key_bindings }
         } else {
-            let mut error_message = "Errors in user keymap file.\n".to_owned();
+            let mut error_message = "Errors in user keymap file.".to_owned();
+
             for (context, section_errors) in errors {
                 if context.is_empty() {
-                    let _ = write!(error_message, "\n\nIn section without context predicate:");
+                    let _ = write!(error_message, "\nIn section without context predicate:");
                 } else {
                     let _ = write!(
                         error_message,
-                        "\n\nIn section with {}:",
+                        "\nIn section with {}:",
                         MarkdownInlineCode(&format!("context = \"{}\"", context))
                     );
                 }
                 let _ = write!(error_message, "{section_errors}");
             }
+
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message: MarkdownString(error_message),
@@ -360,11 +362,10 @@ impl KeymapFile {
         }
     }
 
-    fn build_keymap_action(
+    pub fn parse_action(
         action: &KeymapAction,
-        cx: &App,
-    ) -> std::result::Result<(Box<dyn Action>, Option<String>), String> {
-        let (build_result, action_input_string) = match &action.0 {
+    ) -> Result<Option<(&String, Option<&Value>)>, String> {
+        let name_and_input = match &action.0 {
             Value::Array(items) => {
                 if items.len() != 2 {
                     return Err(format!(
@@ -380,22 +381,10 @@ impl KeymapFile {
                         MarkdownInlineCode(&action.0.to_string())
                     ));
                 };
-                let action_input = items[1].clone();
-                if name.as_str() == ActionSequence::name_for_type() {
-                    (ActionSequence::build_sequence(action_input, cx), None)
-                } else {
-                    let action_input_string = action_input.to_string();
-                    (
-                        cx.build_action(name, Some(action_input)),
-                        Some(action_input_string),
-                    )
-                }
+                Some((name, Some(&items[1])))
             }
-            Value::String(name) if name.as_str() == ActionSequence::name_for_type() => {
-                (Err(ActionSequence::expected_array_error()), None)
-            }
-            Value::String(name) => (cx.build_action(name, None), None),
-            Value::Null => (Ok(NoAction.boxed_clone()), None),
+            Value::String(name) => Some((name, None)),
+            Value::Null => None,
             _ => {
                 return Err(format!(
                     "expected two-element array of `[name, input]`. \
@@ -403,6 +392,33 @@ impl KeymapFile {
                     MarkdownInlineCode(&action.0.to_string())
                 ));
             }
+        };
+        Ok(name_and_input)
+    }
+
+    fn build_keymap_action(
+        action: &KeymapAction,
+        cx: &App,
+    ) -> std::result::Result<(Box<dyn Action>, Option<String>), String> {
+        let (build_result, action_input_string) = match Self::parse_action(action)? {
+            Some((name, action_input)) if name.as_str() == ActionSequence::name_for_type() => {
+                match action_input {
+                    Some(action_input) => (
+                        ActionSequence::build_sequence(action_input.clone(), cx),
+                        None,
+                    ),
+                    None => (Err(ActionSequence::expected_array_error()), None),
+                }
+            }
+            Some((name, Some(action_input))) => {
+                let action_input_string = action_input.to_string();
+                (
+                    cx.build_action(name, Some(action_input.clone())),
+                    Some(action_input_string),
+                )
+            }
+            Some((name, None)) => (cx.build_action(name, None), None),
+            None => (Ok(NoAction.boxed_clone()), None),
         };
 
         let action = match build_result {
@@ -438,7 +454,9 @@ impl KeymapFile {
     /// Creates a JSON schema generator, suitable for generating json schemas
     /// for actions
     pub fn action_schema_generator() -> schemars::SchemaGenerator {
-        schemars::generate::SchemaSettings::draft2019_09().into_generator()
+        schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(AllowTrailingCommas)
+            .into_generator()
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {

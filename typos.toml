@@ -11,16 +11,12 @@ extend-exclude = [
     "crates/theme/src/icon_theme.rs",
     "crates/extensions_ui/src/extension_suggest.rs",
 
-    # Some countries codes are flagged as typos.
-    "crates/anthropic/src/supported_countries.rs",
-    "crates/google_ai/src/supported_countries.rs",
-    "crates/open_ai/src/supported_countries.rs",
-
     # Some mock data is flagged as typos.
     "crates/assistant_tools/src/web_search_tool.rs",
 
-    # Stripe IDs are flagged as typos.
-    "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
+    # Suppress false positives in database schema.
+    "crates/collab/migrations/20251208000000_test_schema.sql",
+
     # Not our typos.
     "crates/livekit_api/",
     # Vim makes heavy use of partial typing tables.
@@ -35,6 +31,9 @@ extend-exclude = [
     "crates/rpc/src/auth.rs",
     # glsl isn't recognized by this tool.
     "extensions/glsl/languages/glsl/",
+    # Protols is the name of the language server.
+    "extensions/proto/extension.toml",
+    "extensions/proto/src/language_servers/protols.rs",
     # Windows likes its abbreviations.
     "crates/gpui/src/platform/windows/directx_renderer.rs",
     "crates/gpui/src/platform/windows/events.rs",
@@ -54,6 +53,10 @@ extend-exclude = [
     "crates/editor/src/code_completion_tests.rs",
     # Linux repository structure is not a valid text, hence we should not check it for typos
     "crates/project_panel/benches/linux_repo_snapshot.txt",
+    # Some multibuffer test cases have word fragments that register as typos
+    "crates/multi_buffer/src/multi_buffer_tests.rs",
+    # Macos apis
+    "crates/gpui/src/platform/mac/dispatcher.rs",
 ]
 
 [default]
@@ -61,8 +64,6 @@ extend-ignore-re = [
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',
-    # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
-    "COLUMN enviroment",
     "doas",
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols",

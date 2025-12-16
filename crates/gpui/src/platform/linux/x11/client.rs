@@ -1,5 +1,6 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
+use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -17,7 +18,7 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt;
+use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -28,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, ModMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -245,10 +246,6 @@ impl X11ClientStatePtr {
             state.keyboard_focused_window = None;
         }
         state.cursor_styles.remove(&x_window);
-
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -316,7 +313,37 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let mut timing = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
                         });
                     }
                 }
@@ -410,7 +437,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -991,6 +1018,12 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -1046,6 +1079,7 @@ impl X11Client {
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    prefer_character_input: false,
                 }));
             }
             Event::KeyRelease(event) => {
@@ -1054,6 +1088,11 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -1315,17 +1354,9 @@ impl X11Client {
             return None;
         };
         let mut state = self.0.borrow_mut();
-        let keystroke = state.pre_key_char_down.take();
         state.composing = false;
         drop(state);
-        if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text);
-            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                keystroke,
-                is_held: false,
-            }));
-        }
-
+        window.handle_ime_commit(text);
         Some(())
     }
 
@@ -1455,6 +1486,10 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
+        let parent_window = state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window);
         let x_window = state
             .xcb_connection
             .generate_id()
@@ -1473,6 +1508,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
+            parent_window,
         )?;
         check_reply(
             || "Failed to set XdndAware property",
@@ -1659,6 +1695,16 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+
+    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+        let state = self.0.borrow();
+        state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window as u64)
+            .map(|x_window| std::future::ready(Some(WindowIdentifier::from_xid(x_window))))
+            .unwrap_or(std::future::ready(None))
     }
 }
 
@@ -2480,4 +2526,20 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
+    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
+    let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+    let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+    xkb.update_mask(
+        depressed_mods.into(),
+        latched_mods,
+        locked_mods,
+        0,
+        0,
+        locked_layout,
+    );
 }

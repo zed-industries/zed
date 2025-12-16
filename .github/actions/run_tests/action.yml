@@ -4,10 +4,8 @@ description: "Runs the tests"
 runs:
   using: "composite"
   steps:
-    - name: Install Rust
-      shell: bash -euxo pipefail {0}
-      run: |
-        cargo install cargo-nextest --locked
+    - name: Install nextest
+      uses: taiki-e/install-action@nextest
 
     - name: Install Node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -15,9 +13,12 @@ runs:
         node-version: "18"
 
     - name: Limit target directory size
+      env:
+        MAX_SIZE: ${{ runner.os == 'macOS' && 300 || 100 }}
       shell: bash -euxo pipefail {0}
-      run: script/clear-target-dir-if-larger-than 100
+      # Use the variable in the run command
+      run: script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final

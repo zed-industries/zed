@@ -1,25 +1,27 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
-    invalid_buffer_view::InvalidBufferView,
+    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    invalid_item_view::InvalidItemView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics, TabContentParams,
-        TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
+        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
+        TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
+    utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, IsZero, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
     actions, anchored, deferred, prelude::*,
 };
@@ -45,10 +47,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
-    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
+    IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
+    Tooltip, prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
@@ -119,6 +120,17 @@ pub struct CloseActiveItem {
 #[serde(deny_unknown_fields)]
 #[action(deprecated_aliases = ["pane::CloseInactiveItems"])]
 pub struct CloseOtherItems {
+    #[serde(default)]
+    pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
+}
+
+/// Closes all multibuffers in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields)]
+pub struct CloseMultibufferItems {
     #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -365,6 +377,7 @@ pub struct Pane {
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     max_tabs: Option<NonZeroUsize>,
+    use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
@@ -384,6 +397,11 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+    welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
+
+    pub in_center_group: bool,
+    pub is_upper_left: bool,
+    pub is_upper_right: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -410,20 +428,15 @@ struct NavHistoryState {
     next_timestamp: Arc<AtomicUsize>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum NavigationMode {
+    #[default]
     Normal,
     GoingBack,
     GoingForward,
     ClosingItem,
     ReopeningClosedItem,
     Disabled,
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 pub struct NavigationEntry {
@@ -462,10 +475,16 @@ impl Pane {
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
+        use_max_tabs: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let max_tabs = if use_max_tabs {
+            WorkspaceSettings::get_global(cx).max_tabs
+        } else {
+            None
+        };
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),
@@ -487,7 +506,8 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
-            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
+            max_tabs,
+            use_max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -526,6 +546,10 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            welcome_page: None,
+            in_center_group: false,
+            is_upper_left: false,
+            is_upper_right: false,
         }
     }
 
@@ -612,6 +636,10 @@ impl Pane {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
             }
+        } else if let Some(welcome_page) = self.welcome_page.as_ref() {
+            if self.focus_handle.is_focused(window) {
+                welcome_page.read(cx).focus_handle(cx).focus(window);
+            }
         }
     }
 
@@ -695,7 +723,7 @@ impl Pane {
             self.preview_item_id = None;
         }
 
-        if new_max_tabs != self.max_tabs {
+        if self.use_max_tabs && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
             self.close_items_on_settings_change(window, cx);
         }
@@ -859,10 +887,35 @@ impl Pane {
         self.preview_item_id == Some(item_id)
     }
 
+    /// Promotes the item with the given ID to not be a preview item.
+    /// This does nothing if it wasn't already a preview item.
+    pub fn unpreview_item_if_preview(&mut self, item_id: EntityId) {
+        if self.is_active_preview_item(item_id) {
+            self.preview_item_id = None;
+        }
+    }
+
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
-    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
-        if PreviewTabsSettings::get_global(cx).enabled {
+    ///
+    /// The old preview item (if there was one) is closed and its index is returned.
+    pub fn replace_preview_item_id(
+        &mut self,
+        item_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let idx = self.close_current_preview_item(window, cx);
+        self.set_preview_item_id(Some(item_id), cx);
+        idx
+    }
+
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    ///
+    /// This is a low-level method. Prefer `unpreview_item_if_preview()` or `set_new_preview_item()`.
+    pub(crate) fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
+        if item_id.is_none() || PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
     }
@@ -881,7 +934,7 @@ impl Pane {
             && preview_item.item_id() == item_id
             && !preview_item.preserve_preview(cx)
         {
-            self.set_preview_item_id(None, cx);
+            self.unpreview_item_if_preview(item_id);
         }
     }
 
@@ -900,7 +953,7 @@ impl Pane {
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
             for (index, item) in self.items.iter().enumerate() {
-                if item.is_singleton(cx)
+                if item.buffer_kind(cx) == ItemBufferKind::Singleton
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
@@ -910,7 +963,9 @@ impl Pane {
             }
         } else {
             for (index, item) in self.items.iter().enumerate() {
-                if item.is_singleton(cx) && item.project_path(cx).as_ref() == Some(&project_path) {
+                if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                    && item.project_path(cx).as_ref() == Some(&project_path)
+                {
                     let item = item.boxed_clone();
                     existing_item = Some((index, item));
                     break;
@@ -920,14 +975,8 @@ impl Pane {
 
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                // If the item is already open, and the item is a preview item
-                // and we are not allowing items to open as preview, mark the item as persistent.
-                if let Some(preview_item_id) = pane.preview_item_id
-                    && let Some(tab) = pane.items.get(index)
-                    && tab.item_id() == preview_item_id
-                    && !allow_preview
-                {
-                    pane.set_preview_item_id(None, cx);
+                if !allow_preview && let Some(item) = pane.items.get(index) {
+                    pane.unpreview_item_if_preview(item.item_id());
                 }
                 if activate {
                     pane.activate_item(index, focus_item, focus_item, window, cx);
@@ -939,8 +988,13 @@ impl Pane {
                                window: &mut Window,
                                cx: &mut Context<Self>| {
             if allow_preview {
-                pane.set_preview_item_id(Some(new_item.item_id()), cx);
+                pane.replace_preview_item_id(new_item.item_id(), window, cx);
             }
+
+            if let Some(text) = new_item.telemetry_event_text(cx) {
+                telemetry::event!(text);
+            }
+
             pane.add_item_inner(
                 new_item,
                 true,
@@ -966,11 +1020,11 @@ impl Pane {
 
             let new_item = build_item(self, window, cx);
             // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
-            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidBufferView>() {
+            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidItemView>() {
                 let mut already_open_view = None;
                 let mut views_to_close = HashSet::default();
                 for existing_error_view in self
-                    .items_of_type::<InvalidBufferView>()
+                    .items_of_type::<InvalidItemView>()
                     .filter(|item| item.read(cx).abs_path == invalid_buffer_view.read(cx).abs_path)
                 {
                     if already_open_view.is_none()
@@ -1015,6 +1069,7 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        self.set_preview_item_id(None, cx);
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
@@ -1046,7 +1101,7 @@ impl Pane {
             self.close_items_on_item_open(window, cx);
         }
 
-        if item.is_singleton(cx)
+        if item.buffer_kind(cx) == ItemBufferKind::Singleton
             && let Some(&entry_id) = item.project_entry_ids(cx).first()
         {
             let Some(project) = self.project.upgrade() else {
@@ -1077,7 +1132,7 @@ impl Pane {
         };
 
         // Does the item already exist?
-        let project_entry_id = if item.is_singleton(cx) {
+        let project_entry_id = if item.buffer_kind(cx) == ItemBufferKind::Singleton {
             item.project_entry_ids(cx).first().copied()
         } else {
             None
@@ -1086,7 +1141,7 @@ impl Pane {
         let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.item_id() == item.item_id() {
                 true
-            } else if existing_item.is_singleton(cx) {
+            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
                 existing_item
                     .project_entry_ids(cx)
                     .first()
@@ -1097,7 +1152,6 @@ impl Pane {
                 false
             }
         });
-
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
 
@@ -1157,6 +1211,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            telemetry::event!(text);
+        }
+
         self.add_item_inner(
             item,
             activate_pane,
@@ -1179,7 +1237,7 @@ impl Pane {
     pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = Entity<T>> {
         self.items
             .iter()
-            .filter_map(|item| item.to_any().downcast().ok())
+            .filter_map(|item| item.to_any_view().downcast().ok())
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
@@ -1202,7 +1260,9 @@ impl Pane {
         cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && (item.project_entry_ids(cx).as_slice() == [entry_id])
+            {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -1216,7 +1276,8 @@ impl Pane {
         cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(move |item| {
-            if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && (item.project_path(cx).as_slice() == [project_path.clone()])
             {
                 Some(item.boxed_clone())
             } else {
@@ -1247,6 +1308,25 @@ impl Pane {
                 cx.focus_self(window);
             }
             cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if !self.zoomed && !self.items.is_empty() {
+            if !self.focus_handle.contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
     }
 
@@ -1475,6 +1555,30 @@ impl Pane {
         )
     }
 
+    pub fn close_multibuffer_items(
+        &mut self,
+        action: &CloseMultibufferItems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.items.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let pinned_item_ids = self.pinned_item_ids();
+        let multibuffer_items = self.multibuffer_item_ids(cx);
+
+        self.close_items(
+            window,
+            cx,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            move |item_id| {
+                (action.close_pinned || !pinned_item_ids.contains(&item_id))
+                    && multibuffer_items.contains(&item_id)
+            },
+        )
+    }
+
     pub fn close_clean_items(
         &mut self,
         action: &CloseCleanItems,
@@ -1637,14 +1741,14 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
-            return !(item.is_singleton(cx) && item.is_dirty(cx));
+            return !(item.buffer_kind(cx) == ItemBufferKind::Singleton && item.is_dirty(cx));
         }
 
         for open_item in workspace.items(cx) {
             if open_item.item_id() == item.item_id() {
                 continue;
             }
-            if !open_item.is_singleton(cx) {
+            if open_item.buffer_kind(cx) != ItemBufferKind::Singleton {
                 continue;
             }
             let other_project_item_ids = open_item.project_item_model_ids(cx);
@@ -1930,9 +2034,7 @@ impl Pane {
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
-        if self.is_active_preview_item(item.item_id()) {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item.item_id());
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -1999,7 +2101,7 @@ impl Pane {
                 item.is_dirty(cx),
                 item.can_save(cx),
                 item.can_save_as(cx),
-                item.is_singleton(cx),
+                item.buffer_kind(cx) == ItemBufferKind::Singleton,
                 item.has_deleted_file(cx),
             )
         })?;
@@ -2143,9 +2245,7 @@ impl Pane {
 
             if can_save {
                 pane.update_in(cx, |pane, window, cx| {
-                    if pane.is_active_preview_item(item.item_id()) {
-                        pane.set_preview_item_id(None, cx);
-                    }
+                    pane.unpreview_item_if_preview(item.item_id());
                     item.save(
                         SaveOptions {
                             format: should_format,
@@ -2281,7 +2381,9 @@ impl Pane {
         cx: &mut Context<Pane>,
     ) -> Option<()> {
         let item_id = self.items().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && item.project_entry_ids(cx).as_slice() == [entry_id]
+            {
                 Some(item.item_id())
             } else {
                 None
@@ -2397,8 +2499,8 @@ impl Pane {
             let id = self.item_for_index(ix)?.item_id();
             let should_activate = ix == self.active_item_index;
 
-            if matches!(operation, PinOperation::Pin) && self.is_active_preview_item(id) {
-                self.set_preview_item_id(None, cx);
+            if matches!(operation, PinOperation::Pin) {
+                self.unpreview_item_if_preview(id);
             }
 
             match operation {
@@ -2538,6 +2640,7 @@ impl Pane {
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -2570,12 +2673,9 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
-                    if let Some(id) = pane.preview_item_id
-                        && id == item_id
-                        && event.click_count > 1
-                    {
-                        pane.set_preview_item_id(None, cx);
+                cx.listener(move |pane, event: &MouseDownEvent, _, _| {
+                    if event.click_count > 1 {
+                        pane.unpreview_item_if_preview(item_id);
                     }
                 }),
             )
@@ -2625,12 +2725,6 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
-            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
-                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text)),
-                TabTooltipContent::Custom(element_fn) => {
-                    tab.tooltip(move |window, cx| element_fn(window, cx))
-                }
-            })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
@@ -2675,8 +2769,7 @@ impl Pane {
                             Tooltip::for_action_in(
                                 end_slot_tooltip_text,
                                 end_slot_action,
-                                &focus_handle,
-                                window,
+                                &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
                                 cx,
                             )
                         })
@@ -2698,15 +2791,26 @@ impl Pane {
                         })
                         .flatten(),
                     )
-                    .child(label),
+                    .child(label)
+                    .id(("pane-tab-content", ix))
+                    .map(|this| match tab_tooltip_content {
+                        Some(TabTooltipContent::Text(text)) => this.tooltip(Tooltip::text(text)),
+                        Some(TabTooltipContent::Custom(element_fn)) => {
+                            this.tooltip(move |window, cx| element_fn(window, cx))
+                        }
+                        None => this,
+                    }),
             );
 
-        let single_entry_to_resolve = self.items[ix]
-            .is_singleton(cx)
+        let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
             .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
             .flatten();
 
         let total_items = self.items.len();
+        let has_multibuffer_items = self
+            .items
+            .iter()
+            .any(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer);
         let has_items_to_left = ix > 0;
         let has_items_to_right = ix < total_items - 1;
         let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
@@ -2724,6 +2828,10 @@ impl Pane {
                         close_pinned: true,
                     };
                     let close_inactive_items_action = CloseOtherItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+                    let close_multibuffers_action = CloseMultibufferItems {
                         save_intent: None,
                         close_pinned: false,
                     };
@@ -2764,6 +2872,24 @@ impl Pane {
                                         .detach_and_log_err(cx);
                                     })),
                             ))
+                            // We make this optional, instead of using disabled as to not overwhelm the context menu unnecessarily
+                            .extend(has_multibuffer_items.then(|| {
+                                ContextMenuItem::Entry(
+                                    ContextMenuEntry::new("Close Multibuffers")
+                                        .action(Box::new(close_multibuffers_action.clone()))
+                                        .handler(window.handler_for(
+                                            &pane,
+                                            move |pane, window, cx| {
+                                                pane.close_multibuffer_items(
+                                                    &close_multibuffers_action,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                            },
+                                        )),
+                                )
+                            }))
                             .separator()
                             .item(ContextMenuItem::Entry(
                                 ContextMenuEntry::new("Close Left")
@@ -2940,7 +3066,13 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return gpui::Empty.into_any();
+        };
+
         let focus_handle = self.focus_handle.clone();
+        let is_pane_focused = self.has_focus(window, cx);
+
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
@@ -2955,9 +3087,78 @@ impl Pane {
             .tooltip({
                 let focus_handle = focus_handle.clone();
                 move |window, cx| {
-                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                    Tooltip::for_action_in(
+                        "Go Back",
+                        &GoBack,
+                        &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                        cx,
+                    )
                 }
             });
+
+        let open_aside_left = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Left).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                h_flex()
+                    .h_full()
+                    .pr_1p5()
+                    .border_r_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        IconButton::new("open_aside_left", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Left,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
+                    .into_any_element()
+            })
+        };
+
+        let open_aside_right = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Right).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                h_flex()
+                    .h_full()
+                    .when(is_pane_focused, |this| {
+                        this.pl(DynamicSpacing::Base04.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                    })
+                    .child(
+                        IconButton::new("open_aside_right", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Right,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
+                    .into_any_element()
+            })
+        };
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
@@ -2973,7 +3174,12 @@ impl Pane {
             .tooltip({
                 let focus_handle = focus_handle.clone();
                 move |window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                    Tooltip::for_action_in(
+                        "Go Forward",
+                        &GoForward,
+                        &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                        cx,
+                    )
                 }
             });
 
@@ -2999,7 +3205,45 @@ impl Pane {
         }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
+
+        let render_aside_toggle_left = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_left
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Left)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
+        let render_aside_toggle_right = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_right
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Right)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
         TabBar::new("tab_bar")
+            .map(|tab_bar| {
+                if let Some(open_aside_left) = open_aside_left
+                    && render_aside_toggle_left
+                {
+                    tab_bar.start_child(open_aside_left)
+                } else {
+                    tab_bar
+                }
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
@@ -3022,8 +3266,10 @@ impl Pane {
             .children(pinned_tabs.len().ne(&0).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = !max_scroll.is_zero();
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                // Avoid flickering when max_offset is very small (< 2px).
+                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+                let is_scrollable = max_scroll > px(2.0);
                 let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
                 h_flex()
                     .children(pinned_tabs)
@@ -3090,6 +3336,15 @@ impl Pane {
                             })),
                     ),
             )
+            .map(|tab_bar| {
+                if let Some(open_aside_right) = open_aside_right
+                    && render_aside_toggle_right
+                {
+                    tab_bar.end_child(open_aside_right)
+                } else {
+                    tab_bar
+                }
+            })
             .into_any_element()
     }
 
@@ -3179,11 +3434,7 @@ impl Pane {
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
-        if let Some(preview_item_id) = self.preview_item_id
-            && item_id == preview_item_id
-        {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item_id);
 
         let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
@@ -3211,10 +3462,21 @@ impl Pane {
                         else {
                             return;
                         };
-                        if let Some(item) = item.clone_on_split(database_id, window, cx) {
-                            to_pane.update(cx, |pane, cx| {
-                                pane.add_item(item, true, true, None, window, cx);
+                        if item.can_split(cx) {
+                            let task = item.clone_on_split(database_id, window, cx);
+                            let to_pane = to_pane.downgrade();
+                            cx.spawn_in(window, async move |_, cx| {
+                                if let Some(item) = task.await {
+                                    to_pane
+                                        .update_in(cx, |pane, window, cx| {
+                                            pane.add_item(item, true, true, None, window, cx)
+                                        })
+                                        .ok();
+                                }
                             })
+                            .detach();
+                        } else {
+                            move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                         }
                     } else {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
@@ -3485,6 +3747,13 @@ impl Pane {
         }
     }
 
+    fn multibuffer_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
+        self.items()
+            .filter(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer)
+            .map(|item| item.item_id())
+            .collect()
+    }
+
     pub fn drag_split_direction(&self) -> Option<SplitDirection> {
         self.drag_split_direction
     }
@@ -3502,6 +3771,11 @@ fn default_render_tab_bar_buttons(
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
+    let (can_clone, can_split_move) = match pane.active_item() {
+        Some(active_item) if active_item.can_split(cx) => (true, false),
+        Some(_) => (false, pane.items_len() > 1),
+        None => (false, false),
+    };
     // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
     // `end_slot`, but due to needing a view here that isn't possible.
     let right_children = h_flex()
@@ -3538,17 +3812,26 @@ fn default_render_tab_bar_buttons(
         .child(
             PopoverMenu::new("pane-tab-bar-split")
                 .trigger_with_tooltip(
-                    IconButton::new("split", IconName::Split).icon_size(IconSize::Small),
+                    IconButton::new("split", IconName::Split)
+                        .icon_size(IconSize::Small)
+                        .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
                 .anchor(Corner::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("Split Right", SplitRight.boxed_clone())
-                            .action("Split Left", SplitLeft.boxed_clone())
-                            .action("Split Up", SplitUp.boxed_clone())
-                            .action("Split Down", SplitDown.boxed_clone())
+                        if can_split_move {
+                            menu.action("Split Right", SplitAndMoveRight.boxed_clone())
+                                .action("Split Left", SplitAndMoveLeft.boxed_clone())
+                                .action("Split Up", SplitAndMoveUp.boxed_clone())
+                                .action("Split Down", SplitAndMoveDown.boxed_clone())
+                        } else {
+                            menu.action("Split Right", SplitRight.boxed_clone())
+                                .action("Split Left", SplitLeft.boxed_clone())
+                                .action("Split Up", SplitUp.boxed_clone())
+                                .action("Split Down", SplitDown.boxed_clone())
+                        }
                     })
                     .into()
                 }),
@@ -3562,11 +3845,10 @@ fn default_render_tab_bar_buttons(
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.toggle_zoom(&crate::ToggleZoom, window, cx);
                 }))
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::for_action(
                         if zoomed { "Zoom Out" } else { "Zoom In" },
                         &ToggleZoom,
-                        window,
                         cx,
                     )
                 })
@@ -3589,6 +3871,10 @@ impl Render for Pane {
         if self.active_item().is_none() {
             key_context.add("EmptyPane");
         }
+
+        self.toolbar
+            .read(cx)
+            .contribute_context(&mut key_context, cx);
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(window, cx);
@@ -3638,6 +3924,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Pane::zoom_in))
+            .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(
@@ -3660,15 +3948,17 @@ impl Render for Pane {
             .on_action(cx.listener(Self::toggle_pin_tab))
             .on_action(cx.listener(Self::unpin_all_tabs))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
-                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
-                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                        if pane.is_active_preview_item(active_item_id) {
-                            pane.set_preview_item_id(None, cx);
-                        } else {
-                            pane.set_preview_item_id(Some(active_item_id), cx);
+                this.on_action(
+                    cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, window, cx| {
+                        if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                            if pane.is_active_preview_item(active_item_id) {
+                                pane.unpreview_item_if_preview(active_item_id);
+                            } else {
+                                pane.replace_preview_item_id(active_item_id, window, cx);
+                            }
                         }
-                    }
-                }))
+                    }),
+                )
             })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
@@ -3706,6 +3996,12 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 }),
             )
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &CloseMultibufferItems, window, cx| {
+                    pane.close_multibuffer_items(action, window, cx)
+                        .detach_and_log_err(cx)
+                },
+            ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
                     let entry_id = action
@@ -3750,7 +4046,7 @@ impl Render for Pane {
                                 .size_full()
                                 .overflow_hidden()
                                 .child(self.toolbar.clone())
-                                .child(item.to_any())
+                                .child(item.to_any_view())
                         } else {
                             let placeholder = div
                                 .id("pane_placeholder")
@@ -3770,10 +4066,15 @@ impl Render for Pane {
                             if has_worktrees {
                                 placeholder
                             } else {
-                                placeholder.child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
+                                if self.welcome_page.is_none() {
+                                    let workspace = self.workspace.clone();
+                                    self.welcome_page = Some(cx.new(|cx| {
+                                        crate::welcome::WelcomePage::new(
+                                            workspace, true, window, cx,
+                                        )
+                                    }));
+                                }
+                                placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
                     })
@@ -3920,6 +4221,25 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
+    pub fn clear(&mut self, cx: &mut App) {
+        let mut state = self.0.lock();
+
+        if state.backward_stack.is_empty()
+            && state.forward_stack.is_empty()
+            && state.closed_stack.is_empty()
+            && state.paths_by_item.is_empty()
+        {
+            return;
+        }
+
+        state.mode = NavigationMode::Normal;
+        state.backward_stack.clear();
+        state.forward_stack.clear();
+        state.closed_stack.clear();
+        state.paths_by_item.clear();
+        state.did_update(cx);
+    }
+
     pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
@@ -3981,6 +4301,7 @@ impl NavHistory {
                     is_preview,
                 });
             }
+            NavigationMode::ClosingItem if is_preview => return,
             NavigationMode::ClosingItem => {
                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.closed_stack.pop_front();
@@ -4008,6 +4329,20 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+    }
+
+    pub fn rename_item(
+        &mut self,
+        item_id: EntityId,
+        project_path: ProjectPath,
+        abs_path: Option<PathBuf>,
+    ) {
+        let mut state = self.0.lock();
+        let path_for_item = state.paths_by_item.get_mut(&item_id);
+        if let Some(path_for_item) = path_for_item {
+            path_for_item.0 = project_path;
+            path_for_item.1 = abs_path;
+        }
     }
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
@@ -5655,7 +5990,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
                 })),
@@ -5673,7 +6008,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -5691,7 +6026,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 2")
                         .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
                 })),
@@ -5709,7 +6044,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(false)
+                        .with_buffer_kind(ItemBufferKind::Multibuffer)
                         .with_label("multibuffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -5727,7 +6062,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(false)
+                        .with_buffer_kind(ItemBufferKind::Multibuffer)
                         .with_label("multibuffer 1b")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -6282,6 +6617,139 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_multibuffer_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let add_labeled_item = |pane: &Entity<Pane>,
+                                label,
+                                is_dirty,
+                                kind: ItemBufferKind,
+                                cx: &mut VisualTestContext| {
+            pane.update_in(cx, |pane, window, cx| {
+                let labeled_item = Box::new(cx.new(|cx| {
+                    TestItem::new(cx)
+                        .with_label(label)
+                        .with_dirty(is_dirty)
+                        .with_buffer_kind(kind)
+                }));
+                pane.add_item(labeled_item.clone(), false, false, None, window, cx);
+                labeled_item
+            })
+        };
+
+        let item_a = add_labeled_item(&pane, "A", false, ItemBufferKind::Multibuffer, cx);
+        add_labeled_item(&pane, "B", false, ItemBufferKind::Multibuffer, cx);
+        add_labeled_item(&pane, "C", false, ItemBufferKind::Singleton, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_item_labels(&pane, ["C*"], cx);
+
+        add_labeled_item(&pane, "A", true, ItemBufferKind::Singleton, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(1, "A.txt", cx))
+        });
+        add_labeled_item(&pane, "B", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(2, "B.txt", cx))
+            },
+        );
+        add_labeled_item(&pane, "D", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(3, "D.txt", cx))
+            },
+        );
+        assert_item_labels(&pane, ["C", "A^", "B^", "D*^"], cx);
+
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Save all");
+        save.await.unwrap();
+        assert_item_labels(&pane, ["C", "A*^"], cx);
+
+        add_labeled_item(&pane, "B", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(2, "B.txt", cx))
+            },
+        );
+        add_labeled_item(&pane, "D", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(3, "D.txt", cx))
+            },
+        );
+        assert_item_labels(&pane, ["C", "A^", "B^", "D*^"], cx);
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Discard all");
+        save.await.unwrap();
+        assert_item_labels(&pane, ["C", "A*^"], cx);
+    }
+
+    #[gpui::test]
     async fn test_close_with_save_intent(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -6347,13 +6815,13 @@ mod tests {
         let tab_bar_scroll_handle =
             pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
         assert_eq!(tab_bar_scroll_handle.children_count(), 6);
-        let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
+        let tab_bounds = cx.debug_bounds("TAB-4").unwrap();
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
-        assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.75 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.75));
+        assert!(tab_bounds.right() <= scroll_bounds.right());
+        // -43.0 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-43.0));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
@@ -6605,8 +7073,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(LoadThemes::JustBase, cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -6673,7 +7139,7 @@ mod tests {
                 .enumerate()
                 .map(|(ix, item)| {
                     let mut state = item
-                        .to_any()
+                        .to_any_view()
                         .downcast::<TestItem>()
                         .unwrap()
                         .read(cx)

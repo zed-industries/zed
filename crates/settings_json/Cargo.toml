@@ -1,0 +1,35 @@
+[package]
+name = "settings_json"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/settings_json.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+tree-sitter.workspace = true
+tree-sitter-json.workspace = true
+util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_lenient.workspace = true
+serde_path_to_error.workspace = true
+
+[dev-dependencies]
+unindent.workspace = true
+pretty_assertions.workspace = true
+
+# Uncomment other workspace dependencies as needed
+# assistant.workspace = true
+# client.workspace = true
+# project.workspace = true
+# settings.workspace = true

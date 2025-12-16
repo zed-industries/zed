@@ -22,7 +22,7 @@ pub fn init(cx: &mut App) {
     extension_snippet::init(cx);
 }
 
-// Is `None` if the snippet file is global.
+/// Language name, or `None` if the snippet file is global.
 type SnippetKind = Option<String>;
 fn file_stem_to_key(stem: &str) -> SnippetKind {
     if stem == "snippets" {
@@ -233,6 +233,19 @@ impl SnippetProvider {
         }
 
         user_snippets
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_snippet_for_test(
+        &mut self,
+        language: SnippetKind,
+        path: PathBuf,
+        snippet: Vec<Arc<Snippet>>,
+    ) {
+        self.snippets
+            .entry(language)
+            .or_default()
+            .insert(path, snippet);
     }
 
     pub fn snippets_for(&self, language: SnippetKind, cx: &App) -> Vec<Arc<Snippet>> {

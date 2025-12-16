@@ -56,6 +56,7 @@ pub struct PromptMetadata {
 pub enum PromptId {
     User { uuid: UserPromptId },
     EditWorkflow,
+    CommitMessage,
 }
 
 impl PromptId {
@@ -63,8 +64,32 @@ impl PromptId {
         UserPromptId::new().into()
     }
 
+    pub fn user_id(&self) -> Option<UserPromptId> {
+        match self {
+            Self::User { uuid } => Some(*uuid),
+            _ => None,
+        }
+    }
+
     pub fn is_built_in(&self) -> bool {
-        !matches!(self, PromptId::User { .. })
+        match self {
+            Self::User { .. } => false,
+            Self::EditWorkflow | Self::CommitMessage => true,
+        }
+    }
+
+    pub fn can_edit(&self) -> bool {
+        match self {
+            Self::User { .. } | Self::CommitMessage => true,
+            Self::EditWorkflow => false,
+        }
+    }
+
+    pub fn default_content(&self) -> Option<&'static str> {
+        match self {
+            Self::User { .. } | Self::EditWorkflow => None,
+            Self::CommitMessage => Some(include_str!("../../git_ui/src/commit_message_prompt.txt")),
+        }
     }
 }
 
@@ -95,6 +120,7 @@ impl std::fmt::Display for PromptId {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
             PromptId::EditWorkflow => write!(f, "Edit workflow"),
+            PromptId::CommitMessage => write!(f, "Commit message"),
         }
     }
 }
@@ -180,6 +206,25 @@ impl PromptStore {
             // a slash command instead.
             metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
             bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+
+            // Insert default commit message prompt if not present
+            if metadata.get(&txn, &PromptId::CommitMessage)?.is_none() {
+                metadata.put(
+                    &mut txn,
+                    &PromptId::CommitMessage,
+                    &PromptMetadata {
+                        id: PromptId::CommitMessage,
+                        title: Some("Git Commit Message".into()),
+                        default: false,
+                        saved_at: Utc::now(),
+                    },
+                )?;
+            }
+            if bodies.get(&txn, &PromptId::CommitMessage)?.is_none() {
+                let commit_message_prompt =
+                    include_str!("../../git_ui/src/commit_message_prompt.txt");
+                bodies.put(&mut txn, &PromptId::CommitMessage, commit_message_prompt)?;
+            }
 
             txn.commit()?;
 
@@ -387,8 +432,8 @@ impl PromptStore {
         body: Rope,
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
-        if id.is_built_in() {
-            return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
+        if !id.can_edit() {
+            return Task::ready(Err(anyhow!("this prompt cannot be edited")));
         }
 
         let prompt_metadata = PromptMetadata {
@@ -430,7 +475,7 @@ impl PromptStore {
     ) -> Task<Result<()>> {
         let mut cache = self.metadata_cache.write();
 
-        if id.is_built_in() {
+        if !id.can_edit() {
             title = cache
                 .metadata_by_id
                 .get(&id)

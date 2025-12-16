@@ -1,15 +1,15 @@
 pub mod wit;
 
-use crate::ExtensionManifest;
 use crate::capability_granter::CapabilityGranter;
+use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
-    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
+    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
+    WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -28,13 +28,16 @@ use lsp::LanguageServerName;
 use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
-use semantic_version::SemanticVersion;
-use std::borrow::Cow;
-use std::sync::{LazyLock, OnceLock};
-use std::time::Duration;
+use semver::Version;
+use settings::Settings;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc, LazyLock, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use util::paths::SanitizedPath;
@@ -42,7 +45,7 @@ use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
-use wasmtime_wasi::{self as wasi, WasiView};
+use wasmtime_wasi::p2::{self as wasi, IoView as _};
 use wit::Extension;
 
 pub struct WasmHost {
@@ -65,7 +68,8 @@ pub struct WasmExtension {
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
-    pub zed_api_version: SemanticVersion,
+    pub zed_api_version: Version,
+    _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
 impl Drop for WasmExtension {
@@ -494,6 +498,11 @@ pub struct WasmState {
     pub(crate) capability_granter: CapabilityGranter,
 }
 
+std::thread_local! {
+    /// Used by the crash handler to ignore panics in extension-related threads.
+    pub static IS_WASM_THREAD: AtomicBool = const { AtomicBool::new(false) };
+}
+
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
@@ -569,6 +578,9 @@ impl WasmHost {
                 message(cx).await;
             }
         });
+
+        let extension_settings = ExtensionSettings::get_global(cx);
+
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
@@ -577,19 +589,7 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
-            granted_capabilities: vec![
-                ExtensionCapability::ProcessExec(ProcessExecCapability {
-                    command: "*".to_string(),
-                    args: vec!["**".to_string()],
-                }),
-                ExtensionCapability::DownloadFile(DownloadFileCapability {
-                    host: "*".to_string(),
-                    path: vec!["**".to_string()],
-                }),
-                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
-                    package: "*".to_string(),
-                }),
-            ],
+            granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })
@@ -599,11 +599,12 @@ impl WasmHost {
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
         manifest: &Arc<ExtensionManifest>,
-        executor: BackgroundExecutor,
+        cx: &AsyncApp,
     ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
         let manifest = manifest.clone();
-        executor.clone().spawn(async move {
+        let executor = cx.background_executor().clone();
+        let load_extension_task = async move {
             let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
@@ -629,7 +630,7 @@ impl WasmHost {
                 &executor,
                 &mut store,
                 this.release_channel,
-                zed_api_version,
+                zed_api_version.clone(),
                 &component,
             )
             .await?;
@@ -640,19 +641,39 @@ impl WasmHost {
                 .context("failed to initialize wasm extension")?;
 
             let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
-            executor
-                .spawn(async move {
-                    while let Some(call) = rx.next().await {
-                        (call)(&mut extension, &mut store).await;
-                    }
-                })
-                .detach();
+            let extension_task = async move {
+                // note: Setting the thread local here will slowly "poison" all tokio threads
+                // causing us to not record their panics any longer.
+                //
+                // This is fine though, the main zed binary only uses tokio for livekit and wasm extensions.
+                // Livekit seldom (if ever) panics 🤞 so the likelihood of us missing a panic in sentry is very low.
+                IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
+                while let Some(call) = rx.next().await {
+                    (call)(&mut extension, &mut store).await;
+                }
+            };
 
-            Ok(WasmExtension {
-                manifest: manifest.clone(),
-                work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
+            anyhow::Ok((
+                extension_task,
+                manifest.clone(),
+                this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
                 zed_api_version,
+            ))
+        };
+        cx.spawn(async move |cx| {
+            let (extension_task, manifest, work_dir, tx, zed_api_version) =
+                cx.background_executor().spawn(load_extension_task).await?;
+            // we need to run run the task in a tokio context as wasmtime_wasi may
+            // call into tokio, accessing its runtime handle when we trigger the `engine.increment_epoch()` above.
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+
+            Ok(WasmExtension {
+                manifest,
+                work_dir,
+                tx,
+                zed_api_version,
+                _task: task,
             })
         })
     }
@@ -664,8 +685,8 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let file_perms = wasi::FilePerms::all();
-        let dir_perms = wasi::DirPerms::all();
+        let file_perms = wasmtime_wasi::FilePerms::all();
+        let dir_perms = wasmtime_wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir).to_string();
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
@@ -692,10 +713,7 @@ impl WasmHost {
     }
 }
 
-pub fn parse_wasm_extension_version(
-    extension_id: &str,
-    wasm_bytes: &[u8],
-) -> Result<SemanticVersion> {
+pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Result<Version> {
     let mut version = None;
 
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
@@ -722,9 +740,9 @@ pub fn parse_wasm_extension_version(
     version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
-fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
+fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {
     if data.len() == 6 {
-        Some(SemanticVersion::new(
+        Some(Version::new(
             u16::from_be_bytes([data[0], data[1]]) as _,
             u16::from_be_bytes([data[2], data[3]]) as _,
             u16::from_be_bytes([data[4], data[5]]) as _,
@@ -747,17 +765,17 @@ impl WasmExtension {
             .fs
             .open_sync(&path)
             .await
-            .context("failed to open wasm file")?;
+            .context(format!("opening wasm file, path: {path:?}"))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
-            .context("failed to read wasm")?;
+            .context(format!("reading wasm file, path: {path:?}"))?;
 
         wasm_host
-            .load_extension(wasm_bytes, manifest, cx.background_executor().clone())
+            .load_extension(wasm_bytes, manifest, cx)
             .await
-            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+            .with_context(|| format!("loading wasm extension: {}", manifest.id))
     }
 
     pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>
@@ -838,11 +856,13 @@ impl WasmState {
     }
 }
 
-impl wasi::WasiView for WasmState {
+impl wasi::IoView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
+}
 
+impl wasi::WasiView for WasmState {
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
     }

@@ -1,7 +1,6 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
     rc::Rc,
     sync::Arc,
 };
@@ -15,10 +14,10 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
-use async_task::Runnable;
-use calloop::{LoopSignal, channel::Channel};
+use calloop::LoopSignal;
 use futures::channel::oneshot;
 use util::ResultExt as _;
+use util::command::{new_smol_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -26,7 +25,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
+    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
+    RunnableVariant, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -42,6 +42,50 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
+
+#[cfg(any(feature = "x11", feature = "wayland"))]
+pub trait ResultExt {
+    type Ok;
+
+    fn notify_err(self, msg: &'static str) -> Self::Ok;
+}
+
+#[cfg(any(feature = "x11", feature = "wayland"))]
+impl<T> ResultExt for anyhow::Result<T> {
+    type Ok = T;
+
+    fn notify_err(self, msg: &'static str) -> T {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
+                use futures::executor::block_on;
+
+                let proxy = block_on(NotificationProxy::new()).expect(msg);
+
+                let notification_id = "dev.zed.Oops";
+                block_on(
+                    proxy.add_notification(
+                        notification_id,
+                        Notification::new("Zed failed to launch")
+                            .body(Some(
+                                format!(
+                                    "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                )
+                                .as_str(),
+                            ))
+                            .priority(Priority::High)
+                            .icon(ashpd::desktop::Icon::with_names(&[
+                                "dialog-question-symbolic",
+                            ])),
+                    )
+                ).expect(msg);
+
+                panic!("{msg}");
+            }
+        }
+    }
+}
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
@@ -73,6 +117,13 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<ashpd::WindowIdentifier>> + Send + 'static {
+        std::future::ready::<Option<ashpd::WindowIdentifier>>(None)
+    }
 }
 
 #[derive(Default)]
@@ -98,8 +149,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
-        let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
+    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+        let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
@@ -208,7 +259,7 @@ impl<P: LinuxClient + 'static> Platform for P {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/usr/bin/env")
+        let restart_process = new_std_command("/usr/bin/env")
             .arg("bash")
             .arg("-c")
             .arg(script)
@@ -291,6 +342,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn(async move {
                 let title = if options.directories {
@@ -300,6 +354,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 };
 
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                    .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
@@ -347,6 +402,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
@@ -355,6 +413,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 async move {
                     let mut request_builder =
                         ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .identifier(identifier.await)
                             .modal(true)
                             .title("Save File")
                             .current_folder(directory)
@@ -407,7 +466,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = smol::process::Command::new("xdg-open")
+                let _ = new_smol_command("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
@@ -590,8 +649,9 @@ pub(super) fn open_uri_internal(
                     .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
                     .send_uri(&uri)
                     .await
+                    .and_then(|e| e.response())
                 {
-                    Ok(_) => return,
+                    Ok(()) => return,
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
 

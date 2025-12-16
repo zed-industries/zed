@@ -24,6 +24,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+async-lock.workspace = true
 clock.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -46,7 +47,6 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

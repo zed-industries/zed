@@ -12,10 +12,9 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
-use gpui::{App, PlatformDispatcher};
+use gpui::{App, PlatformDispatcher, Priority, RunnableVariant};
 use project::Fs;
 pub use runtimelib::ExecutionState;
-use settings::Settings as _;
 
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
@@ -31,9 +30,6 @@ pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    ::editor::init_settings(cx);
-    ReplSettings::register(cx);
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }
@@ -49,11 +45,13 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     // other crates in Zed.
     impl Dispatcher for ZedDispatcher {
         fn dispatch(&self, runnable: Runnable) {
-            self.dispatcher.dispatch(runnable, None)
+            self.dispatcher
+                .dispatch(RunnableVariant::Compat(runnable), None, Priority::default());
         }
 
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.dispatcher.dispatch_after(duration, runnable);
+            self.dispatcher
+                .dispatch_after(duration, RunnableVariant::Compat(runnable));
         }
     }
 

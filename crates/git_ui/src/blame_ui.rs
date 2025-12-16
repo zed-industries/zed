@@ -8,16 +8,15 @@ use git::{
     repository::CommitSummary,
 };
 use gpui::{
-    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle, WeakEntity,
-    prelude::*,
+    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
-use time_format::format_local_timestamp;
-use ui::{ContextMenu, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{ContextMenu, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -48,29 +47,31 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
-            CommitAvatar::new(
-                &blame_entry.sha.to_string().into(),
-                details.as_ref().and_then(|it| it.remote.as_ref()),
+            Some(
+                CommitAvatar::new(
+                    &blame_entry.sha.to_string().into(),
+                    details.as_ref().and_then(|it| it.remote.as_ref()),
+                )
+                .render(window, cx),
             )
-            .render(window, cx)
         } else {
             None
         };
+
         Some(
             div()
                 .mr_2()
                 .child(
                     h_flex()
-                        .w_full()
-                        .justify_between()
-                        .font_family(style.font().family)
-                        .line_height(style.line_height)
                         .id(("blame", ix))
-                        .text_color(cx.theme().status().hint)
+                        .w_full()
                         .gap_2()
+                        .justify_between()
+                        .font(style.font())
+                        .line_height(style.line_height)
+                        .text_color(cx.theme().status().hint)
                         .child(
                             h_flex()
-                                .items_center()
                                 .gap_2()
                                 .child(div().text_color(sha_color).child(short_commit_id))
                                 .children(avatar)
@@ -82,7 +83,10 @@ impl BlameRenderer for GitBlameRenderer {
                         .on_mouse_down(MouseButton::Right, {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
+                            let editor = editor.clone();
                             move |event, window, cx| {
+                                cx.stop_propagation();
+
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
@@ -99,41 +103,29 @@ impl BlameRenderer for GitBlameRenderer {
                             let workspace = workspace.clone();
                             move |_, window, cx| {
                                 CommitView::open(
-                                    CommitSummary {
-                                        sha: blame_entry.sha.to_string().into(),
-                                        subject: blame_entry
-                                            .summary
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .into(),
-                                        commit_timestamp: blame_entry
-                                            .committer_time
-                                            .unwrap_or_default(),
-                                        author_name: blame_entry
-                                            .committer_name
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .into(),
-                                        has_parent: true,
-                                    },
+                                    blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
+                                    None,
+                                    None,
                                     window,
                                     cx,
                                 )
                             }
                         })
-                        .hoverable_tooltip(move |_window, cx| {
-                            cx.new(|cx| {
-                                CommitTooltip::blame_entry(
-                                    &blame_entry,
-                                    details.clone(),
-                                    repository.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )
+                        .when(!editor.read(cx).has_mouse_context_menu(), |el| {
+                            el.hoverable_tooltip(move |_window, cx| {
+                                cx.new(|cx| {
+                                    CommitTooltip::blame_entry(
+                                        &blame_entry,
+                                        details.clone(),
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                })
+                                .into()
                             })
-                            .into()
                         }),
                 )
                 .into_any(),
@@ -164,7 +156,7 @@ impl BlameRenderer for GitBlameRenderer {
             h_flex()
                 .id("inline-blame")
                 .w_full()
-                .font_family(style.font().family)
+                .font(style.font())
                 .text_color(cx.theme().status().hint)
                 .line_height(style.line_height)
                 .child(Icon::new(IconName::FileGit).color(Color::Hint))
@@ -204,16 +196,25 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let absolute_timestamp = format_local_timestamp(
+        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+        let absolute_timestamp = time_format::format_localized_timestamp(
             commit_time,
             OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         );
+        let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
             let mut style = hover_markdown_style(window, cx);
-            if let Some(code_block) = &style.code_block.text {
-                style.base_text_style.refine(code_block);
-            }
+            style.link.refine(&TextStyleRefinement {
+                color: Some(link_color),
+                underline: Some(UnderlineStyle {
+                    color: Some(link_color.opacity(0.4)),
+                    thickness: px(1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
             style
         };
 
@@ -250,21 +251,22 @@ impl BlameRenderer for GitBlameRenderer {
         };
 
         Some(
-            tooltip_container(cx, |d, cx| {
-                d.occlude()
+            tooltip_container(cx, |this, cx| {
+                this.occlude()
                     .on_mouse_move(|_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         v_flex()
                             .w(gpui::rems(30.))
-                            .gap_4()
                             .child(
                                 h_flex()
-                                    .pb_1p5()
-                                    .gap_x_2()
+                                    .pb_1()
+                                    .gap_2()
                                     .overflow_x_hidden()
                                     .flex_wrap()
-                                    .children(avatar)
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(avatar)
                                     .child(author)
                                     .when(!author_email.is_empty(), |this| {
                                         this.child(
@@ -272,30 +274,29 @@ impl BlameRenderer for GitBlameRenderer {
                                                 .text_color(cx.theme().colors().text_muted)
                                                 .child(author_email.to_owned()),
                                         )
-                                    })
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant),
+                                    }),
                             )
                             .child(
                                 div()
                                     .id("inline-blame-commit-message")
-                                    .child(message)
+                                    .track_scroll(&scroll_handle)
+                                    .py_1p5()
                                     .max_h(message_max_height)
                                     .overflow_y_scroll()
-                                    .track_scroll(&scroll_handle),
+                                    .child(message),
                             )
                             .child(
                                 h_flex()
                                     .text_color(cx.theme().colors().text_muted)
                                     .w_full()
                                     .justify_between()
-                                    .pt_1p5()
+                                    .pt_1()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(absolute_timestamp)
                                     .child(
                                         h_flex()
-                                            .gap_1p5()
+                                            .gap_1()
                                             .when_some(pull_request, |this, pr| {
                                                 this.child(
                                                     Button::new(
@@ -306,29 +307,31 @@ impl BlameRenderer for GitBlameRenderer {
                                                     .icon(IconName::PullRequest)
                                                     .icon_color(Color::Muted)
                                                     .icon_position(IconPosition::Start)
-                                                    .style(ButtonStyle::Subtle)
+                                                    .icon_size(IconSize::Small)
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(pr.url.as_str())
                                                     }),
                                                 )
+                                                .child(Divider::vertical())
                                             })
-                                            .child(Divider::vertical())
                                             .child(
                                                 Button::new(
                                                     "commit-sha-button",
                                                     short_commit_id.clone(),
                                                 )
-                                                .style(ButtonStyle::Subtle)
                                                 .color(Color::Muted)
                                                 .icon(IconName::FileGit)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
-                                                        commit_summary.clone(),
+                                                        commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
+                                                        None,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
@@ -337,7 +340,6 @@ impl BlameRenderer for GitBlameRenderer {
                                             )
                                             .child(
                                                 IconButton::new("copy-sha-button", IconName::Copy)
-                                                    .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
                                                     .icon_color(Color::Muted)
                                                     .on_click(move |_, _, cx| {
@@ -366,15 +368,11 @@ impl BlameRenderer for GitBlameRenderer {
         cx: &mut App,
     ) {
         CommitView::open(
-            CommitSummary {
-                sha: blame_entry.sha.to_string().into(),
-                subject: blame_entry.summary.clone().unwrap_or_default().into(),
-                commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
-                author_name: blame_entry.committer_name.unwrap_or_default().into(),
-                has_parent: true,
-            },
+            blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
+            None,
+            None,
             window,
             cx,
         )
@@ -406,6 +404,7 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
+        editor.hide_blame_popover(false, cx);
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });
@@ -414,11 +413,12 @@ fn deploy_blame_entry_context_menu(
 fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
-            let local = chrono::Local::now().offset().local_minus_utc();
+            let local_offset =
+                time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
             time_format::format_localized_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
-                time::UtcOffset::from_whole_seconds(local).unwrap(),
+                local_offset,
                 time_format::TimestampFormat::Relative,
             )
         }

@@ -1,28 +1,52 @@
 use std::future::Future;
 
 use gpui::{App, AppContext, Global, ReadGlobal, Task};
-use tokio::task::JoinError;
 use util::defer;
 
+pub use tokio::task::JoinError;
+
+/// Initializes the Tokio wrapper using a new Tokio runtime with 2 worker threads.
+///
+/// If you need more threads (or access to the runtime outside of GPUI), you can create the runtime
+/// yourself and pass a Handle to `init_from_handle`.
 pub fn init(cx: &mut App) {
-    cx.set_global(GlobalTokio::new());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        // Since we now have two executors, let's try to keep our footprint small
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("Failed to initialize Tokio");
+
+    cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
+}
+
+/// Initializes the Tokio wrapper using a Tokio runtime handle.
+pub fn init_from_handle(cx: &mut App, handle: tokio::runtime::Handle) {
+    cx.set_global(GlobalTokio::new(RuntimeHolder::Shared(handle)));
+}
+
+enum RuntimeHolder {
+    Owned(tokio::runtime::Runtime),
+    Shared(tokio::runtime::Handle),
+}
+
+impl RuntimeHolder {
+    pub fn handle(&self) -> &tokio::runtime::Handle {
+        match self {
+            RuntimeHolder::Owned(runtime) => runtime.handle(),
+            RuntimeHolder::Shared(handle) => handle,
+        }
+    }
 }
 
 struct GlobalTokio {
-    runtime: tokio::runtime::Runtime,
+    runtime: RuntimeHolder,
 }
 
 impl Global for GlobalTokio {}
 
 impl GlobalTokio {
-    fn new() -> Self {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            // Since we now have two executors, let's try to keep our footprint small
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("Failed to initialize Tokio");
-
+    fn new(runtime: RuntimeHolder) -> Self {
         Self { runtime }
     }
 }
@@ -39,7 +63,7 @@ impl Tokio {
         R: Send + 'static,
     {
         cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.runtime.spawn(f);
+            let join_handle = tokio.runtime.handle().spawn(f);
             let abort_handle = join_handle.abort_handle();
             let cancel = defer(move || {
                 abort_handle.abort();
@@ -61,7 +85,7 @@ impl Tokio {
         R: Send + 'static,
     {
         cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.runtime.spawn(f);
+            let join_handle = tokio.runtime.handle().spawn(f);
             let abort_handle = join_handle.abort_handle();
             let cancel = defer(move || {
                 abort_handle.abort();

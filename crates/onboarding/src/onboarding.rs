@@ -1,5 +1,4 @@
-pub use crate::welcome::ShowWelcome;
-use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
+use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
@@ -14,9 +13,11 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
-    StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
+    Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
+    WithScrollbar as _, prelude::*, rems_from_px,
 };
+pub use workspace::welcome::ShowWelcome;
+use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -24,14 +25,12 @@ use workspace::{
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
+use zed_actions::OpenOnboarding;
 
-mod ai_setup_page;
 mod base_keymap_picker;
 mod basics_page;
-mod editing_page;
 pub mod multibuffer_hint;
 mod theme_preview;
-mod welcome;
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
@@ -55,22 +54,8 @@ pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
 
 actions!(
-    zed,
-    [
-        /// Opens the onboarding view.
-        OpenOnboarding
-    ]
-);
-
-actions!(
     onboarding,
     [
-        /// Activates the Basics page.
-        ActivateBasicsPage,
-        /// Activates the Editing page.
-        ActivateEditingPage,
-        /// Activates the AI Setup page.
-        ActivateAISetupPage,
         /// Finish the onboarding process.
         Finish,
         /// Sign in while in the onboarding flow.
@@ -129,7 +114,8 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = WelcomePage::new(window, cx);
+                        let settings_page = cx
+                            .new(|cx| WelcomePage::new(workspace.weak_handle(), false, window, cx));
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
@@ -215,27 +201,9 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectedPage {
-    Basics,
-    Editing,
-    AiSetup,
-}
-
-impl SelectedPage {
-    fn name(&self) -> &'static str {
-        match self {
-            SelectedPage::Basics => "Basics",
-            SelectedPage::Editing => "Editing",
-            SelectedPage::AiSetup => "AI Setup",
-        }
-    }
-}
-
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    selected_page: SelectedPage,
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
@@ -258,7 +226,6 @@ impl Onboarding {
                 workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
-                selected_page: SelectedPage::Basics,
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
@@ -266,242 +233,8 @@ impl Onboarding {
         })
     }
 
-    fn set_page(
-        &mut self,
-        page: SelectedPage,
-        clicked: Option<&'static str>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(click) = clicked {
-            telemetry::event!(
-                "Welcome Tab Clicked",
-                from = self.selected_page.name(),
-                to = page.name(),
-                clicked = click,
-            );
-        }
-
-        self.selected_page = page;
-        self.scroll_handle.set_offset(Default::default());
-        cx.notify();
-        cx.emit(ItemEvent::UpdateTab);
-    }
-
-    fn render_nav_buttons(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> [impl IntoElement; 3] {
-        let pages = [
-            SelectedPage::Basics,
-            SelectedPage::Editing,
-            SelectedPage::AiSetup,
-        ];
-
-        let text = ["Basics", "Editing", "AI Setup"];
-
-        let actions: [&dyn Action; 3] = [
-            &ActivateBasicsPage,
-            &ActivateEditingPage,
-            &ActivateAISetupPage,
-        ];
-
-        let mut binding = actions.map(|action| {
-            KeyBinding::for_action_in(action, &self.focus_handle, window, cx)
-                .map(|kb| kb.size(rems_from_px(12.)))
-        });
-
-        pages.map(|page| {
-            let i = page as usize;
-            let selected = self.selected_page == page;
-            h_flex()
-                .id(text[i])
-                .relative()
-                .w_full()
-                .gap_2()
-                .px_2()
-                .py_0p5()
-                .justify_between()
-                .rounded_sm()
-                .when(selected, |this| {
-                    this.child(
-                        div()
-                            .h_4()
-                            .w_px()
-                            .bg(cx.theme().colors().text_accent)
-                            .absolute()
-                            .left_0(),
-                    )
-                })
-                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                .child(Label::new(text[i]).map(|this| {
-                    if selected {
-                        this.color(Color::Default)
-                    } else {
-                        this.color(Color::Muted)
-                    }
-                }))
-                .child(binding[i].take().map_or(
-                    gpui::Empty.into_any_element(),
-                    IntoElement::into_any_element,
-                ))
-                .on_click(cx.listener(move |this, click_event, _, cx| {
-                    let click = match click_event {
-                        gpui::ClickEvent::Mouse(_) => "mouse",
-                        gpui::ClickEvent::Keyboard(_) => "keyboard",
-                    };
-
-                    this.set_page(page, Some(click), cx);
-                }))
-        })
-    }
-
-    fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ai_setup_page = matches!(self.selected_page, SelectedPage::AiSetup);
-
-        v_flex()
-            .h_full()
-            .w(rems_from_px(220.))
-            .flex_shrink_0()
-            .gap_4()
-            .justify_between()
-            .child(
-                v_flex()
-                    .gap_6()
-                    .child(
-                        h_flex()
-                            .px_2()
-                            .gap_4()
-                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
-                            .child(
-                                v_flex()
-                                    .child(
-                                        Headline::new("Welcome to Zed").size(HeadlineSize::Small),
-                                    )
-                                    .child(
-                                        Label::new("The editor for what's next")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small)
-                                            .italic(),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_4()
-                            .child(
-                                v_flex()
-                                    .py_4()
-                                    .border_y_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                                    .gap_1()
-                                    .children(self.render_nav_buttons(window, cx)),
-                            )
-                            .map(|this| {
-                                let keybinding = KeyBinding::for_action_in(
-                                    &Finish,
-                                    &self.focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.)));
-
-                                if ai_setup_page {
-                                    this.child(
-                                        ButtonLike::new("start_building")
-                                            .style(ButtonStyle::Outlined)
-                                            .size(ButtonSize::Medium)
-                                            .child(
-                                                h_flex()
-                                                    .ml_1()
-                                                    .w_full()
-                                                    .justify_between()
-                                                    .child(Label::new("Start Building"))
-                                                    .children(keybinding),
-                                            )
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            }),
-                                    )
-                                } else {
-                                    this.child(
-                                        ButtonLike::new("skip_all")
-                                            .size(ButtonSize::Medium)
-                                            .child(
-                                                h_flex()
-                                                    .ml_1()
-                                                    .w_full()
-                                                    .justify_between()
-                                                    .child(
-                                                        Label::new("Skip All").color(Color::Muted),
-                                                    )
-                                                    .children(keybinding),
-                                            )
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            }),
-                                    )
-                                }
-                            }),
-                    ),
-            )
-            .child(
-                if let Some(user) = self.user_store.read(cx).current_user() {
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            h_flex()
-                                .ml_2()
-                                .gap_2()
-                                .max_w_full()
-                                .w_full()
-                                .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Label::new(user.github_login.clone()).truncate()),
-                        )
-                        .child(
-                            ButtonLike::new("open_account")
-                                .size(ButtonSize::Medium)
-                                .child(
-                                    h_flex()
-                                        .ml_1()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new("Open Account"))
-                                        .children(
-                                            KeyBinding::for_action_in(
-                                                &OpenAccount,
-                                                &self.focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        ),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(OpenAccount.boxed_clone(), cx);
-                                }),
-                        )
-                        .into_any_element()
-                } else {
-                    Button::new("sign_in", "Sign In")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium)
-                        .key_binding(
-                            KeyBinding::for_action_in(&SignIn, &self.focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            telemetry::event!("Welcome Sign In Clicked");
-                            window.dispatch_action(SignIn.boxed_clone(), cx);
-                        })
-                        .into_any_element()
-                },
-            )
-    }
-
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
-        telemetry::event!("Welcome Skip Clicked");
+        telemetry::event!("Finish Setup");
         go_to_welcome_page(cx);
     }
 
@@ -522,29 +255,14 @@ impl Onboarding {
         cx.open_url(&zed_urls::account_url(cx))
     }
 
-    fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let client = Client::global(cx);
-
-        match self.selected_page {
-            SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
-            SelectedPage::Editing => {
-                crate::editing_page::render_editing_page(window, cx).into_any_element()
-            }
-            SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
-                self.workspace.clone(),
-                self.user_store.clone(),
-                client,
-                window,
-                cx,
-            )
-            .into_any_element(),
-        }
+    fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        crate::basics_page::render_basics_page(cx).into_any_element()
     }
 }
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+        div()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
@@ -558,15 +276,6 @@ impl Render for Onboarding {
             .on_action(Self::on_finish)
             .on_action(Self::handle_sign_in)
             .on_action(Self::handle_open_account)
-            .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.set_page(SelectedPage::Basics, Some("action"), cx);
-            }))
-            .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.set_page(SelectedPage::Editing, Some("action"), cx);
-            }))
-            .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.set_page(SelectedPage::AiSetup, Some("action"), cx);
-            }))
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next();
                 cx.notify();
@@ -576,35 +285,66 @@ impl Render for Onboarding {
                 cx.notify();
             }))
             .child(
-                h_flex()
-                    .max_w(rems_from_px(1100.))
-                    .max_h(rems_from_px(850.))
+                div()
+                    .max_w(Rems(48.0))
                     .size_full()
-                    .m_auto()
-                    .py_20()
-                    .px_12()
-                    .items_start()
-                    .gap_12()
-                    .child(self.render_nav(window, cx))
+                    .mx_auto()
                     .child(
-                        div()
+                        v_flex()
+                            .id("page-content")
+                            .m_auto()
+                            .p_12()
                             .size_full()
-                            .pr_6()
+                            .max_w_full()
+                            .min_w_0()
+                            .gap_6()
+                            .overflow_y_scroll()
                             .child(
-                                v_flex()
-                                    .id("page-content")
-                                    .size_full()
-                                    .max_w_full()
-                                    .min_w_0()
-                                    .pl_12()
-                                    .border_l_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                                    .overflow_y_scroll()
-                                    .child(self.render_page(window, cx))
-                                    .track_scroll(&self.scroll_handle),
+                                h_flex()
+                                    .w_full()
+                                    .gap_4()
+                                    .justify_between()
+                                    .child(
+                                        h_flex()
+                                            .gap_4()
+                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                            .child(
+                                                v_flex()
+                                                    .child(
+                                                        Headline::new("Welcome to Zed")
+                                                            .size(HeadlineSize::Small),
+                                                    )
+                                                    .child(
+                                                        Label::new("The editor for what's next")
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::Small)
+                                                            .italic(),
+                                                    ),
+                                            ),
+                                    )
+                                    .child({
+                                        Button::new("finish_setup", "Finish Setup")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Medium)
+                                            .width(Rems(12.0))
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &Finish,
+                                                    &self.focus_handle,
+                                                    cx,
+                                                )
+                                                .size(rems_from_px(12.)),
+                                            )
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            })
+                                    }),
                             )
-                            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
-                    ),
+                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
+                            .child(self.render_page(cx))
+                            .track_scroll(&self.scroll_handle),
+                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -632,20 +372,23 @@ impl Item for Onboarding {
         false
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Onboarding {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
-            selected_page: self.selected_page,
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }))
+        })))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -678,7 +421,9 @@ fn go_to_welcome_page(cx: &mut App) {
             if let Some(idx) = idx {
                 pane.activate_item(idx, true, true, window, cx);
             } else {
-                let item = Box::new(WelcomePage::new(window, cx));
+                let item = Box::new(
+                    cx.new(|cx| WelcomePage::new(workspace.weak_handle(), false, window, cx)),
+                );
                 pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
             }
 
@@ -700,7 +445,7 @@ pub async fn handle_import_vscode_settings(
         match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
             Ok(vscode_settings) => vscode_settings,
             Err(err) => {
-                zlog::error!("{err}");
+                zlog::error!("{err:?}");
                 let _ = cx.prompt(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),
@@ -827,25 +572,10 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            if let Some(page_number) =
+            if let Some(_) =
                 persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
             {
-                let page = match page_number {
-                    0 => Some(SelectedPage::Basics),
-                    1 => Some(SelectedPage::Editing),
-                    2 => Some(SelectedPage::AiSetup),
-                    _ => None,
-                };
-                workspace.update(cx, |workspace, cx| {
-                    let onboarding_page = Onboarding::new(workspace, cx);
-                    if let Some(page) = page {
-                        zlog::info!("Onboarding page {page:?} loaded");
-                        onboarding_page.update(cx, |onboarding_page, cx| {
-                            onboarding_page.set_page(page, None, cx);
-                        })
-                    }
-                    onboarding_page
-                })
+                workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
             } else {
                 Err(anyhow::anyhow!("No onboarding page to deserialize"))
             }
@@ -861,10 +591,10 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        let page_number = self.selected_page as u16;
+
         Some(cx.background_spawn(async move {
             persistence::ONBOARDING_PAGES
-                .save_onboarding_page(item_id, workspace_id, page_number)
+                .save_onboarding_page(item_id, workspace_id)
                 .await
         }))
     }
@@ -887,17 +617,32 @@ mod persistence {
     impl Domain for OnboardingPagesDb {
         const NAME: &str = stringify!(OnboardingPagesDb);
 
-        const MIGRATIONS: &[&str] = &[sql!(
-                    CREATE TABLE onboarding_pages (
-                        workspace_id INTEGER,
-                        item_id INTEGER UNIQUE,
-                        page_number INTEGER,
+        const MIGRATIONS: &[&str] = &[
+            sql!(
+                        CREATE TABLE onboarding_pages (
+                            workspace_id INTEGER,
+                            item_id INTEGER UNIQUE,
+                            page_number INTEGER,
 
-                        PRIMARY KEY(workspace_id, item_id),
-                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                        ON DELETE CASCADE
-                    ) STRICT;
-        )];
+                            PRIMARY KEY(workspace_id, item_id),
+                            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;
+            ),
+            sql!(
+                        CREATE TABLE onboarding_pages_2 (
+                            workspace_id INTEGER,
+                            item_id INTEGER UNIQUE,
+
+                            PRIMARY KEY(workspace_id, item_id),
+                            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;
+                        INSERT INTO onboarding_pages_2 SELECT workspace_id, item_id FROM onboarding_pages;
+                        DROP TABLE onboarding_pages;
+                        ALTER TABLE onboarding_pages_2 RENAME TO onboarding_pages;
+            ),
+        ];
     }
 
     db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
@@ -906,11 +651,10 @@ mod persistence {
         query! {
             pub async fn save_onboarding_page(
                 item_id: workspace::ItemId,
-                workspace_id: workspace::WorkspaceId,
-                page_number: u16
+                workspace_id: workspace::WorkspaceId
             ) -> Result<()> {
-                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id, page_number)
-                VALUES (?, ?, ?)
+                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id)
+                VALUES (?, ?)
             }
         }
 
@@ -918,8 +662,8 @@ mod persistence {
             pub fn get_onboarding_page(
                 item_id: workspace::ItemId,
                 workspace_id: workspace::WorkspaceId
-            ) -> Result<Option<u16>> {
-                SELECT page_number
+            ) -> Result<Option<workspace::ItemId>> {
+                SELECT item_id
                 FROM onboarding_pages
                 WHERE item_id = ? AND workspace_id = ?
             }

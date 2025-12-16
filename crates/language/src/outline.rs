@@ -1,4 +1,4 @@
-use crate::{BufferSnapshot, Point, ToPoint};
+use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
@@ -16,6 +16,7 @@ pub struct Outline<T> {
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
+    pub source_range_for_text: Range<T>,
     pub text: String,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
@@ -32,6 +33,8 @@ impl<T: ToPoint> OutlineItem<T> {
         OutlineItem {
             depth: self.depth,
             range: self.range.start.to_point(buffer)..self.range.end.to_point(buffer),
+            source_range_for_text: self.source_range_for_text.start.to_point(buffer)
+                ..self.source_range_for_text.end.to_point(buffer),
             text: self.text.clone(),
             highlight_ranges: self.highlight_ranges.clone(),
             name_ranges: self.name_ranges.clone(),
@@ -44,6 +47,54 @@ impl<T: ToPoint> OutlineItem<T> {
                 .as_ref()
                 .map(|r| r.start.to_point(buffer)..r.end.to_point(buffer)),
         }
+    }
+
+    pub fn body_range(&self, buffer: &BufferSnapshot) -> Option<Range<Point>> {
+        if let Some(range) = self.body_range.as_ref() {
+            return Some(range.start.to_point(buffer)..range.end.to_point(buffer));
+        }
+
+        let range = self.range.start.to_point(buffer)..self.range.end.to_point(buffer);
+        let start_indent = buffer.indent_size_for_line(range.start.row);
+        let node = buffer.syntax_ancestor(range.clone())?;
+
+        let mut cursor = node.walk();
+        loop {
+            let node = cursor.node();
+            if node.start_position() >= range.start.to_ts_point()
+                && node.end_position() <= range.end.to_ts_point()
+            {
+                break;
+            }
+            cursor.goto_first_child_for_point(range.start.to_ts_point());
+        }
+
+        if !cursor.goto_last_child() {
+            return None;
+        }
+        let body_node = loop {
+            let node = cursor.node();
+            if node.child_count() > 0 {
+                break node;
+            }
+            if !cursor.goto_previous_sibling() {
+                return None;
+            }
+        };
+
+        let mut start_row = body_node.start_position().row as u32;
+        let mut end_row = body_node.end_position().row as u32;
+
+        while start_row < end_row && buffer.indent_size_for_line(start_row) == start_indent {
+            start_row += 1;
+        }
+        while start_row < end_row && buffer.indent_size_for_line(end_row - 1) == start_indent {
+            end_row -= 1;
+        }
+        if start_row < end_row {
+            return Some(Point::new(start_row, 0)..Point::new(end_row, 0));
+        }
+        None
     }
 }
 
@@ -205,6 +256,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                source_range_for_text: Point::new(0, 0)..Point::new(0, 9),
                 text: "class Foo".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![6..9],
@@ -214,6 +266,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(2, 0)..Point::new(2, 7),
+                source_range_for_text: Point::new(0, 0)..Point::new(0, 7),
                 text: "private".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![],
@@ -238,6 +291,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
+                source_range_for_text: Point::new(0, 0)..Point::new(0, 10),
                 text: "fn process".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![3..10],
@@ -247,6 +301,7 @@ mod tests {
             OutlineItem {
                 depth: 0,
                 range: Point::new(7, 0)..Point::new(12, 0),
+                source_range_for_text: Point::new(0, 0)..Point::new(0, 20),
                 text: "struct DataProcessor".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![7..20],

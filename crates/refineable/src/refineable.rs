@@ -13,50 +13,9 @@ pub use derive_refineable::Refineable;
 /// wrapped appropriately:
 ///
 /// - **Refineable fields** (marked with `#[refineable]`): Become the corresponding refinement type
-///   (e.g., `Bar` becomes `BarRefinement`)
+///   (e.g., `Bar` becomes `BarRefinement`, or `BarRefinement` remains `BarRefinement`)
 /// - **Optional fields** (`Option<T>`): Remain as `Option<T>`
 /// - **Regular fields**: Become `Option<T>`
-///
-/// ## Example
-///
-/// ```
-/// use derive_refineable::Refineable as _;
-/// use refineable::Refineable;
-///
-/// #[derive(Refineable, Clone, Default)]
-/// struct Example {
-///     color: String,
-///     font_size: Option<u32>,
-///     #[refineable]
-///     margin: Margin,
-/// }
-///
-/// #[derive(Refineable, Clone, Default)]
-/// struct Margin {
-///     top: u32,
-///     left: u32,
-/// }
-///
-///
-/// fn example() {
-///     let mut base_style = Example::default();
-///     let refinement = ExampleRefinement {
-///         color: Some("red".to_string()),
-///         font_size: None,
-///         margin: MarginRefinement {
-///             top: Some(10),
-///             left: None,
-///         },
-///     };
-///
-///     base_style.refine(&refinement);
-/// }
-/// ```
-///
-/// This generates `ExampleRefinement` with:
-/// - `color: Option<String>`
-/// - `font_size: Option<u32>` (unchanged)
-/// - `margin: MarginRefinement`
 ///
 /// ## Attributes
 ///

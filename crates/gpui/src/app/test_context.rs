@@ -5,12 +5,14 @@ use crate::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 use rand::{SeedableRng, rngs::StdRng};
-use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -130,8 +132,11 @@ impl TestAppContext {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
+        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        app.borrow_mut().mode = GpuiMode::test();
+
         Self {
-            app: App::new_app(platform.clone(), asset_source, http_client),
+            app,
             background_executor,
             foreground_executor,
             dispatcher,
@@ -140,6 +145,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Skip all drawing operations for the duration of this test.
+    pub fn skip_drawing(&mut self) {
+        self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
     }
 
     /// Create a single TestAppContext, for non-multi-client tests
@@ -331,6 +341,13 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Returns true if there's an alert dialog open.
+    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.test_platform.expect_restart.borrow_mut().replace(tx);
+        rx
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -455,7 +472,7 @@ impl TestAppContext {
             .windows
             .get_mut(window.id)
             .unwrap()
-            .as_mut()
+            .as_deref_mut()
             .unwrap()
             .platform_window
             .as_test()
@@ -836,7 +853,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a SrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)
@@ -888,7 +905,9 @@ impl VisualTestContext {
         // safety: on_quit will be called after the test has finished.
         // the executor will ensure that all tasks related to the test have stopped.
         // so there is no way for cx to be accessed after on_quit is called.
-        let cx = Box::leak(unsafe { Box::from_raw(ptr) });
+        // todo: This is unsound under stacked borrows (also tree borrows probably?)
+        // the mutable reference invalidates `ptr` which is later used in the closure
+        let cx = unsafe { &mut *ptr };
         cx.on_quit(move || unsafe {
             drop(Box::from_raw(ptr));
         });

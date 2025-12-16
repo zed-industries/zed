@@ -1,8 +1,7 @@
-use gpui::App;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
 /// Settings for configuring REPL display and behavior.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RegisterSetting)]
 pub struct ReplSettings {
     /// Maximum number of lines to keep in REPL's scrollback buffer.
     /// Clamped with [4, 256] range.
@@ -17,7 +16,7 @@ pub struct ReplSettings {
 }
 
 impl Settings for ReplSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let repl = content.repl.as_ref().unwrap();
 
         Self {

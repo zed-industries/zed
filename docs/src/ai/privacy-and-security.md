@@ -2,7 +2,7 @@
 
 ## Philosophy
 
-Zed aims to collect on the minimum data necessary to serve and improve our product.
+Zed aims to collect only the minimum data necessary to serve and improve our product.
 
 We believe in opt-in data sharing as the default in building AI products, rather than opt-out, like most of our competitors. Privacy Mode is not a setting to be toggled, it's a default stance.
 
@@ -12,11 +12,15 @@ It is entirely possible to use Zed, including Zed's AI capabilities, without sha
 
 ## Documentation
 
+- [Worktree trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
+
 - [Telemetry](../telemetry.md): How Zed collects general telemetry data.
 
 - [AI Improvement](./ai-improvement.md): Zed's opt-in-only approach to data collection for AI improvement, whether our Agentic offering or Edit Predictions.
 
-- [Accounts](../accounts.md): When and why you'd need to authenticate into Zed, how to do so, and what scope we need from you.
+- [Accounts](../authentication.md): When and why you'd need to authenticate into Zed, how to do so, and what scope we need from you.
+
+- [Collab](https://zed.dev/faq#data-and-privacy): How Zed's live collaboration works, and how data flows to provide the experience (we don't store your code!).
 
 ## Legal Links
 

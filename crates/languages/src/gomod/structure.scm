@@ -27,3 +27,9 @@
   ("(") @structure.open
   (")") @structure.close
 )
+
+(ignore_directive
+  "ignore" @structure.anchor
+  ("(") @structure.open
+  (")") @structure.close
+)

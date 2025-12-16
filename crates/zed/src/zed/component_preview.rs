@@ -17,7 +17,7 @@ use persistence::COMPONENT_PREVIEW_DB;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use workspace::{
     AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::ItemEvent,
@@ -99,7 +99,7 @@ struct ComponentPreview {
     component_map: HashMap<ComponentId, ComponentMetadata>,
     components: Vec<ComponentMetadata>,
     cursor_index: usize,
-    filter_editor: Entity<SingleLineInput>,
+    filter_editor: Entity<InputField>,
     filter_text: String,
     focus_handle: FocusHandle,
     language_registry: Arc<LanguageRegistry>,
@@ -126,8 +126,7 @@ impl ComponentPreview {
         let sorted_components = component_registry.sorted_components();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
-        let filter_editor =
-            cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
+        let filter_editor = cx.new(|cx| InputField::new(window, cx, "Find components or usages…"));
 
         let component_list = ListState::new(
             sorted_components.len(),
@@ -628,7 +627,7 @@ impl Render for ComponentPreview {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.nav_scroll_handle.clone())
+                        .track_scroll(&self.nav_scroll_handle)
                         .p_2p5()
                         .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
@@ -654,10 +653,8 @@ impl Render for ComponentPreview {
             )
             .child(
                 v_flex()
-                    .id("content-area")
                     .flex_1()
                     .size_full()
-                    .overflow_y_scroll()
                     .child(
                         div()
                             .p_2()
@@ -666,14 +663,18 @@ impl Render for ComponentPreview {
                             .border_color(cx.theme().colors().border)
                             .child(self.filter_editor.clone()),
                     )
-                    .child(match active_page {
-                        PreviewPage::AllComponents => {
-                            self.render_all_components(cx).into_any_element()
-                        }
-                        PreviewPage::Component(id) => self
-                            .render_component_page(&id, window, cx)
-                            .into_any_element(),
-                    }),
+                    .child(
+                        div().id("content-area").flex_1().overflow_y_scroll().child(
+                            match active_page {
+                                PreviewPage::AllComponents => {
+                                    self.render_all_components(cx).into_any_element()
+                                }
+                                PreviewPage::Component(id) => self
+                                    .render_component_page(&id, window, cx)
+                                    .into_any_element(),
+                            },
+                        ),
+                    ),
             )
     }
 }
@@ -716,12 +717,16 @@ impl Item for ComponentPreview {
         false
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::Entity<Self>>
+    ) -> Task<Option<gpui::Entity<Self>>>
     where
         Self: Sized,
     {
@@ -743,13 +748,13 @@ impl Item for ComponentPreview {
             cx,
         );
 
-        match self_result {
+        Task::ready(match self_result {
             Ok(preview) => Some(cx.new(|_cx| preview)),
             Err(e) => {
                 log::error!("Failed to clone component preview: {}", e);
                 None
             }
-        }
+        })
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -931,15 +936,16 @@ impl ComponentPreviewPage {
 
     fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
         v_flex()
-            .py_12()
-            .px_16()
+            .min_w_0()
+            .w_full()
+            .p_12()
             .gap_6()
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(
                         Label::new(self.component.scope().to_string())
                             .size(LabelSize::Small)
@@ -956,7 +962,7 @@ impl ComponentPreviewPage {
                     ),
             )
             .when_some(self.component.description(), |this, description| {
-                this.child(div().text_sm().child(description))
+                this.child(Label::new(description).size(LabelSize::Small))
             })
     }
 

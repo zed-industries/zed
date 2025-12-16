@@ -4,7 +4,7 @@ path_suffixes = ["c"]
 line_comments = ["// "]
 decrease_indent_patterns = [
   { pattern = "^\\s*\\{.*\\}?\\s*$", valid_after = ["if", "for", "while", "do", "switch", "else"] },
-  { pattern = "^\\s*else\\s*$", valid_after = ["if"] }
+  { pattern = "^\\s*else\\b", valid_after = ["if"] }
 ]
 autoclose_before = ";:.,=}])>"
 brackets = [
@@ -17,3 +17,4 @@ brackets = [
 ]
 debuggers = ["CodeLLDB", "GDB"]
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+import_path_strip_regex = "^<|>$"

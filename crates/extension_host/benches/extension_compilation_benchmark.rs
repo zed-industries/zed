@@ -7,8 +7,8 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
-use fs::RealFs;
-use gpui::{SemanticVersion, TestAppContext, TestDispatcher};
+use fs::{Fs, RealFs};
+use gpui::{TestAppContext, TestDispatcher};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
 use rand::{SeedableRng, rngs::StdRng};
@@ -19,11 +19,16 @@ use util::test::TempTree;
 
 fn extension_benchmarks(c: &mut Criterion) {
     let cx = init();
+    cx.update(gpui_tokio::init);
 
     let mut group = c.benchmark_group("load");
 
     let mut manifest = manifest();
-    let wasm_bytes = wasm_bytes(&cx, &mut manifest);
+    let wasm_bytes = wasm_bytes(
+        &cx,
+        &mut manifest,
+        Arc::new(RealFs::new(None, cx.executor())),
+    );
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
         "installed": {},
@@ -37,7 +42,7 @@ fn extension_benchmarks(c: &mut Criterion) {
             |wasm_bytes| {
                 let _extension = cx
                     .executor()
-                    .block(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
+                    .block(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
                     .unwrap();
             },
             BatchSize::SmallInput,
@@ -53,13 +58,13 @@ fn init() -> TestAppContext {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 
     cx
 }
 
-fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> {
+fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn Fs>) -> Vec<u8> {
     let extension_builder = extension_builder();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -72,6 +77,7 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> 
             &path,
             manifest,
             CompileExtensionOptions { release: true },
+            fs,
         ))
         .unwrap();
     std::fs::read(path.join("extension.wasm")).unwrap()
@@ -123,7 +129,7 @@ fn manifest() -> ExtensionManifest {
         icon_themes: Vec::new(),
         lib: LibManifestEntry {
             kind: Some(ExtensionLibraryKind::Rust),
-            version: Some(SemanticVersion::new(0, 1, 0)),
+            version: Some(semver::Version::new(0, 1, 0)),
         },
         languages: Vec::new(),
         grammars: BTreeMap::default(),
@@ -131,6 +137,7 @@ fn manifest() -> ExtensionManifest {
             .into_iter()
             .collect(),
         context_servers: BTreeMap::default(),
+        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: vec![ExtensionCapability::ProcessExec(

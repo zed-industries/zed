@@ -7,7 +7,7 @@ use gpui::{Entity, FocusHandle, SharedString};
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
 pub struct AgentModelSelector {
@@ -25,6 +25,8 @@ impl AgentModelSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle_clone = focus_handle.clone();
+
         Self {
             selector: cx.new(move |cx| {
                 let fs = fs.clone();
@@ -47,6 +49,8 @@ impl AgentModelSelector {
                             }
                         }
                     },
+                    true, // Use popover styles for picker
+                    focus_handle_clone,
                     window,
                     cx,
                 )
@@ -59,6 +63,10 @@ impl AgentModelSelector {
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
     }
+
+    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+        self.selector.read(cx).delegate.active_model(cx)
+    }
 }
 
 impl Render for AgentModelSelector {
@@ -70,6 +78,11 @@ impl Render for AgentModelSelector {
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
         let provider_icon = model.as_ref().map(|model| model.provider.icon());
+        let color = if self.menu_handle.is_deployed() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
 
         let focus_handle = self.focus_handle.clone();
 
@@ -77,32 +90,31 @@ impl Render for AgentModelSelector {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     Label::new(model_name)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )
                 .child(
                     Icon::new(IconName::ChevronDown)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
+                        .color(color)
+                        .size(IconSize::Small),
                 ),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            move |_window, cx| {
+                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
             },
-            gpui::Corner::BottomRight,
+            gpui::Corner::TopRight,
             cx,
         )
         .with_handle(self.menu_handle.clone())
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
         .render(window, cx)
     }
 }

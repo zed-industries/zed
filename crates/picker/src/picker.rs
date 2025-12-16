@@ -97,6 +97,18 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     );
+
+    /// Called before the picker handles `SelectPrevious` or `SelectNext`. Return `Some(query)` to
+    /// set a new query and prevent the default selection behavior.
+    fn select_history(
+        &mut self,
+        _direction: Direction,
+        _query: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<String> {
+        None
+    }
     fn can_select(
         &mut self,
         _ix: usize,
@@ -278,6 +290,15 @@ impl<D: PickerDelegate> Picker<D> {
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
+    pub fn nonsearchable_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let head = Head::empty(Self::on_empty_head_blur, window, cx);
+
+        Self::new(delegate, ContainerKind::List, head, window, cx)
+    }
+
+    /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
+    /// The picker allows the user to perform search items by text.
+    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
     pub fn list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(window, cx),
@@ -305,7 +326,7 @@ impl<D: PickerDelegate> Picker<D> {
             confirm_on_update: None,
             width: None,
             widest_item: None,
-            max_height: Some(rems(18.).into()),
+            max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
         };
@@ -349,6 +370,16 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn modal(mut self, modal: bool) -> Self {
         self.is_modal = modal;
+        self
+    }
+
+    pub fn list_measure_all(mut self) -> Self {
+        match self.element_container {
+            ElementContainer::List(state) => {
+                self.element_container = ElementContainer::List(state.measure_all());
+            }
+            _ => {}
+        }
         self
     }
 
@@ -429,6 +460,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Down, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -448,6 +487,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Up, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -588,7 +635,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                if self.is_modal {
+                if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -600,7 +647,9 @@ impl<D: PickerDelegate> Picker<D> {
         let Head::Empty(_) = &self.head else {
             panic!("unexpected call");
         };
-        self.cancel(&menu::Cancel, window, cx);
+        if window.is_window_active() {
+            self.cancel(&menu::Cancel, window, cx);
+        }
     }
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
@@ -690,7 +739,7 @@ impl<D: PickerDelegate> Picker<D> {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
             ElementContainer::UniformList(scroll_handle) => {
-                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
             }
         }
     }
@@ -759,7 +808,7 @@ impl<D: PickerDelegate> Picker<D> {
             })
             .flex_grow()
             .py_1()
-            .track_scroll(scroll_handle.clone())
+            .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
                 state.clone(),
@@ -845,12 +894,12 @@ impl<D: PickerDelegate> Render for Picker<D> {
 
                             this.map(|this| match &self.element_container {
                                 ElementContainer::List(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    base_scrollbar_config.tracked_scroll_handle(state),
                                     window,
                                     cx,
                                 ),
                                 ElementContainer::UniformList(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    base_scrollbar_config.tracked_scroll_handle(state),
                                     window,
                                     cx,
                                 ),

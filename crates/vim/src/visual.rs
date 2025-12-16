@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
-    Bias, DisplayPoint, Editor, SelectionEffects,
+    Bias, DisplayPoint, Editor, MultiBufferOffset, SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
@@ -179,7 +179,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_map();
+                let map = s.display_snapshot();
                 let ranges = ranges
                     .into_iter()
                     .map(|(start, end, reversed)| {
@@ -304,7 +304,7 @@ impl Vim {
     ) {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Default::default(), window, cx, |s| {
-            let map = &s.display_map();
+            let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
@@ -366,6 +366,8 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
+            let going_up = tail.row() > head.row();
+            let direction = if going_up { -1 } else { 1 };
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
@@ -396,15 +398,23 @@ impl Vim {
 
                     selections.push(selection);
                 }
-                if row == head.row() {
+
+                // When dealing with soft wrapped lines, it's possible that
+                // `row` ends up being set to a value other than `head.row()` as
+                // `head.row()` might be a `DisplayPoint` mapped to a soft
+                // wrapped line, hence the need for `<=` and `>=` instead of
+                // `==`.
+                if going_up && row <= head.row() || !going_up && row >= head.row() {
                     break;
                 }
-                if tail.row() > head.row() {
-                    row.0 -= 1
-                } else {
-                    row.0 += 1
-                }
+
+                // Find the next or previous buffer row where the `row` should
+                // be moved to, so that wrapped lines are skipped.
+                row = map
+                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                    .row();
             }
+
             s.select(selections);
         })
     }
@@ -481,7 +491,7 @@ impl Vim {
                             if object == Object::Paragraph && range.start != range.end {
                                 let row_of_selection_end_line = selection.end.to_point(map).row;
                                 let new_selection_end = if map
-                                    .buffer_snapshot
+                                    .buffer_snapshot()
                                     .line_len(MultiBufferRow(row_of_selection_end_line))
                                     == 0
                                 {
@@ -501,7 +511,7 @@ impl Vim {
                                     if selection.end.to_point(map).row > new_start_point.row {
                                         if original_point.column
                                             == map
-                                                .buffer_snapshot
+                                                .buffer_snapshot()
                                                 .line_len(MultiBufferRow(original_point.row))
                                         {
                                             selection.start = movement::saturating_left(
@@ -631,7 +641,7 @@ impl Vim {
                                     let row = end.row.saturating_sub(1);
                                     selection.end = Point::new(
                                         row,
-                                        map.buffer_snapshot.line_len(MultiBufferRow(row)),
+                                        map.buffer_snapshot().line_len(MultiBufferRow(row)),
                                     )
                                     .to_display_point(map)
                                 } else {
@@ -654,12 +664,13 @@ impl Vim {
                         s.move_with(|map, selection| {
                             let end = selection.end.to_point(map);
                             let start = selection.start.to_point(map);
-                            if end.row < map.buffer_snapshot.max_point().row {
+                            if end.row < map.buffer_snapshot().max_point().row {
                                 selection.end = Point::new(end.row + 1, 0).to_display_point(map)
                             } else if start.row > 0 {
                                 selection.start = Point::new(
                                     start.row - 1,
-                                    map.buffer_snapshot.line_len(MultiBufferRow(start.row - 1)),
+                                    map.buffer_snapshot()
+                                        .line_len(MultiBufferRow(start.row - 1)),
                                 )
                                 .to_display_point(map)
                             }
@@ -702,9 +713,11 @@ impl Vim {
                         let end = selection.end.to_point(map);
                         if end.column == 0 && end > start {
                             let row = end.row.saturating_sub(1);
-                            selection.end =
-                                Point::new(row, map.buffer_snapshot.line_len(MultiBufferRow(row)))
-                                    .to_display_point(map);
+                            selection.end = Point::new(
+                                row,
+                                map.buffer_snapshot().line_len(MultiBufferRow(row)),
+                            )
+                            .to_display_point(map);
                         }
                     });
                 });
@@ -741,7 +754,8 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
 
                 // Selections are biased right at the start. So we need to store
                 // anchors that are biased left so that we can restore the selections
@@ -751,7 +765,7 @@ impl Vim {
                     .disjoint_anchors_arc()
                     .iter()
                     .map(|selection| {
-                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
+                        let start = selection.start.bias_left(&display_map.buffer_snapshot());
                         start..start
                     })
                     .collect::<Vec<_>>();
@@ -764,7 +778,7 @@ impl Vim {
                     {
                         let range = row_range.start.to_offset(&display_map, Bias::Right)
                             ..row_range.end.to_offset(&display_map, Bias::Right);
-                        let text = text.repeat(range.len());
+                        let text = text.repeat(range.end - range.start);
                         edits.push((range, text));
                     }
                 }
@@ -830,8 +844,8 @@ impl Vim {
             return;
         };
         let vim_is_normal = self.mode == Mode::Normal;
-        let mut start_selection = 0usize;
-        let mut end_selection = 0usize;
+        let mut start_selection = MultiBufferOffset(0);
+        let mut end_selection = MultiBufferOffset(0);
 
         self.update_editor(cx, |_, editor, _| {
             editor.set_collapse_matches(false);
@@ -852,7 +866,9 @@ impl Vim {
             });
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             start_selection = latest.start;
             end_selection = latest.end;
         });
@@ -873,7 +889,9 @@ impl Vim {
             return;
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             if vim_is_normal {
                 start_selection = latest.start;
                 end_selection = latest.end;
@@ -1530,6 +1548,63 @@ mod test {
             kox jumps over
             khe lazy dog
             k"
+        });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_wrapping_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Ensure that the editor is wrapping lines at 12 columns so that each
+        // of the lines ends up being wrapped.
+        cx.set_shared_wrap(12).await;
+        cx.set_shared_state(indoc! {
+            "ˇ12345678901234567890
+            12345678901234567890
+            12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v j").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»2345678901234567890
+            «1ˇ»2345678901234567890
+            12345678901234567890
+            "
+        });
+
+        // Test with lines taking up different amounts of display rows to ensure
+        // that, even in that case, only the buffer rows are taken into account.
+        cx.set_shared_state(indoc! {
+            "ˇ123456789012345678901234567890123456789012345678901234567890
+            1234567890123456789012345678901234567890
+            12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v 2 j").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»23456789012345678901234567890123456789012345678901234567890
+            «1ˇ»234567890123456789012345678901234567890
+            «1ˇ»2345678901234567890
+            "
+        });
+
+        // Same scenario as above, but using the up motion to ensure that the
+        // result is the same.
+        cx.set_shared_state(indoc! {
+            "123456789012345678901234567890123456789012345678901234567890
+            1234567890123456789012345678901234567890
+            ˇ12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v 2 k").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»23456789012345678901234567890123456789012345678901234567890
+            «1ˇ»234567890123456789012345678901234567890
+            «1ˇ»2345678901234567890
+            "
         });
     }
 

@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset, ToPoint,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -691,7 +691,6 @@ impl Vim {
                         return;
                     }
                 }
-
                 Mode::HelixNormal | Mode::HelixSelect => {}
             }
         }
@@ -1387,7 +1386,7 @@ impl Motion {
             let end = selection.end.to_point(map);
             let start_row = MultiBufferRow(selection.start.to_point(map).row);
             if end.row > start.row {
-                selection.end = Point::new(start_row.0, map.buffer_snapshot.line_len(start_row))
+                selection.end = Point::new(start_row.0, map.buffer_snapshot().line_len(start_row))
                     .to_display_point(map);
 
                 // a bit of a hack, we need `cw` on a blank line to not delete the newline,
@@ -1525,24 +1524,6 @@ fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayP
     }
 }
 
-pub(crate) fn start_of_relative_buffer_row(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    times: isize,
-) -> DisplayPoint {
-    let start = map.display_point_to_fold_point(point, Bias::Left);
-    let target = start.row() as isize + times;
-    let new_row = (target.max(0) as u32).min(map.fold_snapshot.max_point().row());
-
-    map.clip_point(
-        map.fold_point_to_display_point(
-            map.fold_snapshot
-                .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
-        ),
-        Bias::Right,
-    )
-}
-
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -1566,7 +1547,7 @@ fn up_down_buffer_rows(
 
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
-        map.fold_snapshot
+        map.fold_snapshot()
             .clip_point(FoldPoint::new(start.row(), 0), Bias::Left),
     );
     let select_nth_wrapped_row = point.row().0 - begin_folded_line.row().0;
@@ -1583,10 +1564,10 @@ fn up_down_buffer_rows(
     };
 
     let target = start.row() as isize + times;
-    let new_row = (target.max(0) as u32).min(map.fold_snapshot.max_point().row());
+    let new_row = (target.max(0) as u32).min(map.fold_snapshot().max_point().row());
 
     let mut begin_folded_line = map.fold_point_to_display_point(
-        map.fold_snapshot
+        map.fold_snapshot()
             .clip_point(FoldPoint::new(new_row, 0), bias),
     );
 
@@ -1692,7 +1673,7 @@ pub(crate) fn next_word_start(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1726,7 +1707,7 @@ pub(crate) fn next_word_end(
     always_advance: bool,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1774,7 +1755,7 @@ fn previous_word_start(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1806,19 +1787,19 @@ fn previous_word_end(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
-        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    if point.column < map.buffer_snapshot().line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot().chars_at(point).next()
     {
         point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
-            &map.buffer_snapshot,
+            &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
             |left, right| {
@@ -1849,7 +1830,7 @@ fn next_subword_start(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1886,7 +1867,7 @@ pub(crate) fn next_subword_end(
     allow_cross_newline: bool,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1937,7 +1918,7 @@ fn previous_subword_start(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
@@ -1981,19 +1962,19 @@ fn previous_subword_end(
     times: usize,
 ) -> DisplayPoint {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row))
-        && let Some(ch) = map.buffer_snapshot.chars_at(point).next()
+    if point.column < map.buffer_snapshot().line_len(MultiBufferRow(point.row))
+        && let Some(ch) = map.buffer_snapshot().chars_at(point).next()
     {
         point.column += ch.len_utf8() as u32;
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
-            &map.buffer_snapshot,
+            &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
             |left, right| {
@@ -2029,7 +2010,7 @@ pub(crate) fn first_non_whitespace(
     from: DisplayPoint,
 ) -> DisplayPoint {
     let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
-    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
+    let classifier = map.buffer_snapshot().char_classifier_at(from.to_point(map));
     for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
@@ -2051,7 +2032,7 @@ pub(crate) fn last_non_whitespace(
     count: usize,
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
-    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
+    let classifier = map.buffer_snapshot().char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
     if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next()
@@ -2107,7 +2088,7 @@ pub(crate) fn middle_of_line(
     } else {
         let mut buffer_point = point.to_point(map);
         buffer_point.column = (map
-            .buffer_snapshot
+            .buffer_snapshot()
             .line_len(MultiBufferRow(buffer_point.row)) as f64
             * percent) as u32;
 
@@ -2122,7 +2103,7 @@ pub(crate) fn end_of_line(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     if display_lines {
         map.clip_point(
@@ -2139,7 +2120,7 @@ pub(crate) fn sentence_backwards(
     point: DisplayPoint,
     mut times: usize,
 ) -> DisplayPoint {
-    let mut start = point.to_point(map).to_offset(&map.buffer_snapshot);
+    let mut start = point.to_point(map).to_offset(&map.buffer_snapshot());
     let mut chars = map.reverse_buffer_chars_at(start).peekable();
 
     let mut was_newline = map
@@ -2162,10 +2143,10 @@ pub(crate) fn sentence_backwards(
             if start_of_next_sentence < start {
                 times = times.saturating_sub(1);
             }
-            if times == 0 || offset == 0 {
+            if times == 0 || offset.0 == 0 {
                 return map.clip_point(
                     start_of_next_sentence
-                        .to_offset(&map.buffer_snapshot)
+                        .to_offset(&map.buffer_snapshot())
                         .to_display_point(map),
                     Bias::Left,
                 );
@@ -2185,7 +2166,7 @@ pub(crate) fn sentence_forwards(
     point: DisplayPoint,
     mut times: usize,
 ) -> DisplayPoint {
-    let start = point.to_point(map).to_offset(&map.buffer_snapshot);
+    let start = point.to_point(map).to_offset(&map.buffer_snapshot());
     let mut chars = map.buffer_chars_at(start).peekable();
 
     let mut was_newline = map
@@ -2213,7 +2194,7 @@ pub(crate) fn sentence_forwards(
             if times == 0 {
                 return map.clip_point(
                     start_of_next_sentence
-                        .to_offset(&map.buffer_snapshot)
+                        .to_offset(&map.buffer_snapshot())
                         .to_display_point(map),
                     Bias::Right,
                 );
@@ -2226,19 +2207,22 @@ pub(crate) fn sentence_forwards(
     map.max_point()
 }
 
-fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
+fn next_non_blank(map: &DisplaySnapshot, start: MultiBufferOffset) -> MultiBufferOffset {
     for (c, o) in map.buffer_chars_at(start) {
         if c == '\n' || !c.is_whitespace() {
             return o;
         }
     }
 
-    map.buffer_snapshot.len()
+    map.buffer_snapshot().len()
 }
 
 // given the offset after a ., !, or ? find the start of the next sentence.
 // if this is not a sentence boundary, returns None.
-fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Option<usize> {
+fn start_of_next_sentence(
+    map: &DisplaySnapshot,
+    end_of_sentence: MultiBufferOffset,
+) -> Option<MultiBufferOffset> {
     let chars = map.buffer_chars_at(end_of_sentence);
     let mut seen_space = false;
 
@@ -2258,12 +2242,12 @@ fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Opti
         }
     }
 
-    Some(map.buffer_snapshot.len())
+    Some(map.buffer_snapshot().len())
 }
 
 fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(mut excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+    let Some(mut excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     let offset = excerpt.buffer().point_to_offset(
@@ -2272,38 +2256,34 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             .clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
     );
     let buffer_range = excerpt.buffer_range();
-    if offset >= buffer_range.start && offset <= buffer_range.end {
+    if offset >= buffer_range.start.0 && offset <= buffer_range.end.0 {
         let point = map
-            .buffer_snapshot
-            .offset_to_point(excerpt.map_offset_from_buffer(offset));
+            .buffer_snapshot()
+            .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
         return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
     let mut last_position = None;
-    for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
+    for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
         let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
             ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
+            let anchor = Anchor::in_buffer(excerpt, text_anchor);
             return anchor.to_display_point(map);
         } else if offset <= excerpt_range.start {
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
+            let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
         } else {
-            last_position = Some(Anchor::in_buffer(
-                excerpt,
-                buffer.remote_id(),
-                range.context.end,
-            ));
+            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
 
-    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot);
+    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot());
     last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot.clip_point(point, Bias::Left),
+            map.buffer_snapshot().clip_point(point, Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
@@ -2325,7 +2305,7 @@ fn start_of_document(
 
     map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot.clip_point(first_point, Bias::Left),
+            map.buffer_snapshot().clip_point(first_point, Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
@@ -2341,12 +2321,12 @@ fn end_of_document(
         return go_to_line(map, display_point, times);
     };
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let mut last_point = map.buffer_snapshot.max_point();
+    let mut last_point = map.buffer_snapshot().max_point();
     last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot.clip_point(last_point, Bias::Left),
+            map.buffer_snapshot().clip_point(last_point, Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
@@ -2359,7 +2339,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
 
     if head > outer.start && head < inner.start {
         let mut offset = inner.end.to_offset(map, Bias::Left);
-        for c in map.buffer_snapshot.chars_at(offset) {
+        for c in map.buffer_snapshot().chars_at(offset) {
             if c == '/' || c == '\n' || c == '>' {
                 return Some(offset.to_display_point(map));
             }
@@ -2367,7 +2347,7 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         }
     } else {
         let mut offset = outer.start.to_offset(map, Bias::Left);
-        for c in map.buffer_snapshot.chars_at(offset) {
+        for c in map.buffer_snapshot().chars_at(offset) {
             offset += c.len_utf8();
             if c == '<' || c == '\n' {
                 return Some(offset.to_display_point(map));
@@ -2379,10 +2359,14 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
 }
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    if !map.is_singleton() {
+        return display_point;
+    }
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
-    let offset = point.to_offset(&map.buffer_snapshot);
+    let offset = point.to_offset(&map.buffer_snapshot());
+    let snapshot = map.buffer_snapshot();
 
     // Ensure the range is contained by the current line.
     let mut line_end = map.next_line_boundary(point).0;
@@ -2390,31 +2374,47 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    if let Some((opening_range, closing_range)) = map
-        .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(offset..offset, None)
-    {
-        if opening_range.contains(&offset) {
-            return closing_range.start.to_display_point(map);
-        } else if closing_range.contains(&offset) {
-            return opening_range.start.to_display_point(map);
+    // Attempt to find the smallest enclosing bracket range that also contains
+    // the offset, which only happens if the cursor is currently in a bracket.
+    let range_filter = |_buffer: &language::BufferSnapshot,
+                        opening_range: Range<BufferOffset>,
+                        closing_range: Range<BufferOffset>| {
+        opening_range.contains(&BufferOffset(offset.0))
+            || closing_range.contains(&BufferOffset(offset.0))
+    };
+
+    let bracket_ranges = snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
+        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+
+    if let Some((opening_range, closing_range)) = bracket_ranges {
+        let mut chars = map.buffer_snapshot().chars_at(offset);
+        match chars.next() {
+            Some('/') => {}
+            _ => {
+                if opening_range.contains(&offset) {
+                    return closing_range.start.to_display_point(map);
+                } else if closing_range.contains(&offset) {
+                    return opening_range.start.to_display_point(map);
+                }
+            }
         }
     }
 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
+    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot)
-            ..line_range.end.to_offset(&map.buffer_snapshot);
+        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+            ..line_range.end.to_offset(&map.buffer_snapshot());
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
-            if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
+            if map.buffer_snapshot().chars_at(open_range.start).next() == Some('<') {
                 if offset > open_range.start && offset < close_range.start {
-                    let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                    let mut chars = map.buffer_snapshot().chars_at(close_range.start);
                     if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
                         return display_point;
                     }
@@ -2435,7 +2435,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -2446,7 +2445,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -2468,7 +2466,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 //
 // https://neovim.io/doc/user/motion.html#N%25
 fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
-    let total_lines = map.buffer_snapshot.max_point().row + 1;
+    let total_lines = map.buffer_snapshot().max_point().row + 1;
     let target_line = (count * total_lines as usize).div_ceil(100);
     let target_point = DisplayPoint::new(
         DisplayRow(target_line.saturating_sub(1) as u32),
@@ -2486,16 +2484,16 @@ fn unmatched_forward(
     for _ in 0..times {
         // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1245
         let point = display_point.to_point(map);
-        let offset = point.to_offset(&map.buffer_snapshot);
+        let offset = point.to_offset(&map.buffer_snapshot());
 
-        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let ranges = map.buffer_snapshot().enclosing_bracket_ranges(point..point);
         let Some(ranges) = ranges else { break };
         let mut closest_closing_destination = None;
         let mut closest_distance = usize::MAX;
 
         for (_, close_range) in ranges {
             if close_range.start > offset {
-                let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                let mut chars = map.buffer_snapshot().chars_at(close_range.start);
                 if Some(char) == chars.next() {
                     let distance = close_range.start - offset;
                     if distance < closest_distance {
@@ -2527,9 +2525,9 @@ fn unmatched_backward(
     for _ in 0..times {
         // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1239
         let point = display_point.to_point(map);
-        let offset = point.to_offset(&map.buffer_snapshot);
+        let offset = point.to_offset(&map.buffer_snapshot());
 
-        let ranges = map.buffer_snapshot.enclosing_bracket_ranges(point..point);
+        let ranges = map.buffer_snapshot().enclosing_bracket_ranges(point..point);
         let Some(ranges) = ranges else {
             break;
         };
@@ -2539,7 +2537,7 @@ fn unmatched_backward(
 
         for (start_range, _) in ranges {
             if start_range.start < offset {
-                let mut chars = map.buffer_snapshot.chars_at(start_range.start);
+                let mut chars = map.buffer_snapshot().chars_at(start_range.start);
                 if Some(char) == chars.next() {
                     let distance = offset - start_range.start;
                     if distance < closest_distance {
@@ -2624,7 +2622,7 @@ fn find_backward(
         to = new_to;
     }
 
-    let next = map.buffer_snapshot.chars_at(to.to_point(map)).next();
+    let next = map.buffer_snapshot().chars_at(to.to_point(map)).next();
     if next.is_some() && is_character_match(target, next.unwrap(), smartcase) {
         if after {
             *to.column_mut() += 1;
@@ -2719,17 +2717,17 @@ fn sneak_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, times as isize);
+    let correct_line = map.start_of_relative_buffer_row(point, times as isize);
     first_non_whitespace(map, false, correct_line)
 }
 
 fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, -(times as isize));
+    let correct_line = map.start_of_relative_buffer_row(point, -(times as isize));
     first_non_whitespace(map, false, correct_line)
 }
 
 fn go_to_column(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, 0);
+    let correct_line = map.start_of_relative_buffer_row(point, 0);
     right(map, correct_line, times.saturating_sub(1))
 }
 
@@ -2739,7 +2737,7 @@ pub(crate) fn next_line_end(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     end_of_line(map, false, point, 1)
 }
@@ -2845,13 +2843,13 @@ fn method_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
         return display_point;
     };
 
     for _ in 0..times {
         let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot);
+        let offset = point.to_offset(&map.buffer_snapshot()).0;
         let range = if direction == Direction::Prev {
             0..offset
         } else {
@@ -2880,7 +2878,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -2895,13 +2893,13 @@ fn comment_motion(
     times: usize,
     direction: Direction,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() else {
+    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
         return display_point;
     };
 
     for _ in 0..times {
         let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot);
+        let offset = point.to_offset(&map.buffer_snapshot()).0;
         let range = if direction == Direction::Prev {
             0..offset
         } else {
@@ -2934,7 +2932,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -2951,22 +2949,22 @@ fn section_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    if map.buffer_snapshot.as_singleton().is_some() {
+    if map.buffer_snapshot().as_singleton().is_some() {
         for _ in 0..times {
             let offset = map
                 .display_point_to_point(display_point, Bias::Left)
-                .to_offset(&map.buffer_snapshot);
+                .to_offset(&map.buffer_snapshot());
             let range = if direction == Direction::Prev {
-                0..offset
+                MultiBufferOffset(0)..offset
             } else {
-                offset..map.buffer_snapshot.len()
+                offset..map.buffer_snapshot().len()
             };
 
             // we set a max start depth here because we want a section to only be "top level"
             // similar to vim's default of '{' in the first column.
             // (and without it, ]] at the start of editor.rs is -very- slow)
             let mut possibilities = map
-                .buffer_snapshot
+                .buffer_snapshot()
                 .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(3))
                 .filter(|(_, object)| {
                     matches!(
@@ -2988,7 +2986,7 @@ fn section_motion(
                 let relevant = if is_start { range.start } else { range.end };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
+                } else if direction == Direction::Next && relevant > offset + 1usize {
                     Some(relevant)
                 } else {
                     None
@@ -2996,9 +2994,9 @@ fn section_motion(
             });
 
             let offset = if direction == Direction::Prev {
-                possibilities.max().unwrap_or(0)
+                possibilities.max().unwrap_or(MultiBufferOffset(0))
             } else {
-                possibilities.min().unwrap_or(map.buffer_snapshot.len())
+                possibilities.min().unwrap_or(map.buffer_snapshot().len())
             };
 
             let new_point = map.clip_point(offset.to_display_point(map), Bias::Left);
@@ -3093,7 +3091,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::display_map::Inlay;
+    use editor::Inlay;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
@@ -3314,6 +3312,96 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_unmatched_forward_markdown(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
+
+        cx.neovim.exec("set filetype=markdown").await;
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+            ˇ    }
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                ˇ}
+            }
+            ```
+        "});
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }   ˇ
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("] }").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }  •
+            ˇ}
+            ```
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_unmatched_backward_markdown(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_markdown_with_rust(cx).await;
+
+        cx.neovim.exec("set filetype=markdown").await;
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+            ˇ    }
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> ˇ{
+                }
+            }
+            ```
+        "});
+
+        cx.set_shared_state(indoc! {r"
+            ```rs
+            impl Worktree {
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }   ˇ
+            }
+            ```
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("[ {").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ```rs
+            impl Worktree ˇ{
+                pub async fn open_buffers(&self, path: &Path) -> impl Iterator<&Buffer> {
+                }  •
+            }
+            ```
+        "});
+    }
+
+    #[gpui::test]
     async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_html(cx).await;
 
@@ -3361,6 +3449,23 @@ mod test {
                 test = "test"
             />
         </a>"#});
+
+        // test nested closing tag
+        cx.set_shared_state(indoc! {r#"<html>
+            <bˇody>
+            </body>
+        </html>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <body>
+            <ˇ/body>
+        </html>"#});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <ˇbody>
+            </body>
+        </html>"#});
     }
 
     #[gpui::test]
@@ -3384,6 +3489,22 @@ mod test {
                 </div>
             );
         }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_nested_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_tsx(cx).await;
+
+        cx.set_shared_state(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick={() => {}ˇ}></Button>"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
     }
 
     #[gpui::test]

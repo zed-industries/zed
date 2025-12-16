@@ -69,7 +69,7 @@ impl Vim {
                                     let mut start_offset =
                                         selection.start.to_offset(map, Bias::Left);
                                     let classifier = map
-                                        .buffer_snapshot
+                                        .buffer_snapshot()
                                         .char_classifier_at(selection.start.to_point(map));
                                     for (ch, offset) in map.buffer_chars_at(start_offset) {
                                         if ch == '\n' || !classifier.is_whitespace(ch) {
@@ -121,7 +121,11 @@ impl Vim {
                     });
                 });
                 if objects_found {
-                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                    let kind = match object.target_visual_mode(vim.mode, around) {
+                        Mode::VisualLine => MotionKind::Linewise,
+                        _ => MotionKind::Exclusive,
+                    };
+                    vim.copy_selections_content(editor, kind, window, cx);
                     editor.insert("", window, cx);
                     editor.refresh_edit_prediction(true, false, window, cx);
                 }
@@ -153,7 +157,7 @@ fn expand_changed_word_selection(
 ) -> Option<MotionKind> {
     let is_in_word = || {
         let classifier = map
-            .buffer_snapshot
+            .buffer_snapshot()
             .char_classifier_at(selection.start.to_point(map));
 
         map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))

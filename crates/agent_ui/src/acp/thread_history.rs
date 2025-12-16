@@ -1,6 +1,6 @@
 use crate::acp::AcpThreadView;
-use crate::{AgentPanel, RemoveSelectedThread};
-use agent2::{HistoryEntry, HistoryStore};
+use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
+use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
@@ -12,7 +12,7 @@ use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, WithScrollbar,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
     prelude::*,
 };
 
@@ -23,11 +23,9 @@ pub struct AcpThreadHistory {
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
-
     visible_items: Vec<ListItemType>,
-
     local_timezone: UtcOffset,
-
+    confirming_delete_history: bool,
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -62,7 +60,7 @@ impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub(crate) fn new(
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -101,6 +99,7 @@ impl AcpThreadHistory {
             )
             .unwrap(),
             search_query: SharedString::default(),
+            confirming_delete_history: false,
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _update_task: Task::ready(()),
         };
@@ -327,11 +326,29 @@ impl AcpThreadHistory {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
                 .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
+            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(text_thread.path.clone(), cx)
             }),
         };
         task.detach_and_log_err(cx);
+    }
+
+    fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.history_store.update(cx, |store, cx| {
+            store.delete_threads(cx).detach_and_log_err(cx)
+        });
+        self.confirming_delete_history = false;
+        cx.notify();
+    }
+
+    fn prompt_delete_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirming_delete_history = true;
+        cx.notify();
+    }
+
+    fn cancel_delete_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.confirming_delete_history = false;
+        cx.notify();
     }
 
     fn render_list_items(
@@ -426,12 +443,13 @@ impl AcpThreadHistory {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
-                                ),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_thread(ix, cx);
+                                    cx.stop_propagation()
+                                })),
                         )
                     } else {
                         None
@@ -450,34 +468,38 @@ impl Focusable for AcpThreadHistory {
 
 impl Render for AcpThreadHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_no_history = self.history_store.read(cx).is_empty(cx);
+
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
-            .when(!self.history_store.read(cx).is_empty(cx), |parent| {
-                parent.child(
-                    h_flex()
-                        .h(px(41.)) // Match the toolbar perfectly
-                        .w_full()
-                        .py_1()
-                        .px_2()
-                        .gap_2()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
-                        )
-                        .child(self.search_editor.clone()),
-                )
-            })
+            .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
+                this.remove_history(window, cx);
+            }))
+            .child(
+                h_flex()
+                    .h(Tab::container_height(cx))
+                    .w_full()
+                    .py_1()
+                    .px_2()
+                    .gap_2()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(self.search_editor.clone()),
+            )
             .child({
                 let view = v_flex()
                     .id("list-container")
@@ -485,20 +507,16 @@ impl Render for AcpThreadHistory {
                     .overflow_hidden()
                     .flex_grow();
 
-                if self.history_store.read(cx).is_empty(cx) {
-                    view.justify_center()
-                        .child(
-                            h_flex().w_full().justify_center().child(
-                                Label::new("You don't have any past threads yet.")
-                                    .size(LabelSize::Small),
-                            ),
-                        )
-                } else if self.search_produced_no_matches() {
-                    view.justify_center().child(
-                        h_flex().w_full().justify_center().child(
-                            Label::new("No threads match your search.").size(LabelSize::Small),
-                        ),
+                if has_no_history {
+                    view.justify_center().items_center().child(
+                        Label::new("You don't have any past threads yet.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
+                } else if self.search_produced_no_matches() {
+                    view.justify_center()
+                        .items_center()
+                        .child(Label::new("No threads match your search.").size(LabelSize::Small))
                 } else {
                     view.child(
                         uniform_list(
@@ -510,15 +528,73 @@ impl Render for AcpThreadHistory {
                         )
                         .p_1()
                         .pr_4()
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .flex_grow(),
                     )
-                    .vertical_scrollbar_for(
-                        self.scroll_handle.clone(),
-                        window,
-                        cx,
-                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
+            })
+            .when(!has_no_history, |this| {
+                this.child(
+                    h_flex()
+                        .p_2()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .when(!self.confirming_delete_history, |this| {
+                            this.child(
+                                Button::new("delete_history", "Delete All History")
+                                    .full_width()
+                                    .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.prompt_delete_history(window, cx);
+                                    })),
+                            )
+                        })
+                        .when(self.confirming_delete_history, |this| {
+                            this.w_full()
+                                .gap_2()
+                                .flex_wrap()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .flex_wrap()
+                                        .gap_1()
+                                        .child(
+                                            Label::new("Delete all threads?")
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Label::new("You won't be able to recover them later.")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Button::new("cancel_delete", "Cancel")
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.cancel_delete_history(window, cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("confirm_delete", "Delete")
+                                                .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                                .color(Color::Error)
+                                                .label_size(LabelSize::Small)
+                                                .on_click(cx.listener(|_, _, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(RemoveHistory),
+                                                        cx,
+                                                    );
+                                                })),
+                                        ),
+                                )
+                        }),
+                )
             })
     }
 }
@@ -598,8 +674,8 @@ impl RenderOnce for AcpHistoryEntryElement {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();
@@ -638,12 +714,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                                     });
                                 }
                             }
-                            HistoryEntry::TextThread(context) => {
+                            HistoryEntry::TextThread(text_thread) => {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
-                                            .open_saved_prompt_editor(
-                                                context.path.clone(),
+                                            .open_saved_text_thread(
+                                                text_thread.path.clone(),
                                                 window,
                                                 cx,
                                             )
@@ -675,7 +751,7 @@ impl EntryTimeFormat {
                 timezone,
                 time_format::TimestampFormat::EnhancedAbsolute,
             ),
-            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp.to_offset(timezone)),
         }
     }
 }

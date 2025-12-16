@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+
 use anyhow::Context as _;
 use gpui::{App, Context, Entity, Window};
 use language::Language;
 use project::lsp_store::lsp_ext_command::SwitchSourceHeaderResult;
 use rpc::proto;
-use url::Url;
 use util::paths::PathStyle;
 use workspace::{OpenOptions, OpenVisible};
 
@@ -77,19 +78,24 @@ pub fn switch_source_header(
             return Ok(());
         }
 
-        let goto = Url::parse(&switch_source_header.0).with_context(|| {
-            format!(
-                "Parsing URL \"{}\" returned from switch source/header failed",
-                switch_source_header.0
-            )
-        })?;
-
-        let path = goto
-            .to_file_path()
-            .map_err(|()| anyhow::anyhow!("URL conversion to file path failed for \"{goto}\""))?;
+        let goto = switch_source_header
+            .0
+            .strip_prefix("file://")
+            .with_context(|| {
+                format!(
+                    "Parsing file url \"{}\" returned from switch source/header failed",
+                    switch_source_header.0
+                )
+            })?;
 
         workspace
             .update_in(cx, |workspace, window, cx| {
+                let goto = if workspace.path_style(cx).is_windows() {
+                    goto.strip_prefix('/').unwrap_or(goto)
+                } else {
+                    goto
+                };
+                let path = PathBuf::from(goto);
                 workspace.open_abs_path(
                     path,
                     OpenOptions {

@@ -963,26 +963,21 @@ pub fn init(cx: &mut App) {
         };
 
         let project = workspace.project();
-        if project.read(cx).is_local() {
-            log_store.update(cx, |store, cx| {
-                store.add_project(project, cx);
-            });
-        }
+        log_store.update(cx, |store, cx| {
+            store.add_project(project, cx);
+        });
 
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenDebugAdapterLogs, window, cx| {
-            let project = workspace.project().read(cx);
-            if project.is_local() {
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-            }
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
         });
     })
     .detach();
@@ -1003,7 +998,11 @@ impl Item for DapLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 }
@@ -1018,11 +1017,13 @@ impl SearchableItem for DapLogView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.update_matches(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.update_matches(matches, active_match_index, window, cx)
+        })
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {

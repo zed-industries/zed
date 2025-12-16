@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -80,11 +80,14 @@ pub struct LanguageServerBinaryOptions {
     pub pre_release: bool,
 }
 
+struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
+
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
+    notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
@@ -328,29 +331,26 @@ impl LanguageServer {
         };
         let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
-
         log::info!(
-            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: \
+            {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
         );
-
-        let mut server = util::command::new_smol_command(&binary.path)
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
             .current_dir(working_dir)
             .args(&binary.arguments)
             .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+
+        let mut server = command
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
-                    binary.path, working_dir, &binary.arguments
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {command:?}",))?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
@@ -480,9 +480,24 @@ impl LanguageServer {
         }
         .into();
 
+        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        cx.background_spawn({
+            let outbound_tx = outbound_tx.clone();
+            async move {
+                while let Ok(serializer) = notification_rx.recv().await {
+                    let serialized = (serializer.0)();
+                    let Ok(_) = outbound_tx.send(serialized).await else {
+                        return;
+                    };
+                }
+                outbound_tx.close();
+            }
+        })
+        .detach();
         Self {
             server_id,
             notification_handlers,
+            notification_tx,
             response_handlers,
             io_handlers,
             name: server_name,
@@ -652,7 +667,7 @@ impl LanguageServer {
 
         #[allow(deprecated)]
         InitializeParams {
-            process_id: None,
+            process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
@@ -748,6 +763,10 @@ impl LanguageServer {
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
                                 ],
+                            }),
+                            deprecated_support: Some(true),
+                            tag_support: Some(TagSupport {
+                                value_set: vec![CompletionItemTag::DEPRECATED],
                             }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
@@ -909,7 +928,7 @@ impl LanguageServer {
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(&InitializedParams {})?;
+            self.notify::<notification::Initialized>(InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -921,11 +940,13 @@ impl LanguageServer {
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
             let executor = self.executor.clone();
+            let notification_serializers = self.notification_tx.clone();
             let mut output_done = self.output_done_rx.lock().take().unwrap();
             let shutdown_request = Self::request_internal::<request::Shutdown>(
                 &next_id,
                 &response_handlers,
                 &outbound_tx,
+                &notification_serializers,
                 &executor,
                 (),
             );
@@ -959,8 +980,8 @@ impl LanguageServer {
                 }
 
                 response_handlers.lock().take();
-                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                outbound_tx.close();
+                Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
+                notification_serializers.close();
                 output_done.recv().await;
                 server.lock().take().map(|mut child| child.kill());
                 drop(tasks);
@@ -1182,6 +1203,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.notification_tx,
             &self.executor,
             params,
         )
@@ -1203,6 +1225,7 @@ impl LanguageServer {
             &self.next_id,
             &self.response_handlers,
             &self.outbound_tx,
+            &self.notification_tx,
             &self.executor,
             timer,
             params,
@@ -1213,6 +1236,7 @@ impl LanguageServer {
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1264,7 +1288,7 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
-        let outbound_tx = outbound_tx.downgrade();
+        let notification_serializers = notification_serializers.downgrade();
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {
@@ -1275,10 +1299,10 @@ impl LanguageServer {
             }
 
             let cancel_on_drop = util::defer(move || {
-                if let Some(outbound_tx) = outbound_tx.upgrade() {
+                if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
-                        &outbound_tx,
-                        &CancelParams {
+                        &notification_serializers,
+                        CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1313,6 +1337,7 @@ impl LanguageServer {
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
+        notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
@@ -1324,6 +1349,7 @@ impl LanguageServer {
             next_id,
             response_handlers,
             outbound_tx,
+            notification_serializers,
             executor,
             Self::default_request_timer(executor.clone()),
             params,
@@ -1339,21 +1365,25 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
-        Self::notify_internal::<T>(&self.outbound_tx, params)
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+        let outbound = self.notification_tx.clone();
+        Self::notify_internal::<T>(&outbound, params)
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<String>,
-        params: &T::Params,
+        outbound_tx: &channel::Sender<NotificationSerializer>,
+        params: T::Params,
     ) -> Result<()> {
-        let message = serde_json::to_string(&Notification {
-            jsonrpc: JSON_RPC_VERSION,
-            method: T::METHOD,
-            params,
-        })
-        .unwrap();
-        outbound_tx.try_send(message)?;
+        let serializer = NotificationSerializer(Box::new(move || {
+            serde_json::to_string(&Notification {
+                jsonrpc: JSON_RPC_VERSION,
+                method: T::METHOD,
+                params,
+            })
+            .unwrap()
+        }));
+
+        outbound_tx.send_blocking(serializer)?;
         Ok(())
     }
 
@@ -1388,7 +1418,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
 
@@ -1422,7 +1452,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
@@ -1454,7 +1484,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).ok();
         }
     }
 
@@ -1472,14 +1502,14 @@ impl LanguageServer {
         version: i32,
         initial_text: String,
     ) {
-        self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+        self.notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
         })
         .ok();
     }
 
     pub fn unregister_buffer(&self, uri: Uri) {
-        self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
+        self.notify::<notification::DidCloseTextDocument>(DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
         .ok();
@@ -1695,7 +1725,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1804,7 +1834,7 @@ impl FakeLanguageServer {
         .await
         .into_response()
         .unwrap();
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1812,7 +1842,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1822,7 +1852,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{SemanticVersion, TestAppContext};
+    use gpui::TestAppContext;
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1833,7 +1863,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),
@@ -1871,7 +1901,7 @@ mod tests {
             .await
             .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
@@ -1889,11 +1919,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
@@ -1907,6 +1937,7 @@ mod tests {
         fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
+        cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
     }
 

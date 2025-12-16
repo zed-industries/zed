@@ -9,10 +9,16 @@ pub(crate) fn neutral() -> ColorScaleSet {
 }
 
 const ADDED_COLOR: Hsla = Hsla {
-    h: 142. / 360.,
-    s: 0.68,
-    l: 0.45,
+    h: 134. / 360.,
+    s: 0.55,
+    l: 0.40,
     a: 1.0,
+};
+const WORD_ADDED_COLOR: Hsla = Hsla {
+    h: 134. / 360.,
+    s: 0.55,
+    l: 0.40,
+    a: 0.35,
 };
 const MODIFIED_COLOR: Hsla = Hsla {
     h: 48. / 360.,
@@ -21,10 +27,16 @@ const MODIFIED_COLOR: Hsla = Hsla {
     a: 1.0,
 };
 const REMOVED_COLOR: Hsla = Hsla {
-    h: 355. / 360.,
-    s: 0.65,
-    l: 0.65,
+    h: 350. / 360.,
+    s: 0.88,
+    l: 0.25,
     a: 1.0,
+};
+const WORD_DELETED_COLOR: Hsla = Hsla {
+    h: 350. / 360.,
+    s: 0.88,
+    l: 0.25,
+    a: 0.80,
 };
 
 /// The default colors for the theme.
@@ -79,13 +91,14 @@ impl ThemeColors {
             tab_inactive_background: neutral().light().step_2(),
             tab_active_background: neutral().light().step_1(),
             search_match_background: neutral().light().step_5(),
+            search_active_match_background: neutral().light().step_7(),
             panel_background: neutral().light().step_2(),
             panel_focused_border: blue().light().step_10(),
             panel_indent_guide: neutral().light_alpha().step_5(),
             panel_indent_guide_hover: neutral().light_alpha().step_6(),
             panel_indent_guide_active: neutral().light_alpha().step_6(),
             panel_overlay_background: neutral().light().step_2(),
-            panel_overlay_hover: neutral().light_alpha().step_4(),
+            panel_overlay_hover: neutral().light().step_4(),
             pane_focused_border: blue().light().step_5(),
             pane_group_border: neutral().light().step_6(),
             scrollbar_thumb_background: neutral().light_alpha().step_3(),
@@ -152,8 +165,19 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
             version_control_ignored: gray().light().step_12(),
+            version_control_word_added: WORD_ADDED_COLOR,
+            version_control_word_deleted: WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
+            vim_mode_text: system.transparent,
         }
     }
 
@@ -205,13 +229,14 @@ impl ThemeColors {
             tab_inactive_background: neutral().dark().step_2(),
             tab_active_background: neutral().dark().step_1(),
             search_match_background: neutral().dark().step_5(),
+            search_active_match_background: neutral().dark().step_3(),
             panel_background: neutral().dark().step_2(),
             panel_focused_border: blue().dark().step_8(),
             panel_indent_guide: neutral().dark_alpha().step_4(),
             panel_indent_guide_hover: neutral().dark_alpha().step_6(),
             panel_indent_guide_active: neutral().dark_alpha().step_6(),
             panel_overlay_background: neutral().dark().step_2(),
-            panel_overlay_hover: neutral().dark_alpha().step_4(),
+            panel_overlay_hover: neutral().dark().step_4(),
             pane_focused_border: blue().dark().step_5(),
             pane_group_border: neutral().dark().step_6(),
             scrollbar_thumb_background: neutral().dark_alpha().step_3(),
@@ -278,8 +303,19 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
             version_control_ignored: gray().dark().step_12(),
+            version_control_word_added: WORD_ADDED_COLOR,
+            version_control_word_deleted: WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
+            vim_mode_text: system.transparent,
         }
     }
 }

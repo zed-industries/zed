@@ -34,11 +34,11 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

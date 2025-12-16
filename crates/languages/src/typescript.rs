@@ -4,17 +4,16 @@ use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
-use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
-use smol::{fs, lock::RwLock, stream::StreamExt};
+use smol::lock::RwLock;
 use std::{
     borrow::Cow,
     ffi::OsString,
@@ -22,10 +21,10 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe};
-use util::{merge_json_value_into, rel_path::RelPath};
+use util::rel_path::RelPath;
+use util::{ResultExt, maybe};
 
-use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
+use crate::{PackageJson, PackageJsonData};
 
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
@@ -52,6 +51,12 @@ const TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE: VariableName =
 
 const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JASMINE_PACKAGE_PATH"));
+
+const TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_PACKAGE_PATH"));
+
+const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
 
 #[derive(Clone, Debug, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
@@ -106,8 +111,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     VariableName::File.template_value(),
                 ],
                 cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
@@ -125,8 +129,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
@@ -215,6 +218,65 @@ impl PackageJsonData {
                     "tsx-test".to_owned(),
                 ],
                 cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.bun_package_path.is_some() {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "bun test".to_owned()),
+                command: "bun".to_owned(),
+                args: vec!["test".to_owned(), VariableName::File.template_value()],
+                cwd: Some(TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!("bun test {}", VariableName::Symbol.template_value(),),
+                command: "bun".to_owned(),
+                args: vec![
+                    "test".to_owned(),
+                    "--test-name-pattern".to_owned(),
+                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::File.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.node_package_path.is_some() {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "node test".to_owned()),
+                command: "node".to_owned(),
+                args: vec!["--test".to_owned(), VariableName::File.template_value()],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!("node test {}", VariableName::Symbol.template_value()),
+                command: "node".to_owned(),
+                args: vec![
+                    "--test".to_owned(),
+                    "--test-name-pattern".to_owned(),
+                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::File.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -492,6 +554,26 @@ impl ContextProvider for TypeScriptContextProvider {
                                 .to_string(),
                         );
                     }
+
+                    if let Some(path) = package_json_data.bun_package_path {
+                        vars.insert(
+                            TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE,
+                            path.parent()
+                                .unwrap_or(Path::new(""))
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                    }
+
+                    if let Some(path) = package_json_data.node_package_path {
+                        vars.insert(
+                            TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE,
+                            path.parent()
+                                .unwrap_or(Path::new(""))
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                    }
                 }
             }
             Ok(vars)
@@ -501,14 +583,6 @@ impl ContextProvider for TypeScriptContextProvider {
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
-}
-
-fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![
-        "--max-old-space-size=8192".into(),
-        server_path.into(),
-        "--stdio".into(),
-    ]
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
@@ -523,14 +597,19 @@ pub struct TypeScriptLspAdapter {
 }
 
 impl TypeScriptLspAdapter {
-    const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
-    const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-    const SERVER_NAME: LanguageServerName =
-        LanguageServerName::new_static("typescript-language-server");
+    const OLD_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.js";
+    const NEW_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.mjs";
+
     const PACKAGE_NAME: &str = "typescript";
+    const SERVER_PACKAGE_NAME: &str = "typescript-language-server";
+
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static(Self::SERVER_PACKAGE_NAME);
+
     pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
         TypeScriptLspAdapter { fs, node }
     }
+
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
@@ -570,10 +649,13 @@ impl LspInstaller for TypeScriptLspAdapter {
         _: &mut AsyncApp,
     ) -> Result<TypeScriptVersions> {
         Ok(TypeScriptVersions {
-            typescript_version: self.node.npm_package_latest_version("typescript").await?,
+            typescript_version: self
+                .node
+                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .await?,
             server_version: self
                 .node
-                .npm_package_latest_version("typescript-language-server")
+                .npm_package_latest_version(Self::SERVER_PACKAGE_NAME)
                 .await?,
         })
     }
@@ -586,7 +668,7 @@ impl LspInstaller for TypeScriptLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
-        let should_install_language_server = self
+        if self
             .node
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
@@ -594,17 +676,29 @@ impl LspInstaller for TypeScriptLspAdapter {
                 container_dir,
                 VersionStrategy::Latest(version.typescript_version.as_str()),
             )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: None,
-                arguments: typescript_server_binary_arguments(&server_path),
-            })
+            .await
+        {
+            return None;
         }
+
+        if self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version.server_version.as_str()),
+            )
+            .await
+        {
+            return None;
+        }
+
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: typescript_server_binary_arguments(&server_path),
+        })
     }
 
     async fn fetch_server_binary(
@@ -624,7 +718,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                         latest_version.typescript_version.as_str(),
                     ),
                     (
-                        "typescript-language-server",
+                        Self::SERVER_PACKAGE_NAME,
                         latest_version.server_version.as_str(),
                     ),
                 ],
@@ -668,7 +762,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         use lsp::CompletionItemKind as Kind;
-        let len = item.label.len();
+        let label_len = item.label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
             Kind::CLASS | Kind::INTERFACE | Kind::ENUM => grammar.highlight_id_for_name("type"),
@@ -691,16 +785,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         } else {
             item.label.clone()
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..len);
-        Some(language::CodeLabel {
+        Some(language::CodeLabel::filtered(
             text,
-            runs: vec![(0..len, highlight_id)],
-            filter_range,
-        })
+            label_len,
+            item.filter_text.as_deref(),
+            vec![(0..label_len, highlight_id)],
+        ))
     }
 
     async fn initialization_options(
@@ -729,9 +819,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -750,9 +840,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("TypeScript"), "typescript".into()),
-            (LanguageName::new("JavaScript"), "javascript".into()),
-            (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new_static("TypeScript"), "typescript".into()),
+            (LanguageName::new_static("JavaScript"), "javascript".into()),
+            (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
     }
 }
@@ -784,233 +874,12 @@ async fn get_cached_ts_server_binary(
     .log_err()
 }
 
-pub struct EsLintLspAdapter {
-    node: NodeRuntime,
-}
-
-impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "2.4.4";
-    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
-
-    #[cfg(not(windows))]
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
-    #[cfg(windows)]
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
-
-    const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
-    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
-
-    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] = &[
-        "eslint.config.js",
-        "eslint.config.mjs",
-        "eslint.config.cjs",
-        "eslint.config.ts",
-        "eslint.config.cts",
-        "eslint.config.mts",
-    ];
-
-    pub fn new(node: NodeRuntime) -> Self {
-        EsLintLspAdapter { node }
-    }
-
-    fn build_destination_path(container_dir: &Path) -> PathBuf {
-        container_dir.join(format!("vscode-eslint-{}", Self::CURRENT_VERSION))
-    }
-}
-
-impl LspInstaller for EsLintLspAdapter {
-    type BinaryVersion = GitHubLspBinaryVersion;
-
-    async fn fetch_latest_server_version(
-        &self,
-        _delegate: &dyn LspAdapterDelegate,
-        _: bool,
-        _: &mut AsyncApp,
-    ) -> Result<GitHubLspBinaryVersion> {
-        let url = build_asset_url(
-            "zed-industries/vscode-eslint",
-            Self::CURRENT_VERSION_TAG_NAME,
-            Self::GITHUB_ASSET_KIND,
-        )?;
-
-        Ok(GitHubLspBinaryVersion {
-            name: Self::CURRENT_VERSION.into(),
-            digest: None,
-            url,
-        })
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        version: GitHubLspBinaryVersion,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let destination_path = Self::build_destination_path(&container_dir);
-        let server_path = destination_path.join(Self::SERVER_PATH);
-
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |_| true).await;
-
-            download_server_binary(
-                delegate,
-                &version.url,
-                None,
-                &destination_path,
-                Self::GITHUB_ASSET_KIND,
-            )
-            .await?;
-
-            let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.context("missing first file")??;
-            let repo_root = destination_path.join("vscode-eslint");
-            fs::rename(first.path(), &repo_root).await?;
-
-            #[cfg(target_os = "windows")]
-            {
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("client").join("src").join("shared"),
-                )
-                .await?;
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("server").join("src").join("shared"),
-                )
-                .await?;
-            }
-
-            self.node
-                .run_npm_subcommand(&repo_root, "install", &[])
-                .await?;
-
-            self.node
-                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
-                .await?;
-        }
-
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path =
-            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
-        Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
-}
-
-#[async_trait(?Send)]
-impl LspAdapter for EsLintLspAdapter {
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::new("source.fixAll.eslint"),
-        ])
-    }
-
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        cx: &mut AsyncApp,
-    ) -> Result<Value> {
-        let workspace_root = delegate.worktree_root_path();
-        let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
-            .iter()
-            .any(|file| workspace_root.join(file).is_file());
-
-        let mut default_workspace_configuration = json!({
-            "validate": "on",
-            "rulesCustomizations": [],
-            "run": "onType",
-            "nodePath": null,
-            "workingDirectory": {
-                "mode": "auto"
-            },
-            "workspaceFolder": {
-                "uri": workspace_root,
-                "name": workspace_root.file_name()
-                    .unwrap_or(workspace_root.as_os_str())
-                    .to_string_lossy(),
-            },
-            "problems": {},
-            "codeActionOnSave": {
-                // We enable this, but without also configuring code_actions_on_format
-                // in the Zed configuration, it doesn't have an effect.
-                "enable": true,
-            },
-            "codeAction": {
-                "disableRuleComment": {
-                    "enable": true,
-                    "location": "separateLine",
-                },
-                "showDocumentation": {
-                    "enable": true
-                }
-            },
-            "experimental": {
-                "useFlatConfig": use_flat_config,
-            }
-        });
-
-        let override_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-        })?;
-
-        if let Some(override_options) = override_options {
-            merge_json_value_into(override_options, &mut default_workspace_configuration);
-        }
-
-        Ok(json!({
-            "": default_workspace_configuration
-        }))
-    }
-
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME
-    }
-}
-
-#[cfg(target_os = "windows")]
-async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
-    anyhow::ensure!(
-        fs::metadata(&src_dir).await.is_ok(),
-        "Directory {src_dir:?} is not present"
-    );
-    if fs::metadata(&dest_dir).await.is_ok() {
-        fs::remove_file(&dest_dir).await?;
-    }
-    fs::create_dir_all(&dest_dir).await?;
-    let mut entries = fs::read_dir(&src_dir).await?;
-    while let Some(entry) = entries.try_next().await? {
-        let entry_path = entry.path();
-        let entry_name = entry.file_name();
-        let dest_path = dest_dir.join(&entry_name);
-        fs::copy(&entry_path, &dest_path).await?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
-    use language::language_settings;
-    use project::{FakeFs, Project};
+    use project::FakeFs;
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
@@ -1022,14 +891,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
-        let language = crate::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-
-        let text = r#"
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
             function a() {
-              // local variables are omitted
+              // local variables are included
               let a1 = 1;
               // all functions are included
               async function a2() {}
@@ -1040,24 +911,252 @@ mod tests {
             // exported variables are included
             export const d = e;
         "#
-        .unindent();
+            .unindent();
 
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
-        assert_eq!(
-            outline
-                .items
-                .iter()
-                .map(|item| (item.text.as_str(), item.depth))
-                .collect::<Vec<_>>(),
-            &[
-                ("function a()", 0),
-                ("async function a2()", 1),
-                ("let b", 0),
-                ("function getB()", 0),
-                ("const d", 0),
-            ]
-        );
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("function a()", 0),
+                    ("let a1", 1),
+                    ("async function a2()", 1),
+                    ("let b", 0),
+                    ("function getB()", 0),
+                    ("const d", 0),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_destructuring(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+            // Top-level destructuring
+            const { a1, a2 } = a;
+            const [b1, b2] = b;
+
+            // Defaults and rest
+            const [c1 = 1, , c2, ...rest1] = c;
+            const { d1, d2: e1, f1 = 2, g1: h1 = 3, ...rest2 } = d;
+
+            function processData() {
+              // Nested object destructuring
+              const { c1, c2 } = c;
+              // Nested array destructuring
+              const [d1, d2, d3] = d;
+              // Destructuring with renaming
+              const { f1: g1 } = f;
+              // With defaults
+              const [x = 10, y] = xy;
+            }
+
+            class DataHandler {
+              method() {
+                // Destructuring in class method
+                const { a1, a2 } = a;
+                const [b1, ...b2] = b;
+              }
+            }
+        "#
+            .unindent();
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const a1", 0),
+                    ("const a2", 0),
+                    ("const b1", 0),
+                    ("const b2", 0),
+                    ("const c1", 0),
+                    ("const c2", 0),
+                    ("const rest1", 0),
+                    ("const d1", 0),
+                    ("const e1", 0),
+                    ("const h1", 0),
+                    ("const rest2", 0),
+                    ("function processData()", 0),
+                    ("const c1", 1),
+                    ("const c2", 1),
+                    ("const d1", 1),
+                    ("const d2", 1),
+                    ("const d3", 1),
+                    ("const g1", 1),
+                    ("const x", 1),
+                    ("const y", 1),
+                    ("class DataHandler", 0),
+                    ("method()", 1),
+                    ("const a1", 2),
+                    ("const a2", 2),
+                    ("const b1", 2),
+                    ("const b2", 2),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_object_properties(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+            // Object with function properties
+            const o = { m() {}, async n() {}, g: function* () {}, h: () => {}, k: function () {} };
+
+            // Object with primitive properties
+            const p = { p1: 1, p2: "hello", p3: true };
+
+            // Nested objects
+            const q = {
+                r: {
+                    // won't be included due to one-level depth limit
+                    s: 1
+                },
+                t: 2
+            };
+
+            function getData() {
+                const local = { x: 1, y: 2 };
+                return local;
+            }
+        "#
+            .unindent();
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const o", 0),
+                    ("m()", 1),
+                    ("async n()", 1),
+                    ("g", 1),
+                    ("h", 1),
+                    ("k", 1),
+                    ("const p", 0),
+                    ("p1", 1),
+                    ("p2", 1),
+                    ("p3", 1),
+                    ("const q", 0),
+                    ("r", 1),
+                    ("s", 2),
+                    ("t", 1),
+                    ("function getData()", 0),
+                    ("const local", 1),
+                    ("x", 2),
+                    ("y", 2),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_computed_property_names(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+            // Symbols as object keys
+            const sym = Symbol("test");
+            const obj1 = {
+                [sym]: 1,
+                [Symbol("inline")]: 2,
+                normalKey: 3
+            };
+
+            // Enums as object keys
+            enum Color { Red, Blue, Green }
+
+            const obj2 = {
+                [Color.Red]: "red value",
+                [Color.Blue]: "blue value",
+                regularProp: "normal"
+            };
+
+            // Mixed computed properties
+            const key = "dynamic";
+            const obj3 = {
+                [key]: 1,
+                ["string" + "concat"]: 2,
+                [1 + 1]: 3,
+                static: 4
+            };
+
+            // Nested objects with computed properties
+            const obj4 = {
+                [sym]: {
+                    nested: 1
+                },
+                regular: {
+                    [key]: 2
+                }
+            };
+        "#
+            .unindent();
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+            assert_eq!(
+                outline
+                    .items
+                    .iter()
+                    .map(|item| (item.text.as_str(), item.depth))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("const sym", 0),
+                    ("const obj1", 0),
+                    ("[sym]", 1),
+                    ("[Symbol(\"inline\")]", 1),
+                    ("normalKey", 1),
+                    ("enum Color", 0),
+                    ("const obj2", 0),
+                    ("[Color.Red]", 1),
+                    ("[Color.Blue]", 1),
+                    ("regularProp", 1),
+                    ("const key", 0),
+                    ("const obj3", 0),
+                    ("[key]", 1),
+                    ("[\"string\" + \"concat\"]", 1),
+                    ("[1 + 1]", 1),
+                    ("static", 1),
+                    ("const obj4", 0),
+                    ("[sym]", 1),
+                    ("nested", 2),
+                    ("regular", 1),
+                    ("[key]", 2),
+                ]
+            );
+        }
     }
 
     #[gpui::test]
@@ -1120,8 +1219,6 @@ mod tests {
     async fn test_package_json_discovery(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
-            Project::init_settings(cx);
-            language_settings::init(cx);
         });
 
         let package_json_1 = json!({
@@ -1177,6 +1274,8 @@ mod tests {
                 mocha_package_path: Some(Path::new(path!("/root/package.json")).into()),
                 vitest_package_path: Some(Path::new(path!("/root/sub/package.json")).into()),
                 jasmine_package_path: None,
+                bun_package_path: None,
+                node_package_path: None,
                 scripts: [
                     (
                         Path::new(path!("/root/package.json")).into(),
@@ -1230,6 +1329,7 @@ mod tests {
             ]
         );
     }
+
     #[test]
     fn test_escaping_name() {
         let cases = [
@@ -1262,5 +1362,109 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(replace_test_name_parameters(input), expected);
         }
+    }
+
+    // The order of test runner tasks is based on inferred user preference:
+    // 1. Dedicated test runners (e.g., Jest, Vitest, Mocha, Jasmine) are prioritized.
+    // 2. Bun's built-in test runner (`bun test`) comes next.
+    // 3. Node.js's built-in test runner (`node --test`) is last.
+    // This hierarchy assumes that if a dedicated test framework is installed, it is the
+    // preferred testing mechanism. Between runtime-specific options, `bun test` is
+    // typically preferred over `node --test` when @types/bun is present.
+    #[gpui::test]
+    async fn test_task_ordering_with_multiple_test_runners(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        // Test case with all test runners present
+        let package_json_all_runners = json!({
+            "devDependencies": {
+                "@types/bun": "1.0.0",
+                "@types/node": "^20.0.0",
+                "jest": "29.0.0",
+                "mocha": "10.0.0",
+                "vitest": "1.0.0",
+                "jasmine": "5.0.0",
+            },
+            "scripts": {
+                "test": "jest"
+            }
+        })
+        .to_string();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "package.json": package_json_all_runners,
+                "file.js": "",
+            }),
+        )
+        .await;
+
+        let provider = TypeScriptContextProvider::new(fs.clone());
+
+        let package_json_data = cx
+            .update(|cx| {
+                provider.combined_package_json_data(
+                    fs.clone(),
+                    path!("/root").as_ref(),
+                    rel_path("file.js"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(package_json_data.jest_package_path.is_some());
+        assert!(package_json_data.mocha_package_path.is_some());
+        assert!(package_json_data.vitest_package_path.is_some());
+        assert!(package_json_data.jasmine_package_path.is_some());
+        assert!(package_json_data.bun_package_path.is_some());
+        assert!(package_json_data.node_package_path.is_some());
+
+        let mut task_templates = TaskTemplates::default();
+        package_json_data.fill_task_templates(&mut task_templates);
+
+        let test_tasks: Vec<_> = task_templates
+            .0
+            .iter()
+            .filter(|template| {
+                template.tags.contains(&"ts-test".to_owned())
+                    || template.tags.contains(&"js-test".to_owned())
+            })
+            .map(|template| &template.label)
+            .collect();
+
+        let node_test_index = test_tasks
+            .iter()
+            .position(|label| label.contains("node test"));
+        let jest_test_index = test_tasks.iter().position(|label| label.contains("jest"));
+        let bun_test_index = test_tasks
+            .iter()
+            .position(|label| label.contains("bun test"));
+
+        assert!(
+            node_test_index.is_some(),
+            "Node test tasks should be present"
+        );
+        assert!(
+            jest_test_index.is_some(),
+            "Jest test tasks should be present"
+        );
+        assert!(bun_test_index.is_some(), "Bun test tasks should be present");
+
+        assert!(
+            jest_test_index.unwrap() < bun_test_index.unwrap(),
+            "Jest should come before Bun"
+        );
+        assert!(
+            bun_test_index.unwrap() < node_test_index.unwrap(),
+            "Bun should come before Node"
+        );
     }
 }

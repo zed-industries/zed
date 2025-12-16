@@ -41,6 +41,7 @@ fn main() {
                 name: "Quit".into(),
                 action: Box::new(Quit),
                 os_action: None,
+                checked: false,
             }],
         }]);
 
@@ -377,7 +378,7 @@ impl Render for LivekitWindow {
                             .when_some(state.audio_output_stream.as_ref(), |el, state| {
                                 el.child(
                                     button()
-                                        .id(SharedString::from(identity.0.clone()))
+                                        .id(identity.0.clone())
                                         .child(if state.0.is_enabled() {
                                             "Deafen"
                                         } else {

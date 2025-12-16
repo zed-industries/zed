@@ -1,9 +1,10 @@
 pub mod copilot_chat;
-mod copilot_completion_provider;
+mod copilot_edit_prediction_delegate;
+pub mod copilot_responses;
 pub mod request;
 mod sign_in;
 
-use crate::sign_in::initiate_sign_in_within_workspace;
+use crate::sign_in::initiate_sign_out;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -27,12 +28,10 @@ use project::DisableAiSettings;
 use request::StatusNotification;
 use semver::Version;
 use serde_json::json;
-use settings::Settings;
-use settings::SettingsStore;
-use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
-use std::collections::hash_map::Entry;
+use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
+    collections::hash_map::Entry,
     env,
     ffi::OsString,
     mem,
@@ -41,12 +40,14 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
-use util::rel_path::RelPath;
-use util::{ResultExt, fs::remove_matching};
+use util::{ResultExt, fs::remove_matching, rel_path::RelPath};
 use workspace::Workspace;
 
-pub use crate::copilot_completion_provider::CopilotCompletionProvider;
-pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_and_sign_in};
+pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
+pub use crate::sign_in::{
+    ConfigurationMode, ConfigurationView, CopilotCodeVerification, initiate_sign_in,
+    reinstall_and_sign_in,
+};
 
 actions!(
     copilot,
@@ -97,21 +98,14 @@ pub fn init(
     .detach();
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|workspace, _: &SignIn, window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                let is_reinstall = false;
-                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
-            }
+        workspace.register_action(|_, _: &SignIn, window, cx| {
+            initiate_sign_in(window, cx);
         });
-        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
-            }
+        workspace.register_action(|_, _: &Reinstall, window, cx| {
+            reinstall_and_sign_in(window, cx);
         });
-        workspace.register_action(|workspace, _: &SignOut, _window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                sign_out_within_workspace(workspace, copilot, cx);
-            }
+        workspace.register_action(|_, _: &SignOut, window, cx| {
+            initiate_sign_out(window, cx);
         });
     })
     .detach();
@@ -270,7 +264,7 @@ impl RegisteredBuffer {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidChangeTextDocument>(
-                                    &lsp::DidChangeTextDocumentParams {
+                                    lsp::DidChangeTextDocumentParams {
                                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
                                             buffer.snapshot_version,
@@ -374,7 +368,7 @@ impl Copilot {
         }
     }
 
-    fn start_copilot(
+    pub fn start_copilot(
         &mut self,
         check_edit_prediction_provider: bool,
         awaiting_sign_in_after_start: bool,
@@ -488,7 +482,11 @@ impl Copilot {
             let node_path = node_runtime.binary_path().await?;
             ensure_node_version_for_copilot(&node_path).await?;
 
-            let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
+            let arguments: Vec<OsString> = vec![
+                "--experimental-sqlite".into(),
+                server_path.into(),
+                "--stdio".into(),
+            ];
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
@@ -558,6 +556,14 @@ impl Copilot {
         let server = start_language_server.await;
         this.update(cx, |this, cx| {
             cx.notify();
+
+            if env::var("ZED_FORCE_COPILOT_ERROR").is_ok() {
+                this.server = CopilotServer::Error(
+                    "Forced error for testing (ZED_FORCE_COPILOT_ERROR)".into(),
+                );
+                return;
+            }
+
             match server {
                 Ok((server, status)) => {
                     this.server = CopilotServer::Running(RunningCopilotServer {
@@ -579,7 +585,17 @@ impl Copilot {
         .ok();
     }
 
-    pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn is_authenticated(&self) -> bool {
+        return matches!(
+            self.server,
+            CopilotServer::Running(RunningCopilotServer {
+                sign_in_status: SignInStatus::Authorized,
+                ..
+            })
+        );
+    }
+
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized => Task::ready(Ok(())).shared(),
@@ -744,7 +760,7 @@ impl Copilot {
                 let snapshot = buffer.read(cx).snapshot();
                 server
                     .notify::<lsp::notification::DidOpenTextDocument>(
-                        &lsp::DidOpenTextDocumentParams {
+                        lsp::DidOpenTextDocumentParams {
                             text_document: lsp::TextDocumentItem {
                                 uri: uri.clone(),
                                 language_id: language_id.clone(),
@@ -792,16 +808,17 @@ impl Copilot {
                     server
                         .lsp
                         .notify::<lsp::notification::DidSaveTextDocument>(
-                            &lsp::DidSaveTextDocumentParams {
+                            lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier::new(
                                     registered_buffer.uri.clone(),
                                 ),
                                 text: None,
                             },
-                        )?;
+                        )
+                        .ok();
                 }
                 language::BufferEvent::FileHandleChanged
-                | language::BufferEvent::LanguageChanged => {
+                | language::BufferEvent::LanguageChanged(_) => {
                     let new_language_id = id_for_language(buffer.read(cx).language());
                     let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
                         return Ok(());
@@ -814,14 +831,15 @@ impl Copilot {
                         server
                             .lsp
                             .notify::<lsp::notification::DidCloseTextDocument>(
-                                &lsp::DidCloseTextDocumentParams {
+                                lsp::DidCloseTextDocumentParams {
                                     text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                 },
-                            )?;
+                            )
+                            .ok();
                         server
                             .lsp
                             .notify::<lsp::notification::DidOpenTextDocument>(
-                                &lsp::DidOpenTextDocumentParams {
+                                lsp::DidOpenTextDocumentParams {
                                     text_document: lsp::TextDocumentItem::new(
                                         registered_buffer.uri.clone(),
                                         registered_buffer.language_id.clone(),
@@ -829,7 +847,8 @@ impl Copilot {
                                         registered_buffer.snapshot.text(),
                                     ),
                                 },
-                            )?;
+                            )
+                            .ok();
                     }
                 }
                 _ => {}
@@ -846,7 +865,7 @@ impl Copilot {
             server
                 .lsp
                 .notify::<lsp::notification::DidCloseTextDocument>(
-                    &lsp::DidCloseTextDocumentParams {
+                    lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                     },
                 )
@@ -1151,9 +1170,12 @@ fn notify_did_change_config_to_server(
         }
     });
 
-    server.notify::<lsp::notification::DidChangeConfiguration>(&lsp::DidChangeConfigurationParams {
-        settings,
-    })
+    server
+        .notify::<lsp::notification::DidChangeConfiguration>(lsp::DidChangeConfigurationParams {
+            settings,
+        })
+        .ok();
+    Ok(())
 }
 
 async fn clear_copilot_dir() {
