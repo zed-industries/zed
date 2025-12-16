@@ -108,7 +108,13 @@ impl Message {
 
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
         match self {
-            Message::User(message) => vec![message.to_request()],
+            Message::User(message) => {
+                if message.content.is_empty() {
+                    vec![]
+                } else {
+                    vec![message.to_request()]
+                }
+            }
             Message::Agent(message) => message.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,

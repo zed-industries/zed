@@ -1318,7 +1318,7 @@ impl AcpThreadView {
             })?;
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn open_edited_buffer(

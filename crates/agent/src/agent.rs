@@ -18,7 +18,7 @@ pub use templates::*;
 pub use thread::*;
 pub use tools::*;
 
-use acp_thread::{AcpThread, AgentModelSelector};
+use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -808,6 +808,7 @@ impl NativeAgent {
 
     fn send_mcp_prompt(
         &self,
+        message_id: UserMessageId,
         session_id: agent_client_protocol::SessionId,
         prompt_name: String,
         server_id: ContextServerId,
@@ -832,51 +833,50 @@ impl NativeAgent {
 
             let mut last_is_user = true;
 
-            if original_content.len() > 1 {
-                thread.update(cx, |thread, cx| {
-                    let id = acp_thread::UserMessageId::new();
-                    thread.push_acp_user_block(
-                        id,
-                        original_content.into_iter().skip(1),
-                        path_style,
-                        cx,
-                    );
-                })?;
-            }
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    message_id,
+                    original_content.into_iter().skip(1),
+                    path_style,
+                    cx,
+                );
+            })?;
 
             acp_thread.update(cx, |acp_thread, cx| {
-                acp_thread.push_user_content_block(None, "\n\n".into(), cx);
+                // separate command from prompt messages so that they can be edited separately
+                acp_thread.push_assistant_content_block("".into(), false, cx);
             })?;
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
                 let block = mcp_message_content_to_acp_content_block(content);
 
-                acp_thread.update(cx, |acp_thread, cx| {
-                    match role {
-                        context_server::types::Role::User => {
-                            acp_thread.push_user_content_block(None, block.clone(), cx);
-                        }
-                        context_server::types::Role::Assistant => {
-                            acp_thread.push_assistant_content_block(block.clone(), false, cx);
-                        }
-                    }
-                    anyhow::Ok(())
-                })??;
+                match role {
+                    context_server::types::Role::User => {
+                        let id = acp_thread::UserMessageId::new();
 
-                thread.update(cx, |thread, cx| {
-                    match role {
-                        context_server::types::Role::User => {
-                            let id = acp_thread::UserMessageId::new();
+                        acp_thread.update(cx, |acp_thread, cx| {
+                            acp_thread.push_user_content_block(Some(id.clone()), block.clone(), cx);
+                            anyhow::Ok(())
+                        })??;
+
+                        thread.update(cx, |thread, cx| {
                             thread.push_acp_user_block(id, [block], path_style, cx);
-                        }
-                        context_server::types::Role::Assistant => {
-                            thread.push_acp_agent_block(block, cx);
-                        }
+                            anyhow::Ok(())
+                        })??;
                     }
+                    context_server::types::Role::Assistant => {
+                        acp_thread.update(cx, |acp_thread, cx| {
+                            acp_thread.push_assistant_content_block(block.clone(), false, cx);
+                            anyhow::Ok(())
+                        })??;
 
-                    anyhow::Ok(())
-                })??;
+                        thread.update(cx, |thread, cx| {
+                            thread.push_acp_agent_block(block, cx);
+                            anyhow::Ok(())
+                        })??;
+                    }
+                }
 
                 last_is_user = role == context_server::types::Role::User;
             }
@@ -1237,6 +1237,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
                 return self.0.update(cx, |agent, cx| {
                     agent.send_mcp_prompt(
+                        id,
                         session_id.clone(),
                         prompt_name,
                         server_id,
