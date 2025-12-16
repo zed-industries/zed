@@ -98,6 +98,10 @@ actions!(
         ToggleSortByPath,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
+        /// Expands the selected entry to show its children.
+        ExpandSelectedEntry,
+        /// Collapses the selected entry to hide its children.
+        CollapseSelectedEntry,
     ]
 );
 
@@ -894,6 +898,48 @@ impl GitPanel {
         self.entries
             .iter()
             .position(|entry| entry.status_entry().is_some())
+    }
+
+    fn expand_selected_entry(
+        &mut self,
+        _: &ExpandSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.get_selected_entry().cloned() else {
+            return;
+        };
+
+        if let GitListEntry::Directory(dir_entry) = entry {
+            if dir_entry.expanded {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                self.toggle_directory(&dir_entry.key, window, cx);
+            }
+        } else {
+            self.select_next(&SelectNext, window, cx);
+        }
+    }
+
+    fn collapse_selected_entry(
+        &mut self,
+        _: &CollapseSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.get_selected_entry().cloned() else {
+            return;
+        };
+
+        if let GitListEntry::Directory(dir_entry) = entry {
+            if dir_entry.expanded {
+                self.toggle_directory(&dir_entry.key, window, cx);
+            } else {
+                self.select_previous(&SelectPrevious, window, cx);
+            }
+        } else {
+            self.select_previous(&SelectPrevious, window, cx);
+        }
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
@@ -5264,6 +5310,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
             })
+            .on_action(cx.listener(Self::collapse_selected_entry))
+            .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
