@@ -56,6 +56,7 @@ pub struct PromptMetadata {
 pub enum PromptId {
     User { uuid: UserPromptId },
     EditWorkflow,
+    CommitMessage,
 }
 
 impl PromptId {
@@ -65,6 +66,13 @@ impl PromptId {
 
     pub fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
+    }
+
+    pub fn user_id(&self) -> Option<UserPromptId> {
+        match self {
+            PromptId::User { uuid } => Some(*uuid),
+            _ => None,
+        }
     }
 }
 
@@ -95,6 +103,7 @@ impl std::fmt::Display for PromptId {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
             PromptId::EditWorkflow => write!(f, "Edit workflow"),
+            PromptId::CommitMessage => write!(f, "Commit message"),
         }
     }
 }
@@ -180,6 +189,25 @@ impl PromptStore {
             // a slash command instead.
             metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
             bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+
+            // Insert default commit message prompt if not present
+            if metadata.get(&txn, &PromptId::CommitMessage)?.is_none() {
+                metadata.put(
+                    &mut txn,
+                    &PromptId::CommitMessage,
+                    &PromptMetadata {
+                        id: PromptId::CommitMessage,
+                        title: Some("Git Commit Message".into()),
+                        default: false,
+                        saved_at: Utc::now(),
+                    },
+                )?;
+            }
+            if bodies.get(&txn, &PromptId::CommitMessage)?.is_none() {
+                let commit_message_prompt =
+                    include_str!("../../git_ui/src/commit_message_prompt.txt");
+                bodies.put(&mut txn, &PromptId::CommitMessage, commit_message_prompt)?;
+            }
 
             txn.commit()?;
 

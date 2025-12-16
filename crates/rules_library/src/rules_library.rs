@@ -267,27 +267,40 @@ impl PickerDelegate for RulePickerDelegate {
 
         cx.spawn_in(window, async move |this, cx| {
             let (filtered_entries, selected_index) = cx
-                .background_spawn(async move {
-                    let matches = search.await;
+            .background_spawn(async move {
+                let matches = search.await;
 
-                    let (default_rules, non_default_rules): (Vec<_>, Vec<_>) =
-                        matches.iter().partition(|rule| rule.default);
+                let (built_in_rules, user_rules): (Vec<_>, Vec<_>) =
+                    matches.into_iter().partition(|rule| rule.id.is_built_in());
+                let (default_rules, other_rules): (Vec<_>, Vec<_>) =
+                    user_rules.into_iter().partition(|rule| rule.default);
 
-                    let mut filtered_entries = Vec::new();
+                let mut filtered_entries = Vec::new();
 
-                    if !default_rules.is_empty() {
-                        filtered_entries.push(RulePickerEntry::Header("Default Rules".into()));
+                if !built_in_rules.is_empty() {
+                    filtered_entries
+                        .push(RulePickerEntry::Header("Built-in Rules".into()));
 
-                        for rule in default_rules {
-                            filtered_entries.push(RulePickerEntry::Rule(rule.clone()));
-                        }
-
-                        filtered_entries.push(RulePickerEntry::Separator);
+                    for rule in built_in_rules {
+                        filtered_entries.push(RulePickerEntry::Rule(rule));
                     }
 
-                    for rule in non_default_rules {
-                        filtered_entries.push(RulePickerEntry::Rule(rule.clone()));
+                    filtered_entries.push(RulePickerEntry::Separator);
+                }
+
+                if !default_rules.is_empty() {
+                    filtered_entries.push(RulePickerEntry::Header("Default Rules".into()));
+
+                    for rule in default_rules {
+                        filtered_entries.push(RulePickerEntry::Rule(rule));
                     }
+
+                    filtered_entries.push(RulePickerEntry::Separator);
+                }
+
+                for rule in other_rules {
+                    filtered_entries.push(RulePickerEntry::Rule(rule));
+                }
 
                     let selected_index = prev_prompt_id
                         .and_then(|prev_prompt_id| {
@@ -341,21 +354,26 @@ impl PickerDelegate for RulePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
-            RulePickerEntry::Header(title) => Some(
-                ListSubHeader::new(title.clone())
-                    .end_slot(
-                        IconButton::new("info", IconName::Info)
-                            .style(ButtonStyle::Transparent)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text(
-                                "Default Rules are attached by default with every new thread.",
-                            ))
-                            .into_any_element(),
-                    )
-                    .inset(true)
-                    .into_any_element(),
-            ),
+            RulePickerEntry::Header(title) => {
+                let tooltip_text = if title.as_ref() == "Built-in Rules" {
+                    "Built-in rules provide special functionality and are read-only."
+                } else {
+                    "Default Rules are attached by default with every new thread."
+                };
+                Some(
+                    ListSubHeader::new(title.clone())
+                        .end_slot(
+                            IconButton::new("info", IconName::Info)
+                                .style(ButtonStyle::Transparent)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text(tooltip_text))
+                                .into_any_element(),
+                        )
+                        .inset(true)
+                        .into_any_element(),
+                )
+            }
             RulePickerEntry::Separator => Some(
                 h_flex()
                     .py_1()
