@@ -697,6 +697,12 @@ impl PathWithPosition {
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
             .captures(maybe_file_name_with_row_col)
+            .and_then(|captures| {
+                captures
+                    .get(0)
+                    .filter(|m| m.as_str() == maybe_file_name_with_row_col)
+                    .map(|_| captures)
+            })
             .map(|caps| caps.extract())
         {
             Some((_, [file_name, maybe_row, maybe_column])) => {
@@ -1853,6 +1859,18 @@ mod tests {
                 path: PathBuf::from("Types.hs"),
                 row: Some(617),
                 column: Some(9),
+            }
+        );
+    }
+
+    #[perf]
+    fn path_with_position_preserves_parenthesized_filenames() {
+        assert_eq!(
+            PathWithPosition::parse_str("name(1).txt"),
+            PathWithPosition {
+                path: PathBuf::from("name(1).txt"),
+                row: None,
+                column: None
             }
         );
     }
