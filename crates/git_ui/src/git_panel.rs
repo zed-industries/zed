@@ -43,7 +43,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, ZED_CLOUD_PROVIDER_ID,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -2422,8 +2423,19 @@ impl GitPanel {
         }
     }
 
-    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
+    async fn load_commit_message_prompt(
+        is_using_legacy_zed_pro: bool,
+        cx: &mut AsyncApp,
+    ) -> String {
         const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+        // Remove this once we stop supporting legacy Zed Pro
+        // In legacy Zed Pro, Git commit summary generation did not count as a
+        // prompt. If the user changes the prompt, our classification will fail,
+        // meaning that users will be charged for generating commit messages.
+        if is_using_legacy_zed_pro {
+            return DEFAULT_PROMPT.to_string();
+        }
 
         let load = async {
             let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
@@ -2466,6 +2478,13 @@ impl GitPanel {
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
+        // Remove this once we stop supporting legacy Zed Pro
+        let is_using_legacy_zed_pro = provider.id() == ZED_CLOUD_PROVIDER_ID
+            && self.workspace.upgrade().map_or(false, |workspace| {
+                workspace.read(cx).user_store().read(cx).plan()
+                    == Some(cloud_llm_client::Plan::V1(cloud_llm_client::PlanV1::ZedPro))
+            });
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -2501,7 +2520,7 @@ impl GitPanel {
 
                 let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
 
-                let prompt = Self::load_commit_message_prompt(&mut cx).await;
+                let prompt = Self::load_commit_message_prompt(is_using_legacy_zed_pro, &mut cx).await;
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
