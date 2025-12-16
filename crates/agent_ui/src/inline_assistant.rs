@@ -2271,6 +2271,36 @@ pub mod evals {
         );
     }
 
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_empty_buffer() {
+        run_eval(
+            20,
+            1.0,
+            "Write a Python hello, world program".to_string(),
+            "ˇ".to_string(),
+            |output| match output {
+                InlineAssistantOutput::Success {
+                    full_buffer_text, ..
+                } => {
+                    if full_buffer_text.is_empty() {
+                        EvalOutput::failed("expected some output".to_string())
+                    } else {
+                        EvalOutput::passed(format!("Produced {full_buffer_text}"))
+                    }
+                }
+                o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+                o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+            },
+        );
+    }
+
     fn run_eval(
         iterations: usize,
         expected_pass_ratio: f32,
