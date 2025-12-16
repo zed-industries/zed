@@ -2713,12 +2713,13 @@ impl Pane {
             .toggle_state(is_active)
             .on_click(
                 cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if event.is_middle_click() {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                            .detach_and_log_err(cx);
-                    } else {
-                        pane.activate_item(ix, true, true, window, cx);
-                    }
+                    pane.activate_item(ix, true, true, window, cx);
+                }),
+            )
+            .on_middle_click(
+                cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                    pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                        .detach_and_log_err(cx);
                 }),
             )
             .on_mouse_down(

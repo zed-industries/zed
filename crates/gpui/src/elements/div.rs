@@ -522,6 +522,38 @@ impl Interactivity {
         }));
     }
 
+    /// Bind the given callback to right click events of this element.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_right_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_right_click(
+        &mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) where
+        Self: Sized,
+    {
+        self.right_click_listeners
+            .push(Rc::new(move |event, window, cx| {
+                listener(event, window, cx)
+            }));
+    }
+
+    /// Bind the given callback to middle click events of this element.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_middle_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_middle_click(
+        &mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) where
+        Self: Sized,
+    {
+        self.middle_click_listeners
+            .push(Rc::new(move |event, window, cx| {
+                listener(event, window, cx)
+            }));
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`Self::on_drag_move`] API.
@@ -1190,6 +1222,36 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Bind the given callback to click events of this element.
+    /// The fluent API equivalent to [`Interactivity::on_right_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_right_click(
+        mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().on_right_click(listener);
+        self
+    }
+
+    /// Bind the given callback to click events of this element.
+    /// The fluent API equivalent to [`Interactivity::on_middle_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_middle_click(
+        mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().on_middle_click(listener);
+        self
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`InteractiveElement::on_drag_move`] API.
@@ -1595,6 +1657,8 @@ pub struct Interactivity {
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
+    pub(crate) right_click_listeners: Vec<ClickListener>,
+    pub(crate) middle_click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
@@ -1788,6 +1852,8 @@ impl Interactivity {
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
             || !self.click_listeners.is_empty()
+            || !self.right_click_listeners.is_empty()
+            || !self.middle_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
@@ -2211,6 +2277,8 @@ impl Interactivity {
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
         let click_listeners = mem::take(&mut self.click_listeners);
+        let right_click_listeners = mem::take(&mut self.right_click_listeners);
+        let middle_click_listeners = mem::take(&mut self.middle_click_listeners);
         let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
 
         if !drop_listeners.is_empty() {
@@ -2262,10 +2330,7 @@ impl Interactivity {
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
                     move |event: &MouseDownEvent, phase, window, _cx| {
-                        if phase == DispatchPhase::Bubble
-                            && event.button == MouseButton::Left
-                            && hitbox.is_hovered(window)
-                        {
+                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             window.refresh();
                         }
@@ -2285,6 +2350,7 @@ impl Interactivity {
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                             && let Some((drag_value, drag_listener)) = drag_listener.take()
+                            && mouse_down.button == MouseButton::Left
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - hitbox.origin;
@@ -2361,12 +2427,30 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
+                                let btn = mouse_down.button;
+
                                 let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
                                 });
-                                for listener in &click_listeners {
-                                    listener(&mouse_click, window, cx);
+
+                                match btn {
+                                    MouseButton::Left => {
+                                        for listener in &click_listeners {
+                                            listener(&mouse_click, window, cx);
+                                        }
+                                    }
+                                    MouseButton::Right => {
+                                        for listener in &right_click_listeners {
+                                            listener(&mouse_click, window, cx);
+                                        }
+                                    }
+                                    MouseButton::Middle => {
+                                        for listener in &middle_click_listeners {
+                                            listener(&mouse_click, window, cx);
+                                        }
+                                    }
+                                    _ => { /* No listeners for navigate or any others right now */ }
                                 }
                             }
                         }
