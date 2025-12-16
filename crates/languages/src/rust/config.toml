@@ -1,6 +1,7 @@
 name = "Rust"
 grammar = "rust"
 path_suffixes = ["rs"]
+modeline_aliases = ["rs", "rustic"]
 line_comments = ["// ", "/// ", "//! "]
 autoclose_before = ";:.,=}])>"
 brackets = [
