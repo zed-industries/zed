@@ -562,6 +562,7 @@ impl ScrollManager {
     }
 
     pub fn cancel_animation(&mut self) {
+        // TODO: should we do something else?
         self.scroll_animation = None;
     }
 
@@ -700,6 +701,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> WasScrolled {
+        self.scroll_manager.cancel_animation();
+
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.set_scroll_position_taking_display_map(
             scroll_position,
@@ -755,6 +758,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.scroll_manager.cancel_animation();
+
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let top_row = scroll_anchor
