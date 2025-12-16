@@ -5,6 +5,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod templates;
+#[cfg(test)]
 mod tests;
 mod thread;
 mod tools;
@@ -364,10 +365,9 @@ impl NativeAgent {
             acp_thread.update(cx, |thread, cx| {
                 thread
                     .handle_session_update(
-                        acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
-                            available_commands,
-                            meta: None,
-                        }),
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate::new(available_commands),
+                        ),
                         cx,
                     )
                     .log_err();
@@ -658,10 +658,7 @@ impl NativeAgent {
                     thread
                         .handle_session_update(
                             acp::SessionUpdate::AvailableCommandsUpdate(
-                                acp::AvailableCommandsUpdate {
-                                    available_commands: available_commands.clone(),
-                                    meta: None,
-                                },
+                                acp::AvailableCommandsUpdate::new(available_commands.clone()),
                             ),
                             cx,
                         )
@@ -675,29 +672,30 @@ impl NativeAgent {
         self.context_server_registry
             .read(cx)
             .prompts()
-            .map(|context_server_prompt| {
+            .flat_map(|context_server_prompt| {
                 let prompt = &context_server_prompt.prompt;
-                let has_argument = prompt
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|args| !args.is_empty());
 
-                acp::AvailableCommand {
-                    name: prompt.name.clone(),
-                    description: prompt.description.clone().unwrap_or_default(),
-                    input: if has_argument {
-                        let arg = prompt.arguments.as_ref().unwrap().first().unwrap();
-                        Some(acp::AvailableCommandInput::Unstructured {
-                            hint: format!("<{}>", arg.name),
-                        })
-                    } else {
-                        None
-                    },
-                    meta: Some(serde_json::json!({
-                        "mcp_prompt": true,
-                        "server_id": context_server_prompt.server_id.0,
-                    })),
+                let mut command = acp::AvailableCommand::new(
+                    prompt.name.clone(),
+                    prompt.description.clone().unwrap_or_default(),
+                );
+
+                match prompt.arguments.as_ref().map(|args| args.as_slice()) {
+                    Some([arg]) => {
+                        let hint = format!("<{}>", arg.name);
+
+                        command = command.input(acp::AvailableCommandInput::Unstructured(
+                            acp::UnstructuredCommandInput::new(hint),
+                        ));
+                    }
+                    Some([]) | None => {}
+                    Some(_) => {
+                        // skip >1 argument commands since we don't support them yet
+                        return None;
+                    }
                 }
+
+                Some(command)
             })
             .collect()
     }
@@ -825,6 +823,8 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
+            let mut last_is_user = false;
+
             if original_content.len() > 1 {
                 thread.update(cx, |thread, cx| {
                     let id = acp_thread::UserMessageId::new();
@@ -835,6 +835,7 @@ impl NativeAgent {
                         cx,
                     );
                 })?;
+                last_is_user = true;
             }
 
             for message in prompt.messages {
@@ -866,10 +867,12 @@ impl NativeAgent {
 
                     anyhow::Ok(())
                 })??;
+
+                last_is_user = role == context_server::types::Role::User;
             }
 
             let response_stream = thread.update(cx, |thread, cx| {
-                if matches!(thread.last_message(), Some(Message::User(_))) {
+                if last_is_user {
                     thread.send_existing(cx)
                 } else {
                     // Resume if MCP prompt did not end with a user message
@@ -1839,43 +1842,27 @@ fn mcp_message_content_to_acp_content_block(
         context_server::types::MessageContent::Text {
             text,
             annotations: _,
-        } => acp::ContentBlock::Text(acp::TextContent {
-            text,
-            annotations: None,
-            meta: None,
-        }),
+        } => text.into(),
         context_server::types::MessageContent::Image {
             data,
             mime_type,
             annotations: _,
-        } => acp::ContentBlock::Image(acp::ImageContent {
+        } => acp::ContentBlock::Image(acp::ImageContent::new(data, mime_type)),
+        context_server::types::MessageContent::Audio {
             data,
             mime_type,
-            annotations: None,
-            meta: None,
-            uri: None,
-        }),
-        context_server::types::MessageContent::Audio {
-            data: _,
-            mime_type: _,
             annotations: _,
-        } => acp::ContentBlock::Text(acp::TextContent {
-            text: "[audio]".to_string(),
-            annotations: None,
-            meta: None,
-        }),
+        } => acp::ContentBlock::Audio(acp::AudioContent::new(data, mime_type)),
         context_server::types::MessageContent::Resource {
             resource,
             annotations: _,
-        } => acp::ContentBlock::ResourceLink(acp::ResourceLink {
-            uri: resource.uri.to_string(),
-            name: resource.uri.to_string(),
-            annotations: None,
-            description: None,
-            mime_type: resource.mime_type,
-            size: None,
-            title: None,
-            meta: None,
-        }),
+        } => {
+            let mut link =
+                acp::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string());
+            if let Some(mime_type) = resource.mime_type {
+                link = link.mime_type(mime_type);
+            }
+            acp::ContentBlock::ResourceLink(link)
+        }
     }
 }

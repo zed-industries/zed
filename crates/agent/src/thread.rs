@@ -1189,7 +1189,9 @@ impl Thread {
             acp::ContentBlock::Resource(resource) => match resource.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
                 acp::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
+                _ => "[resource]".to_string(),
             },
+            _ => "[unknown]".to_string(),
         };
 
         self.messages.push(Message::Agent(AgentMessage {
