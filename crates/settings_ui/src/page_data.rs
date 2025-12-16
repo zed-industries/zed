@@ -1,12 +1,12 @@
-use gpui::App;
+use gpui::{Action as _, App};
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use strum::IntoDiscriminant as _;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
-    SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
+    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
+    SettingsPage, SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -1054,6 +1054,25 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         SettingsPage {
             title: "Keymap",
             items: vec![
+                SettingsPageItem::SectionHeader("Keybindings"),
+                SettingsPageItem::ActionLink(ActionLink {
+                    title: "Edit Keybindings".into(),
+                    description: Some("Customize keybindings in the keymap editor.".into()),
+                    button_text: "Open Keymap".into(),
+                    on_click: Arc::new(|settings_window, window, cx| {
+                        let Some(original_window) = settings_window.original_window else {
+                            return;
+                        };
+                        original_window
+                            .update(cx, |_workspace, original_window, cx| {
+                                original_window
+                                    .dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                original_window.activate_window();
+                            })
+                            .ok();
+                        window.remove_window();
+                    }),
+                }),
                 SettingsPageItem::SectionHeader("Base Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Base Keymap",

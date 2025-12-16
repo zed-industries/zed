@@ -3142,7 +3142,15 @@ List of strings containing any combination of:
 
 ```json [settings]
 {
-  "restore_on_startup": "none"
+  "restore_on_startup": "empty_tab"
+}
+```
+
+4. Always start with the welcome launchpad:
+
+```json [settings]
+{
+  "restore_on_startup": "launchpad"
 }
 ```
 

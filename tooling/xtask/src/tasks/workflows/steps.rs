@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::{runners::Platform, vars};
+use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
 pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
@@ -15,6 +15,16 @@ pub fn checkout_repo() -> Step<Use> {
     // prevent checkout action from running `git clean -ffdx` which
     // would delete the target directory
     .add_with(("clean", false))
+}
+
+pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
+    named::uses(
+        "actions",
+        "checkout",
+        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+    )
+    .add_with(("clean", false))
+    .add_with(("token", token.to_string()))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
