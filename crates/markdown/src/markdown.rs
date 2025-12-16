@@ -70,6 +70,7 @@ pub struct MarkdownStyle {
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
+    pub table_columns_min_size: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -91,6 +92,7 @@ impl Default for MarkdownStyle {
             heading_level_styles: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
+            table_columns_min_size: false,
         }
     }
 }
@@ -1071,7 +1073,12 @@ impl Element for MarkdownElement {
                                     .id(("table", range.start))
                                     .grid()
                                     .grid_cols(column_count as u16)
-                                    .min_w_0()
+                                    .when(self.style.table_columns_min_size, |this| {
+                                        this.grid_cols_min_content(column_count as u16)
+                                    })
+                                    .when(!self.style.table_columns_min_size, |this| {
+                                        this.grid_cols(column_count as u16)
+                                    })
                                     .size_full()
                                     .mb_2()
                                     .border_1()
