@@ -619,9 +619,7 @@ fn append_message_to_response_items(
             MessageContent::Thinking { text, .. } => {
                 push_response_text_part(&message.role, text, &mut content_parts);
             }
-            MessageContent::RedactedThinking(_) => {
-                push_response_text_part(&message.role, "<redacted>", &mut content_parts);
-            }
+            MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&message.role, image, &mut content_parts);
             }
