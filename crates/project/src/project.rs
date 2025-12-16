@@ -5337,6 +5337,8 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
+            let has_bom = file.has_bom;
+
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
@@ -5348,6 +5350,7 @@ impl Project {
                         new_text.into(),
                         line_ending,
                         encoding_rs::UTF_8,
+                        has_bom,
                         cx,
                     )
                 })?

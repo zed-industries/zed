@@ -19,7 +19,8 @@ use std::{
     sync::Arc,
 };
 use util::{
-    ResultExt, path,
+    ResultExt,
+    path,
     paths::PathStyle,
     rel_path::{RelPath, rel_path},
     test::TempTree,
@@ -726,6 +727,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "hello".into(),
                 Default::default(),
                 encoding_rs::UTF_8,
+                false,
                 cx,
             )
         })
@@ -738,6 +740,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "world".into(),
                 Default::default(),
                 encoding_rs::UTF_8,
+                false,
                 cx,
             )
         })
@@ -2044,6 +2047,7 @@ fn randomly_mutate_worktree(
                     "".into(),
                     Default::default(),
                     encoding_rs::UTF_8,
+                    false,
                     cx,
                 );
                 cx.background_spawn(async move {
@@ -2518,6 +2522,30 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
             ],
             "今天天气不错",
         ),
+        (
+            "utf16le_bom.txt",
+            &[
+                0xFF, 0xFE, // BOM
+                0x53, 0x30, // こ
+                0x93, 0x30, // ん
+                0x6B, 0x30, // に
+                0x61, 0x30, // ち
+                0x6F, 0x30, // は
+            ],
+            "こんにちは",
+        ),
+        (
+            "utf8_bom.txt",
+            &[
+                0xEF, 0xBB, 0xBF, // UTF-8 BOM
+                0xE3, 0x81, 0x93, // こ
+                0xE3, 0x82, 0x93, // ん
+                0xE3, 0x81, 0xAB, // に
+                0xE3, 0x81, 0xA1, // ち
+                0xE3, 0x81, 0xAF, // は
+            ],
+            "こんにちは",
+        )
     ];
 
     let root_path = if cfg!(windows) {
@@ -2603,6 +2631,7 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
             text,
             text::LineEnding::Unix,
             encoding_rs::SHIFT_JIS,
+            false,
             cx,
         )
     });
