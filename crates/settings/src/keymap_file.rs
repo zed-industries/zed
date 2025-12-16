@@ -303,33 +303,20 @@ impl KeymapFile {
         if errors.is_empty() {
             KeymapFileLoadResult::Success { key_bindings }
         } else {
-            let mut error_message = "Errors in user keymap file.\n".to_owned();
+            let mut error_message = "Errors in user keymap file.".to_owned();
+
             for (context, section_errors) in errors {
                 if context.is_empty() {
-                    let _ = write!(error_message, "\n\nIn section without context predicate:");
+                    let _ = write!(error_message, "\nIn section without context predicate:");
                 } else {
                     let _ = write!(
                         error_message,
-                        "\n\nIn section with {}:",
+                        "\nIn section with {}:",
                         MarkdownInlineCode(&format!("context = \"{}\"", context))
                     );
                 }
                 let _ = write!(error_message, "{section_errors}");
             }
-            // Format error message to match size of other error dialogs
-            let error_message = error_message
-                .lines()
-                .map(|line| {
-                    if line.is_empty() {
-                        String::new()
-                    } else if line.trim_start().starts_with('-') {
-                        line.replacen("- ", "- ##### ", 1) // Keep bullet formatting
-                    } else {
-                        format!("##### {}", line)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
 
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,

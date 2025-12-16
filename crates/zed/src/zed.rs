@@ -1749,12 +1749,13 @@ fn show_markdown_app_notification<F>(
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
                         image_cache(retain_all("notification-cache"))
-                            .text_xs()
-                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                &parsed_markdown.clone(),
-                                Some(workspace_handle.clone()),
-                                window,
-                                cx,
+                            .child(div().text_ui(cx).child(
+                                markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    window,
+                                    cx,
+                                ),
                             ))
                             .into_any()
                     })
