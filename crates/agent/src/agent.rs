@@ -707,7 +707,7 @@ impl NativeAgent {
                     prompt.description.clone().unwrap_or_default(),
                 );
 
-                match prompt.arguments.as_ref().map(|args| args.as_slice()) {
+                match prompt.arguments.as_deref() {
                     Some([arg]) => {
                         let hint = format!("<{}>", arg.name);
 
@@ -1255,7 +1255,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            let session_id = session_id.clone();
             let registry = self.0.read(cx).context_server_registry.read(cx);
 
             let explicit_server_id = parsed_command
@@ -1273,10 +1272,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         .and_then(|args| args.first())
                         .map(|arg| arg.name.clone())
                 {
-                    HashMap::from_iter([(
-                        arg_name.to_string(),
-                        parsed_command.arg_value.to_string(),
-                    )])
+                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
                 } else {
                     Default::default()
                 };
