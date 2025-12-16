@@ -128,7 +128,7 @@ pub fn track_worktree_trust(
                 }
             });
         }
-        None => debug_panic!("No TrustedWorktrees initialized"),
+        None => log::debug!("No TrustedWorktrees initialized, not tracking worktree trust"),
     }
 }
 
