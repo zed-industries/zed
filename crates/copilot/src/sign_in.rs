@@ -338,7 +338,7 @@ impl CopilotCodeVerification {
     fn render_unauthorized_modal(&self, cx: &mut Context<Self>) -> impl Element {
         let sign_up_url = self
             .sign_up_url
-            .as_ref()
+            .as_deref()
             .unwrap_or(COPILOT_SIGN_UP_URL)
             .to_owned();
         let description = "Enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.";
