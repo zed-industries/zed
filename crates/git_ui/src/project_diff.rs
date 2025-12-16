@@ -74,6 +74,13 @@ pub struct ProjectDiff {
     _subscription: Subscription,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefreshReason {
+    DiffChanged,
+    StatusesChanged,
+    EditorSaved,
+}
+
 const CONFLICT_SORT_PREFIX: u64 = 1;
 const TRACKED_SORT_PREFIX: u64 = 2;
 const NEW_SORT_PREFIX: u64 = 3;
@@ -149,6 +156,10 @@ impl ProjectDiff {
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
+            existing.update(cx, |project_diff, cx| {
+                project_diff.move_to_beginning(window, cx);
+            });
+
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
@@ -278,7 +289,7 @@ impl ProjectDiff {
                 BranchDiffEvent::FileListChanged => {
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
+                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
                     })
                 }
             },
@@ -297,7 +308,7 @@ impl ProjectDiff {
                 this._task = {
                     window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
+                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
                     })
                 }
             }
@@ -308,7 +319,7 @@ impl ProjectDiff {
 
         let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::refresh(this, cx).await
+            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
         });
 
         Self {
@@ -356,6 +367,14 @@ impl ProjectDiff {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+
+    fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |editor, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            });
+        });
     }
 
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
@@ -448,19 +467,27 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let EditorEvent::SelectionsChanged { local: true } = event {
-            let Some(project_path) = self.active_path(cx) else {
-                return;
-            };
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                        git_panel.update(cx, |git_panel, cx| {
-                            git_panel.select_entry_by_path(project_path, window, cx)
-                        })
-                    }
-                })
-                .ok();
+        match event {
+            EditorEvent::SelectionsChanged { local: true } => {
+                let Some(project_path) = self.active_path(cx) else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                            git_panel.update(cx, |git_panel, cx| {
+                                git_panel.select_entry_by_path(project_path, window, cx)
+                            })
+                        }
+                    })
+                    .ok();
+            }
+            EditorEvent::Saved => {
+                self._task = cx.spawn_in(window, async move |this, cx| {
+                    Self::refresh(this, RefreshReason::EditorSaved, cx).await
+                });
+            }
+            _ => {}
         }
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
@@ -482,7 +509,7 @@ impl ProjectDiff {
         let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
             this._task = window.spawn(cx, {
                 let this = cx.weak_entity();
-                async |cx| Self::refresh(this, cx).await
+                async |cx| Self::refresh(this, RefreshReason::DiffChanged, cx).await
             })
         });
         self.buffer_diff_subscriptions
@@ -581,14 +608,23 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn refresh(
+        this: WeakEntity<Self>,
+        reason: RefreshReason,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+            let mut previous_paths = this
+                .multibuffer
+                .read(cx)
+                .paths()
+                .cloned()
+                .collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -605,8 +641,20 @@ impl ProjectDiff {
 
             this.multibuffer.update(cx, |multibuffer, cx| {
                 for path in previous_paths {
+                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
+                        let skip = match reason {
+                            RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
+                                buffer.read(cx).is_dirty()
+                            }
+                            RefreshReason::StatusesChanged => false,
+                        };
+                        if skip {
+                            continue;
+                        }
+                    }
+
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path, cx);
+                    multibuffer.remove_excerpts_for_path(path.clone(), cx);
                 }
             });
             buffers_to_load
@@ -619,7 +667,27 @@ impl ProjectDiff {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                        let multibuffer = this.multibuffer.read(cx);
+                        let skip = multibuffer.buffer(buffer.read(cx).remote_id()).is_some()
+                            && multibuffer
+                                .diff_for(buffer.read(cx).remote_id())
+                                .is_some_and(|prev_diff| prev_diff.entity_id() == diff.entity_id())
+                            && match reason {
+                                RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
+                                    buffer.read(cx).is_dirty()
+                                }
+                                RefreshReason::StatusesChanged => false,
+                            };
+                        if !skip {
+                            this.register_buffer(
+                                path_key,
+                                entry.file_status,
+                                buffer,
+                                diff,
+                                window,
+                                cx,
+                            )
+                        }
                     })
                     .ok();
                 })?;
@@ -637,7 +705,7 @@ impl ProjectDiff {
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
-            .excerpt_paths()
+            .paths()
             .map(|key| key.path.clone())
             .collect()
     }
@@ -1650,9 +1718,13 @@ mod tests {
             .unindent(),
         );
 
-        editor.update_in(cx, |editor, window, cx| {
-            editor.git_restore(&Default::default(), window, cx);
-        });
+        editor
+            .update_in(cx, |editor, window, cx| {
+                editor.git_restore(&Default::default(), window, cx);
+                editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .unwrap();
         cx.run_until_parked();
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
@@ -1841,8 +1913,8 @@ mod tests {
             cx,
             &"
                 - original
-                + ˇdifferent
-            "
+                + different
+                  ˇ"
             .unindent(),
         );
     }

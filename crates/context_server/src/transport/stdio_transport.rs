@@ -32,13 +32,11 @@ impl StdioTransport {
         cx: &AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
-        let builder = ShellBuilder::new(&shell, cfg!(windows));
-        let (command, args) =
-            builder.build(Some(binary.executable.display().to_string()), &binary.args);
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let mut command =
+            builder.build_command(Some(binary.executable.display().to_string()), &binary.args);
 
-        let mut command = util::command::new_smol_command(command);
         command
-            .args(args)
             .envs(binary.env.unwrap_or_default())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

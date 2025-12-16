@@ -316,9 +316,9 @@ impl AgentTool for EditFileTool {
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
                     anyhow::bail!(
-                        "This file cannot be written to because it has unsaved changes. \
-                         Please end the current conversation immediately by telling the user you want to write to this file (mention its path explicitly) but you can't write to it because it has unsaved changes. \
-                         Ask the user to save that buffer's changes and to inform you when it's ok to proceed."
+                        "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
                     );
                 }
 
@@ -2202,8 +2202,23 @@ mod tests {
         assert!(result.is_err(), "Edit should fail when buffer is dirty");
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("cannot be written to because it has unsaved changes"),
+            error_msg.contains("This file has unsaved changes."),
             "Error should mention unsaved changes, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("keep or discard"),
+            "Error should ask whether to keep or discard changes, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("save_file"),
+            "Error should reference save_file tool, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("restore_file_from_disk"),
+            "Error should reference restore_file_from_disk tool, got: {}",
             error_msg
         );
     }
