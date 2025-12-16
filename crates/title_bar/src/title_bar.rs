@@ -30,18 +30,20 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
+use project::{
+    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
+};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
+    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -163,6 +165,7 @@ impl Render for TitleBar {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
+                                        .children(self.render_restricted_mode(cx))
                                         .children(self.render_project_host(cx))
                                         .child(self.render_project_name(cx))
                                 })
@@ -291,7 +294,12 @@ impl TitleBar {
                 _ => {}
             }),
         );
-        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
+                cx.notify();
+            }));
+        }
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
@@ -317,7 +325,7 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            screen_share_popover_handle: Default::default(),
+            screen_share_popover_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -422,6 +430,48 @@ impl TitleBar {
                         .boxed_clone(),
                         cx,
                     );
+                })
+                .into_any_element(),
+        )
+    }
+
+    pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| {
+                trusted_worktrees
+                    .read(cx)
+                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
+            })
+            .unwrap_or(false);
+        if !has_restricted_worktrees {
+            return None;
+        }
+
+        Some(
+            Button::new("restricted_mode_trigger", "Restricted Mode")
+                .style(ButtonStyle::Tinted(TintColor::Warning))
+                .label_size(LabelSize::Small)
+                .color(Color::Warning)
+                .icon(IconName::Warning)
+                .icon_color(Color::Warning)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::Start)
+                .tooltip(|_, cx| {
+                    Tooltip::with_meta(
+                        "You're in Restricted Mode",
+                        Some(&ToggleWorktreeSecurity),
+                        "Mark this project as trusted and unlock all features",
+                        cx,
+                    )
+                })
+                .on_click({
+                    cx.listener(move |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_worktree_trust_security_modal(true, window, cx)
+                            })
+                            .log_err();
+                    })
                 })
                 .into_any_element(),
         )

@@ -45,6 +45,7 @@
       "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu",
+      "ctrl-alt-shift-s": "workspace::ToggleWorktreeSecurity",
     },
   },
   {
