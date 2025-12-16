@@ -1086,16 +1086,11 @@ impl Thread {
         })
     }
 
-    /// Get the cumulative input tokens for all messages before the given message.
-    ///
-    /// This returns the `input_tokens` from the API response for the message
-    /// immediately before `target_id`. Since the API's `input_tokens` represents
-    /// the total input for that request (including all previous messages),
-    /// this gives us an accurate baseline for incremental token counting.
+    /// Get the total input token count as of the message before the given message.
     ///
     /// Returns `None` if:
-    /// - `target_id` is the first message (no previous tokens)
-    /// - The previous message hasn't been sent yet (no usage data)
+    /// - `target_id` is the first message (no previous message)
+    /// - The previous message hasn't received a response yet (no usage data)
     /// - `target_id` is not found in the messages
     pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
         let mut previous_user_message_id: Option<&UserMessageId> = None;
@@ -1103,7 +1098,6 @@ impl Thread {
         for message in &self.messages {
             if let Message::User(user_msg) = message {
                 if &user_msg.id == target_id {
-                    // Found the target - return the input_tokens from the previous message
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
                     return Some(usage.input_tokens);

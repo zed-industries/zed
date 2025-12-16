@@ -1,6 +1,6 @@
 use anthropic::{
-    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest,
-    Event, ResponseContent, ToolResultContent, ToolResultPart, Usage,
+    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
+    ResponseContent, ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
@@ -374,9 +374,7 @@ pub fn into_anthropic_count_tokens_request(
 
 /// Estimate tokens using tiktoken. Used as a fallback when the API is unavailable,
 /// or by providers (like Zed Cloud) that don't have direct Anthropic API access.
-pub fn count_anthropic_tokens_with_tiktoken(
-    request: LanguageModelRequest,
-) -> Result<u64> {
+pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Result<u64> {
     let messages = request.messages;
     let mut tokens_from_images = 0;
     let mut string_messages = Vec::with_capacity(messages.len());
@@ -560,8 +558,8 @@ impl LanguageModel for AnthropicModel {
                 .await
             {
                 Ok(response) => Ok(response.input_tokens),
-                Err(_) => {
-                    // Fall back to tiktoken estimation on API failure
+                Err(err) => {
+                    log::error!("Anthropic count_tokens API failed, falling back to tiktoken: {err:?}");
                     count_anthropic_tokens_with_tiktoken(request)
                 }
             }
