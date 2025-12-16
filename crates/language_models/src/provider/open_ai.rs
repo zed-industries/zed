@@ -397,7 +397,7 @@ impl LanguageModel for OpenAiLanguageModel {
             );
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = ResponseEventMapper::new();
+                let mapper = OpenAiResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()
@@ -866,7 +866,7 @@ struct RawToolCall {
     arguments: String,
 }
 
-pub struct ResponseEventMapper {
+pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     pending_stop_reason: Option<StopReason>,
 }
@@ -878,7 +878,7 @@ struct PendingResponseFunctionCall {
     arguments: String,
 }
 
-impl ResponseEventMapper {
+impl OpenAiResponseEventMapper {
     pub fn new() -> Self {
         Self {
             function_calls_by_item: HashMap::default(),
@@ -1375,7 +1375,7 @@ mod tests {
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            ResponseEventMapper::new()
+            OpenAiResponseEventMapper::new()
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await

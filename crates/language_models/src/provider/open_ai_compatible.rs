@@ -22,7 +22,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::provider::open_ai::{
-    OpenAiEventMapper, ResponseEventMapper, into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
 };
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
@@ -407,7 +407,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             );
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = ResponseEventMapper::new();
+                let mapper = OpenAiResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()
