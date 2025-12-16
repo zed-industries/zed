@@ -396,7 +396,6 @@ impl ManageProfilesModal {
         }
 
         let fs = self.fs.clone();
-        let profile_id_for_settings = profile_id.clone();
 
         update_settings_file(fs, cx, move |settings, _cx| {
             let Some(agent_settings) = settings.agent.as_mut() else {
@@ -407,14 +406,12 @@ impl ManageProfilesModal {
                 return;
             };
 
-            profiles.shift_remove(profile_id_for_settings.0.as_ref());
+            profiles.shift_remove(profile_id.0.as_ref());
 
             if agent_settings
                 .default_profile
                 .as_deref()
-                .is_some_and(|default_profile| {
-                    default_profile == profile_id_for_settings.0.as_ref()
-                })
+                .is_some_and(|default_profile| default_profile == profile_id.0.as_ref())
             {
                 agent_settings.default_profile = Some(AgentProfileId::default().0);
             }
