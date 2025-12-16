@@ -2414,7 +2414,10 @@ impl CodeLabel {
             "invalid filter range"
         );
         runs.iter().for_each(|(range, _)| {
-            assert!(text.get(range.clone()).is_some(), "invalid run range");
+            assert!(
+                text.get(range.clone()).is_some(),
+                "invalid run range with inputs. Requested range {range:?} in text '{text}'",
+            );
         });
         Self {
             runs,
