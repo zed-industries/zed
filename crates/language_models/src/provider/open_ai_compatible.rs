@@ -269,7 +269,7 @@ impl OpenAiCompatibleLanguageModel {
                 state.settings.api_url.clone(),
             )
         }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let provider = self.provider_name.clone();

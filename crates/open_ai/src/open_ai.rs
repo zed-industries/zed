@@ -17,10 +17,6 @@ fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
     opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
-const fn bool_true() -> bool {
-    true
-}
-
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -104,9 +100,13 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
         reasoning_effort: Option<ReasoningEffort>,
-        #[serde(default = "bool_true")]
+        #[serde(default = "default_supports_chat_completions")]
         supports_chat_completions: bool,
     },
+}
+
+const fn default_supports_chat_completions() -> bool {
+    true
 }
 
 impl Model {

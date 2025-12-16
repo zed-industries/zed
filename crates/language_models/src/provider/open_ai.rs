@@ -1070,52 +1070,45 @@ impl ResponseEventMapper {
         self.text_buffer.push_str(&delta);
 
         let mut events = Vec::new();
-        loop {
-            if self.stop_triggered {
-                self.text_buffer.clear();
-                break;
+        if self.stop_triggered {
+            self.text_buffer.clear();
+        }
+        let mut earliest_stop: Option<(usize, usize)> = None;
+        for sequence in &self.stop_sequences {
+            if sequence.is_empty() {
+                continue;
             }
-            let mut earliest_stop: Option<(usize, usize)> = None;
-            for sequence in &self.stop_sequences {
-                if sequence.is_empty() {
-                    continue;
-                }
-                if let Some(idx) = self.text_buffer.find(sequence) {
-                    if earliest_stop
-                        .map(|(existing_idx, existing_len)| {
-                            idx < existing_idx
-                                || (idx == existing_idx && sequence.len() < existing_len)
-                        })
-                        .unwrap_or(true)
-                    {
-                        earliest_stop = Some((idx, sequence.len()));
-                    }
+            if let Some(idx) = self.text_buffer.find(sequence) {
+                if earliest_stop
+                    .map(|(existing_idx, existing_len)| {
+                        idx < existing_idx || (idx == existing_idx && sequence.len() < existing_len)
+                    })
+                    .unwrap_or(true)
+                {
+                    earliest_stop = Some((idx, sequence.len()));
                 }
             }
+        }
 
-            if let Some((stop_idx, stop_len)) = earliest_stop {
-                if stop_idx > 0 {
-                    let before_stop = self.text_buffer[..stop_idx].to_string();
-                    events.push(Ok(LanguageModelCompletionEvent::Text(before_stop)));
-                }
-                // Remove up to and including the stop sequence
-                self.text_buffer.drain(..stop_idx + stop_len);
-                if self.pending_stop_reason.is_none() {
-                    self.pending_stop_reason = Some(StopReason::EndTurn);
-                }
-                self.stop_triggered = true;
-                self.text_buffer.clear();
-                break;
-            } else {
-                let retain_len = self.max_stop_sequence_len.saturating_sub(1);
-                if self.text_buffer.len() <= retain_len {
-                    break;
-                }
+        if let Some((stop_idx, stop_len)) = earliest_stop {
+            if stop_idx > 0 {
+                let before_stop = self.text_buffer[..stop_idx].to_string();
+                events.push(Ok(LanguageModelCompletionEvent::Text(before_stop)));
+            }
+            // Remove up to and including the stop sequence
+            self.text_buffer.drain(..stop_idx + stop_len);
+            if self.pending_stop_reason.is_none() {
+                self.pending_stop_reason = Some(StopReason::EndTurn);
+            }
+            self.stop_triggered = true;
+            self.text_buffer.clear();
+        } else {
+            let retain_len = self.max_stop_sequence_len.saturating_sub(1);
+            if self.text_buffer.len() > retain_len {
                 let emit_len = self.text_buffer.len() - retain_len;
                 let emit_text = self.text_buffer[..emit_len].to_string();
                 events.push(Ok(LanguageModelCompletionEvent::Text(emit_text)));
                 self.text_buffer.drain(..emit_len);
-                break;
             }
         }
 
@@ -1465,7 +1458,7 @@ impl Render for ConfigurationView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{DevicePixels, TestAppContext, size};
+    use gpui::TestAppContext;
     use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
 
     use super::*;
@@ -1789,12 +1782,12 @@ mod tests {
             id: tool_call_id.clone(),
             name: Arc::from("get_weather"),
             raw_input: tool_arguments.clone(),
-            input: tool_input.clone(),
+            input: tool_input,
             is_input_complete: true,
             thought_signature: None,
         };
         let tool_result = LanguageModelToolResult {
-            tool_use_id: tool_call_id.clone(),
+            tool_use_id: tool_call_id,
             tool_name: Arc::from("get_weather"),
             is_error: false,
             content: LanguageModelToolResultContent::Text(Arc::from("Sunny")),
@@ -1802,7 +1795,7 @@ mod tests {
         };
         let user_image = LanguageModelImage {
             source: SharedString::from("aGVsbG8="),
-            size: size(DevicePixels(1), DevicePixels(1)),
+            size: None,
         };
         let expected_image_url = user_image.to_base64_url();
 
@@ -1822,7 +1815,7 @@ mod tests {
                     role: Role::User,
                     content: vec![
                         MessageContent::Text("Please check the weather.".into()),
-                        MessageContent::Image(user_image.clone()),
+                        MessageContent::Image(user_image),
                     ],
                     cache: false,
                     reasoning_details: None,
@@ -1831,14 +1824,14 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![
                         MessageContent::Text("Looking that up.".into()),
-                        MessageContent::ToolUse(tool_use.clone()),
+                        MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
                     reasoning_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
-                    content: vec![MessageContent::ToolResult(tool_result.clone())],
+                    content: vec![MessageContent::ToolResult(tool_result)],
                     cache: false,
                     reasoning_details: None,
                 },
