@@ -49,8 +49,6 @@ enum AcpModelPickerEntry {
 }
 
 /// Corresponds to the action button shown on the model in the list.
-/// `Unfavorite` and `RemoveFromFavorites` are semantically the same but
-/// correspond to different icons.
 #[derive(Copy, Clone)]
 enum AcpModelPickerEntryAction {
     Favorite,
