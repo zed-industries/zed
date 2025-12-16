@@ -293,6 +293,9 @@ impl BackgroundExecutor {
         priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
+        #[cfg(target_os = "windows")]
+        let priority = Priority::Medium; // multi-prio scheduler is broken on windows
+
         let (runnable, task) = if let Priority::Realtime(realtime) = priority {
             let location = core::panic::Location::caller();
             let (mut tx, rx) = flume::bounded::<Runnable<RunnableMeta>>(1);
