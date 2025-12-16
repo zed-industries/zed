@@ -6849,9 +6849,15 @@ impl LspStore {
         ranges: &[Range<text::Anchor>],
         cx: &mut Context<Self>,
     ) -> Vec<Range<BufferRow>> {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
-            .applicable_chunks(ranges)
+            .applicable_chunks(ranges.as_slice())
             .map(|chunk| chunk.row_range())
             .collect()
     }
@@ -6898,6 +6904,12 @@ impl LspStore {
             .map(|(_, known_chunks)| known_chunks)
             .unwrap_or_default();
 
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         let mut hint_fetch_tasks = Vec::new();
         let mut cached_inlay_hints = None;
         let mut ranges_to_query = None;
@@ -6922,9 +6934,7 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let Some(chunk_range) = existing_inlay_hints.chunk_range(row_chunk) else {
-                        continue;
-                    };
+                    let chunk_range = row_chunk.anchor_range();
                     ranges_to_query
                         .get_or_insert_with(Vec::new)
                         .push((row_chunk, chunk_range));
@@ -12726,10 +12736,11 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
-                .applicable_chunks(&[range])
+                .applicable_chunks(&[range.to_point(&buffer_snapshot)])
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {
