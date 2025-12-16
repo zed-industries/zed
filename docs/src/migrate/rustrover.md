@@ -102,7 +102,7 @@ Open buffers appear as tabs across the top. The sidebar shows your file tree and
 
 If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to RustRover.
 
-### Common Shared Keybindings (Zed with JetBrains keymap ↔ RustRover)
+### Common Shared Keybindings
 
 | Action                        | Shortcut                |
 | ----------------------------- | ----------------------- |
@@ -158,14 +158,14 @@ Zed also supports key sequences (multi-key shortcuts).
 
 RustRover indexes your project when you first open it to build a model of your codebase. This process runs whenever you open a project or when dependencies change via Cargo.
 
-Zed doesn't index. You open a folder and start working immediately. Because both editors use rust-analyzer under the hood for Rust intelligence, the "indexing" you experience in Zed is rust-analyzer's own analysis, which happens in the background without blocking the UI.
+Zed skips the indexing step. You open a folder and start working right away. Since both editors rely on rust-analyzer for Rust intelligence, the analysis still happens—but in Zed it runs in the background without blocking the UI or showing modal progress dialogs.
 
 **How to adapt:**
 
-- For project-wide symbol search, use `Cmd+O` / Go to Symbol (powered by rust-analyzer)
-- For finding files by name, use `Cmd+Shift+O` / Go to File
-- For text search across files, use `Cmd+Shift+F`—this is fast even on large codebases
-- For deep static analysis, run `cargo clippy` from the terminal
+- Use `Cmd+O` to search symbols across your crate (rust-analyzer handles this)
+- Jump to files by name with `Cmd+Shift+O`
+- `Cmd+Shift+F` gives you fast text search across the entire project
+- For linting and deeper checks, run `cargo clippy` in the terminal
 
 ### rust-analyzer: Shared Foundation, Different Integration
 
@@ -197,13 +197,13 @@ Where you might notice differences:
 
 RustRover manages projects through `.idea` folders containing XML configuration files, toolchain assignments, and run configurations. The Cargo tool window provides a visual interface for your project structure, targets, and dependencies.
 
-Zed has no project model. A project is a folder containing a `Cargo.toml`. There's no wizard, no toolchain selection screen, no visual Cargo management.
+Zed keeps it simpler: a project is a folder with a `Cargo.toml`. No project wizard, no toolchain dialogs, no visual Cargo management layer.
 
-This means:
+In practice:
 
-- Run configurations don't exist. You define tasks or use the terminal.
-- Toolchain management is external. Use `rustup` from the terminal.
-- Dependencies are managed through `Cargo.toml` directly—no GUI.
+- Run configurations don't carry over. Your `.idea/` setup stays behind—define the commands you need in `tasks.json` instead.
+- Toolchains are managed externally via `rustup`.
+- Dependencies live in `Cargo.toml`. Edit the file directly; rust-analyzer provides completions for crate names and versions.
 
 **How to adapt:**
 
@@ -370,17 +370,8 @@ To set expectations clearly, here's what RustRover offers that Zed doesn't have:
 If you're moving from RustRover partly due to licensing concerns or telemetry policies, you should know:
 
 - **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
-- **Telemetry is optional** and can be disabled in settings
-- **No license tiers** — all features are available to everyone
-
-```json
-{
-  "telemetry": {
-    "diagnostics": false,
-    "metrics": false
-  }
-}
-```
+- **Telemetry is optional** and can be disabled during onboarding or in settings
+- **No license tiers**: All features are available to everyone
 
 ## Collaboration in Zed vs. RustRover
 

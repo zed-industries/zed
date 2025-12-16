@@ -148,14 +148,16 @@ If you've used WebStorm on large projects, you know the wait. Opening a project 
 > "I work for AWS and the applications I deal with are massive. Often I need to keep many projects open due to tight dependencies. I'm talking about complex microservices and micro frontend infrastructure which oftentimes lead to 2-15 minutes of indexing wait time whenever I open a project or build the system locally."
 > — Developer working on large-scale microservices
 
-Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size. The trade-off is real: WebStorm's index powers features like finding all usages across your entire codebase, understanding import hierarchies, and detecting unused exports project-wide. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
+Zed doesn't index. You open a folder and start coding immediately—no progress bars, no "Indexing paused" banners. File search and navigation stay fast regardless of project size or how many `node_modules` dependencies you have.
+
+The trade-off: WebStorm's index enables features like finding all usages across your entire codebase, tracking import hierarchies, and flagging unused exports project-wide. Zed relies on language servers for this analysis, which may not cover as much ground.
 
 **How to adapt:**
 
-- For project-wide symbol search, use `Cmd+O` / Go to Symbol (relies on your language server)
-- For finding files by name, use `Cmd+Shift+O` / Go to File
-- For text search across files, use `Cmd+Shift+F`—this is fast even on large codebases
-- For deep static analysis, consider running ESLint, TypeScript compiler checks, or other tools from the terminal
+- Search symbols across the project with `Cmd+O` (powered by the TypeScript language server)
+- Find files by name with `Cmd+Shift+O`
+- Use `Cmd+Shift+F` for text search—it stays fast even in large monorepos
+- Run `tsc --noEmit` or `eslint .` from the terminal when you need deeper project-wide analysis
 
 ### LSP vs. Native Language Intelligence
 
@@ -181,18 +183,19 @@ Where you might notice differences:
 - Use `Alt+Enter` for available code actions—the list will vary by language server
 - Ensure your `tsconfig.json` is properly configured so the language server understands your project structure
 - Use Prettier for consistent formatting (it's enabled by default for JS/TS)
+- For code inspection similar to WebStorm's "Inspect Code," check the Diagnostics panel (`Cmd+6`)—ESLint and TypeScript together catch many of the same issues
 
 ### No Project Model
 
 WebStorm manages projects through `.idea` folders containing XML configuration files, framework detection, and run configurations. This model lets WebStorm remember your project settings, manage npm scripts through the UI, and persist run/debug setups.
 
-Zed has no project model. A project is a folder. There's no wizard, no framework detection screen, no project structure configuration.
+Zed takes a different approach: a project is just a folder. There's no setup wizard, no framework detection dialog, no project structure to configure.
 
-This means:
+What this means in practice:
 
-- Run configurations don't exist. You define tasks or use the terminal.
-- npm script management is external. Use `npm run`, `pnpm`, or `yarn` from the terminal.
-- Framework detection doesn't happen. Zed treats all JavaScript/TypeScript the same.
+- Run configurations aren't a thing. Define reusable commands in `tasks.json` instead. Note that your existing `.idea/` configurations won't carry over—you'll set up the ones you need fresh.
+- npm scripts live in the terminal. Run `npm run dev`, `pnpm build`, or `yarn test` directly—there's no dedicated npm panel.
+- No framework detection. Zed treats React, Angular, Vue, and vanilla JS/TS the same way.
 
 **How to adapt:**
 
