@@ -263,6 +263,8 @@ impl NativeAgent {
 
         cx.new(|cx| {
             let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
 
             let mut subscriptions = vec![
                 cx.subscribe(&project, Self::handle_project_event),
@@ -273,6 +275,10 @@ impl NativeAgent {
                 cx.subscribe(
                     &context_server_store,
                     Self::handle_context_server_store_updated,
+                ),
+                cx.subscribe(
+                    &context_server_registry,
+                    Self::handle_context_server_registry_event,
                 ),
             ];
             if let Some(prompt_store) = prompt_store.as_ref() {
@@ -289,8 +295,7 @@ impl NativeAgent {
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
-                context_server_registry: cx
-                    .new(|cx| ContextServerRegistry::new(context_server_store, cx)),
+                context_server_registry,
                 templates,
                 models: LanguageModels::new(cx),
                 project,
@@ -360,19 +365,7 @@ impl NativeAgent {
             },
         );
 
-        let available_commands = self.build_available_commands(cx);
-        if !available_commands.is_empty() {
-            acp_thread.update(cx, |thread, cx| {
-                thread
-                    .handle_session_update(
-                        acp::SessionUpdate::AvailableCommandsUpdate(
-                            acp::AvailableCommandsUpdate::new(available_commands),
-                        ),
-                        cx,
-                    )
-                    .log_err();
-            });
-        }
+        self.update_available_commands(cx);
 
         acp_thread
     }
@@ -647,10 +640,24 @@ impl NativeAgent {
         _event: &project::context_server_store::Event,
         cx: &mut Context<Self>,
     ) {
-        self.broadcast_available_commands(cx);
+        self.update_available_commands(cx);
     }
 
-    fn broadcast_available_commands(&self, cx: &mut Context<Self>) {
+    fn handle_context_server_registry_event(
+        &mut self,
+        _registry: Entity<ContextServerRegistry>,
+        event: &ContextServerRegistryEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ContextServerRegistryEvent::ToolsChanged => {}
+            ContextServerRegistryEvent::PromptsChanged => {
+                self.update_available_commands(cx);
+            }
+        }
+    }
+
+    fn update_available_commands(&self, cx: &mut Context<Self>) {
         let available_commands = self.build_available_commands(cx);
         for session in self.sessions.values() {
             if let Some(acp_thread) = session.acp_thread.upgrade() {
@@ -823,7 +830,7 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            let mut last_is_user = false;
+            let mut last_is_user = true;
 
             if original_content.len() > 1 {
                 thread.update(cx, |thread, cx| {
@@ -835,8 +842,11 @@ impl NativeAgent {
                         cx,
                     );
                 })?;
-                last_is_user = true;
             }
+
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.push_user_content_block(None, "\n\n".into(), cx);
+            })?;
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;

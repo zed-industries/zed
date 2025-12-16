@@ -172,16 +172,14 @@ impl ContextServerRegistry {
                 registered_server.prompts.clear();
                 if let Some(response) = response.log_err() {
                     for prompt in response.prompts {
-                        if acceptable_prompt(&prompt) {
-                            let name: SharedString = prompt.name.clone().into();
-                            registered_server.prompts.insert(
-                                name,
-                                ContextServerPrompt {
-                                    server_id: server_id.clone(),
-                                    prompt,
-                                },
-                            );
-                        }
+                        let name: SharedString = prompt.name.clone().into();
+                        registered_server.prompts.insert(
+                            name,
+                            ContextServerPrompt {
+                                server_id: server_id.clone(),
+                                prompt,
+                            },
+                        );
                     }
                     cx.emit(ContextServerRegistryEvent::PromptsChanged);
                     cx.notify();
@@ -350,16 +348,6 @@ impl AnyAgentTool for ContextServerTool {
     }
 }
 
-/// MCP servers can return prompts with multiple arguments. Since we only
-/// support one argument, we ignore all others.
-fn acceptable_prompt(prompt: &context_server::types::Prompt) -> bool {
-    match &prompt.arguments {
-        None => true,
-        Some(args) if args.len() <= 1 => true,
-        _ => false,
-    }
-}
-
 // todo! move to impl?
 pub fn get_prompt(
     server_store: &Entity<ContextServerStore>,
@@ -387,11 +375,7 @@ pub fn get_prompt(
             .request::<context_server::types::requests::PromptsGet>(
                 context_server::types::PromptsGetParams {
                     name: prompt_name,
-                    arguments: if arguments.is_empty() {
-                        Some(arguments)
-                    } else {
-                        None
-                    },
+                    arguments: (!arguments.is_empty()).then(|| arguments),
                     meta: None,
                 },
             )
