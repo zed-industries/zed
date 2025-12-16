@@ -378,6 +378,7 @@ impl QuickSearchSource for CommitsSource {
         selected: &QuickMatch,
         _weak_ranges: Vec<Range<TextAnchor>>,
         _use_diff_preview: bool,
+        query: &str,
     ) -> PreviewRequest {
         let key = PreviewKey(selected.id);
         match &selected.kind {
@@ -387,7 +388,7 @@ impl QuickSearchSource for CommitsSource {
                 key,
                 repo_workdir: repo_workdir.clone(),
                 sha: sha.clone(),
-                query: Arc::<str>::from(""),
+                query: Arc::<str>::from(query.to_string()),
             },
             _ => PreviewRequest::Empty,
         }

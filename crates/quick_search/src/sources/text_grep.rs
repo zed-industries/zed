@@ -216,6 +216,7 @@ impl QuickSearchSource for TextGrepSource {
         selected: &QuickMatch,
         weak_ranges: Vec<Range<TextAnchor>>,
         use_diff_preview: bool,
+        _query: &str,
     ) -> PreviewRequest {
         let key = PreviewKey(selected.id);
         match &selected.kind {

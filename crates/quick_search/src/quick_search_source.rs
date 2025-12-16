@@ -73,6 +73,7 @@ pub trait QuickSearchSource {
         selected: &QuickMatch,
         weak_ranges: Vec<Range<TextAnchor>>,
         use_diff_preview: bool,
+        query: &str,
     ) -> PreviewRequest;
 
     fn weak_preview_ranges(
@@ -173,9 +174,10 @@ impl SourceRegistry {
         selected: &QuickMatch,
         weak_ranges: Vec<Range<TextAnchor>>,
         use_diff_preview: bool,
+        query: &str,
     ) -> PreviewRequest {
         self.source_for_match(selected)
-            .map(|s| s.preview_request_for_match(selected, weak_ranges, use_diff_preview))
+            .map(|s| s.preview_request_for_match(selected, weak_ranges, use_diff_preview, query))
             .unwrap_or(PreviewRequest::Empty)
     }
 

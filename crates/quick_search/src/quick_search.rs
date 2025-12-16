@@ -1273,27 +1273,9 @@ impl PickerDelegate for QuickSearchDelegate {
                 selected,
                 weak_preview_anchors.clone(),
                 use_diff_preview,
+                &self.current_query,
             )
         });
-        let request = match (&selected, request) {
-            (
-                Some(QuickMatch {
-                    kind:
-                        types::QuickMatchKind::GitCommit {
-                            repo_workdir, sha, ..
-                        },
-                    id,
-                    ..
-                }),
-                _,
-            ) => PreviewRequest::GitCommit {
-                key: preview::PreviewKey(*id),
-                repo_workdir: repo_workdir.clone(),
-                sha: sha.clone(),
-                query: Arc::<str>::from(self.current_query.clone()),
-            },
-            (_, request) => request,
-        };
         let quick_search = self.quick_search.clone();
 
         Some(Box::new(move |window, cx| {
