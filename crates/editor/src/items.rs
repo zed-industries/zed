@@ -38,8 +38,8 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, Selection};
-use theme::{Theme, ThemeSettings};
-use ui::{IconButtonShape, IconDecorationKind, Tooltip, prelude::*};
+use theme::Theme;
+use ui::{IconDecorationKind, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,

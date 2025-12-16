@@ -5,12 +5,12 @@ use gpui::{
 };
 use itertools::Itertools;
 use settings::Settings;
-use std::{any::Any, cmp};
+use std::cmp;
 use theme::ActiveTheme;
 use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
     TabBarSettings, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    item::{BreadcrumbText, ItemBufferKind, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
 pub struct Breadcrumbs {
@@ -37,6 +37,11 @@ impl Breadcrumbs {
 
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
+// Potential idea:
+// - Rename this to "BreadcrumbToolbar" or something
+// - Create a wrapping "Breadcrumb" struct for Vec<BreadcrumbText>
+// - Implement render for _that_ breadcrumb struct.
+// - Call that from here to eliminate much of the logic.
 impl Render for Breadcrumbs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;

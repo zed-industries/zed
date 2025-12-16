@@ -4330,6 +4330,7 @@ impl EditorElement {
             })
     }
 
+    // TODO This has too much code in common with Breadcrumb::render. We should find a way to DRY it.
     fn render_breadcrumb_text(
         &self,
         mut segments: Vec<BreadcrumbText>,
