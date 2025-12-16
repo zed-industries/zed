@@ -1969,6 +1969,12 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.running_turn
+            .as_ref()
+            .is_some_and(|turn| turn.tools.contains_key(name))
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -2662,7 +2668,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        // TODO: make this optional?
-        size: gpui::Size::new(0.into(), 0.into()),
+        size: None,
     }
 }

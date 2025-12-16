@@ -37,6 +37,7 @@ dependencies = [
  "terminal",
  "ui",
  "url",
+ "urlencoding",
  "util",
  "uuid",
  "watch",
@@ -3672,6 +3673,7 @@ dependencies = [
  "task",
  "theme",
  "ui",
+ "url",
  "util",
  "workspace",
  "zlog",
@@ -10842,7 +10844,6 @@ dependencies = [
  "documented",
  "fs",
  "fuzzy",
- "git",
  "gpui",
  "menu",
  "notifications",
@@ -14248,6 +14249,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "theme",
 ]
 
@@ -20095,11 +20097,13 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "git",
  "gpui",
  "http_client",
  "itertools 0.14.0",
  "language",
  "log",
+ "markdown",
  "menu",
  "node_runtime",
  "parking_lot",
@@ -20503,7 +20507,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.218.0"
+version = "0.219.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",

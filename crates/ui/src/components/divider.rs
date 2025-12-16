@@ -146,13 +146,11 @@ impl RenderOnce for Divider {
         let base = match self.direction {
             DividerDirection::Horizontal => div()
                 .min_w_0()
-                .flex_none()
                 .h_px()
                 .w_full()
                 .when(self.inset, |this| this.mx_1p5()),
             DividerDirection::Vertical => div()
                 .min_w_0()
-                .flex_none()
                 .w_px()
                 .h_full()
                 .when(self.inset, |this| this.my_1p5()),

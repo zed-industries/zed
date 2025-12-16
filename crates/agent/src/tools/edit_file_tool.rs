@@ -306,20 +306,39 @@ impl AgentTool for EditFileTool {
 
             // Check if the file has been modified since the agent last read it
             if let Some(abs_path) = abs_path.as_ref() {
-                let (last_read_mtime, current_mtime, is_dirty) = self.thread.update(cx, |thread, cx| {
+                let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.update(cx, |thread, cx| {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    (last_read, current, dirty)
+                    let has_save = thread.has_tool("save_file");
+                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    (last_read, current, dirty, has_save, has_restore)
                 })?;
 
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
-                    anyhow::bail!(
-                        "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-                    );
+                    let message = match (has_save_tool, has_restore_tool) {
+                        (true, true) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                        }
+                        (true, false) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                             If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
+                        }
+                        (false, true) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                             If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
+                             If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
+                        }
+                        (false, false) => {
+                            "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
+                             then ask them to save or revert the file manually and inform you when it's ok to proceed."
+                        }
+                    };
+                    anyhow::bail!("{}", message);
                 }
 
                 // Check if the file was modified on disk since we last read it
@@ -2211,14 +2230,11 @@ mod tests {
             "Error should ask whether to keep or discard changes, got: {}",
             error_msg
         );
+        // Since save_file and restore_file_from_disk tools aren't added to the thread,
+        // the error message should ask the user to manually save or revert
         assert!(
-            error_msg.contains("save_file"),
-            "Error should reference save_file tool, got: {}",
-            error_msg
-        );
-        assert!(
-            error_msg.contains("restore_file_from_disk"),
-            "Error should reference restore_file_from_disk tool, got: {}",
+            error_msg.contains("save or revert the file manually"),
+            "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error_msg
         );
     }
