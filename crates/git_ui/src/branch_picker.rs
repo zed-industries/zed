@@ -316,17 +316,17 @@ impl Entry {
 
 #[derive(Clone, Copy, PartialEq)]
 enum BranchFilter {
-    /// Only show local branches
-    Local,
-    /// Only show remote branches
+    /// Show both local and remote branches.
+    All,
+    /// Only show remote branches.
     Remote,
 }
 
 impl BranchFilter {
     fn invert(&self) -> Self {
         match self {
-            BranchFilter::Local => BranchFilter::Remote,
-            BranchFilter::Remote => BranchFilter::Local,
+            BranchFilter::All => BranchFilter::Remote,
+            BranchFilter::Remote => BranchFilter::All,
         }
     }
 }
@@ -375,7 +375,7 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
-            branch_filter: BranchFilter::Local,
+            branch_filter: BranchFilter::All,
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
         }
@@ -518,7 +518,7 @@ impl PickerDelegate for BranchListDelegate {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
-                    BranchFilter::Local => "Select branch…",
+                    BranchFilter::All => "Select branch or remote…",
                     BranchFilter::Remote => "Select remote…",
                 }
             }
@@ -560,8 +560,8 @@ impl PickerDelegate for BranchListDelegate {
                         self.editor_position() == PickerEditorPosition::End,
                         |this| {
                             let tooltip_label = match self.branch_filter {
-                                BranchFilter::Local => "Turn Off Remote Filter",
-                                BranchFilter::Remote => "Filter Remote Branches",
+                                BranchFilter::All => "Filter Remote Branches",
+                                BranchFilter::Remote => "Show All Branches",
                             };
 
                             this.gap_1().justify_between().child({
@@ -625,40 +625,38 @@ impl PickerDelegate for BranchListDelegate {
             return Task::ready(());
         };
 
-        let display_remotes = self.branch_filter;
+        let branch_filter = self.branch_filter;
         cx.spawn_in(window, async move |picker, cx| {
+            let branch_matches_filter = |branch: &Branch| match branch_filter {
+                BranchFilter::All => true,
+                BranchFilter::Remote => branch.is_remote(),
+            };
+
             let mut matches: Vec<Entry> = if query.is_empty() {
-                all_branches
+                let mut matches: Vec<Entry> = all_branches
                     .into_iter()
-                    .filter(|branch| {
-                        if display_remotes == BranchFilter::Remote {
-                            branch.is_remote()
-                        } else {
-                            !branch.is_remote()
-                        }
-                    })
+                    .filter(|branch| branch_matches_filter(branch))
                     .map(|branch| Entry::Branch {
                         branch,
                         positions: Vec::new(),
                     })
-                    .collect()
+                    .collect();
+
+                // Keep the existing recency sort within each group, but show local branches first.
+                matches.sort_by_key(|entry| entry.as_branch().is_some_and(|b| b.is_remote()));
+
+                matches
             } else {
                 let branches = all_branches
                     .iter()
-                    .filter(|branch| {
-                        if display_remotes == BranchFilter::Remote {
-                            branch.is_remote()
-                        } else {
-                            !branch.is_remote()
-                        }
-                    })
+                    .filter(|branch| branch_matches_filter(branch))
                     .collect::<Vec<_>>();
                 let candidates = branches
                     .iter()
                     .enumerate()
                     .map(|(ix, branch)| StringMatchCandidate::new(ix, branch.name()))
                     .collect::<Vec<StringMatchCandidate>>();
-                fuzzy::match_strings(
+                let mut matches: Vec<Entry> = fuzzy::match_strings(
                     &candidates,
                     &query,
                     true,
@@ -673,7 +671,12 @@ impl PickerDelegate for BranchListDelegate {
                     branch: branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
                 })
-                .collect()
+                .collect();
+
+                // Keep fuzzy-relevance ordering within local/remote groups, but show locals first.
+                matches.sort_by_key(|entry| entry.as_branch().is_some_and(|b| b.is_remote()));
+
+                matches
             };
             picker
                 .update(cx, |picker, _| {
@@ -841,10 +844,13 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. } => {
                 Icon::new(IconName::Plus).color(Color::Muted)
             }
-            Entry::Branch { .. } => match self.branch_filter {
-                BranchFilter::Local => Icon::new(IconName::GitBranchAlt).color(Color::Muted),
-                BranchFilter::Remote => Icon::new(IconName::Screen).color(Color::Muted),
-            },
+            Entry::Branch { branch, .. } => {
+                if branch.is_remote() {
+                    Icon::new(IconName::Screen).color(Color::Muted)
+                } else {
+                    Icon::new(IconName::GitBranchAlt).color(Color::Muted)
+                }
+            }
         };
 
         let entry_title = match entry {
@@ -1036,8 +1042,8 @@ impl PickerDelegate for BranchListDelegate {
     ) -> Option<AnyElement> {
         matches!(self.state, PickerState::List).then(|| {
             let label = match self.branch_filter {
-                BranchFilter::Local => "Local",
-                BranchFilter::Remote => "Remote",
+                BranchFilter::All => "Branches",
+                BranchFilter::Remote => "Remotes",
             };
 
             ListHeader::new(label).inset(true).into_any_element()
@@ -1551,7 +1557,7 @@ mod tests {
         branch_list
             .update_in(cx, |branch_list, window, cx| {
                 branch_list.picker.update(cx, |picker, cx| {
-                    assert_eq!(picker.delegate.matches.len(), 2);
+                    assert_eq!(picker.delegate.matches.len(), 4);
                     let branches = picker
                         .delegate
                         .matches
@@ -1560,9 +1566,21 @@ mod tests {
                         .collect::<HashSet<_>>();
                     assert_eq!(
                         branches,
-                        ["feature-ui", "develop"]
+                        ["origin/main", "fork/feature-auth", "feature-ui", "develop"]
                             .into_iter()
                             .collect::<HashSet<_>>()
+                    );
+
+                    // Locals should be listed before remotes.
+                    let ordered = picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .map(|be| be.name())
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        ordered,
+                        vec!["feature-ui", "develop", "origin/main", "fork/feature-auth"]
                     );
 
                     // Verify the last entry is NOT the "create new branch" option
