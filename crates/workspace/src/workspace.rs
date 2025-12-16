@@ -1278,11 +1278,25 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
-                    this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.update_history(cx);
+                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                }
+
+                project::Event::WorktreeRemoved(_) => {
+                    this.update_worktree_data(window, cx);
+                }
+
+                project::Event::WorktreeAdded(worktree_id) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                    this.update_worktree_data(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -6526,6 +6540,13 @@ impl Workspace {
                 });
             }
         }
+    }
+
+    fn update_worktree_data(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.update_window_title(window, cx);
+        self.serialize_workspace(window, cx);
+        // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+        self.update_history(cx);
     }
 }
 
