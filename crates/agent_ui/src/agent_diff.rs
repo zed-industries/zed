@@ -130,7 +130,12 @@ impl AgentDiffPane {
             .action_log()
             .read(cx)
             .changed_buffers(cx);
-        let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+        let mut paths_to_delete = self
+            .multibuffer
+            .read(cx)
+            .paths()
+            .cloned()
+            .collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
             if buffer.read(cx).file().is_none() {
@@ -493,7 +498,7 @@ impl Item for AgentDiffPane {
         Some("Assistant Diff Opened")
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

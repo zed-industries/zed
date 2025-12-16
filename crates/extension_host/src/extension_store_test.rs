@@ -307,9 +307,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(
             language_registry.language_names(),
             [
-                LanguageName::new("ERB"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Ruby"),
+                LanguageName::new_static("ERB"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Ruby"),
             ]
         );
         assert_eq!(
@@ -463,9 +463,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(
             language_registry.language_names(),
             [
-                LanguageName::new("ERB"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Ruby"),
+                LanguageName::new_static("ERB"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Ruby"),
             ]
         );
         assert_eq!(
@@ -523,7 +523,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            [LanguageName::new("Plain Text")]
+            [LanguageName::new_static("Plain Text")]
         );
         assert_eq!(language_registry.grammar_names(), []);
     });
@@ -705,7 +705,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.register_fake_language_server(
+    let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
             completion_provider: Some(Default::default()),

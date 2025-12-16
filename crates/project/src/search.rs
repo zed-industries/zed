@@ -3,17 +3,20 @@ use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
+use itertools::Itertools as _;
 use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
-    path::Path,
     sync::{Arc, LazyLock},
 };
 use text::Anchor;
-use util::paths::{PathMatcher, PathStyle};
+use util::{
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
 
 #[derive(Debug)]
 pub enum SearchResult {
@@ -306,16 +309,16 @@ impl SearchQuery {
     }
 
     pub fn to_proto(&self) -> proto::SearchQuery {
-        let files_to_include = self.files_to_include().sources().to_vec();
-        let files_to_exclude = self.files_to_exclude().sources().to_vec();
+        let mut files_to_include = self.files_to_include().sources();
+        let mut files_to_exclude = self.files_to_exclude().sources();
         proto::SearchQuery {
             query: self.as_str().to_string(),
             regex: self.is_regex(),
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
-            files_to_include: files_to_include.clone(),
-            files_to_exclude: files_to_exclude.clone(),
+            files_to_include: files_to_include.clone().map(ToOwned::to_owned).collect(),
+            files_to_exclude: files_to_exclude.clone().map(ToOwned::to_owned).collect(),
             match_full_paths: self.match_full_paths(),
             // Populate legacy fields for backwards compatibility
             files_to_include_legacy: files_to_include.join(","),
@@ -551,8 +554,8 @@ impl SearchQuery {
     }
 
     pub fn filters_path(&self) -> bool {
-        !(self.files_to_exclude().sources().is_empty()
-            && self.files_to_include().sources().is_empty())
+        !(self.files_to_exclude().sources().next().is_none()
+            && self.files_to_include().sources().next().is_none())
     }
 
     pub fn match_full_paths(&self) -> bool {
@@ -561,12 +564,12 @@ impl SearchQuery {
 
     /// Check match full paths to determine whether you're required to pass a fully qualified
     /// project path (starts with a project root).
-    pub fn match_path(&self, file_path: &Path) -> bool {
-        let mut path = file_path.to_path_buf();
+    pub fn match_path(&self, file_path: &RelPath) -> bool {
+        let mut path = file_path.to_rel_path_buf();
         loop {
             if self.files_to_exclude().is_match(&path) {
                 return false;
-            } else if self.files_to_include().sources().is_empty()
+            } else if self.files_to_include().sources().next().is_none()
                 || self.files_to_include().is_match(&path)
             {
                 return true;
@@ -608,14 +611,14 @@ mod tests {
             "~/dir/another_dir/",
             "./dir/file",
             "dir/[a-z].txt",
-            "../dir/filé",
         ] {
             let path_matcher = PathMatcher::new(&[valid_path.to_owned()], PathStyle::local())
                 .unwrap_or_else(|e| {
                     panic!("Valid path {valid_path} should be accepted, but got: {e}")
                 });
             assert!(
-                path_matcher.is_match(valid_path),
+                path_matcher
+                    .is_match(&RelPath::new(valid_path.as_ref(), PathStyle::local()).unwrap()),
                 "Path matcher for valid path {valid_path} should match itself"
             )
         }

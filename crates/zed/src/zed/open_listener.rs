@@ -54,7 +54,7 @@ pub enum OpenRequestKind {
         schema_path: String,
     },
     Setting {
-        // None just opens settings without navigating to a specific path
+        /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
     },
 }
@@ -686,6 +686,7 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
+                connection_timeout: None,
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
