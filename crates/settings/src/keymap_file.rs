@@ -322,7 +322,7 @@ impl KeymapFile {
                     if line.is_empty() {
                         String::new()
                     } else if line.trim_start().starts_with('-') {
-                        line.replacen("- ", "- ##### ", 1)  // Keep bullet formatting
+                        line.replacen("- ", "- ##### ", 1) // Keep bullet formatting
                     } else {
                         format!("##### {}", line)
                     }
