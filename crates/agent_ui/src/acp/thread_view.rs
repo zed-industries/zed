@@ -4208,7 +4208,11 @@ impl AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(mode_selector) = this.mode_selector() {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.update(cx, |profile_selector, cx| {
+                        profile_selector.cycle_profile(cx);
+                    });
+                } else if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.cycle_mode(window, cx);
                     });
