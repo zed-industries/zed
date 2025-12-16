@@ -12,7 +12,7 @@ use buffer_diagnostics::BufferDiagnosticsEditor;
 use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -894,8 +894,12 @@ impl Item for ProjectDiagnosticsEditor {
         Some(Box::new(self.editor.clone()))
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
