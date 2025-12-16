@@ -860,7 +860,11 @@ mod tests {
                 if info.model.telemetry_id() == "zed/claude" {
                     assert!(info.is_favorite, "zed/claude should be a favorite");
                 } else {
-                    assert!(!info.is_favorite, "{} should not be a favorite", info.model.telemetry_id());
+                    assert!(
+                        !info.is_favorite,
+                        "{} should not be a favorite",
+                        info.model.telemetry_id()
+                    );
                 }
             }
         }

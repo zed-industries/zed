@@ -20,9 +20,7 @@ use ui::{DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, 
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{
-    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
-};
+use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
