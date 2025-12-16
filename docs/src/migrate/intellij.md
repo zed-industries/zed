@@ -9,7 +9,7 @@ If you're here, you might be looking for a faster, lighter editor. Or something 
 Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
-`brew install zed-editor/zed/zed`
+`brew install --cask zed`
 
 For Windows, download the installer from zed.dev/download, or install via winget:
 `winget install Zed.Zed`
@@ -54,7 +54,6 @@ Here's how common IntelliJ settings translate to Zed:
 | Editor → Font → Size | `buffer_font_size` | Set in pixels |
 | Editor → Code Style → Tab size | `tab_size` | Can override per language |
 | Editor → Code Style → Use tab character | `hard_tabs` | Boolean |
-| Editor → General → Auto Import | `use_autoclose` | Zed handles this via LSP |
 | Code Style → Reformat on save | `format_on_save` | Works with formatter enabled |
 | Editor → General → Soft Wraps | `soft_wrap` | Supports optional wrap column |
 
@@ -122,7 +121,6 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 | Action | Shortcut | Notes |
 | --- | --- | --- |
 | Toggle Right Dock | `Cmd + R` | Assistant panel, notifications |
-| Syntactic Selection | `Alt + Up/Down` | Selects code by structure (matches IntelliJ's Extend Selection) |
 | Split Panes | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
@@ -337,11 +335,20 @@ Here are a few useful tweaks:
   "lsp": {
     "jdtls": {
       "settings": {
-        "java": {
-          "home": "/path/to/jdk"
-        }
+        "java_home": "/path/to/jdk"
       }
     }
   }
 }
 ```
+
+## Next Steps
+
+Now that you're set up, here are some resources to help you get the most out of Zed:
+
+- [Configuring Zed](../configuring-zed.md) — Customize settings, themes, and editor behavior
+- [Key Bindings](../key-bindings.md) — Learn how to customize and extend your keymap
+- [Tasks](../tasks.md) — Set up build and run commands for your projects
+- [AI Features](../ai/overview.md) — Explore Zed's AI capabilities beyond code completion
+- [Collaboration](../collaboration/overview.md) — Share your projects and code together in real time
+- [Languages](../languages.md) — Language-specific setup guides, including Java and Kotlin
