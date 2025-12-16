@@ -966,7 +966,6 @@ impl<T: 'static> PromptEditor<T> {
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
             .tooltip({
-                let focus_handle = focus_handle.clone();
                 move |_window, cx| {
                     Tooltip::for_action_in(
                         "Close Assistant",
