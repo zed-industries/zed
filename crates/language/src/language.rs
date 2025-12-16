@@ -2427,7 +2427,7 @@ impl CodeLabel {
         runs.iter().for_each(|(range, _)| {
             assert!(
                 text.get(range.clone()).is_some(),
-                "invalid run range with inputs. Requested range {range:?} in text {text}",
+                "invalid run range with inputs. Requested range {range:?} in text '{text}'",
             );
         });
         Self {
