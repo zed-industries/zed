@@ -26,6 +26,7 @@ impl VimTestContext {
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
+            quick_search::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             settings_ui::init(cx);
         });

@@ -18,6 +18,8 @@ We currently support:
 
 This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
 
+The Quick Search overlay is bound by default to `Ctrl+Alt+K` on Windows/Linux and `Cmd+Alt+K` on macOS; you can remap it in the keymap editor or `keymap.json`.
+
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
