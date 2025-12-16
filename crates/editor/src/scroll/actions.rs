@@ -31,14 +31,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // TODO: Should this be in a separate method?
-        let smooth_scroll_enabled = EditorSettings::get_global(cx).smooth_scroll;
-        if !smooth_scroll_enabled {
-            self.scroll_manager.update_ongoing_scroll(axis);
-            self.set_scroll_position(scroll_position, window, cx);
-            return;
-        }
+        self.scroll_manager.update_ongoing_scroll(axis);
+        self.set_scroll_position(scroll_position, window, cx);
+    }
 
+    pub fn scroll_animated(
+        &mut self,
+        scroll_position: Point<ScrollOffset>,
+        axis: Option<Axis>,
+        cx: &mut Context<Self>,
+    ) {
         let current_position = self.scroll_position(cx);
         self.scroll_manager.update_ongoing_scroll(axis);
         self.scroll_manager
