@@ -1441,7 +1441,7 @@ impl Workspace {
                             let has_paths = !this.root_paths(cx).is_empty();
                             if !has_paths {
                                 cx.background_executor()
-                                    .spawn(persistence::write_no_project_window_bounds(
+                                    .spawn(persistence::write_default_window_bounds(
                                         SerializedWindowBounds((window_bounds)),
                                         display_uuid,
                                     ))
@@ -1457,7 +1457,7 @@ impl Workspace {
                                     .detach_and_log_err(cx);
                             } else {
                                 cx.background_executor()
-                                    .spawn(persistence::write_no_project_window_bounds(
+                                    .spawn(persistence::write_default_window_bounds(
                                         SerializedWindowBounds(window_bounds),
                                         display_uuid,
                                     ))
@@ -1683,7 +1683,7 @@ impl Workspace {
                     }
                 } else if is_empty_workspace {
                     // Empty workspace - try to restore the last known no-project window bounds
-                    if let Some((display, bounds)) = persistence::read_no_project_window_bounds() {
+                    if let Some((display, bounds)) = persistence::read_default_window_bounds() {
                         (Some(bounds.0), Some(display))
                     } else {
                         (None, None)
@@ -8709,7 +8709,7 @@ pub fn remote_workspace_position_from_db(
             let restorable_bounds = serialized_workspace
                 .as_ref()
                 .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                .or_else(|| persistence::read_no_project_window_bounds());
+                .or_else(|| persistence::read_default_window_bounds());
 
             if let Some((serialized_display, serialized_status)) = restorable_bounds {
                 (Some(serialized_status.0), Some(serialized_display))

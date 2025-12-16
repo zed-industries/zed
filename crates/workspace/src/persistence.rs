@@ -156,33 +156,33 @@ impl Column for SerializedWindowBounds {
     }
 }
 
-const NO_PROJECT_WINDOW_BOUNDS_KEY: &str = "no_project_window_bounds";
+const DEFAULT_WINDOW_BOUNDS_KEY: &str = "default_window_bounds";
 
-pub fn read_no_project_window_bounds() -> Option<(Uuid, SerializedWindowBounds)> {
+pub fn read_default_window_bounds() -> Option<(Uuid, SerializedWindowBounds)> {
     let json_str = KEY_VALUE_STORE
-        .read_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY)
+        .read_kvp(DEFAULT_WINDOW_BOUNDS_KEY)
         .log_err()
         .flatten()?;
 
     let (display_uuid, persisted) =
-        serde_json::from_str::<(Uuid, NoProjectWindowBounds)>(&json_str).ok()?;
+        serde_json::from_str::<(Uuid, WindowBoundsJson)>(&json_str).ok()?;
     Some((display_uuid, SerializedWindowBounds(persisted.into())))
 }
 
-pub async fn write_no_project_window_bounds(
+pub async fn write_default_window_bounds(
     bounds: SerializedWindowBounds,
     display_uuid: Uuid,
 ) -> anyhow::Result<()> {
-    let persisted = NoProjectWindowBounds::from(bounds.0);
+    let persisted = WindowBoundsJson::from(bounds.0);
     let json_str = serde_json::to_string(&(display_uuid, persisted))?;
     KEY_VALUE_STORE
-        .write_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+        .write_kvp(DEFAULT_WINDOW_BOUNDS_KEY.to_string(), json_str)
         .await?;
     Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum NoProjectWindowBounds {
+pub enum WindowBoundsJson {
     Windowed {
         x: i32,
         y: i32,
@@ -203,13 +203,13 @@ pub enum NoProjectWindowBounds {
     },
 }
 
-impl From<WindowBounds> for NoProjectWindowBounds {
+impl From<WindowBounds> for WindowBoundsJson {
     fn from(b: WindowBounds) -> Self {
         match b {
             WindowBounds::Windowed(bounds) => {
                 let origin = bounds.origin;
                 let size = bounds.size;
-                NoProjectWindowBounds::Windowed {
+                WindowBoundsJson::Windowed {
                     x: f32::from(origin.x).round() as i32,
                     y: f32::from(origin.y).round() as i32,
                     width: f32::from(size.width).round() as i32,
@@ -219,7 +219,7 @@ impl From<WindowBounds> for NoProjectWindowBounds {
             WindowBounds::Maximized(bounds) => {
                 let origin = bounds.origin;
                 let size = bounds.size;
-                NoProjectWindowBounds::Maximized {
+                WindowBoundsJson::Maximized {
                     x: f32::from(origin.x).round() as i32,
                     y: f32::from(origin.y).round() as i32,
                     width: f32::from(size.width).round() as i32,
@@ -229,7 +229,7 @@ impl From<WindowBounds> for NoProjectWindowBounds {
             WindowBounds::Fullscreen(bounds) => {
                 let origin = bounds.origin;
                 let size = bounds.size;
-                NoProjectWindowBounds::Fullscreen {
+                WindowBoundsJson::Fullscreen {
                     x: f32::from(origin.x).round() as i32,
                     y: f32::from(origin.y).round() as i32,
                     width: f32::from(size.width).round() as i32,
@@ -240,10 +240,10 @@ impl From<WindowBounds> for NoProjectWindowBounds {
     }
 }
 
-impl From<NoProjectWindowBounds> for WindowBounds {
-    fn from(n: NoProjectWindowBounds) -> Self {
+impl From<WindowBoundsJson> for WindowBounds {
+    fn from(n: WindowBoundsJson) -> Self {
         match n {
-            NoProjectWindowBounds::Windowed {
+            WindowBoundsJson::Windowed {
                 x,
                 y,
                 width,
@@ -252,7 +252,7 @@ impl From<NoProjectWindowBounds> for WindowBounds {
                 origin: point(px(x as f32), px(y as f32)),
                 size: size(px(width as f32), px(height as f32)),
             }),
-            NoProjectWindowBounds::Maximized {
+            WindowBoundsJson::Maximized {
                 x,
                 y,
                 width,
@@ -261,7 +261,7 @@ impl From<NoProjectWindowBounds> for WindowBounds {
                 origin: point(px(x as f32), px(y as f32)),
                 size: size(px(width as f32), px(height as f32)),
             }),
-            NoProjectWindowBounds::Fullscreen {
+            WindowBoundsJson::Fullscreen {
                 x,
                 y,
                 width,
