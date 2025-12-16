@@ -5,7 +5,7 @@ mod claude_code_onboarding_modal;
 mod end_trial_upsell;
 mod hold_for_default;
 mod onboarding_modal;
-mod unavailable_editing_tooltip;
+
 mod usage_callout;
 
 pub use acp_onboarding_modal::*;
@@ -15,5 +15,5 @@ pub use claude_code_onboarding_modal::*;
 pub use end_trial_upsell::*;
 pub use hold_for_default::*;
 pub use onboarding_modal::*;
-pub use unavailable_editing_tooltip::*;
+
 pub use usage_callout::*;

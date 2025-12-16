@@ -63,10 +63,7 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::{
-    AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
-    UsageCallout,
-};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
     CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
@@ -2091,10 +2088,23 @@ impl AcpThreadView {
                                                     .icon_size(IconSize::Small)
                                                     .icon_color(Color::Muted)
                                                     .style(ButtonStyle::Transparent)
-                                                    .tooltip(move |_window, cx| {
-                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.clone()))
-                                                            .into()
-                                                    })
+                                                    .tooltip(Tooltip::element({
+                                                        move |_, _| {
+                                                            v_flex()
+                                                                .gap_1()
+                                                                .child(Label::new("Unavailable Editing")).child(
+                                                                    div().max_w_64().child(
+                                                                        Label::new(format!(
+                                                                            "Editing previous messages is not available for {} yet.",
+                                                                            agent_name.clone()
+                                                                        ))
+                                                                        .size(LabelSize::Small)
+                                                                        .color(Color::Muted),
+                                                                    ),
+                                                                )
+                                                                .into_any_element()
+                                                        }
+                                                    }))
                                             )
                                     )
                                 }
