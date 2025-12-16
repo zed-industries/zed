@@ -190,10 +190,10 @@ impl Render for ProfileSelector {
                 move |_window, cx| {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
-                        .gap_1p5()
+                        .gap_1()
                         .child(
                             container()
-                                .pb_1p5()
+                                .pb_1()
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(Label::new("Cycle Through Profiles"))
