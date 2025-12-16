@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, FluentBuilder, NamedJob, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -45,20 +45,30 @@ fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
         )
     }
 
+    fn run_prettier_fix() -> Step<Run> {
+        named::bash("./script/prettier --write")
+    }
+
     fn commit_and_push(token: &StepOutput) -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             if git diff --quiet; then
                 echo "No changes to commit"
             else
                 git add -A
-                git commit -m "Apply cargo fmt and clippy --fix"
+                git commit -m "Autofix"
                 git push
             fi
         "#})
         .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+        .add_env((
+            "GIT_COMMITTER_EMAIL",
+            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        ))
         .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env(("GIT_AUTHOR_EMAIL", "hi@zed.dev"))
+        .add_env((
+            "GIT_AUTHOR_EMAIL",
+            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        ))
         .add_env(("GITHUB_TOKEN", token))
     }
 
@@ -66,12 +76,18 @@ fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
 
     named::job(
         Job::default()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(steps::checkout_repo_with_token(&token))
             .add_step(checkout_pr(pr_number, &token))
+            .add_step(steps::setup_cargo_config(runners::Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
+            .add_step(steps::setup_pnpm())
+            .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
             .add_step(run_clippy_fix())
-            .add_step(commit_and_push(&token)),
+            .add_step(commit_and_push(&token))
+            .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
     )
 }

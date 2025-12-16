@@ -11,7 +11,7 @@ on:
         type: string
 jobs:
   run_autofix:
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: get-app-token
       name: autofix_pr::run_autofix::authenticate_as_zippy
@@ -29,6 +29,31 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: autofix_pr::run_autofix::run_prettier_fix
+      run: ./script/prettier --write
+      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_cargo_fmt
       run: cargo fmt --all
       shell: bash -euxo pipefail {0}
@@ -41,13 +66,18 @@ jobs:
             echo "No changes to commit"
         else
             git add -A
-            git commit -m "Apply cargo fmt and clippy --fix"
+            git commit -m "Autofix"
             git push
         fi
       shell: bash -euxo pipefail {0}
       env:
         GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: hi@zed.dev
+        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GIT_AUTHOR_NAME: Zed Zippy
-        GIT_AUTHOR_EMAIL: hi@zed.dev
+        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
