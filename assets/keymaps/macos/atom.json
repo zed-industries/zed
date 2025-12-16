@@ -4,16 +4,16 @@
     "bindings": {
       "ctrl-alt-cmd-l": "workspace::Reload",
       "cmd-k cmd-p": "workspace::ActivatePreviousPane",
-      "cmd-k cmd-n": "workspace::ActivateNextPane"
-    }
+      "cmd-k cmd-n": "workspace::ActivateNextPane",
+    },
   },
   {
     "context": "Editor",
     "bindings": {
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-k cmd-u": "editor::ConvertToUpperCase",
-      "cmd-k cmd-l": "editor::ConvertToLowerCase"
-    }
+      "cmd-k cmd-l": "editor::ConvertToLowerCase",
+    },
   },
   {
     "context": "Editor && mode == full",
@@ -33,8 +33,8 @@
       "ctrl-cmd-down": "editor::MoveLineDown",
       "cmd-\\": "workspace::ToggleLeftDock",
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide",
-      "cmd-r": "outline::Toggle"
-    }
+      "cmd-r": "outline::Toggle",
+    },
   },
   {
     "context": "BufferSearchBar",
@@ -42,8 +42,8 @@
       "cmd-g": ["editor::SelectNext", { "replace_newest": true }],
       "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }],
       "cmd-f3": "search::SelectNextMatch",
-      "cmd-shift-f3": "search::SelectPreviousMatch"
-    }
+      "cmd-shift-f3": "search::SelectPreviousMatch",
+    },
   },
   {
     "context": "Workspace",
@@ -51,8 +51,8 @@
       "cmd-\\": "workspace::ToggleLeftDock",
       "cmd-k cmd-b": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
-      "cmd-shift-r": "project_symbols::Toggle"
-    }
+      "cmd-shift-r": "project_symbols::Toggle",
+    },
   },
   {
     "context": "Pane",
@@ -67,8 +67,8 @@
       "cmd-6": ["pane::ActivateItem", 5],
       "cmd-7": ["pane::ActivateItem", 6],
       "cmd-8": ["pane::ActivateItem", 7],
-      "cmd-9": "pane::ActivateLastItem"
-    }
+      "cmd-9": "pane::ActivateLastItem",
+    },
   },
   {
     "context": "ProjectPanel",
@@ -77,8 +77,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "cmd-x": "project_panel::Cut",
       "cmd-c": "project_panel::Copy",
-      "cmd-v": "project_panel::Paste"
-    }
+      "cmd-v": "project_panel::Paste",
+    },
   },
   {
     "context": "ProjectPanel && not_editing",
@@ -92,7 +92,7 @@
       "d": "project_panel::Duplicate",
       "home": "menu::SelectFirst",
       "end": "menu::SelectLast",
-      "shift-a": "project_panel::NewDirectory"
-    }
-  }
+      "shift-a": "project_panel::NewDirectory",
+    },
+  },
 ]

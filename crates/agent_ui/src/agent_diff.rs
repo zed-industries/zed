@@ -130,7 +130,12 @@ impl AgentDiffPane {
             .action_log()
             .read(cx)
             .changed_buffers(cx);
-        let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+        let mut paths_to_delete = self
+            .multibuffer
+            .read(cx)
+            .paths()
+            .cloned()
+            .collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
             if buffer.read(cx).file().is_none() {

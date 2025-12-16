@@ -6050,9 +6050,9 @@ impl Render for ProjectPanel {
                     h_flex()
                         .w_1_2()
                         .gap_2()
-                        .child(Divider::horizontal())
+                        .child(div().flex_1().child(Divider::horizontal()))
                         .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
-                        .child(Divider::horizontal()),
+                        .child(div().flex_1().child(Divider::horizontal())),
                 )
                 .child(
                     Button::new("clone_repo", "Clone Repository")

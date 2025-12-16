@@ -729,12 +729,14 @@ impl BufferSearchBar {
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
             self.sync_select_next_case_sensitivity(cx);
-            self.replace_enabled = deploy.replace_enabled;
-            self.selection_search_enabled = if deploy.selection_search_enabled {
-                Some(FilteredSearchRange::Default)
-            } else {
-                None
-            };
+            self.replace_enabled |= deploy.replace_enabled;
+            self.selection_search_enabled =
+                self.selection_search_enabled
+                    .or(if deploy.selection_search_enabled {
+                        Some(FilteredSearchRange::Default)
+                    } else {
+                        None
+                    });
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;

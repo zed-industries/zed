@@ -2,7 +2,6 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
 use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
@@ -44,7 +43,7 @@ use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
@@ -1250,18 +1249,14 @@ impl Render for ConfigurationView {
             .child(
                 List::new()
                     .child(
-                        InstructionListItem::new(
-                            "Grant permissions to the strategy you'll use according to the:",
-                            Some("Prerequisites"),
-                            Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
-                        )
+                        ListBulletItem::new("")
+                            .child(Label::new("Grant permissions to the strategy you'll use according to the:"))
+                            .child(ButtonLink::new("Prerequisites", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
                     )
                     .child(
-                        InstructionListItem::new(
-                            "Select the models you would like access to:",
-                            Some("Bedrock Model Catalog"),
-                            Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
-                        )
+                        ListBulletItem::new("")
+                            .child(Label::new("Select the models you would like access to:"))
+                            .child(ButtonLink::new("Bedrock Model Catalog", "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"))
                     )
             )
             .child(self.render_static_credentials_ui())
@@ -1302,22 +1297,22 @@ impl ConfigurationView {
             )
             .child(
                 List::new()
-                    .child(InstructionListItem::new(
-                        "Create an IAM user in the AWS console with programmatic access",
-                        Some("IAM Console"),
-                        Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"),
-                    ))
-                    .child(InstructionListItem::new(
-                        "Attach the necessary Bedrock permissions to this ",
-                        Some("user"),
-                        Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Copy the access key ID and secret access key when provided",
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Enter these credentials below",
-                    )),
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Create an IAM user in the AWS console with programmatic access"))
+                            .child(ButtonLink::new("IAM Console", "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"))
+                    )
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Attach the necessary Bedrock permissions to this"))
+                            .child(ButtonLink::new("user", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
+                    )
+                    .child(
+                        ListBulletItem::new("Copy the access key ID and secret access key when provided")
+                    )
+                    .child(
+                        ListBulletItem::new("Enter these credentials below")
+                    )
             )
             .child(self.access_key_id_editor.clone())
             .child(self.secret_access_key_editor.clone())

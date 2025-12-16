@@ -6053,13 +6053,13 @@ fn default_markdown_style(
             },
             border_color: Some(colors.border_variant),
             background: Some(colors.editor_background.into()),
-            text: Some(TextStyleRefinement {
+            text: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 ..Default::default()
-            }),
+            },
             ..Default::default()
         },
         inline_code: TextStyleRefinement {

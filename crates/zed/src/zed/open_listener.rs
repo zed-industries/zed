@@ -686,6 +686,7 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
+                connection_timeout: None,
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);

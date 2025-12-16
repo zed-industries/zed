@@ -966,6 +966,14 @@ impl DirectoryLister {
             }
         }
     }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        match self {
+            Self::Local(project, ..) | Self::Project(project, ..) => {
+                project.read(cx).path_style(cx)
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -1147,7 +1147,7 @@ impl ProjectSearchView {
         };
 
         search.update(cx, |search, cx| {
-            search.replace_enabled = action.replace_enabled;
+            search.replace_enabled |= action.replace_enabled;
             if let Some(query) = query {
                 search.set_query(&query, window, cx);
             }

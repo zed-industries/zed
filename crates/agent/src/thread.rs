@@ -2,7 +2,8 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -530,6 +531,7 @@ pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+    fn kill(&self, cx: &AsyncApp) -> Result<()>;
 }
 
 pub trait ThreadEnvironment {
@@ -1001,6 +1003,8 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
+        self.add_tool(SaveFileTool::new(self.project.clone()));
+        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);

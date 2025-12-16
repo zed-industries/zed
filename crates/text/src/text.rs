@@ -2321,8 +2321,13 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             self.visible_text.len()
         } else {
-            debug_assert!(anchor.buffer_id == Some(self.remote_id));
-            debug_assert!(self.version.observed(anchor.timestamp));
+            debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
+            debug_assert!(
+                self.version.observed(anchor.timestamp),
+                "Anchor timestamp {:?} not observed by buffer {:?}",
+                anchor.timestamp,
+                self.version
+            );
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
@@ -3380,6 +3385,25 @@ impl LineEnding {
             text
         }
     }
+}
+
+pub fn chunks_with_line_ending(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
+    rope.chunks().flat_map(move |chunk| {
+        let mut newline = false;
+        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
+        chunk
+            .lines()
+            .flat_map(move |line| {
+                let ending = if newline {
+                    Some(line_ending.as_str())
+                } else {
+                    None
+                };
+                newline = true;
+                ending.into_iter().chain([line])
+            })
+            .chain(end_with_newline)
+    })
 }
 
 #[cfg(debug_assertions)]

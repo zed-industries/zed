@@ -139,7 +139,7 @@ impl CommitModal {
                             && !git_panel.amend_pending()
                         {
                             git_panel.set_amend_pending(true, cx);
-                            git_panel.load_last_commit_message_if_empty(cx);
+                            git_panel.load_last_commit_message(cx);
                         }
                     }
                     ForceMode::Commit => {
@@ -492,53 +492,20 @@ impl CommitModal {
         }
     }
 
-    fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.git_panel.read(cx).amend_pending() {
-            return;
+    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.commit(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
+            telemetry::event!("Git Committed", source = "Git Modal");
+            cx.emit(DismissEvent);
         }
-        telemetry::event!("Git Committed", source = "Git Modal");
-        self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(
-                CommitOptions {
-                    amend: false,
-                    signoff: git_panel.signoff_enabled(),
-                },
-                window,
-                cx,
-            )
-        });
-        cx.emit(DismissEvent);
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .git_panel
-            .read(cx)
-            .active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).head_commit.as_ref())
-            .is_none()
-        {
-            return;
-        }
-        if !self.git_panel.read(cx).amend_pending() {
-            self.git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_amend_pending(true, cx);
-                git_panel.load_last_commit_message_if_empty(cx);
-            });
-        } else {
+    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.amend(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
             telemetry::event!("Git Amended", source = "Git Modal");
-            self.git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_amend_pending(false, cx);
-                git_panel.commit_changes(
-                    CommitOptions {
-                        amend: true,
-                        signoff: git_panel.signoff_enabled(),
-                    },
-                    window,
-                    cx,
-                );
-            });
             cx.emit(DismissEvent);
         }
     }
@@ -564,8 +531,8 @@ impl Render for CommitModal {
             .id("commit-modal")
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::commit))
-            .on_action(cx.listener(Self::amend))
+            .on_action(cx.listener(Self::on_commit))
+            .on_action(cx.listener(Self::on_amend))
             .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
                 this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
                     this.git_panel.update(cx, |panel, cx| {
