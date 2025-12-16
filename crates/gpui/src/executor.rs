@@ -290,6 +290,13 @@ impl BackgroundExecutor {
         &self,
         future: AnyFuture<R>,
         label: Option<TaskLabel>,
+        #[cfg_attr(
+            target_os = "windows",
+            expect(
+                unused_variables,
+                reason = "Multi priority scheduler is broken on windows"
+            )
+        )]
         priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();

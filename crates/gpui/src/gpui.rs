@@ -31,7 +31,7 @@ mod path_builder;
 mod platform;
 pub mod prelude;
 mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 mod queue;
 mod scene;
 mod shared_string;
