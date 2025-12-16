@@ -29370,6 +29370,7 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    cx.update(|cx| project::trusted_worktrees::init(HashMap::default(), None, None, cx));
 
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {

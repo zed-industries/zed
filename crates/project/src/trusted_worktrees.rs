@@ -68,19 +68,21 @@ use util::debug_panic;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
-#[cfg(not(any(test, feature = "test-support")))]
-use crate::persistence::PROJECT_DB;
-#[cfg(not(any(test, feature = "test-support")))]
-use util::ResultExt as _;
-
 pub fn init(
+    db_trusted_paths: TrustedPaths,
     downstream_client: Option<(AnyProtoClient, u64)>,
     upstream_client: Option<(AnyProtoClient, u64)>,
     cx: &mut App,
 ) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
-        let trusted_worktrees = cx.new(|cx| {
-            TrustedWorktreesStore::new(None, None, downstream_client, upstream_client, cx)
+        let trusted_worktrees = cx.new(|_| {
+            TrustedWorktreesStore::new(
+                db_trusted_paths,
+                None,
+                None,
+                downstream_client,
+                upstream_client,
+            )
         });
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
@@ -126,18 +128,7 @@ pub fn track_worktree_trust(
                 }
             });
         }
-        None => {
-            let trusted_worktrees = cx.new(|cx| {
-                TrustedWorktreesStore::new(
-                    Some(worktree_store.clone()),
-                    remote_host,
-                    downstream_client,
-                    upstream_client,
-                    cx,
-                )
-            });
-            cx.set_global(TrustedWorktrees(trusted_worktrees))
-        }
+        None => log::debug!("No TrustedWorktrees initialized, not tracking worktree trust"),
     }
 }
 
@@ -212,9 +203,7 @@ pub struct TrustedWorktreesStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     upstream_client: Option<(AnyProtoClient, u64)>,
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
-    trusted_paths: HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>,
-    #[cfg(not(any(test, feature = "test-support")))]
-    serialization_task: Task<()>,
+    trusted_paths: TrustedPaths,
     restricted: HashSet<WorktreeId>,
     remote_host: Option<RemoteHostLocation>,
     restricted_workspaces: HashSet<Option<RemoteHostLocation>>,
@@ -307,36 +296,16 @@ pub enum TrustedWorktreesEvent {
 
 impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStore {}
 
+pub type TrustedPaths = HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>;
+
 impl TrustedWorktreesStore {
     fn new(
+        trusted_paths: TrustedPaths,
         worktree_store: Option<Entity<WorktreeStore>>,
         remote_host: Option<RemoteHostLocation>,
         downstream_client: Option<(AnyProtoClient, u64)>,
         upstream_client: Option<(AnyProtoClient, u64)>,
-        cx: &App,
     ) -> Self {
-        #[cfg(any(test, feature = "test-support"))]
-        let _ = cx;
-
-        #[cfg(not(any(test, feature = "test-support")))]
-        let trusted_paths = if downstream_client.is_none() {
-            match PROJECT_DB.fetch_trusted_worktrees(
-                worktree_store.clone(),
-                remote_host.clone(),
-                cx,
-            ) {
-                Ok(trusted_paths) => trusted_paths,
-                Err(e) => {
-                    log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
-                    HashMap::default()
-                }
-            }
-        } else {
-            HashMap::default()
-        };
-        #[cfg(any(test, feature = "test-support"))]
-        let trusted_paths = HashMap::<Option<RemoteHostLocation>, HashSet<PathTrust>>::default();
-
         if let Some((upstream_client, upstream_project_id)) = &upstream_client {
             let trusted_paths = trusted_paths
                 .iter()
@@ -366,8 +335,6 @@ impl TrustedWorktreesStore {
             remote_host,
             restricted_workspaces: HashSet::default(),
             restricted: HashSet::default(),
-            #[cfg(not(any(test, feature = "test-support")))]
-            serialization_task: Task::ready(()),
             worktree_stores,
         }
     }
@@ -496,41 +463,6 @@ impl TrustedWorktreesStore {
             trusted_paths.clone(),
         ));
 
-        #[cfg(not(any(test, feature = "test-support")))]
-        if self.downstream_client.is_none() {
-            let mut new_trusted_workspaces = HashSet::default();
-            let new_trusted_worktrees = self
-                .trusted_paths
-                .clone()
-                .into_iter()
-                .map(|(host, paths)| {
-                    let abs_paths = paths
-                        .into_iter()
-                        .flat_map(|path| match path {
-                            PathTrust::Worktree(worktree_id) => self
-                                .find_worktree_data(worktree_id, cx)
-                                .map(|(abs_path, ..)| abs_path.to_path_buf()),
-                            PathTrust::AbsPath(abs_path) => Some(abs_path),
-                            PathTrust::Workspace => {
-                                new_trusted_workspaces.insert(host.clone());
-                                None
-                            }
-                        })
-                        .collect();
-                    (host, abs_paths)
-                })
-                .collect();
-            // Do not persist auto trusted worktrees
-            if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                self.serialization_task = cx.background_spawn(async move {
-                    PROJECT_DB
-                        .save_trusted_worktrees(new_trusted_worktrees, new_trusted_workspaces)
-                        .await
-                        .log_err();
-                });
-            }
-        }
-
         if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
             let trusted_paths = trusted_paths
                 .iter()
@@ -578,31 +510,8 @@ impl TrustedWorktreesStore {
 
     /// Erases all trust information.
     /// Requires Zed's restart to take proper effect.
-    pub fn clear_trusted_paths(&mut self, cx: &App) -> Task<()> {
-        if self.downstream_client.is_none() {
-            self.trusted_paths.clear();
-
-            #[cfg(not(any(test, feature = "test-support")))]
-            {
-                let (tx, rx) = smol::channel::bounded(1);
-                self.serialization_task = cx.background_spawn(async move {
-                    PROJECT_DB.clear_trusted_worktrees().await.log_err();
-                    tx.send(()).await.ok();
-                });
-
-                return cx.background_spawn(async move {
-                    rx.recv().await.ok();
-                });
-            }
-
-            #[cfg(any(test, feature = "test-support"))]
-            {
-                let _ = cx;
-                Task::ready(())
-            }
-        } else {
-            Task::ready(())
-        }
+    pub fn clear_trusted_paths(&mut self) {
+        self.trusted_paths.clear();
     }
 
     /// Checks whether a certain worktree is trusted (or on a larger trust level).
@@ -785,6 +694,39 @@ impl TrustedWorktreesStore {
         }
     }
 
+    /// Returns a normalized representation of the trusted paths to store in the DB.
+    pub fn trusted_paths_for_serialization(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (
+        HashSet<Option<RemoteHostLocation>>,
+        HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+    ) {
+        let mut new_trusted_workspaces = HashSet::default();
+        let new_trusted_worktrees = self
+            .trusted_paths
+            .clone()
+            .into_iter()
+            .map(|(host, paths)| {
+                let abs_paths = paths
+                    .into_iter()
+                    .flat_map(|path| match path {
+                        PathTrust::Worktree(worktree_id) => self
+                            .find_worktree_data(worktree_id, cx)
+                            .map(|(abs_path, ..)| abs_path.to_path_buf()),
+                        PathTrust::AbsPath(abs_path) => Some(abs_path),
+                        PathTrust::Workspace => {
+                            new_trusted_workspaces.insert(host.clone());
+                            None
+                        }
+                    })
+                    .collect();
+                (host, abs_paths)
+            })
+            .collect();
+        (new_trusted_workspaces, new_trusted_worktrees)
+    }
+
     fn find_worktree_data(
         &mut self,
         worktree_id: WorktreeId,
@@ -841,7 +783,7 @@ impl TrustedWorktreesStore {
     }
 }
 
-pub(crate) fn find_worktree_in_store(
+pub fn find_worktree_in_store(
     worktree_store: &WorktreeStore,
     abs_path: &Path,
     cx: &App,
@@ -885,6 +827,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Entity<TrustedWorktreesStore> {
         cx.update(|cx| {
+            init(HashMap::default(), None, None, cx);
             track_worktree_trust(worktree_store, None, None, None, cx);
             TrustedWorktrees::try_get_global(cx).expect("global should be set")
         })

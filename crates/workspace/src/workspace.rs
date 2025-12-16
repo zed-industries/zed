@@ -80,7 +80,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::TrustedWorktrees,
+    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -1184,6 +1184,7 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
+    _schedule_serialize_worktree_trust: Task<()>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1229,16 +1230,43 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe_global::<SettingsStore>(|_, cx| {
-            if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                        trusted_worktrees.auto_trust_all(cx);
-                    })
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
+                if let TrustedWorktreesEvent::Trusted(..) = e {
+                    let (new_trusted_workspaces, new_trusted_worktrees) = worktrees_store
+                        .update(cx, |worktrees_store, cx| {
+                            worktrees_store.trusted_paths_for_serialization(cx)
+                        });
+                    // Do not persist auto trusted worktrees
+                    if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                        workspace._schedule_serialize_worktree_trust =
+                            cx.background_spawn(async move {
+                                timeout.await;
+                                persistence::DB
+                                    .save_trusted_worktrees(
+                                        new_trusted_worktrees,
+                                        new_trusted_workspaces,
+                                    )
+                                    .await
+                                    .log_err();
+                            });
+                    }
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
+
+            cx.observe_global::<SettingsStore>(|_, cx| {
+                if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.auto_trust_all(cx);
+                        })
+                    }
+                }
+            })
+            .detach();
+        }
 
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
@@ -1250,11 +1278,25 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
-                    this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.update_history(cx);
+                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                }
+
+                project::Event::WorktreeRemoved(_) => {
+                    this.update_worktree_data(window, cx);
+                }
+
+                project::Event::WorktreeAdded(worktree_id) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                    this.update_worktree_data(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1540,6 +1582,7 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _schedule_serialize_ssh_paths: None,
+            _schedule_serialize_worktree_trust: Task::ready(()),
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -5970,12 +6013,14 @@ impl Workspace {
             .on_action(
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                        let clear_task = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.clear_trusted_paths(cx)
+                        trusted_worktrees.update(cx, |trusted_worktrees, _| {
+                            trusted_worktrees.clear_trusted_paths()
                         });
+                        let clear_task = persistence::DB.clear_trusted_worktrees();
                         cx.spawn(async move |_, cx| {
-                            clear_task.await;
-                            cx.update(|cx| reload(cx)).ok();
+                            if clear_task.await.log_err().is_some() {
+                                cx.update(|cx| reload(cx)).ok();
+                            }
                         })
                         .detach();
                     }
@@ -6495,6 +6540,13 @@ impl Workspace {
                 });
             }
         }
+    }
+
+    fn update_worktree_data(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.update_window_title(window, cx);
+        self.serialize_workspace(window, cx);
+        // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+        self.update_history(cx);
     }
 }
 
