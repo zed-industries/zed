@@ -55,7 +55,7 @@ fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
                 echo "No changes to commit"
             else
                 git add -A
-                git commit -m "Apply cargo fmt and clippy --fix"
+                git commit -m "Autofix"
                 git push
             fi
         "#})
