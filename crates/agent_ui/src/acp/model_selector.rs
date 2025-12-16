@@ -233,7 +233,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn render_match(
         &self,
         ix: usize,
-        focused: bool,
+        is_focused: bool,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
@@ -262,7 +262,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         })
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
-                                .is_focused(focused)
+                                .is_focused(is_focused)
                                 .is_selected(is_selected)
                                 .when_some(model_info.icon, |this, icon| this.icon(icon)),
                         )

@@ -461,7 +461,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn render_match(
         &self,
         ix: usize,
-        focused: bool,
+        is_focused: bool,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
@@ -479,7 +479,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
-                        .is_focused(focused)
+                        .is_focused(is_focused)
                         .is_selected(is_selected)
                         .icon(model_info.icon)
                         .into_any_element(),
