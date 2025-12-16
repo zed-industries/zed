@@ -22,14 +22,14 @@ use crate::ui::{
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
+type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &App) + 'static>;
 
 pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-    on_add_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
-    on_remove_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -38,8 +38,7 @@ pub fn language_model_selector(
     let delegate = LanguageModelPickerDelegate::new(
         get_active_model,
         on_model_changed,
-        on_add_favorite_model,
-        on_remove_favorite_model,
+        on_toggle_favorite,
         popover_styles,
         focus_handle,
         window,
@@ -62,7 +61,7 @@ fn all_models(cx: &App) -> GroupedModels {
 
     let mut favorites_index = FavoritesIndex::default();
 
-    for sel in &AgentSettings::get_global(cx).favorite_models_as_selections {
+    for sel in &AgentSettings::get_global(cx).favorite_models {
         favorites_index
             .entry(sel.provider.0.clone().into())
             .or_default()
@@ -122,8 +121,7 @@ impl ModelInfo {
 pub struct LanguageModelPickerDelegate {
     on_model_changed: OnModelChanged,
     get_active_model: GetActiveModel,
-    on_add_favorite_model: Arc<dyn Fn(Arc<dyn LanguageModel>, &App)>,
-    on_remove_favorite_model: Arc<dyn Fn(Arc<dyn LanguageModel>, &App)>,
+    on_toggle_favorite: OnToggleFavorite,
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
@@ -137,8 +135,7 @@ impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-        on_add_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
-        on_remove_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
         popover_styles: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -154,8 +151,7 @@ impl LanguageModelPickerDelegate {
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
-            on_add_favorite_model: Arc::new(on_add_favorite_model),
-            on_remove_favorite_model: Arc::new(on_remove_favorite_model),
+            on_toggle_favorite: Arc::new(on_toggle_favorite),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
@@ -296,7 +292,7 @@ impl GroupedModels {
             entries.extend(self.favorites.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::Unfavorite,
+                    ModelSelectorFavoriteAction::Unfavorite,
                 )
             }));
         }
@@ -306,7 +302,7 @@ impl GroupedModels {
             entries.extend(self.recommended.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::from_favorite_state(info.is_favorite),
+                    ModelSelectorFavoriteAction::from_is_favorite(info.is_favorite),
                 )
             }));
         }
@@ -321,7 +317,7 @@ impl GroupedModels {
             entries.extend(models.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::from_favorite_state(info.is_favorite),
+                    ModelSelectorFavoriteAction::from_is_favorite(info.is_favorite),
                 )
             }));
         }
@@ -330,25 +326,8 @@ impl GroupedModels {
 }
 
 enum LanguageModelPickerEntry {
-    Model(ModelInfo, LanguageModelPickerEntryAction),
+    Model(ModelInfo, ModelSelectorFavoriteAction),
     Separator(SharedString),
-}
-
-/// Corresponds to the action button shown on the model in the list.
-#[derive(Copy, Clone)]
-enum LanguageModelPickerEntryAction {
-    Favorite,
-    Unfavorite,
-}
-
-impl LanguageModelPickerEntryAction {
-    fn from_favorite_state(is_favorite: bool) -> Self {
-        if is_favorite {
-            Self::Unfavorite
-        } else {
-            Self::Favorite
-        }
-    }
 }
 
 struct ModelMatcher {
@@ -554,27 +533,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     && Some(model_info.model.id()) == active_model_id;
 
                 let handle_action_click = {
-                    let action = *action;
+                    let is_favorite = model_info.is_favorite;
                     let model = model_info.model.clone();
-                    let on_add_favorite_model = self.on_add_favorite_model.clone();
-                    let on_remove_favorite_model = self.on_remove_favorite_model.clone();
-                    move |cx: &App| match action {
-                        LanguageModelPickerEntryAction::Favorite => {
-                            on_add_favorite_model(model.clone(), cx)
-                        }
-                        LanguageModelPickerEntryAction::Unfavorite => {
-                            on_remove_favorite_model(model.clone(), cx)
-                        }
-                    }
-                };
-
-                let favorite_action = match action {
-                    LanguageModelPickerEntryAction::Favorite => {
-                        ModelSelectorFavoriteAction::Favorite
-                    }
-                    LanguageModelPickerEntryAction::Unfavorite => {
-                        ModelSelectorFavoriteAction::Unfavorite
-                    }
+                    let on_toggle_favorite = self.on_toggle_favorite.clone();
+                    move |cx: &App| on_toggle_favorite(model.clone(), !is_favorite, cx)
                 };
 
                 Some(
@@ -582,7 +544,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon(model_info.icon)
                         .is_selected(is_selected)
                         .is_focused(selected)
-                        .favorite_action(favorite_action)
+                        .favorite_action(*action)
                         .on_favorite_action_click(handle_action_click)
                         .into_any_element(),
                 )
@@ -915,13 +877,13 @@ mod tests {
                 LanguageModelPickerEntry::Model(info, action)
                     if !in_favorites_section && info.model.telemetry_id() == "zed/claude" =>
                 {
-                    assert!(matches!(action, LanguageModelPickerEntryAction::Unfavorite));
+                    assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
                 }
                 LanguageModelPickerEntry::Model(info, action) => {
                     if info.is_favorite {
-                        assert!(matches!(action, LanguageModelPickerEntryAction::Unfavorite));
+                        assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
                     } else {
-                        assert!(matches!(action, LanguageModelPickerEntryAction::Favorite));
+                        assert!(matches!(action, ModelSelectorFavoriteAction::Favorite));
                     }
                 }
             }

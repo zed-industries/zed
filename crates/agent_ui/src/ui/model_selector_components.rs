@@ -42,6 +42,14 @@ pub enum ModelSelectorFavoriteAction {
 }
 
 impl ModelSelectorFavoriteAction {
+    pub fn from_is_favorite(is_favorite: bool) -> Self {
+        if is_favorite {
+            Self::Unfavorite
+        } else {
+            Self::Favorite
+        }
+    }
+
     pub fn icon_name(&self) -> IconName {
         match self {
             Self::Favorite => IconName::Star,

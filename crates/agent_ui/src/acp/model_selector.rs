@@ -45,24 +45,7 @@ pub fn acp_model_selector(
 
 enum AcpModelPickerEntry {
     Separator(SharedString),
-    Model(AgentModelInfo, AcpModelPickerEntryAction),
-}
-
-/// Corresponds to the action button shown on the model in the list.
-#[derive(Copy, Clone)]
-enum AcpModelPickerEntryAction {
-    Favorite,
-    Unfavorite,
-}
-
-impl AcpModelPickerEntryAction {
-    fn from_favorite_state(is_favorite: bool) -> Self {
-        if is_favorite {
-            Self::Unfavorite
-        } else {
-            Self::Favorite
-        }
-    }
+    Model(AgentModelInfo, ModelSelectorFavoriteAction),
 }
 
 pub struct AcpModelPickerDelegate {
@@ -180,7 +163,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let favorites = if self.selector.supports_favorites() {
-            AgentSettings::get_global(cx).favorite_models_as_ids.clone()
+            Arc::new(AgentSettings::get_global(cx).favorite_model_ids())
         } else {
             Default::default()
         };
@@ -201,7 +184,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries =
-                    info_list_to_picker_entries(filtered_models, favorites).collect();
+                    info_list_to_picker_entries(filtered_models, favorites);
                 // Finds the currently selected model in the list
                 let new_index = this
                     .delegate
@@ -279,32 +262,17 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 let supports_favorites = self.selector.supports_favorites();
 
                 let handle_action_click = {
-                    let action = *action;
+                    let is_favorite = matches!(action, ModelSelectorFavoriteAction::Unfavorite);
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
 
-                    move |cx: &App| match action {
-                        AcpModelPickerEntryAction::Favorite => {
-                            crate::favorite_models::add_to_settings(
-                                model_id.clone(),
-                                fs.clone(),
-                                cx,
-                            )
-                        }
-                        AcpModelPickerEntryAction::Unfavorite => {
-                            crate::favorite_models::remove_from_settings(
-                                model_id.clone(),
-                                fs.clone(),
-                                cx,
-                            )
-                        }
-                    }
-                };
-
-                let favorite_action = match action {
-                    AcpModelPickerEntryAction::Favorite => ModelSelectorFavoriteAction::Favorite,
-                    AcpModelPickerEntryAction::Unfavorite => {
-                        ModelSelectorFavoriteAction::Unfavorite
+                    move |cx: &App| {
+                        crate::favorite_models::toggle_model_id_in_settings(
+                            model_id.clone(),
+                            !is_favorite,
+                            fs.clone(),
+                            cx,
+                        );
                     }
                 };
 
@@ -328,7 +296,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .when(supports_favorites, |this| {
-                                    this.favorite_action(favorite_action)
+                                    this.favorite_action(*action)
                                         .on_favorite_action_click(handle_action_click)
                                 }),
                         )
@@ -381,58 +349,56 @@ impl PickerDelegate for AcpModelPickerDelegate {
 fn info_list_to_picker_entries(
     model_list: AgentModelList,
     favorites: Arc<HashSet<ModelId>>,
-) -> impl Iterator<Item = AcpModelPickerEntry> {
-    let all_models = match &model_list {
-        AgentModelList::Flat(list) => itertools::Either::Left(list.iter()),
-        AgentModelList::Grouped(index_map) => {
-            itertools::Either::Right(index_map.values().flatten())
-        }
+) -> Vec<AcpModelPickerEntry> {
+    let mut entries = Vec::new();
+
+    let all_models: Vec<_> = match &model_list {
+        AgentModelList::Flat(list) => list.iter().collect(),
+        AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
     };
 
-    let favorites_entries = all_models
-        .filter(|model_info| favorites.contains(&model_info.id))
-        .unique_by(|model_info| &model_info.id)
-        .map(|model_info| {
-            AcpModelPickerEntry::Model(model_info.clone(), AcpModelPickerEntryAction::Unfavorite)
-        })
-        .collect_vec();
+    let favorite_models: Vec<_> = all_models
+        .iter()
+        .filter(|m| favorites.contains(&m.id))
+        .unique_by(|m| &m.id)
+        .collect();
 
-    let model_list_is_flat = model_list.is_flat();
-
-    let all_models_entries = match model_list {
-        AgentModelList::Flat(list) => {
-            itertools::Either::Left(list.into_iter().map(move |model_info| {
-                let action = AcpModelPickerEntryAction::from_favorite_state(
-                    favorites.contains(&model_info.id),
-                );
-                AcpModelPickerEntry::Model(model_info, action)
-            }))
+    let has_favorites = !favorite_models.is_empty();
+    if has_favorites {
+        entries.push(AcpModelPickerEntry::Separator("Favorite".into()));
+        for model in favorite_models {
+            entries.push(AcpModelPickerEntry::Model(
+                (*model).clone(),
+                ModelSelectorFavoriteAction::Unfavorite,
+            ));
         }
-        AgentModelList::Grouped(index_map) => {
-            itertools::Either::Right(index_map.into_iter().flat_map(move |(group_name, models)| {
-                let favorites = favorites.clone();
-                std::iter::once(AcpModelPickerEntry::Separator(group_name.0)).chain(
-                    models.into_iter().map(move |model_info| {
-                        let action = AcpModelPickerEntryAction::from_favorite_state(
-                            favorites.contains(&model_info.id),
-                        );
-                        AcpModelPickerEntry::Model(model_info, action)
-                    }),
-                )
-            }))
-        }
-    };
-
-    if favorites_entries.is_empty() {
-        itertools::Either::Left(all_models_entries)
-    } else {
-        itertools::Either::Right(
-            std::iter::once(AcpModelPickerEntry::Separator("Favorite".into()))
-                .chain(favorites_entries)
-                .chain(model_list_is_flat.then_some(AcpModelPickerEntry::Separator("All".into())))
-                .chain(all_models_entries),
-        )
     }
+
+    match model_list {
+        AgentModelList::Flat(list) => {
+            if has_favorites {
+                entries.push(AcpModelPickerEntry::Separator("All".into()));
+            }
+            for model in list {
+                let action =
+                    ModelSelectorFavoriteAction::from_is_favorite(favorites.contains(&model.id));
+                entries.push(AcpModelPickerEntry::Model(model, action));
+            }
+        }
+        AgentModelList::Grouped(index_map) => {
+            for (group_name, models) in index_map {
+                entries.push(AcpModelPickerEntry::Separator(group_name.0));
+                for model in models {
+                    let action = ModelSelectorFavoriteAction::from_is_favorite(
+                        favorites.contains(&model.id),
+                    );
+                    entries.push(AcpModelPickerEntry::Model(model, action));
+                }
+            }
+        }
+    }
+
+    entries
 }
 
 async fn fuzzy_search(
@@ -591,7 +557,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
 
         assert!(matches!(
             entries.first(),
@@ -607,7 +573,7 @@ mod tests {
         let models = create_model_list(vec![("zed", vec!["zed/claude", "zed/gemini"])]);
         let favorites = create_favorites(vec![]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
 
         assert!(matches!(
             entries.first(),
@@ -623,16 +589,16 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
 
         for entry in &entries {
             match entry {
                 AcpModelPickerEntry::Separator(_) => {}
                 AcpModelPickerEntry::Model(info, action) if info.id.0.as_ref() == "zed/claude" => {
-                    assert!(matches!(action, AcpModelPickerEntryAction::Unfavorite));
+                    assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
                 }
                 AcpModelPickerEntry::Model(_, action) => {
-                    assert!(matches!(action, AcpModelPickerEntryAction::Favorite));
+                    assert!(matches!(action, ModelSelectorFavoriteAction::Favorite));
                 }
             }
         }
@@ -646,7 +612,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini", "openai/gpt-5"]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
         let model_ids = get_entry_model_ids(&entries);
 
         assert_eq!(model_ids[0], "zed/gemini");
@@ -667,7 +633,7 @@ mod tests {
 
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
         let labels = get_entry_labels(&entries);
 
         assert_eq!(
@@ -707,7 +673,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, favorites).collect_vec();
+        let entries = info_list_to_picker_entries(models, favorites);
 
         assert!(matches!(
             entries.first(),

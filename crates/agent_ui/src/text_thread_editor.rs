@@ -321,12 +321,14 @@ impl TextThreadEditor {
                     },
                     {
                         let fs = fs.clone();
-                        move |model, cx| {
-                            crate::favorite_models::add_to_settings(model, fs.clone(), cx);
+                        move |model, should_be_favorite, cx| {
+                            crate::favorite_models::toggle_in_settings(
+                                model,
+                                should_be_favorite,
+                                fs.clone(),
+                                cx,
+                            );
                         }
-                    },
-                    move |model, cx| {
-                        crate::favorite_models::remove_from_settings(model, fs.clone(), cx);
                     },
                     true, // Use popover styles for picker
                     focus_handle,
