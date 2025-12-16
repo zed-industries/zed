@@ -245,8 +245,6 @@ struct SelectionSet {
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
-    /// The ID provided by the dynamic registration that produced this diagnostic.
-    pub registration_id: Option<SharedString>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
     pub code_description: Option<lsp::Uri>,
@@ -5406,7 +5404,6 @@ impl Default for Diagnostic {
             is_unnecessary: false,
             underline: true,
             data: None,
-            registration_id: None,
         }
     }
 }

@@ -984,8 +984,6 @@ pub enum LspPullDiagnostics {
         server_id: LanguageServerId,
         /// URI of the resource,
         uri: lsp::Uri,
-        /// The ID provided by the dynamic registration that produced diagnostics.
-        registration_id: Option<SharedString>,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -996,10 +994,10 @@ pub enum PulledDiagnostics {
     Unchanged {
         /// An ID the current pulled batch for this file.
         /// If given, can be used to query workspace diagnostics partially.
-        result_id: SharedString,
+        result_id: String,
     },
     Changed {
-        result_id: Option<SharedString>,
+        result_id: Option<String>,
         diagnostics: Vec<lsp::Diagnostic>,
     },
 }

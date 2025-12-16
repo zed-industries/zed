@@ -26798,7 +26798,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected: Option<String>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -26811,7 +26811,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             let buffer_result_id = project
                 .lsp_store()
                 .read(cx)
-                .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
+                .result_id(server_id, buffer_id, cx);
             assert_eq!(expected, buffer_result_id);
         });
     };
@@ -26828,7 +26828,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .next()
         .await
         .expect("should have sent the first diagnostics pull request");
-    ensure_result_id(Some(SharedString::new("1")), cx);
+    ensure_result_id(Some("1".to_string()), cx);
 
     // Editing should trigger diagnostics
     editor.update_in(cx, |editor, window, cx| {
@@ -26841,7 +26841,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Editing should trigger diagnostic request"
     );
-    ensure_result_id(Some(SharedString::new("2")), cx);
+    ensure_result_id(Some("2".to_string()), cx);
 
     // Moving cursor should not trigger diagnostic request
     editor.update_in(cx, |editor, window, cx| {
@@ -26856,7 +26856,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Cursor movement should not trigger diagnostic request"
     );
-    ensure_result_id(Some(SharedString::new("2")), cx);
+    ensure_result_id(Some("2".to_string()), cx);
     // Multiple rapid edits should be debounced
     for _ in 0..5 {
         editor.update_in(cx, |editor, window, cx| {
@@ -26871,7 +26871,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         final_requests <= 4,
         "Multiple rapid edits should be debounced (got {final_requests} requests)",
     );
-    ensure_result_id(Some(SharedString::new(final_requests.to_string())), cx);
+    ensure_result_id(Some(final_requests.to_string()), cx);
 }
 
 #[gpui::test]

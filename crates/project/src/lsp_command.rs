@@ -14,7 +14,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -26,8 +26,8 @@ use language::{
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, RenameOptions, ServerCapabilities,
+    DiagnosticServerCapabilities, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    LinkedEditingRangeServerCapabilities, OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -265,9 +265,8 @@ pub(crate) struct LinkedEditingRange {
 pub(crate) struct GetDocumentDiagnostics {
     /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
     /// a server can register multiple diagnostic providers post-mortem.
-    pub registration_id: Option<SharedString>,
-    pub identifier: Option<String>,
-    pub previous_result_id: Option<SharedString>,
+    pub dynamic_caps: DiagnosticServerCapabilities,
+    pub previous_result_id: Option<String>,
 }
 
 #[async_trait(?Send)]
@@ -3756,16 +3755,15 @@ impl GetDocumentDiagnostics {
             .into_iter()
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
-                    registration_id: diagnostics.registration_id.map(SharedString::from),
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
                     uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
                         PulledDiagnostics::Unchanged {
-                            result_id: SharedString::new(diagnostics.result_id?),
+                            result_id: diagnostics.result_id?,
                         }
                     } else {
                         PulledDiagnostics::Changed {
-                            result_id: diagnostics.result_id.map(SharedString::new),
+                            result_id: diagnostics.result_id,
                             diagnostics: diagnostics
                                 .diagnostics
                                 .into_iter()
@@ -3929,7 +3927,6 @@ impl GetDocumentDiagnostics {
     pub fn deserialize_workspace_diagnostics_report(
         report: lsp::WorkspaceDiagnosticReportResult,
         server_id: LanguageServerId,
-        registration_id: Option<SharedString>,
     ) -> Vec<WorkspaceLspPullDiagnostics> {
         let mut pulled_diagnostics = HashMap::default();
         match report {
@@ -3941,7 +3938,6 @@ impl GetDocumentDiagnostics {
                                 &mut pulled_diagnostics,
                                 server_id,
                                 report,
-                                registration_id.clone(),
                             )
                         }
                         lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
@@ -3949,7 +3945,6 @@ impl GetDocumentDiagnostics {
                                 &mut pulled_diagnostics,
                                 server_id,
                                 report,
-                                registration_id.clone(),
                             )
                         }
                     }
@@ -3965,7 +3960,6 @@ impl GetDocumentDiagnostics {
                                 &mut pulled_diagnostics,
                                 server_id,
                                 report,
-                                registration_id.clone(),
                             )
                         }
                         lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
@@ -3973,7 +3967,6 @@ impl GetDocumentDiagnostics {
                                 &mut pulled_diagnostics,
                                 server_id,
                                 report,
-                                registration_id.clone(),
                             )
                         }
                     }
@@ -3994,7 +3987,6 @@ fn process_full_workspace_diagnostics_report(
     diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceFullDocumentDiagnosticReport,
-    registration_id: Option<SharedString>,
 ) {
     let mut new_diagnostics = HashMap::default();
     process_full_diagnostics_report(
@@ -4002,7 +3994,6 @@ fn process_full_workspace_diagnostics_report(
         server_id,
         report.uri,
         report.full_document_diagnostic_report,
-        registration_id,
     );
     diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
         (
@@ -4019,7 +4010,6 @@ fn process_unchanged_workspace_diagnostics_report(
     diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
-    registration_id: Option<SharedString>,
 ) {
     let mut new_diagnostics = HashMap::default();
     process_unchanged_diagnostics_report(
@@ -4027,7 +4017,6 @@ fn process_unchanged_workspace_diagnostics_report(
         server_id,
         report.uri,
         report.unchanged_document_diagnostic_report,
-        registration_id,
     );
     diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
         (
@@ -4061,12 +4050,19 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
+        let identifier = match &self.dynamic_caps {
+            lsp::DiagnosticServerCapabilities::Options(options) => options.identifier.clone(),
+            lsp::DiagnosticServerCapabilities::RegistrationOptions(options) => {
+                options.diagnostic_options.identifier.clone()
+            }
+        };
+
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: file_path_to_lsp_url(path)?,
             },
-            identifier: self.identifier.clone(),
-            previous_result_id: self.previous_result_id.clone().map(|id| id.to_string()),
+            identifier,
+            previous_result_id: self.previous_result_id.clone(),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -4101,7 +4097,6 @@ impl LspCommand for GetDocumentDiagnostics {
                             &mut pulled_diagnostics,
                             server_id,
                             related_documents,
-                            self.registration_id.clone(),
                         );
                     }
                     process_full_diagnostics_report(
@@ -4109,7 +4104,6 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.full_document_diagnostic_report,
-                        self.registration_id,
                     );
                 }
                 lsp::DocumentDiagnosticReport::Unchanged(report) => {
@@ -4118,7 +4112,6 @@ impl LspCommand for GetDocumentDiagnostics {
                             &mut pulled_diagnostics,
                             server_id,
                             related_documents,
-                            self.registration_id.clone(),
                         );
                     }
                     process_unchanged_diagnostics_report(
@@ -4126,7 +4119,6 @@ impl LspCommand for GetDocumentDiagnostics {
                         server_id,
                         url,
                         report.unchanged_document_diagnostic_report,
-                        self.registration_id,
                     );
                 }
             },
@@ -4136,7 +4128,6 @@ impl LspCommand for GetDocumentDiagnostics {
                         &mut pulled_diagnostics,
                         server_id,
                         related_documents,
-                        self.registration_id,
                     );
                 }
             }
@@ -4179,7 +4170,6 @@ impl LspCommand for GetDocumentDiagnostics {
                     server_id,
                     uri,
                     diagnostics,
-                    registration_id,
                 } => {
                     let mut changed = false;
                     let (diagnostics, result_id) = match diagnostics {
@@ -4194,7 +4184,7 @@ impl LspCommand for GetDocumentDiagnostics {
                     };
                     Some(proto::PulledDiagnostics {
                         changed,
-                        result_id: result_id.map(|id| id.to_string()),
+                        result_id,
                         uri: uri.to_string(),
                         server_id: server_id.to_proto(),
                         diagnostics: diagnostics
@@ -4205,7 +4195,6 @@ impl LspCommand for GetDocumentDiagnostics {
                                     .log_err()
                             })
                             .collect(),
-                        registration_id: registration_id.as_ref().map(ToString::to_string),
                     })
                 }
             })
@@ -4376,25 +4365,14 @@ fn process_related_documents(
     diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
     documents: impl IntoIterator<Item = (lsp::Uri, lsp::DocumentDiagnosticReportKind)>,
-    registration_id: Option<SharedString>,
 ) {
     for (url, report_kind) in documents {
         match report_kind {
-            lsp::DocumentDiagnosticReportKind::Full(report) => process_full_diagnostics_report(
-                diagnostics,
-                server_id,
-                url,
-                report,
-                registration_id.clone(),
-            ),
+            lsp::DocumentDiagnosticReportKind::Full(report) => {
+                process_full_diagnostics_report(diagnostics, server_id, url, report)
+            }
             lsp::DocumentDiagnosticReportKind::Unchanged(report) => {
-                process_unchanged_diagnostics_report(
-                    diagnostics,
-                    server_id,
-                    url,
-                    report,
-                    registration_id.clone(),
-                )
+                process_unchanged_diagnostics_report(diagnostics, server_id, url, report)
             }
         }
     }
@@ -4405,9 +4383,8 @@ fn process_unchanged_diagnostics_report(
     server_id: LanguageServerId,
     uri: lsp::Uri,
     report: lsp::UnchangedDocumentDiagnosticReport,
-    registration_id: Option<SharedString>,
 ) {
-    let result_id = SharedString::new(report.result_id);
+    let result_id = report.result_id;
     match diagnostics.entry(uri.clone()) {
         hash_map::Entry::Occupied(mut o) => match o.get_mut() {
             LspPullDiagnostics::Default => {
@@ -4415,14 +4392,12 @@ fn process_unchanged_diagnostics_report(
                     server_id,
                     uri,
                     diagnostics: PulledDiagnostics::Unchanged { result_id },
-                    registration_id,
                 });
             }
             LspPullDiagnostics::Response {
                 server_id: existing_server_id,
                 uri: existing_uri,
                 diagnostics: existing_diagnostics,
-                ..
             } => {
                 if server_id != *existing_server_id || &uri != existing_uri {
                     debug_panic!(
@@ -4442,7 +4417,6 @@ fn process_unchanged_diagnostics_report(
                 server_id,
                 uri,
                 diagnostics: PulledDiagnostics::Unchanged { result_id },
-                registration_id,
             });
         }
     }
@@ -4453,9 +4427,8 @@ fn process_full_diagnostics_report(
     server_id: LanguageServerId,
     uri: lsp::Uri,
     report: lsp::FullDocumentDiagnosticReport,
-    registration_id: Option<SharedString>,
 ) {
-    let result_id = report.result_id.map(SharedString::new);
+    let result_id = report.result_id;
     match diagnostics.entry(uri.clone()) {
         hash_map::Entry::Occupied(mut o) => match o.get_mut() {
             LspPullDiagnostics::Default => {
@@ -4466,14 +4439,12 @@ fn process_full_diagnostics_report(
                         result_id,
                         diagnostics: report.items,
                     },
-                    registration_id,
                 });
             }
             LspPullDiagnostics::Response {
                 server_id: existing_server_id,
                 uri: existing_uri,
                 diagnostics: existing_diagnostics,
-                ..
             } => {
                 if server_id != *existing_server_id || &uri != existing_uri {
                     debug_panic!(
@@ -4507,7 +4478,6 @@ fn process_full_diagnostics_report(
                     result_id,
                     diagnostics: report.items,
                 },
-                registration_id,
             });
         }
     }
