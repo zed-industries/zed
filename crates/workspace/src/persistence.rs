@@ -1484,24 +1484,6 @@ impl WorkspaceDb {
         }
     }
 
-    pub(crate) fn last_window(
-        &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
-        let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
-                SELECT
-                display,
-                window_state, window_x, window_y, window_width, window_height
-                FROM workspaces
-                WHERE paths
-                IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ))?;
-        let result = prepared_query()?;
-        Ok(result.into_iter().next().unwrap_or((None, None)))
-    }
-
     query! {
         pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
             DELETE FROM workspaces
