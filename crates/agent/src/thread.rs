@@ -2662,7 +2662,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        // TODO: make this optional?
-        size: gpui::Size::new(0.into(), 0.into()),
+        size: None,
     }
 }
