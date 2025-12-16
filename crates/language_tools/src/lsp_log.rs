@@ -24,6 +24,23 @@ const SEND_LINE: &str = "// Send:";
 const RECEIVE_LINE: &str = "// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
+fn format_rpc_message_for_log(message: &str) -> Cow<'_, str> {
+    let trimmed = message.trim();
+    let first = trimmed.as_bytes().first().copied();
+    if !matches!(first, Some(b'{') | Some(b'[')) {
+        return Cow::Borrowed(trimmed);
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return Cow::Borrowed(trimmed);
+    };
+
+    match serde_json::to_string_pretty(&value) {
+        Ok(formatted) => Cow::Owned(formatted),
+        Err(_) => Cow::Borrowed(trimmed),
+    }
+}
+
 pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
@@ -574,13 +591,13 @@ impl LogStore {
         while rpc_log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             rpc_log_lines.pop_front();
         }
-        let message = message.trim();
+        let message = format_rpc_message_for_log(message).into_owned();
         rpc_log_lines.push_back(RpcMessage {
-            message: message.to_string(),
+            message: message.clone(),
         });
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
-            entry: message.to_string(),
+            entry: message,
             kind: LogKind::Rpc,
         });
         cx.notify();
@@ -1035,6 +1052,34 @@ fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> 
         acc.push('\n');
         acc
     })
+}
+
+#[cfg(test)]
+mod rpc_log_format_tests {
+    use super::format_rpc_message_for_log;
+
+    #[test]
+    fn pretty_formats_json_rpc_messages() {
+        let input = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#;
+        let formatted = format_rpc_message_for_log(input);
+        assert_eq!(
+            formatted.as_ref(),
+            r#"{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "capabilities": {}
+  }
+}"#
+        );
+    }
+
+    #[test]
+    fn leaves_non_json_messages_unchanged() {
+        let input = "Content-Length: 123";
+        assert_eq!(format_rpc_message_for_log(input).as_ref(), input);
+    }
 }
 
 impl Render for LspLogView {
