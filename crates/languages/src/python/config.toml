@@ -1,6 +1,7 @@
 name = "Python"
 grammar = "python"
 path_suffixes = ["py", "pyi", "mpy"]
+modeline_aliases = ["py"]
 first_line_pattern = '^#!.*\bpython[0-9.]*\b'
 line_comments = ["# "]
 autoclose_before = ";:.,=}])>"

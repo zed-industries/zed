@@ -1,6 +1,7 @@
 name = "Go"
 grammar = "go"
 path_suffixes = ["go"]
+modeline_aliases = ["golang"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
