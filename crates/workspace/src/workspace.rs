@@ -1086,8 +1086,6 @@ pub enum OpenVisible {
 enum WorkspaceLocation {
     // Valid local paths or SSH project to serialize
     Location(SerializedWorkspaceLocation, PathList),
-    // No valid location found hence clear session id
-    DetachFromSession,
     // No valid location found to serialize
     None,
 }
@@ -5537,12 +5535,6 @@ impl Workspace {
                     persistence::DB.save_workspace(serialized_workspace).await;
                 })
             }
-            WorkspaceLocation::DetachFromSession => window.spawn(cx, async move |_| {
-                persistence::DB
-                    .set_session_id(database_id, None)
-                    .await
-                    .log_err();
-            }),
             WorkspaceLocation::None => Task::ready(()),
         }
     }
