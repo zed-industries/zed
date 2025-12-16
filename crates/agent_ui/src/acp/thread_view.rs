@@ -389,6 +389,17 @@ impl AcpThreadView {
             ),
         ];
 
+        cx.on_release(|this, cx| {
+            for window in this.notifications.drain(..) {
+                window
+                    .update(cx, |_, window, _| {
+                        window.remove_window();
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
         let show_codex_windows_warning = cfg!(windows)
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
@@ -5042,8 +5053,8 @@ impl AcpThreadView {
         });
 
         if let Some(screen_window) = cx
-            .open_window(options, |_, cx| {
-                cx.new(|_| {
+            .open_window(options, |_window, cx| {
+                cx.new(|_cx| {
                     AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
                 })
             })
@@ -6466,6 +6477,57 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected no notification when notify_when_agent_waiting is Never"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let weak_view = thread_view.downgrade();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify notification is shown
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification to be shown"
+        );
+
+        // Drop the thread view (simulating navigation to a new thread)
+        drop(thread_view);
+        drop(message_editor);
+        // Trigger an update to flush effects, which will call release_dropped_entities
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        // Verify the entity was actually released
+        assert!(
+            !weak_view.is_upgradable(),
+            "Thread view entity should be released after dropping"
+        );
+
+        // The notification should be automatically closed via on_release
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Notification should be closed when thread view is dropped"
         );
     }
 
