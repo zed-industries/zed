@@ -984,6 +984,14 @@ impl GitPanel {
             return;
         }
 
+        if matches!(
+            self.entries.get(new_index.saturating_sub(1)),
+            Some(GitListEntry::Header(..))
+        ) && new_index == 0
+        {
+            return;
+        }
+
         if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
             self.selected_entry = Some(new_index.saturating_sub(1));
         } else {
