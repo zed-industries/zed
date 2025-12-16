@@ -545,6 +545,7 @@ impl ScrollManager {
         current_position: gpui::Point<ScrollOffset>,
         target_position: gpui::Point<ScrollOffset>,
     ) {
+        // We advance the current animation and restart it with the last position
         let start_position = if let Some(animation) = &self.scroll_animation {
             animation.advance()
         } else {
@@ -566,19 +567,16 @@ impl ScrollManager {
     pub fn update_animation(&mut self) -> Option<ScrollAnimationUpdate> {
         let animation = self.scroll_animation?;
 
-        let progress = animation.progress();
-        let target = animation.advance();
-
-        if progress >= 1.0 {
+        if animation.progress() >= 1.0 {
             self.cancel_animation();
 
             Some(ScrollAnimationUpdate {
-                position: target,
+                position: animation.target_position,
                 phase: ScrollAnimationPhase::Final,
             })
         } else {
             Some(ScrollAnimationUpdate {
-                position: target,
+                position: animation.advance(),
                 phase: ScrollAnimationPhase::Intermediate,
             })
         }
@@ -853,7 +851,7 @@ impl Editor {
                 amount.lines(visible_line_count),
             );
 
-        self.scroll(new_position, None, window, cx);
+        self.scroll_animated(new_position, None, cx);
     }
 
     /// Returns an ordering. The newest selection is:
