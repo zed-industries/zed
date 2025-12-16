@@ -327,11 +327,9 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 3. In the Agent Panel, select one of the Ollama models using the model dropdown.
 
-#### Ollama Autodiscovery
+#### Autodiscovery
 
-Zed will automatically discover models that Ollama has pulled. You can turn this off by setting
-the `auto_discover` field in the Ollama settings. If you do this, you should manually specify which
-models are available.
+Zed automatically discovers models that Ollama has pulled. To disable this behavior, set the `auto_discover` field to `false` in the Ollama settings. When auto-discovery is disabled, you must manually specify which models are available.
 
 ```json [settings]
 {
