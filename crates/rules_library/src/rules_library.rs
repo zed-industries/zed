@@ -22,7 +22,7 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Render, Tooltip, prelude::*,
+    Chip, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
@@ -354,10 +354,11 @@ impl PickerDelegate for RulePickerDelegate {
         match self.filtered_entries.get(ix)? {
             RulePickerEntry::Header(title) => {
                 let tooltip_text = if title.as_ref() == "Built-in Rules" {
-                    "Built-in rules provide special functionality and are read-only."
+                    "Built-in rules are those included out of the box with Zed."
                 } else {
                     "Default Rules are attached by default with every new thread."
                 };
+
                 Some(
                     ListSubHeader::new(title.clone())
                         .end_slot(
@@ -404,28 +405,16 @@ impl PickerDelegate for RulePickerDelegate {
                         }))
                         .end_hover_slot(
                             h_flex()
-                                .child(if prompt_id.can_delete() {
-                                    IconButton::new("delete-rule", IconName::Trash)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Delete Rule"))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(RulePickerEvent::Deleted { prompt_id })
-                                        }))
-                                        .into_any_element()
-                                } else {
-                                    div()
-                                        .id("built-in-rule")
-                                        .child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                        .tooltip(move |_window, cx| {
-                                            Tooltip::with_meta(
-                                                "Built-in rule",
-                                                None,
-                                                BUILT_IN_TOOLTIP_TEXT,
-                                                cx,
-                                            )
-                                        })
-                                        .into_any()
+                                .when(prompt_id.can_delete(), |this| {
+                                    this.child(
+                                        IconButton::new("delete-rule", IconName::Trash)
+                                            .icon_color(Color::Muted)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Delete Rule"))
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(RulePickerEvent::Deleted { prompt_id })
+                                            })),
+                                    )
                                 })
                                 .when(!prompt_id.is_built_in(), |this| {
                                     this.child(
@@ -1195,30 +1184,38 @@ impl RulesLibrary {
     fn render_active_rule_editor(
         &self,
         editor: &Entity<Editor>,
+        read_only: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
+        let text_color = if read_only {
+            cx.theme().colors().text_muted
+        } else {
+            cx.theme().colors().text
+        };
 
         div()
             .w_full()
-            .on_action(cx.listener(Self::move_down_from_title))
             .pl_1()
             .border_1()
             .border_color(transparent_black())
             .rounded_sm()
-            .group_hover("active-editor-header", |this| {
-                this.border_color(cx.theme().colors().border_variant)
+            .when(!read_only, |this| {
+                this.group_hover("active-editor-header", |this| {
+                    this.border_color(cx.theme().colors().border_variant)
+                })
             })
+            .on_action(cx.listener(Self::move_down_from_title))
             .child(EditorElement::new(
                 &editor,
                 EditorStyle {
                     background: cx.theme().system().transparent,
                     local_player: cx.theme().players().local(),
                     text: TextStyle {
-                        color: cx.theme().colors().editor_foreground,
+                        color: text_color,
                         font_family: settings.ui_font.family.clone(),
                         font_features: settings.ui_font.features.clone(),
-                        font_size: HeadlineSize::Large.rems().into(),
+                        font_size: HeadlineSize::Medium.rems().into(),
                         font_weight: settings.ui_font.weight,
                         line_height: relative(settings.buffer_line_height.value()),
                         ..Default::default()
@@ -1233,6 +1230,64 @@ impl RulesLibrary {
             ))
     }
 
+    fn render_duplicate_rule_button(&self) -> impl IntoElement {
+        IconButton::new("duplicate-rule", IconName::BookCopy)
+            .tooltip(move |_window, cx| Tooltip::for_action("Duplicate Rule", &DuplicateRule, cx))
+            .on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(DuplicateRule), cx);
+            })
+    }
+
+    fn render_built_in_rule_controls(&self) -> impl IntoElement {
+        h_flex()
+            .gap_1()
+            .child(self.render_duplicate_rule_button())
+            .child(
+                IconButton::new("restore-default", IconName::RotateCcw)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action("Restore Default Content", &RestoreDefaultContent, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(RestoreDefaultContent), cx);
+                    }),
+            )
+    }
+
+    fn render_regular_rule_controls(&self, default: bool) -> impl IntoElement {
+        h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("toggle-default-rule", IconName::Paperclip)
+                    .toggle_state(default)
+                    .when(default, |this| this.icon_color(Color::Accent))
+                    .map(|this| {
+                        if default {
+                            this.tooltip(Tooltip::text("Remove from Default Rules"))
+                        } else {
+                            this.tooltip(move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Add to Default Rules",
+                                    None,
+                                    "Always included in every thread.",
+                                    cx,
+                                )
+                            })
+                        }
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(ToggleDefaultRule), cx);
+                    }),
+            )
+            .child(self.render_duplicate_rule_button())
+            .child(
+                IconButton::new("delete-rule", IconName::Trash)
+                    .tooltip(move |_window, cx| Tooltip::for_action("Delete Rule", &DeleteRule, cx))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(DeleteRule), cx);
+                    }),
+            )
+    }
+
     fn render_active_rule(&mut self, cx: &mut Context<RulesLibrary>) -> gpui::Stateful<Div> {
         div()
             .id("rule-editor")
@@ -1245,9 +1300,9 @@ impl RulesLibrary {
                 let rule_metadata = self.store.read(cx).metadata(prompt_id)?;
                 let rule_editor = &self.rule_editors[&prompt_id];
                 let focus_handle = rule_editor.body_editor.focus_handle(cx);
-                let model = LanguageModelRegistry::read_global(cx)
-                    .default_model()
-                    .map(|default| default.model);
+                let registry = LanguageModelRegistry::read_global(cx);
+                let model = registry.default_model().map(|default| default.model);
+                let built_in = prompt_id.is_built_in();
 
                 Some(
                     v_flex()
@@ -1261,14 +1316,15 @@ impl RulesLibrary {
                         .child(
                             h_flex()
                                 .group("active-editor-header")
-                                .pt_2()
-                                .pl_1p5()
-                                .pr_2p5()
+                                .h_12()
+                                .px_2()
                                 .gap_2()
                                 .justify_between()
-                                .child(
-                                    self.render_active_rule_editor(&rule_editor.title_editor, cx),
-                                )
+                                .child(self.render_active_rule_editor(
+                                    &rule_editor.title_editor,
+                                    built_in,
+                                    cx,
+                                ))
                                 .child(
                                     h_flex()
                                         .h_full()
@@ -1305,109 +1361,14 @@ impl RulesLibrary {
                                                     .color(Color::Muted),
                                                 )
                                         }))
-                                        .child(if prompt_id.can_delete() {
-                                            IconButton::new("delete-rule", IconName::Trash)
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::for_action(
-                                                        "Delete Rule",
-                                                        &DeleteRule,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(Box::new(DeleteRule), cx);
-                                                })
-                                                .into_any_element()
-                                        } else {
-                                            div()
-                                                .id("built-in-rule")
-                                                .child(
-                                                    Icon::new(IconName::FileLock)
-                                                        .color(Color::Muted),
-                                                )
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Built-in rule",
-                                                        None,
-                                                        BUILT_IN_TOOLTIP_TEXT,
-                                                        cx,
-                                                    )
-                                                })
-                                                .into_any()
-                                        })
-                                        .when(prompt_id.default_content().is_some(), |this| {
-                                            this.child(
-                                                IconButton::new(
-                                                    "restore-default",
-                                                    IconName::RotateCcw,
-                                                )
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::for_action(
-                                                        "Restore Default Content",
-                                                        &RestoreDefaultContent,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(RestoreDefaultContent),
-                                                        cx,
-                                                    );
-                                                }),
-                                            )
-                                        })
-                                        .child(
-                                            IconButton::new("duplicate-rule", IconName::BookCopy)
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::for_action(
-                                                        "Duplicate Rule",
-                                                        &DuplicateRule,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(DuplicateRule),
-                                                        cx,
-                                                    );
-                                                }),
-                                        )
-                                        .when(!prompt_id.is_built_in(), |this| {
-                                            this.child(
-                                                IconButton::new(
-                                                    "toggle-default-rule",
-                                                    IconName::Paperclip,
-                                                )
-                                                .toggle_state(rule_metadata.default)
-                                                .icon_color(if rule_metadata.default {
-                                                    Color::Accent
-                                                } else {
-                                                    Color::Muted
-                                                })
-                                                .map(|this| {
-                                                    if rule_metadata.default {
-                                                        this.tooltip(Tooltip::text(
-                                                            "Remove from Default Rules",
-                                                        ))
-                                                    } else {
-                                                        this.tooltip(move |_window, cx| {
-                                                            Tooltip::with_meta(
-                                                                "Add to Default Rules",
-                                                                None,
-                                                                "Always included in every thread.",
-                                                                cx,
-                                                            )
-                                                        })
-                                                    }
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(ToggleDefaultRule),
-                                                        cx,
-                                                    );
-                                                }),
-                                            )
+                                        .map(|this| {
+                                            if built_in {
+                                                this.child(self.render_built_in_rule_controls())
+                                            } else {
+                                                this.child(self.render_regular_rule_controls(
+                                                    rule_metadata.default,
+                                                ))
+                                            }
                                         }),
                                 ),
                         )
