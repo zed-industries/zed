@@ -25429,6 +25429,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
         ˇ        log('for else')
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             ˇfor item in items:
@@ -25448,6 +25449,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     // test relative indent is preserved when tab
     // for `if`, `elif`, `else`, `while`, `with` and `for`
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
                 ˇfor item in items:
@@ -25481,6 +25483,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
         ˇ            return 0
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             ˇtry:
@@ -25497,6 +25500,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     // test relative indent is preserved when tab
     // for `try`, `except`, `else`, `finally`, `match` and `def`
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
                 ˇtry:
@@ -25530,6 +25534,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("else:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             if i == 2:
@@ -25547,6 +25552,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("except:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25566,6 +25572,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("else:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25589,6 +25596,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("finally:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25613,6 +25621,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("else:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25638,6 +25647,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("finally:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25663,6 +25673,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("except:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25686,6 +25697,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("except:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             try:
@@ -25707,6 +25719,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("else:", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def main():
             for i in range(10):
@@ -25723,6 +25736,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("a", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         def f() -> list[str]:
             aˇ
@@ -25736,6 +25750,7 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input(":", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         match 1:
             case:ˇ
@@ -25759,6 +25774,7 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         # COMMENT:
         ˇ
@@ -25771,7 +25787,7 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         {
             ˇ
@@ -25831,6 +25847,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
         ˇ}
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function main() {
             ˇfor item in $items; do
@@ -25848,6 +25865,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
     "});
     // test relative indent is preserved when tab
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function main() {
                 ˇfor item in $items; do
@@ -25882,6 +25900,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
         ˇ}
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function handle() {
             ˇcase \"$1\" in
@@ -25924,6 +25943,7 @@ async fn test_indent_after_input_for_bash(cx: &mut TestAppContext) {
         ˇ}
     "});
     cx.update_editor(|e, window, cx| e.handle_input("#", window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function main() {
         #ˇ    for item in $items; do
@@ -25958,6 +25978,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("else", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
             echo \"foo bar\"
@@ -25973,6 +25994,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("elif", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
             echo \"foo bar\"
@@ -25990,6 +26012,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("fi", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
             echo \"foo bar\"
@@ -26007,6 +26030,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("done", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         while read line; do
             echo \"$line\"
@@ -26022,6 +26046,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("done", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         for file in *.txt; do
             cat \"$file\"
@@ -26042,6 +26067,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("esac", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         case \"$1\" in
             start)
@@ -26064,6 +26090,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("*)", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         case \"$1\" in
             start)
@@ -26083,6 +26110,7 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("fi", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
             echo \"outer if\"
@@ -26109,6 +26137,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         # COMMENT:
         ˇ
@@ -26122,7 +26151,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
 
         if [ \"$1\" = \"test\" ]; then
@@ -26137,7 +26166,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
         else
@@ -26152,7 +26181,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         if [ \"$1\" = \"test\" ]; then
         elif
@@ -26166,7 +26195,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         for file in *.txt; do
             ˇ
@@ -26180,7 +26209,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         case \"$1\" in
             start)
@@ -26197,7 +26226,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         case \"$1\" in
             start)
@@ -26213,7 +26242,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         function test() {
             ˇ
@@ -26227,7 +26256,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
-    cx.run_until_parked();
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         echo \"test\";
         ˇ
