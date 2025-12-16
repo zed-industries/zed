@@ -1,7 +1,7 @@
 use crate::Vim;
 use editor::{
     DisplayPoint, Editor, EditorSettings, SelectionEffects,
-    display_map::{DisplayRow, ToDisplayPoint},
+    display_map::DisplayRow,
     scroll::ScrollAmount,
 };
 use gpui::{Context, Window, actions};
@@ -111,7 +111,23 @@ fn scroll_editor(
     cx: &mut Context<Editor>,
 ) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    let old_top_anchor = editor.scroll_manager.anchor().anchor;
+
+    // Capture old scroll position before scrolling - use animation target if animating,
+    // otherwise use the current scroll position
+    let (old_top_row, old_top_column) = editor
+        .scroll_manager
+        .scroll_animation()
+        .map(|a| {
+            (
+                DisplayRow(a.target_position.y as u32),
+                a.target_position.x as u32,
+            )
+        })
+        .unwrap_or_else(|| {
+            let snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let position = editor.scroll_manager.anchor().scroll_position(&snapshot);
+            (DisplayRow(position.y as u32), position.x as u32)
+        });
 
     if editor.scroll_hover(amount, window, cx) {
         return;
@@ -178,15 +194,14 @@ fn scroll_editor(
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
 
                 if preserve_cursor_position {
-                    let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = if old_top.row() == top_row {
+                    let new_row = if old_top_row == top_row {
                         DisplayRow(
                             head.row()
                                 .0
                                 .saturating_add_signed(amount.lines(visible_line_count) as i32),
                         )
                     } else {
-                        DisplayRow(top_row.0 + selection.head().row().0 - old_top.row().0)
+                        DisplayRow(top_row.0 + selection.head().row().0 - old_top_row.0)
                     };
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
@@ -233,7 +248,7 @@ fn scroll_editor(
                 // maximum column for the current line, so the minimum column
                 // would end up being the same as the maximum column.
                 let min_column = match preserve_cursor_position {
-                    true => old_top_anchor.to_display_point(map).column(),
+                    true => old_top_column,
                     false => top_column,
                 };
 
