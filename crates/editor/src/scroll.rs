@@ -149,13 +149,6 @@ impl ActiveScrollbarState {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ScrollAnimation {
-    pub start_position: gpui::Point<ScrollOffset>,
-    pub target_position: gpui::Point<ScrollOffset>,
-    pub start_time: Instant,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub enum ScrollAnimationPhase {
     Intermediate,
     Final,
@@ -165,6 +158,41 @@ pub enum ScrollAnimationPhase {
 pub struct ScrollAnimationUpdate {
     pub position: gpui::Point<ScrollOffset>,
     pub phase: ScrollAnimationPhase,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollAnimation {
+    pub duration: Duration,
+    pub start_position: gpui::Point<ScrollOffset>,
+    pub target_position: gpui::Point<ScrollOffset>,
+    pub start_time: Instant,
+}
+
+impl ScrollAnimation {
+    pub fn progress(&self) -> f32 {
+        let elapsed = self.start_time.elapsed().as_secs_f32();
+        let duration = self.duration.as_secs_f32();
+
+        (elapsed / duration).min(1.0)
+    }
+
+    pub fn advance(&self) -> gpui::Point<ScrollOffset> {
+        let progress = self.progress();
+        let easing_fn = Self::easing_fn();
+        let eased_progress = easing_fn(progress);
+
+        let start = self.start_position;
+        let target = self.target_position;
+
+        let current_x = start.x + (target.x - start.x) * eased_progress as f64;
+        let current_y = start.y + (target.y - start.y) * eased_progress as f64;
+
+        point(current_x, current_y)
+    }
+
+    pub fn easing_fn() -> impl Fn(f32) -> f32 {
+        gpui::ease_out_cubic()
+    }
 }
 
 pub struct ScrollManager {
@@ -519,18 +547,7 @@ impl ScrollManager {
         target_position: gpui::Point<ScrollOffset>,
     ) {
         let start_position = if let Some(animation) = &self.scroll_animation {
-            let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = self.scroll_animation_duration.as_secs_f32();
-            let progress = (elapsed / duration).min(1.0);
-            let easing_fn = gpui::ease_out_cubic();
-            let eased = easing_fn(progress);
-
-            gpui::Point::new(
-                animation.start_position.x
-                    + (animation.target_position.x - animation.start_position.x) * eased as f64,
-                animation.start_position.y
-                    + (animation.target_position.y - animation.start_position.y) * eased as f64,
-            )
+            animation.advance()
         } else {
             current_position
         };
@@ -539,6 +556,7 @@ impl ScrollManager {
             start_position,
             target_position,
             start_time: Instant::now(),
+            duration: self.scroll_animation_duration,
         });
     }
 
@@ -549,21 +567,8 @@ impl ScrollManager {
     pub fn update_animation(&mut self) -> Option<ScrollAnimationUpdate> {
         let animation = self.scroll_animation?;
 
-        let progress = {
-            let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = self.scroll_animation_duration.as_secs_f32();
-            (elapsed / duration).min(1.0)
-        };
-
-        let easing_fn = gpui::ease_out_cubic();
-        let eased_progress = easing_fn(progress);
-
-        let start = animation.start_position;
-        let target = animation.target_position;
-
-        let current_x = start.x + (target.x - start.x) * eased_progress as f64;
-        let current_y = start.y + (target.y - start.y) * eased_progress as f64;
-        let interpolated_position = point(current_x, current_y);
+        let progress = animation.progress();
+        let target = animation.advance();
 
         if progress >= 1.0 {
             self.cancel_animation();
@@ -574,18 +579,16 @@ impl ScrollManager {
             })
         } else {
             Some(ScrollAnimationUpdate {
-                position: interpolated_position,
+                position: target,
                 phase: ScrollAnimationPhase::Intermediate,
             })
         }
     }
 
     pub fn animation_progress(&self) -> Option<f32> {
-        self.scroll_animation.as_ref().map(|animation| {
-            let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = self.scroll_animation_duration.as_secs_f32();
-            (elapsed / duration).min(1.0)
-        })
+        self.scroll_animation
+            .as_ref()
+            .map(|animation| animation.progress())
     }
 }
 
