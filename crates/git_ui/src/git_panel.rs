@@ -57,7 +57,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::RULES_FILE_NAMES;
+use prompt_store::{PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -2422,6 +2422,20 @@ impl GitPanel {
         }
     }
 
+    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
+        const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+        let load = async {
+            let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
+            store
+                .update(cx, |s, cx| s.load(PromptId::CommitMessage, cx))
+                .ok()?
+                .await
+                .ok()
+        };
+        load.await.unwrap_or_else(|| DEFAULT_PROMPT.to_string())
+    }
+
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
@@ -2487,13 +2501,13 @@ impl GitPanel {
 
                 let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
 
+                let prompt = Self::load_commit_message_prompt(&mut cx).await;
+
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
                 })?;
 
                 let text_empty = subject.trim().is_empty();
-
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let rules_section = match &rules_content {
                     Some(rules) => format!(
@@ -2510,7 +2524,7 @@ impl GitPanel {
                 };
 
                 let content = format!(
-                    "{PROMPT}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+                    "{prompt}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
                 );
 
                 let request = LanguageModelRequest {

@@ -414,10 +414,7 @@ impl NativeAgent {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
-                        uuid: match prompt_metadata.id {
-                            prompt_store::PromptId::User { uuid } => uuid,
-                            prompt_store::PromptId::EditWorkflow => return None,
-                        },
+                        uuid: prompt_metadata.id.user_id()?,
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
