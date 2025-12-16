@@ -291,6 +291,16 @@ fn check_dependencies() -> NamedJob {
 }
 
 fn check_workspace_binaries() -> NamedJob {
+    fn ensure_actions_asset_is_up_to_date() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            if ! git diff --exit-code -- assets/generated/actions.json; then
+              echo "Error: assets/generated/actions.json is out of date after running ./script/generate-action-metadata"
+              echo "Please run './script/generate-action-metadata' locally and commit the changes"
+              exit 1
+            fi
+        "#})
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
@@ -300,6 +310,8 @@ fn check_workspace_binaries() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(steps::script("./script/generate-action-metadata"))
+            .add_step(ensure_actions_asset_is_up_to_date())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }

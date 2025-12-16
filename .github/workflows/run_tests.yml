@@ -281,6 +281,17 @@ jobs:
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
       shell: bash -euxo pipefail {0}
+    - name: ./script/generate-action-metadata
+      run: ./script/generate-action-metadata
+      shell: bash -euxo pipefail {0}
+    - name: run_tests::check_workspace_binaries::ensure_actions_asset_is_up_to_date
+      run: |
+        if ! git diff --exit-code -- assets/generated/actions.json; then
+          echo "Error: assets/generated/actions.json is out of date after running ./script/generate-action-metadata"
+          echo "Please run './script/generate-action-metadata' locally and commit the changes"
+          exit 1
+        fi
+      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
