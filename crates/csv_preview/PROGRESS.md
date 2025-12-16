@@ -4,9 +4,7 @@ This document outlines the current state of the POC feature. It might not be the
 
 ## Problems to Discuss
 - **Variable list scrolling**: Horizontal scrolling doesn't work in my variable list rendering mode for some reason
-- **Render optimization verification**: Need a way to confirm variable list only renders visible rows (avoid performance degradation with large datasets)
 - **Data table architecture**: Replace const generics with flexible types (array/vec) to support both compile time fix column sizes and runtime defined column numbers
-- **Performance metrics capturing**: Benchmark  parsing, sorting, filtering and rendering operations
 
 ## Progress
 
