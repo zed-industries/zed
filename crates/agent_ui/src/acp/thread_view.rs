@@ -1315,7 +1315,7 @@ impl AcpThreadView {
             })?;
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn open_edited_buffer(
@@ -1940,6 +1940,16 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let is_indented = entry.is_indented();
+        let is_first_indented = is_indented
+            && self.thread().is_some_and(|thread| {
+                thread
+                    .read(cx)
+                    .entries()
+                    .get(entry_ix.saturating_sub(1))
+                    .is_none_or(|entry| !entry.is_indented())
+            });
+
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1972,7 +1982,9 @@ impl AcpThreadView {
                 v_flex()
                     .id(("user_message", entry_ix))
                     .map(|this| {
-                        if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
+                        if is_first_indented {
+                            this.pt_0p5()
+                        } else if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
                             this.pt(rems_from_px(18.))
                         } else if rules_item.is_some() {
                             this.pt_3()
@@ -2018,6 +2030,9 @@ impl AcpThreadView {
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
+                                    .when(is_indented, |this| {
+                                        this.py_2().px_2().shadow_sm()
+                                    })
                                     .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
                                     .map(|this|{
@@ -2112,7 +2127,10 @@ impl AcpThreadView {
                     )
                     .into_any()
             }
-            AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
+            AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks,
+                indented: _,
+            }) => {
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -2146,6 +2164,7 @@ impl AcpThreadView {
                 v_flex()
                     .px_5()
                     .py_1p5()
+                    .when(is_first_indented, |this| this.pt_0p5())
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
@@ -2155,19 +2174,48 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().map(|this| {
-                    if has_terminals {
-                        this.children(tool_call.terminals().map(|terminal| {
-                            self.render_terminal_tool_call(
-                                entry_ix, terminal, tool_call, window, cx,
-                            )
-                        }))
-                    } else {
-                        this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
-                    }
-                })
+                div()
+                    .w_full()
+                    .map(|this| {
+                        if has_terminals {
+                            this.children(tool_call.terminals().map(|terminal| {
+                                self.render_terminal_tool_call(
+                                    entry_ix, terminal, tool_call, window, cx,
+                                )
+                            }))
+                        } else {
+                            this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
+                        }
+                    })
+                    .into_any()
             }
-            .into_any(),
+        };
+
+        let primary = if is_indented {
+            let line_top = if is_first_indented {
+                rems_from_px(-12.0)
+            } else {
+                rems_from_px(0.0)
+            };
+
+            div()
+                .relative()
+                .w_full()
+                .pl(rems_from_px(20.0))
+                .bg(cx.theme().colors().panel_background.opacity(0.2))
+                .child(
+                    div()
+                        .absolute()
+                        .left(rems_from_px(18.0))
+                        .top(line_top)
+                        .bottom_0()
+                        .w_px()
+                        .bg(cx.theme().colors().border.opacity(0.6)),
+                )
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
         };
 
         let needs_confirmation = if let AgentThreadEntry::ToolCall(tool_call) = entry {
