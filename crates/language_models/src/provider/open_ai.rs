@@ -628,7 +628,6 @@ fn append_message_to_response_items(
                 let call_id = tool_use.id.to_string();
                 input_items.push(json!({
                     "type": "function_call",
-                    "id": call_id,
                     "call_id": call_id,
                     "name": tool_use.name,
                     "arguments": tool_use.raw_input,
@@ -1884,7 +1883,6 @@ mod tests {
                 },
                 {
                     "type": "function_call",
-                    "id": "call-42",
                     "call_id": "call-42",
                     "name": "get_weather",
                     "arguments": tool_arguments
