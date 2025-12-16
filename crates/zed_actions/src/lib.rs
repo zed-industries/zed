@@ -217,8 +217,8 @@ pub mod git {
             Switch,
             /// Selects a different repository.
             SelectRepo,
-            /// Filter remotes.
-            FilterRemotes,
+            /// View remotes.
+            ViewRemotes,
             /// Create a git remote.
             CreateRemote,
             /// Opens the git branch selector.

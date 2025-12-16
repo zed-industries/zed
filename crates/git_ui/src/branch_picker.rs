@@ -31,8 +31,8 @@ actions!(
     [
         /// Deletes the selected git branch or remote.
         DeleteBranch,
-        /// Filter the list of remotes
-        FilterRemotes
+        /// View the list of remotes
+        ViewRemotes
     ]
 );
 
@@ -228,7 +228,7 @@ impl BranchList {
 
     fn handle_filter(
         &mut self,
-        _: &branch_picker::FilterRemotes,
+        _: &branch_picker::ViewRemotes,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -570,14 +570,14 @@ impl PickerDelegate for BranchListDelegate {
                                     .tooltip(move |_, cx| {
                                         Tooltip::for_action_in(
                                             tooltip_label,
-                                            &branch_picker::FilterRemotes,
+                                            &branch_picker::ViewRemotes,
                                             &focus_handle,
                                             cx,
                                         )
                                     })
                                     .on_click(|_click, window, cx| {
                                         window.dispatch_action(
-                                            branch_picker::FilterRemotes.boxed_clone(),
+                                            branch_picker::ViewRemotes.boxed_clone(),
                                             cx,
                                         );
                                     })
@@ -1138,14 +1138,14 @@ impl PickerDelegate for BranchListDelegate {
                                 this.justify_between()
                                     .child({
                                         let focus_handle = focus_handle.clone();
-                                        Button::new("filter-remotes", "Filter Remotes")
+                                        Button::new("filter-remotes", "View Remotes")
                                             .toggle_state(matches!(
                                                 self.branch_filter,
                                                 BranchFilter::Remote
                                             ))
                                             .key_binding(
                                                 KeyBinding::for_action_in(
-                                                    &branch_picker::FilterRemotes,
+                                                    &branch_picker::ViewRemotes,
                                                     &focus_handle,
                                                     cx,
                                                 )
@@ -1153,7 +1153,7 @@ impl PickerDelegate for BranchListDelegate {
                                             )
                                             .on_click(|_click, window, cx| {
                                                 window.dispatch_action(
-                                                    branch_picker::FilterRemotes.boxed_clone(),
+                                                    branch_picker::ViewRemotes.boxed_clone(),
                                                     cx,
                                                 );
                                             })
