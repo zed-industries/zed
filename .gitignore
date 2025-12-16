@@ -8,6 +8,7 @@
 .DS_Store
 .blob_store
 .build
+.claude/settings.local.json
 .envrc
 .flatpak-builder
 .idea
@@ -41,4 +42,4 @@ xcuserdata/
 .env.secret.toml
 
 # `nix build` output
-/result 
+/result

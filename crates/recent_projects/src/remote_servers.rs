@@ -1525,6 +1525,7 @@ impl RemoteServerProjects {
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
+                    connection_timeout: connection_options.connection_timeout,
                 })
         });
     }

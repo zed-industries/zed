@@ -1,7 +1,7 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
+    WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -1308,6 +1308,25 @@ impl Pane {
                 cx.focus_self(window);
             }
             cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if !self.zoomed && !self.items.is_empty() {
+            if !self.focus_handle.contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
     }
 
@@ -3052,6 +3071,8 @@ impl Pane {
         };
 
         let focus_handle = self.focus_handle.clone();
+        let is_pane_focused = self.has_focus(window, cx);
+
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
@@ -3081,15 +3102,27 @@ impl Pane {
                 let toggle_icon = pane.toggle_icon(cx);
                 let workspace_handle = self.workspace.clone();
 
-                IconButton::new("open_aside_left", toggle_icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, window, cx| {
-                        workspace_handle
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
-                            })
-                            .ok();
-                    })
+                h_flex()
+                    .h_full()
+                    .pr_1p5()
+                    .border_r_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        IconButton::new("open_aside_left", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Left,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
                     .into_any_element()
             })
         };
@@ -3100,15 +3133,29 @@ impl Pane {
                 let toggle_icon = pane.toggle_icon(cx);
                 let workspace_handle = self.workspace.clone();
 
-                IconButton::new("open_aside_right", toggle_icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, window, cx| {
-                        workspace_handle
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
-                            })
-                            .ok();
+                h_flex()
+                    .h_full()
+                    .when(is_pane_focused, |this| {
+                        this.pl(DynamicSpacing::Base04.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
                     })
+                    .child(
+                        IconButton::new("open_aside_right", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Right,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
                     .into_any_element()
             })
         };
@@ -3201,8 +3248,8 @@ impl Pane {
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
                     tab_bar
-                        .pre_end_child(navigate_backward)
-                        .pre_end_child(navigate_forward)
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
                 },
             )
             .map(|tab_bar| {
@@ -3877,6 +3924,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Pane::zoom_in))
+            .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(
@@ -6766,13 +6815,13 @@ mod tests {
         let tab_bar_scroll_handle =
             pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
         assert_eq!(tab_bar_scroll_handle.children_count(), 6);
-        let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
+        let tab_bounds = cx.debug_bounds("TAB-4").unwrap();
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
-        assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -35.0 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-35.0));
+        assert!(tab_bounds.right() <= scroll_bounds.right());
+        // -43.0 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-43.0));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

@@ -92,7 +92,9 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use edit_prediction_types::{EditPredictionDelegate, EditPredictionDelegateHandle};
+use edit_prediction_types::{
+    EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionGranularity,
+};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -200,6 +202,7 @@ use ui::{
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -1108,9 +1111,6 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    /// Whether the cursor is offset one character to the left when something is
-    /// selected (needed for vim visual mode)
-    cursor_offset_on_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     pub collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
@@ -2286,7 +2286,6 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
-            cursor_offset_on_selection: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -2473,10 +2472,7 @@ impl Editor {
                     }
                 }
                 EditorEvent::Edited { .. } => {
-                    let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
-                        .map(|vim_mode| vim_mode.0)
-                        .unwrap_or(false);
-                    if !vim_mode {
+                    if !editor.is_vim_mode_enabled(cx) {
                         let display_map = editor.display_snapshot(cx);
                         let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
@@ -2778,21 +2774,24 @@ impl Editor {
 
     pub fn accept_edit_prediction_keybind(
         &self,
-        accept_partial: bool,
+        granularity: EditPredictionGranularity,
         window: &mut Window,
         cx: &mut App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
-        let bindings = if accept_partial {
-            window.bindings_for_action_in_context(&AcceptPartialEditPrediction, key_context)
-        } else {
-            window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-        };
+        let bindings =
+            match granularity {
+                EditPredictionGranularity::Word => window
+                    .bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context),
+                EditPredictionGranularity::Line => window
+                    .bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context),
+                EditPredictionGranularity::Full => {
+                    window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+                }
+            };
 
-        // TODO: if the binding contains multiple keystrokes, display all of them, not
-        // just the first one.
         AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
             !in_conflict
                 || binding
@@ -3100,10 +3099,6 @@ impl Editor {
 
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
-    }
-
-    pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
-        self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
     pub fn set_current_line_highlight(
@@ -4401,10 +4396,50 @@ impl Editor {
                                 && bracket_pair.start.len() == 1
                             {
                                 let target = bracket_pair.start.chars().next().unwrap();
+                                let mut byte_offset = 0u32;
                                 let current_line_count = snapshot
                                     .reversed_chars_at(selection.start)
                                     .take_while(|&c| c != '\n')
-                                    .filter(|&c| c == target)
+                                    .filter(|c| {
+                                        byte_offset += c.len_utf8() as u32;
+                                        if *c != target {
+                                            return false;
+                                        }
+
+                                        let point = Point::new(
+                                            selection.start.row,
+                                            selection.start.column.saturating_sub(byte_offset),
+                                        );
+
+                                        let is_enabled = snapshot
+                                            .language_scope_at(point)
+                                            .and_then(|scope| {
+                                                scope
+                                                    .brackets()
+                                                    .find(|(pair, _)| {
+                                                        pair.start == bracket_pair.start
+                                                    })
+                                                    .map(|(_, enabled)| enabled)
+                                            })
+                                            .unwrap_or(true);
+
+                                        let is_delimiter = snapshot
+                                            .language_scope_at(Point::new(
+                                                point.row,
+                                                point.column + 1,
+                                            ))
+                                            .and_then(|scope| {
+                                                scope
+                                                    .brackets()
+                                                    .find(|(pair, _)| {
+                                                        pair.start == bracket_pair.start
+                                                    })
+                                                    .map(|(_, enabled)| !enabled)
+                                            })
+                                            .unwrap_or(false);
+
+                                        is_enabled && !is_delimiter
+                                    })
                                     .count();
                                 current_line_count % 2 == 1
                             } else {
@@ -7635,9 +7670,9 @@ impl Editor {
         }
     }
 
-    pub fn accept_edit_prediction(
+    pub fn accept_partial_edit_prediction(
         &mut self,
-        _: &AcceptEditPrediction,
+        granularity: EditPredictionGranularity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7649,47 +7684,59 @@ impl Editor {
             return;
         };
 
+        if !matches!(granularity, EditPredictionGranularity::Full) && self.selections.count() != 1 {
+            return;
+        }
+
         match &active_edit_prediction.completion {
             EditPrediction::MoveWithin { target, .. } => {
                 let target = *target;
 
-                if let Some(position_map) = &self.last_position_map {
-                    if position_map
-                        .visible_row_range
-                        .contains(&target.to_display_point(&position_map.snapshot).row())
-                        || !self.edit_prediction_requires_modifier()
-                    {
-                        self.unfold_ranges(&[target..target], true, false, cx);
-                        // Note that this is also done in vim's handler of the Tab action.
-                        self.change_selections(
-                            SelectionEffects::scroll(Autoscroll::newest()),
-                            window,
-                            cx,
-                            |selections| {
-                                selections.select_anchor_ranges([target..target]);
-                            },
-                        );
-                        self.clear_row_highlights::<EditPredictionPreview>();
+                if matches!(granularity, EditPredictionGranularity::Full) {
+                    if let Some(position_map) = &self.last_position_map {
+                        let target_row = target.to_display_point(&position_map.snapshot).row();
+                        let is_visible = position_map.visible_row_range.contains(&target_row);
 
-                        self.edit_prediction_preview
-                            .set_previous_scroll_position(None);
-                    } else {
-                        self.edit_prediction_preview
-                            .set_previous_scroll_position(Some(
-                                position_map.snapshot.scroll_anchor,
-                            ));
-
-                        self.highlight_rows::<EditPredictionPreview>(
-                            target..target,
-                            cx.theme().colors().editor_highlighted_line_background,
-                            RowHighlightOptions {
-                                autoscroll: true,
-                                ..Default::default()
-                            },
-                            cx,
-                        );
-                        self.request_autoscroll(Autoscroll::fit(), cx);
+                        if is_visible || !self.edit_prediction_requires_modifier() {
+                            self.unfold_ranges(&[target..target], true, false, cx);
+                            self.change_selections(
+                                SelectionEffects::scroll(Autoscroll::newest()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_anchor_ranges([target..target]);
+                                },
+                            );
+                            self.clear_row_highlights::<EditPredictionPreview>();
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(None);
+                        } else {
+                            // Highlight and request scroll
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(Some(
+                                    position_map.snapshot.scroll_anchor,
+                                ));
+                            self.highlight_rows::<EditPredictionPreview>(
+                                target..target,
+                                cx.theme().colors().editor_highlighted_line_background,
+                                RowHighlightOptions {
+                                    autoscroll: true,
+                                    ..Default::default()
+                                },
+                                cx,
+                            );
+                            self.request_autoscroll(Autoscroll::fit(), cx);
+                        }
                     }
+                } else {
+                    self.change_selections(
+                        SelectionEffects::scroll(Autoscroll::newest()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_anchor_ranges([target..target]);
+                        },
+                    );
                 }
             }
             EditPrediction::MoveOutside { snapshot, target } => {
@@ -7705,126 +7752,131 @@ impl Editor {
                     cx,
                 );
 
-                if let Some(provider) = self.edit_prediction_provider() {
-                    provider.accept(cx);
-                }
+                match granularity {
+                    EditPredictionGranularity::Full => {
+                        if let Some(provider) = self.edit_prediction_provider() {
+                            provider.accept(cx);
+                        }
 
-                // Store the transaction ID and selections before applying the edit
-                let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
+                        let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
+                        let snapshot = self.buffer.read(cx).snapshot(cx);
+                        let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
 
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
+                        self.buffer.update(cx, |buffer, cx| {
+                            buffer.edit(edits.iter().cloned(), None, cx)
+                        });
 
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits.iter().cloned(), None, cx)
-                });
+                        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchor_ranges([last_edit_end..last_edit_end]);
+                        });
 
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchor_ranges([last_edit_end..last_edit_end]);
-                });
+                        let selections = self.selections.disjoint_anchors_arc();
+                        if let Some(transaction_id_now) =
+                            self.buffer.read(cx).last_transaction_id(cx)
+                        {
+                            if transaction_id_prev != Some(transaction_id_now) {
+                                self.selection_history
+                                    .insert_transaction(transaction_id_now, selections);
+                            }
+                        }
 
-                let selections = self.selections.disjoint_anchors_arc();
-                if let Some(transaction_id_now) = self.buffer.read(cx).last_transaction_id(cx) {
-                    let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
-                    if has_new_transaction {
-                        self.selection_history
-                            .insert_transaction(transaction_id_now, selections);
+                        self.update_visible_edit_prediction(window, cx);
+                        if self.active_edit_prediction.is_none() {
+                            self.refresh_edit_prediction(true, true, window, cx);
+                        }
+                        cx.notify();
+                    }
+                    _ => {
+                        let snapshot = self.buffer.read(cx).snapshot(cx);
+                        let cursor_offset = self
+                            .selections
+                            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+                            .head();
+
+                        let insertion = edits.iter().find_map(|(range, text)| {
+                            let range = range.to_offset(&snapshot);
+                            if range.is_empty() && range.start == cursor_offset {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(text) = insertion {
+                            let text_to_insert = match granularity {
+                                EditPredictionGranularity::Word => {
+                                    let mut partial = text
+                                        .chars()
+                                        .by_ref()
+                                        .take_while(|c| c.is_alphabetic())
+                                        .collect::<String>();
+                                    if partial.is_empty() {
+                                        partial = text
+                                            .chars()
+                                            .by_ref()
+                                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
+                                            .collect::<String>();
+                                    }
+                                    partial
+                                }
+                                EditPredictionGranularity::Line => {
+                                    if let Some(line) = text.split_inclusive('\n').next() {
+                                        line.to_string()
+                                    } else {
+                                        text.to_string()
+                                    }
+                                }
+                                EditPredictionGranularity::Full => unreachable!(),
+                            };
+
+                            cx.emit(EditorEvent::InputHandled {
+                                utf16_range_to_replace: None,
+                                text: text_to_insert.clone().into(),
+                            });
+
+                            self.insert_with_autoindent_mode(&text_to_insert, None, window, cx);
+                            self.refresh_edit_prediction(true, true, window, cx);
+                            cx.notify();
+                        } else {
+                            self.accept_partial_edit_prediction(
+                                EditPredictionGranularity::Full,
+                                window,
+                                cx,
+                            );
+                        }
                     }
                 }
-
-                self.update_visible_edit_prediction(window, cx);
-                if self.active_edit_prediction.is_none() {
-                    self.refresh_edit_prediction(true, true, window, cx);
-                }
-
-                cx.notify();
             }
         }
 
         self.edit_prediction_requires_modifier_in_indent_conflict = false;
     }
 
-    pub fn accept_partial_edit_prediction(
+    pub fn accept_next_word_edit_prediction(
         &mut self,
-        _: &AcceptPartialEditPrediction,
+        _: &AcceptNextWordEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_edit_prediction) = self.active_edit_prediction.as_ref() else {
-            return;
-        };
-        if self.selections.count() != 1 {
-            return;
-        }
+        self.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
+    }
 
-        match &active_edit_prediction.completion {
-            EditPrediction::MoveWithin { target, .. } => {
-                let target = *target;
-                self.change_selections(
-                    SelectionEffects::scroll(Autoscroll::newest()),
-                    window,
-                    cx,
-                    |selections| {
-                        selections.select_anchor_ranges([target..target]);
-                    },
-                );
-            }
-            EditPrediction::MoveOutside { snapshot, target } => {
-                if let Some(workspace) = self.workspace() {
-                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            EditPrediction::Edit { edits, .. } => {
-                self.report_edit_prediction_event(
-                    active_edit_prediction.completion_id.clone(),
-                    true,
-                    cx,
-                );
+    pub fn accept_next_line_edit_prediction(
+        &mut self,
+        _: &AcceptNextLineEditPrediction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.accept_partial_edit_prediction(EditPredictionGranularity::Line, window, cx);
+    }
 
-                // Find an insertion that starts at the cursor position.
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let cursor_offset = self
-                    .selections
-                    .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-                    .head();
-                let insertion = edits.iter().find_map(|(range, text)| {
-                    let range = range.to_offset(&snapshot);
-                    if range.is_empty() && range.start == cursor_offset {
-                        Some(text)
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(text) = insertion {
-                    let mut partial_completion = text
-                        .chars()
-                        .by_ref()
-                        .take_while(|c| c.is_alphabetic())
-                        .collect::<String>();
-                    if partial_completion.is_empty() {
-                        partial_completion = text
-                            .chars()
-                            .by_ref()
-                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
-                            .collect::<String>();
-                    }
-
-                    cx.emit(EditorEvent::InputHandled {
-                        utf16_range_to_replace: None,
-                        text: partial_completion.clone().into(),
-                    });
-
-                    self.insert_with_autoindent_mode(&partial_completion, None, window, cx);
-
-                    self.refresh_edit_prediction(true, true, window, cx);
-                    cx.notify();
-                } else {
-                    self.accept_edit_prediction(&Default::default(), window, cx);
-                }
-            }
-        }
+    pub fn accept_edit_prediction(
+        &mut self,
+        _: &AcceptEditPrediction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.accept_partial_edit_prediction(EditPredictionGranularity::Full, window, cx);
     }
 
     fn discard_edit_prediction(
@@ -8044,21 +8096,23 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let mut modifiers_held = false;
-        if let Some(accept_keystroke) = self
-            .accept_edit_prediction_keybind(false, window, cx)
-            .keystroke()
-        {
-            modifiers_held = modifiers_held
-                || (accept_keystroke.modifiers() == modifiers
-                    && accept_keystroke.modifiers().modified());
-        };
-        if let Some(accept_partial_keystroke) = self
-            .accept_edit_prediction_keybind(true, window, cx)
-            .keystroke()
-        {
-            modifiers_held = modifiers_held
-                || (accept_partial_keystroke.modifiers() == modifiers
-                    && accept_partial_keystroke.modifiers().modified());
+
+        // Check bindings for all granularities.
+        // If the user holds the key for Word, Line, or Full, we want to show the preview.
+        let granularities = [
+            EditPredictionGranularity::Full,
+            EditPredictionGranularity::Line,
+            EditPredictionGranularity::Word,
+        ];
+
+        for granularity in granularities {
+            if let Some(keystroke) = self
+                .accept_edit_prediction_keybind(granularity, window, cx)
+                .keystroke()
+            {
+                modifiers_held = modifiers_held
+                    || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
+            }
         }
 
         if modifiers_held {
@@ -9478,7 +9532,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
+        let accept_binding =
+            self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
@@ -22584,10 +22639,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
-            .map(|vim_mode| vim_mode.0)
-            .unwrap_or(false);
-
+        let vim_mode_enabled = self.is_vim_mode_enabled(cx);
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
             == language::language_settings::EditPredictionProvider::Copilot;
@@ -22605,7 +22657,7 @@ impl Editor {
                 event_type,
                 type = if auto_saved {"autosave"} else {"manual"},
                 file_extension,
-                vim_mode,
+                vim_mode_enabled,
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
@@ -22615,7 +22667,7 @@ impl Editor {
             telemetry::event!(
                 event_type,
                 file_extension,
-                vim_mode,
+                vim_mode_enabled,
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
@@ -23230,6 +23282,14 @@ impl Editor {
             unnecessary_code_fade: settings.unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
         }
+    }
+
+    /// Returns the value of the `vim_mode` setting, defaulting `false` if the
+    /// setting is not set.
+    pub(crate) fn is_vim_mode_enabled(&self, cx: &App) -> bool {
+        VimModeSetting::try_get(cx)
+            .map(|vim_mode| vim_mode.0)
+            .unwrap_or(false)
     }
 }
 

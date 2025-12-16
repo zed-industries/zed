@@ -13,13 +13,12 @@ use settings::DockSide;
 use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{
-    App, Clickable as _, Context, DynamicSpacing, IconButton, IconName, IconSize, IntoElement,
-    Label, LabelCommon as _, LabelSize, Render, Tab, Window, div,
+use ui::{Tab, Tooltip, prelude::*};
+use workspace::{
+    Workspace,
+    dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition},
+    utility_pane::UtilityPaneSlot,
 };
-use workspace::Workspace;
-use workspace::dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition};
-use workspace::utility_pane::UtilityPaneSlot;
 
 pub const DEFAULT_UTILITY_PANE_WIDTH: Pixels = gpui::px(400.0);
 
@@ -169,58 +168,56 @@ impl AgentThreadPane {
         let toggle_icon = self.toggle_icon(cx);
         let title = self.title(cx);
 
-        let make_toggle_button = |workspace: WeakEntity<Workspace>, cx: &App| {
-            div().px(DynamicSpacing::Base06.rems(cx)).child(
-                IconButton::new("toggle_utility_pane", toggle_icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, window, cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_utility_pane(slot, window, cx)
-                            })
-                            .ok();
-                    }),
-            )
+        let pane_toggle_button = |workspace: WeakEntity<Workspace>| {
+            IconButton::new("toggle_utility_pane", toggle_icon)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Toggle Agent Pane"))
+                .on_click(move |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_utility_pane(slot, window, cx)
+                        })
+                        .ok();
+                })
         };
 
-        let make_close_button = |id: &'static str, cx: &mut Context<Self>| {
-            let on_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                cx.emit(ClosePane);
-                this.thread_view = None;
-                cx.notify();
-            });
-            div().px(DynamicSpacing::Base06.rems(cx)).child(
-                IconButton::new(id, IconName::Close)
-                    .icon_size(IconSize::Small)
-                    .on_click(on_click),
-            )
-        };
-
-        let make_title_label = |title: SharedString, cx: &App| {
-            div()
-                .px(DynamicSpacing::Base06.rems(cx))
-                .child(Label::new(title).size(LabelSize::Small))
-        };
-
-        div()
+        h_flex()
             .id("utility-pane-header")
-            .flex()
-            .flex_none()
-            .items_center()
             .w_full()
             .h(Tab::container_height(cx))
-            .when(slot == UtilityPaneSlot::Left, |this| {
-                this.child(make_toggle_button(workspace.clone(), cx))
-                    .child(make_title_label(title.clone(), cx))
-                    .child(div().flex_grow())
-                    .child(make_close_button("close_utility_pane_left", cx))
-            })
+            .px_1p5()
+            .gap(DynamicSpacing::Base06.rems(cx))
             .when(slot == UtilityPaneSlot::Right, |this| {
-                this.child(make_close_button("close_utility_pane_right", cx))
-                    .child(make_title_label(title.clone(), cx))
-                    .child(div().flex_grow())
-                    .child(make_toggle_button(workspace.clone(), cx))
+                this.flex_row_reverse()
             })
+            .flex_none()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(pane_toggle_button(workspace))
+            .child(
+                h_flex()
+                    .size_full()
+                    .min_w_0()
+                    .gap_1()
+                    .map(|this| {
+                        if slot == UtilityPaneSlot::Right {
+                            this.flex_row_reverse().justify_start()
+                        } else {
+                            this.justify_between()
+                        }
+                    })
+                    .child(Label::new(title).truncate())
+                    .child(
+                        IconButton::new("close_btn", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Close Agent Pane"))
+                            .on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                                cx.emit(ClosePane);
+                                this.thread_view = None;
+                                cx.notify()
+                            })),
+                    ),
+            )
     }
 }
 
