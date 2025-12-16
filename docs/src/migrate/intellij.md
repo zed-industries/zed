@@ -217,7 +217,7 @@ This means:
 
 IntelliJ's value for enterprise Java development comes largely from its framework integration. Spring beans are understood and navigable. JPA entities get special treatment. Endpoints are indexed and searchable. Jakarta EE annotations modify how the IDE analyzes your code.
 
-Zed has none of this. There's no Spring plugin, no JPA support, no awareness of web frameworks. The language server sees Java code as Java code—it doesn't understand that `@Autowired` means something special or that this class is a REST controller.
+Zed has none of this. The language server sees Java code as Java code, so it doesn't understand that `@Autowired` means something special or that this class is a REST controller.
 
 Similarly for other ecosystems: no Rails integration, no Django awareness, no Angular/React-specific tooling beyond what the TypeScript language server provides.
 
@@ -230,7 +230,7 @@ Similarly for other ecosystems: no Rails integration, no Django awareness, no An
 
 > **Tip:** For database work, pick up a dedicated tool like DataGrip, DBeaver, or TablePlus. Many developers who switch to Zed keep DataGrip around specifically for SQL—it integrates well with your existing JetBrains license.
 
-The honest assessment: if your daily work depends heavily on framework-aware navigation and refactoring, you'll feel the gap. Zed works best when you're comfortable navigating code through search rather than specialized tooling, or when your language has strong LSP support that covers most of what you need.
+If your daily work depends heavily on framework-aware navigation and refactoring, you'll feel the gap. Zed works best when you're comfortable navigating code through search rather than specialized tooling, or when your language has strong LSP support that covers most of what you need.
 
 ### Tool Windows vs. Docks
 
