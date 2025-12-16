@@ -1,21 +1,28 @@
 # How to Migrate from IntelliJ IDEA to Zed
 
-This guide is for developers who have spent serious time in IntelliJ IDEA (or other JetBrains IDEs) and want to try Zed without losing your productivity.
-
-If you're here, you might be looking for a faster, lighter editor. Or something that strips away the complexity. Or you're curious about built-in collaboration and AI features. Whatever brought you here, this guide helps you move over your habits, shortcuts, and mental models.
+This guide covers how to set up Zed if you're coming from IntelliJ IDEA, including keybindings, settings, and the differences you should expect.
 
 ## Install Zed
 
 Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
-`brew install --cask zed`
+
+```sh
+brew install --cask zed
+```
 
 For Windows, download the installer from zed.dev/download, or install via winget:
-`winget install Zed.Zed`
+
+```sh
+winget install Zed.Zed
+```
 
 For most Linux users, the easiest way to install Zed is through our installation script:
-`curl -f https://zed.dev/install.sh | sh`
+
+```sh
+curl -f https://zed.dev/install.sh | sh
+```
 
 After installation, you can launch Zed from your Applications folder (macOS), Start menu (Windows), or directly from the terminal using:
 `zed .`
@@ -48,16 +55,15 @@ To edit your settings:
 1. `Cmd+,` to open the Settings Editor.
 2. Run `zed: open settings` in the Command Palette.
 
-Here's how common IntelliJ settings translate to Zed:
+Settings IntelliJ users typically configure first:
 
-| IntelliJ Setting                        | Zed Setting          | Notes                         |
-| --------------------------------------- | -------------------- | ----------------------------- |
-| Editor → Font → Font                    | `buffer_font_family` | Zed uses Zed Mono by default  |
-| Editor → Font → Size                    | `buffer_font_size`   | Set in pixels                 |
-| Editor → Code Style → Tab size          | `tab_size`           | Can override per language     |
-| Editor → Code Style → Use tab character | `hard_tabs`          | Boolean                       |
-| Code Style → Reformat on save           | `format_on_save`     | Works with formatter enabled  |
-| Editor → General → Soft Wraps           | `soft_wrap`          | Supports optional wrap column |
+| Zed Setting             | What it does                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `format_on_save`        | Auto-format when saving. Set to `"on"` to enable.                               |
+| `soft_wrap`             | Wrap long lines. Options: `"none"`, `"editor_width"`, `"preferred_line_length"` |
+| `preferred_line_length` | Column width for wrapping and rulers. Default is 80.                            |
+| `inlay_hints`           | Show parameter names and type hints inline, like IntelliJ's hints.              |
+| `relative_line_numbers` | Useful if you're coming from IdeaVim.                                           |
 
 Zed also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project, similar to how you might use `.idea` folders in IntelliJ.
 
@@ -75,7 +81,7 @@ You can also launch Zed from the terminal inside any folder with:
 Once inside a project:
 
 - Use `Cmd+Shift+O` or `Cmd+E` to jump between files quickly (like IntelliJ's "Recent Files")
-- Use `Cmd+Shift+A` or `Shift Shift` to open the command palette (like IntelliJ's "Search Everywhere")
+- Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like IntelliJ's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like IntelliJ's "Go to Class")
 
 Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like IntelliJ's Project tool window).
@@ -130,7 +136,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 To edit your keybindings:
 
-- Open the command palette (`Cmd+Shift+A` or `Shift Shift`)
+- Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
 - Run `Zed: Open Keymap Editor`
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
@@ -201,7 +207,7 @@ This means:
 **How to adapt:**
 
 - Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via command palette: `zed: open tasks`):
+- Define common commands in `tasks.json` (open via Command Palette: `zed: open tasks`):
 
 ```json
 [
