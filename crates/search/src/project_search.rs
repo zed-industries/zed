@@ -1498,6 +1498,9 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
+        self.results_editor.update(cx, |editor, cx| {
+            editor.set_initial_multibuffer_matches(match_ranges.clone());
+        });
 
         if match_ranges.is_empty() {
             self.active_match_index = None;

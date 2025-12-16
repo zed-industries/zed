@@ -24,6 +24,7 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
+multi_buffer.workspace = true
 project.workspace = true
 rand.workspace = true
 serde.workspace = true
