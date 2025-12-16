@@ -16,9 +16,7 @@ use settings::Settings;
 use ui::prelude::*;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{
-    ModelSelectorFavoriteAction, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
-};
+use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -536,8 +534,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon(model_info.icon)
                         .is_selected(is_selected)
                         .is_focused(selected)
-                        .favorite_action(ModelSelectorFavoriteAction::from_is_favorite(is_favorite))
-                        .on_favorite_action_click(handle_action_click)
+                        .is_favorite(is_favorite)
+                        .on_toggle_favorite(handle_action_click)
                         .into_any_element(),
                 )
             }

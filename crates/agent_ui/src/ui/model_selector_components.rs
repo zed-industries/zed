@@ -35,43 +35,6 @@ impl RenderOnce for ModelSelectorHeader {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum ModelSelectorFavoriteAction {
-    Favorite,
-    Unfavorite,
-}
-
-impl ModelSelectorFavoriteAction {
-    pub fn from_is_favorite(is_favorite: bool) -> Self {
-        if is_favorite {
-            Self::Unfavorite
-        } else {
-            Self::Favorite
-        }
-    }
-
-    pub fn icon_name(&self) -> IconName {
-        match self {
-            Self::Favorite => IconName::Star,
-            Self::Unfavorite => IconName::StarFilled,
-        }
-    }
-
-    pub fn icon_color(&self) -> Color {
-        match self {
-            Self::Favorite => Color::Default,
-            Self::Unfavorite => Color::Accent,
-        }
-    }
-
-    pub fn tooltip(&self) -> SharedString {
-        match self {
-            Self::Favorite => "Favorite Model".into(),
-            Self::Unfavorite => "Unfavorite Model".into(),
-        }
-    }
-}
-
 #[derive(IntoElement)]
 pub struct ModelSelectorListItem {
     index: usize,
@@ -79,8 +42,8 @@ pub struct ModelSelectorListItem {
     icon: Option<IconName>,
     is_selected: bool,
     is_focused: bool,
-    favorite_action: Option<ModelSelectorFavoriteAction>,
-    on_favorite_action_click: Option<Box<dyn Fn(&App) + 'static>>,
+    is_favorite: bool,
+    on_toggle_favorite: Option<Box<dyn Fn(&App) + 'static>>,
 }
 
 impl ModelSelectorListItem {
@@ -91,8 +54,8 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
-            favorite_action: None,
-            on_favorite_action_click: None,
+            is_favorite: false,
+            on_toggle_favorite: None,
         }
     }
 
@@ -111,13 +74,13 @@ impl ModelSelectorListItem {
         self
     }
 
-    pub fn favorite_action(mut self, action: ModelSelectorFavoriteAction) -> Self {
-        self.favorite_action = Some(action);
+    pub fn is_favorite(mut self, is_favorite: bool) -> Self {
+        self.is_favorite = is_favorite;
         self
     }
 
-    pub fn on_favorite_action_click(mut self, handler: impl Fn(&App) + 'static) -> Self {
-        self.on_favorite_action_click = Some(Box::new(handler));
+    pub fn on_toggle_favorite(mut self, handler: impl Fn(&App) + 'static) -> Self {
+        self.on_toggle_favorite = Some(Box::new(handler));
         self
     }
 }
@@ -130,8 +93,7 @@ impl RenderOnce for ModelSelectorListItem {
             Color::Muted
         };
 
-        let favorite_action = self.favorite_action;
-        let on_favorite_action_click = self.on_favorite_action_click;
+        let is_favorite = self.is_favorite;
 
         ListItem::new(self.index)
             .inset(true)
@@ -157,19 +119,23 @@ impl RenderOnce for ModelSelectorListItem {
                         .size(IconSize::Small),
                 )
             }))
-            .end_hover_slot(div().pr_2().when_some(
-                favorite_action.zip(on_favorite_action_click),
-                |this, (action, handle_action_click)| {
+            .end_hover_slot(div().pr_2().when_some(self.on_toggle_favorite, {
+                |this, handle_click| {
+                    let (icon, color, tooltip) = if is_favorite {
+                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                    } else {
+                        (IconName::Star, Color::Default, "Favorite Model")
+                    };
                     this.child(
-                        IconButton::new(("toggle-favorite", self.index), action.icon_name())
+                        IconButton::new(("toggle-favorite", self.index), icon)
                             .layer(ElevationIndex::ElevatedSurface)
-                            .icon_color(action.icon_color())
+                            .icon_color(color)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text(action.tooltip()))
-                            .on_click(move |_, _, cx| (handle_action_click)(cx)),
+                            .tooltip(Tooltip::text(tooltip))
+                            .on_click(move |_, _, cx| (handle_click)(cx)),
                     )
-                },
-            ))
+                }
+            }))
     }
 }
 

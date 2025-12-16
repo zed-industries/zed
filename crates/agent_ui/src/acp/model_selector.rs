@@ -21,8 +21,7 @@ use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
 use crate::ui::{
-    HoldForDefault, ModelSelectorFavoriteAction, ModelSelectorFooter, ModelSelectorHeader,
-    ModelSelectorListItem,
+    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
 };
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
@@ -296,8 +295,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .when(supports_favorites, |this| {
-                                    this.favorite_action(ModelSelectorFavoriteAction::from_is_favorite(is_favorite))
-                                        .on_favorite_action_click(handle_action_click)
+                                    this.is_favorite(is_favorite)
+                                        .on_toggle_favorite(handle_action_click)
                                 }),
                         )
                         .into_any_element(),
