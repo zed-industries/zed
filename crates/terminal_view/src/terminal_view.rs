@@ -46,9 +46,9 @@ use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
     delete_unloaded_items,
     item::{
-        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabContextMenuEntry,
+        TabTooltipContent,
     },
-    pane::RenameTab,
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
 };
@@ -90,6 +90,8 @@ pub struct SendKeystroke(String);
 actions!(
     terminal,
     [
+        /// Renames the current terminal tab.
+        RenameTerminal,
         /// Reruns the last executed task in the terminal.
         RerunTask
     ]
@@ -604,7 +606,7 @@ impl TerminalView {
         window.dispatch_action(Box::new(task), cx);
     }
 
-    fn rename_tab(&mut self, _: &RenameTab, window: &mut Window, cx: &mut Context<Self>) {
+    fn rename_terminal(&mut self, _: &RenameTerminal, window: &mut Window, cx: &mut Context<Self>) {
         self.start_rename(window, cx);
     }
 
@@ -1210,7 +1212,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
-            .on_action(cx.listener(Self::rename_tab))
+            .on_action(cx.listener(Self::rename_terminal))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1475,8 +1477,8 @@ impl Item for TerminalView {
         f(*event)
     }
 
-    fn supports_rename(&self) -> bool {
-        true
+    fn tab_context_menu_entries(&self, _window: &Window, _cx: &App) -> Vec<TabContextMenuEntry> {
+        vec![TabContextMenuEntry::new("Rename", RenameTerminal)]
     }
 }
 

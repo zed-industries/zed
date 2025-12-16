@@ -2084,7 +2084,7 @@ impl Terminal {
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
 
-        if let Some(ref title_override) = self.title_override {
+        if let Some(title_override) = &self.title_override {
             return if truncate {
                 truncate_and_trailoff(title_override, MAX_CHARS)
             } else {

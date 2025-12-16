@@ -161,6 +161,20 @@ pub enum TabTooltipContent {
     Custom(Box<dyn Fn(&mut Window, &mut App) -> AnyView>),
 }
 
+pub struct TabContextMenuEntry {
+    pub label: SharedString,
+    pub action: Box<dyn Action>,
+}
+
+impl TabContextMenuEntry {
+    pub fn new(label: impl Into<SharedString>, action: impl Action) -> Self {
+        Self {
+            label: label.into(),
+            action: action.boxed_clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemBufferKind {
     Multibuffer,
@@ -352,8 +366,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         true
     }
 
-    fn supports_rename(&self) -> bool {
-        false
+    fn tab_context_menu_entries(&self, _window: &Window, _cx: &App) -> Vec<TabContextMenuEntry> {
+        Vec::new()
     }
 }
 
@@ -523,7 +537,7 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
-    fn supports_rename(&self, cx: &App) -> bool;
+    fn tab_context_menu_entries(&self, window: &Window, cx: &App) -> Vec<TabContextMenuEntry>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -1062,8 +1076,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         })
     }
 
-    fn supports_rename(&self, cx: &App) -> bool {
-        self.read(cx).supports_rename()
+    fn tab_context_menu_entries(&self, window: &Window, cx: &App) -> Vec<TabContextMenuEntry> {
+        self.read(cx).tab_context_menu_entries(window, cx)
     }
 }
 
