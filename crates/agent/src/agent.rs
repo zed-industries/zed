@@ -862,11 +862,6 @@ impl NativeAgent {
                 );
             })?;
 
-            acp_thread.update(cx, |acp_thread, cx| {
-                // separate command from prompt messages so that they can be edited separately
-                acp_thread.push_assistant_content_block("".into(), false, cx);
-            })?;
-
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
                 let block = mcp_message_content_to_acp_content_block(content);
@@ -876,7 +871,12 @@ impl NativeAgent {
                         let id = acp_thread::UserMessageId::new();
 
                         acp_thread.update(cx, |acp_thread, cx| {
-                            acp_thread.push_user_content_block(Some(id.clone()), block.clone(), cx);
+                            acp_thread.push_user_content_block_with_indent(
+                                Some(id.clone()),
+                                block.clone(),
+                                true,
+                                cx,
+                            );
                             anyhow::Ok(())
                         })??;
 
@@ -887,7 +887,12 @@ impl NativeAgent {
                     }
                     context_server::types::Role::Assistant => {
                         acp_thread.update(cx, |acp_thread, cx| {
-                            acp_thread.push_assistant_content_block(block.clone(), false, cx);
+                            acp_thread.push_assistant_content_block_with_indent(
+                                block.clone(),
+                                false,
+                                true,
+                                cx,
+                            );
                             anyhow::Ok(())
                         })??;
 
