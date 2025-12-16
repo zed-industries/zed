@@ -690,7 +690,7 @@ pub fn count_google_tokens(
             })
             .collect::<Vec<_>>();
 
-        // Tiktoken doesn't yet support these models, so we manually use the
+        // Tiktoken doesn't support these models, so we manually use the
         // same tokenizer as GPT-4.
         tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
     })

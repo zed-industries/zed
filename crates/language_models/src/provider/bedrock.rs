@@ -878,7 +878,7 @@ pub fn get_bedrock_tokens(
                 }
             }
 
-            // Tiktoken doesn't yet support these models, so we manually use the
+            // Tiktoken doesn't support these models, so we manually use the
             // same tokenizer as GPT-4.
             tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
                 .map(|tokens| (tokens + tokens_from_images) as u64)
