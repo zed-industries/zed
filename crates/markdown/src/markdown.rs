@@ -149,8 +149,6 @@ actions!(
     [
         /// Copies the selected text to the clipboard.
         Copy,
-        /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
     ]
 );
 
@@ -292,14 +290,6 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.end <= self.selection.start {
-            return;
-        }
-        let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -1357,14 +1347,6 @@ impl Element for MarkdownElement {
                 let text = text.clone();
                 if phase == DispatchPhase::Bubble {
                     entity.update(cx, move |this, cx| this.copy(&text, window, cx))
-                }
-            }
-        });
-        window.on_action(std::any::TypeId::of::<crate::CopyAsMarkdown>(), {
-            let entity = self.markdown.clone();
-            move |_, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
                 }
             }
         });
