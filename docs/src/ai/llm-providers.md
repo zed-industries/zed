@@ -43,7 +43,7 @@ Ensure your credentials have the following permissions set up:
 
 Your IAM policy should look similar to:
 
-```json
+```json [settings]
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -64,8 +64,8 @@ With that done, choose one of the two authentication methods:
 #### Authentication via Named Profile (Recommended)
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
-   ```json
+2. Open your `settings.json` (`zed: open settings file`) and include the `bedrock` key under `language_models` with the following settings:
+   ```json [settings]
    {
      "language_models": {
        "bedrock": {
@@ -89,12 +89,32 @@ To do this:
 
 #### Cross-Region Inference
 
-The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
+The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) to improve availability and throughput.
 With Cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
 
-For example, if you use `Claude Sonnet 3.7 Thinking` from `us-east-1`, it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
-Cross-Region inference requests are kept within the AWS Regions that are part of the geography where the data originally resides.
-For example, a request made within the US is kept within the AWS Regions in the US.
+##### Regional vs Global Inference Profiles
+
+Bedrock supports two types of cross-region inference profiles:
+
+- **Regional profiles** (default): Route requests within a specific geography (US, EU, APAC). For example, `us-east-1` uses the `us.*` profile which routes across `us-east-1`, `us-east-2`, and `us-west-2`.
+- **Global profiles**: Route requests across all commercial AWS Regions for maximum availability and performance.
+
+By default, Zed uses **regional profiles** which keep your data within the same geography. You can opt into global profiles by adding `"allow_global": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_global": true
+    }
+  }
+}
+```
+
+**Note:** Only select newer models support global inference profiles. See the [AWS Bedrock supported models documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html#inference-profiles-support-system) for the current list of models that support global inference. If you encounter availability issues with a model in your region, enabling `allow_global` may resolve them.
 
 Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
 All data will be transmitted encrypted across Amazon's secure network.
@@ -120,7 +140,7 @@ Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "anthropic": {
@@ -147,14 +167,14 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it) by changing the mode in your model's configuration to `thinking`, for example:
 
-```json
+```json [settings]
 {
   "name": "claude-sonnet-4-latest",
   "display_name": "claude-sonnet-4-thinking",
   "max_tokens": 200000,
   "mode": {
     "type": "thinking",
-    "budget_tokens": 4_096
+    "budget_tokens": 4096
   }
 }
 ```
@@ -174,7 +194,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
 If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "deepseek": {
@@ -231,7 +251,7 @@ By default, Zed will use `stable` versions of models, but you can use specific v
 
 Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "google": {
@@ -286,7 +306,7 @@ The Zed agent comes pre-configured with several Mistral models (codestral-latest
 All the default models support tool use.
 If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "mistral": {
@@ -327,6 +347,33 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 3. In the Agent Panel, select one of the Ollama models using the model dropdown.
 
+#### Ollama Autodiscovery
+
+Zed will automatically discover models that Ollama has pulled. You can turn this off by setting
+the `auto_discover` field in the Ollama settings. If you do this, you should manually specify which
+models are available.
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "auto_discover": false,
+      "available_models": [
+        {
+          "name": "qwen2.5-coder",
+          "display_name": "qwen 2.5 coder",
+          "max_tokens": 32768,
+          "supports_tools": true,
+          "supports_thinking": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
+
 #### Ollama Context Length {#ollama-context}
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
@@ -338,7 +385,7 @@ See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/mai
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
-```json
+```json [settings]
 {
   "language_models": {
     "ollama": {
@@ -406,7 +453,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
 To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "openai": {
@@ -457,7 +504,7 @@ Then, fill up the input fields available in the modal.
 
 To do it via your `settings.json`, add the following snippet under `language_models`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "openai_compatible": {
@@ -513,7 +560,7 @@ Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "open_router": {
@@ -569,7 +616,7 @@ Supported fields (all optional):
 
 Example adding routing preferences to a model:
 
-```json
+```json [settings]
 {
   "language_models": {
     "open_router": {
@@ -601,7 +648,7 @@ These routing controls let you fine‑tune cost, capability, and reliability tra
 
 ### Vercel v0 {#vercel-v0}
 
-[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://v0.app/docs/api/model) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
 The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.
@@ -627,7 +674,7 @@ The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_K
 
 The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "x_ai": {
@@ -657,7 +704,7 @@ The Zed agent comes pre-configured with common Grok models. If you wish to use a
 You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
 To do so, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "some-provider": {

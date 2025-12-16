@@ -3,16 +3,18 @@ use std::num::NonZeroUsize;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
-use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+};
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
-    pub active_pane_modifiers: Option<ActivePanelModifiers>,
+    pub active_pane_modifiers: Option<ActivePaneModifiers>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -56,6 +58,7 @@ pub struct WorkspaceSettingsContent {
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub drop_target_size: Option<f32>,
     /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
@@ -106,9 +109,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Default: client
+    pub window_decorations: Option<WindowDecorations>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
@@ -138,7 +144,7 @@ pub struct ItemSettingsContent {
     pub show_close_button: Option<ShowCloseButton>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
@@ -146,14 +152,31 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+    /// Whether to open tabs in preview mode when opened from the project panel with a single click.
+    ///
+    /// Default: true
+    pub enable_preview_from_project_panel: Option<bool>,
     /// Whether to open tabs in preview mode when selected from the file finder.
     ///
     /// Default: false
     pub enable_preview_from_file_finder: Option<bool>,
-    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    /// Whether to open tabs in preview mode when opened from a multibuffer.
+    ///
+    /// Default: true
+    pub enable_preview_from_multibuffer: Option<bool>,
+    /// Whether to open tabs in preview mode when code navigation is used to open a multibuffer.
     ///
     /// Default: false
-    pub enable_preview_from_code_navigation: Option<bool>,
+    pub enable_preview_multibuffer_from_code_navigation: Option<bool>,
+    /// Whether to open tabs in preview mode when code navigation is used to open a single file.
+    ///
+    /// Default: true
+    pub enable_preview_file_from_code_navigation: Option<bool>,
+    /// Whether to keep tabs in preview mode when code navigation is used to navigate away from them.
+    /// If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
+    ///
+    /// Default: false
+    pub enable_keep_preview_on_code_navigation: Option<bool>,
 }
 
 #[derive(
@@ -240,15 +263,16 @@ pub enum ActivateOnClose {
     LeftNeighbour,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub struct ActivePanelModifiers {
+pub struct ActivePaneModifiers {
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
     ///
     /// Default: `0.0`
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub border_size: Option<f32>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
@@ -256,7 +280,8 @@ pub struct ActivePanelModifiers {
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
-    pub inactive_opacity: Option<f32>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(
@@ -283,6 +308,28 @@ pub enum BottomDockLayout {
     LeftAligned,
     /// Extends under the right dock while snapping to the left dock
     RightAligned,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowDecorations {
+    /// Zed draws its own window decorations/titlebar (client-side decoration)
+    #[default]
+    Client,
+    /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
+    Server,
 }
 
 #[derive(
@@ -344,7 +391,7 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
@@ -361,13 +408,13 @@ pub struct TabBarSettingsContent {
     pub show_tab_bar_buttons: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 pub struct StatusBarSettingsContent {
     /// Whether to show the status bar.
     ///
     /// Default: true
-    #[serde(rename = "experimental.show", default)]
+    #[serde(rename = "experimental.show")]
     pub show: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
@@ -377,15 +424,31 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: true
     pub cursor_position_button: Option<bool>,
+    /// Whether to show active line endings button in the status bar.
+    ///
+    /// Default: false
+    pub line_endings_button: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay { milliseconds: DelayMs },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.
@@ -403,34 +466,58 @@ impl AutosaveSetting {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
     Up,
     Down,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionVertical {
     Left,
     Right,
 }
 
-#[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
+#[with_fallible_options]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub left_padding: Option<f32>,
+    pub left_padding: Option<CenteredPaddingSettings>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub right_padding: Option<f32>,
+    pub right_padding: Option<CenteredPaddingSettings>,
 }
 
 #[derive(
@@ -464,7 +551,24 @@ impl OnLastWindowClosed {
     }
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct ProjectPanelAutoOpenSettings {
+    /// Whether to automatically open newly created files in the editor.
+    ///
+    /// Default: true
+    pub on_create: Option<bool>,
+    /// Whether to automatically open files after pasting or duplicating them.
+    ///
+    /// Default: true
+    pub on_paste: Option<bool>,
+    /// Whether to automatically open files dropped from external sources.
+    ///
+    /// Default: true
+    pub on_drop: Option<bool>,
+}
+
+#[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
@@ -478,6 +582,7 @@ pub struct ProjectPanelSettingsContent {
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of project panel
     ///
@@ -502,6 +607,7 @@ pub struct ProjectPanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
@@ -530,6 +636,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub hide_root: Option<bool>,
+    /// Whether to hide the hidden entries in the project panel.
+    ///
+    /// Default: false
+    pub hide_hidden: Option<bool>,
     /// Whether to stick parent directories at top of the project panel.
     ///
     /// Default: true
@@ -538,6 +648,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
+    /// Settings for automatically opening files.
+    pub auto_open: Option<ProjectPanelAutoOpenSettings>,
+    /// How to order sibling entries in the project panel.
+    ///
+    /// Default: directories_first
+    pub sort_mode: Option<ProjectPanelSortMode>,
 }
 
 #[derive(
@@ -563,8 +679,35 @@ pub enum ProjectPanelEntrySpacing {
     Standard,
 }
 
-#[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelSortMode {
+    /// Show directories first, then files
+    #[default]
+    DirectoriesFirst,
+    /// Mix directories and files together
+    Mixed,
+    /// Show files first, then directories
+    FilesFirst,
+}
+
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
 }

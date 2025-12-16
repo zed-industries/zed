@@ -155,6 +155,12 @@ pub fn temp_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the hang traces directory.
+pub fn hang_traces_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| data_dir().join("hang_traces"))
+}
+
 /// Returns the path to the logs directory.
 pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -288,7 +294,7 @@ pub fn snippets_dir() -> &'static PathBuf {
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.
-pub fn contexts_dir() -> &'static PathBuf {
+pub fn text_threads_dir() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -370,12 +376,12 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
     DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
-/// Returns the path to the agent servers directory
+/// Returns the path to the external agents directory
 ///
 /// This is where agent servers are downloaded to
-pub fn agent_servers_dir() -> &'static PathBuf {
-    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+pub fn external_agents_dir() -> &'static PathBuf {
+    static EXTERNAL_AGENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTERNAL_AGENTS_DIR.get_or_init(|| data_dir().join("external_agents"))
 }
 
 /// Returns the path to the Copilot directory.
@@ -400,6 +406,12 @@ pub fn default_prettier_dir() -> &'static PathBuf {
 pub fn remote_servers_dir() -> &'static PathBuf {
     static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
+}
+
+/// Returns the path to the directory where the devcontainer CLI is installed.
+pub fn devcontainer_dir() -> &'static PathBuf {
+    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
 }
 
 /// Returns the relative path to a `.zed` folder within a project.
@@ -460,8 +472,12 @@ pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
 
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
+pub fn global_ssh_config_file() -> Option<&'static Path> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(Path::new("/etc/ssh/ssh_config"))
+    }
 }
 
 /// Returns candidate paths for the vscode user settings file

@@ -1,8 +1,8 @@
 [package]
-name = "zed-util"
+name = "util"
 version = "0.1.0"
 edition.workspace = true
-publish = true
+publish = false
 license = "Apache-2.0"
 description = "A collection of utility structs and functions used by Zed and GPUI"
 
@@ -45,12 +45,14 @@ unicase.workspace = true
 util_macros = { workspace = true, optional = true }
 walkdir.workspace = true
 which.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 command-fds = "0.3.1"
 libc.workspace = true
 nix = { workspace = true, features = ["user"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

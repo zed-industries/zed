@@ -10,22 +10,22 @@ pub use sink::{flush, init_output_file, init_output_stderr, init_output_stdout};
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
-    if let Err(err) = try_init() {
+    if let Err(err) = try_init(None) {
         log::error!("{err}");
         eprintln!("{err}");
     }
 }
 
-pub fn try_init() -> anyhow::Result<()> {
+pub fn try_init(filter: Option<String>) -> anyhow::Result<()> {
     log::set_logger(&ZLOG)?;
     log::set_max_level(log::LevelFilter::max());
-    process_env();
+    process_env(filter);
     filter::refresh_from_settings(&std::collections::HashMap::default());
     Ok(())
 }
 
 pub fn init_test() {
-    if get_env_config().is_some() && try_init().is_ok() {
+    if get_env_config().is_some() && try_init(None).is_ok() {
         init_output_stdout();
     }
 }
@@ -34,10 +34,17 @@ fn get_env_config() -> Option<String> {
     std::env::var("ZED_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .ok()
+        .or_else(|| {
+            if std::env::var("CI").is_ok() {
+                Some("info".to_owned())
+            } else {
+                None
+            }
+        })
 }
 
-pub fn process_env() {
-    let Some(env_config) = get_env_config() else {
+pub fn process_env(filter: Option<String>) {
+    let Some(env_config) = get_env_config().or(filter) else {
         return;
     };
     match env_config::parse(&env_config) {
@@ -63,18 +70,21 @@ impl log::Log for Zlog {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let (crate_name_scope, module_scope) = match record.module_path_static() {
+        let module_path = record.module_path().or(record.file());
+        let (crate_name_scope, module_scope) = match module_path {
             Some(module_path) => {
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
-                let crate_name_scope = private::scope_new(&[crate_name]);
-                let module_scope = private::scope_new(&[module_path]);
+                let crate_name_scope = private::scope_ref_new(&[crate_name]);
+                let module_scope = private::scope_ref_new(&[module_path]);
                 (crate_name_scope, module_scope)
             }
-            // TODO: when do we hit this
-            None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
+            None => {
+                // TODO: when do we hit this
+                (private::scope_new(&[]), private::scope_new(&["*unknown*"]))
+            }
         };
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&crate_name_scope, record.module_path(), level) {
+        if !filter::is_scope_enabled(&crate_name_scope, Some(record.target()), level) {
             return;
         }
         sink::submit(sink::Record {
@@ -82,7 +92,8 @@ impl log::Log for Zlog {
             level,
             message: record.args(),
             // PERF(batching): store non-static paths in a cache + leak them and pass static str here
-            module_path: record.module_path().or(record.file()),
+            module_path,
+            line: record.line(),
         });
     }
 
@@ -103,6 +114,7 @@ macro_rules! log {
                 level,
                 message: &format_args!($($arg)+),
                 module_path: Some(module_path!()),
+                line: Some(line!()),
             });
         }
     }
@@ -174,7 +186,7 @@ macro_rules! time {
         $crate::Timer::new($logger, $name)
     };
     ($name:expr) => {
-        time!($crate::default_logger!() => $name)
+        $crate::time!($crate::default_logger!() => $name)
     };
 }
 
@@ -243,6 +255,10 @@ pub mod private {
     }
 
     pub const fn scope_new(scopes: &[&'static str]) -> Scope {
+        scope_ref_new(scopes)
+    }
+
+    pub const fn scope_ref_new<'a>(scopes: &[&'a str]) -> ScopeRef<'a> {
         assert!(scopes.len() <= SCOPE_DEPTH_MAX);
         let mut scope = [""; SCOPE_DEPTH_MAX];
         let mut i = 0;
@@ -266,6 +282,7 @@ pub mod private {
 }
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
+pub type ScopeRef<'a> = [&'a str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
 const SCOPE_STRING_SEP_STR: &str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';
@@ -285,7 +302,7 @@ impl log::Log for Logger {
             return;
         }
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&self.scope, record.module_path(), level) {
+        if !filter::is_scope_enabled(&self.scope, Some(record.target()), level) {
             return;
         }
         sink::submit(sink::Record {
@@ -293,6 +310,7 @@ impl log::Log for Logger {
             level,
             message: record.args(),
             module_path: record.module_path(),
+            line: record.line(),
         });
     }
 

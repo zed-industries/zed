@@ -3,9 +3,9 @@ use std::sync::Arc;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance, hsla};
 
 use crate::{
-    AccentColors, Appearance, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles,
-    default_color_scales,
+    AccentColors, Appearance, DEFAULT_DARK_THEME, PlayerColors, StatusColors,
+    StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeColorsRefinement,
+    ThemeFamily, ThemeStyles, default_color_scales,
 };
 
 /// The default theme family for Zed.
@@ -71,10 +71,16 @@ pub(crate) fn zed_default_dark() -> Theme {
     let yellow = hsla(39. / 360., 67. / 100., 69. / 100., 1.0);
 
     const ADDED_COLOR: Hsla = Hsla {
-        h: 142. / 360.,
-        s: 0.68,
-        l: 0.45,
+        h: 134. / 360.,
+        s: 0.55,
+        l: 0.40,
         a: 1.0,
+    };
+    const WORD_ADDED_COLOR: Hsla = Hsla {
+        h: 134. / 360.,
+        s: 0.55,
+        l: 0.40,
+        a: 0.35,
     };
     const MODIFIED_COLOR: Hsla = Hsla {
         h: 48. / 360.,
@@ -83,16 +89,22 @@ pub(crate) fn zed_default_dark() -> Theme {
         a: 1.0,
     };
     const REMOVED_COLOR: Hsla = Hsla {
-        h: 355. / 360.,
-        s: 0.65,
-        l: 0.65,
+        h: 350. / 360.,
+        s: 0.88,
+        l: 0.25,
         a: 1.0,
+    };
+    const WORD_DELETED_COLOR: Hsla = Hsla {
+        h: 350. / 360.,
+        s: 0.88,
+        l: 0.25,
+        a: 0.80,
     };
 
     let player = PlayerColors::dark();
     Theme {
         id: "one_dark".to_string(),
-        name: "One Dark".into(),
+        name: DEFAULT_DARK_THEME.into(),
         appearance: Appearance::Dark,
         styles: ThemeStyles {
             window_background_appearance: WindowBackgroundAppearance::Opaque,
@@ -140,6 +152,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 tab_inactive_background: bg,
                 tab_active_background: editor,
                 search_match_background: bg,
+                search_active_match_background: bg,
 
                 editor_background: editor,
                 editor_gutter_background: editor,
@@ -231,8 +244,20 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_renamed: MODIFIED_COLOR,
                 version_control_conflict: crate::orange().light().step_12(),
                 version_control_ignored: crate::gray().light().step_12(),
+                version_control_word_added: WORD_ADDED_COLOR,
+                version_control_word_deleted: WORD_DELETED_COLOR,
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
+
+                vim_normal_background: SystemColors::default().transparent,
+                vim_insert_background: SystemColors::default().transparent,
+                vim_replace_background: SystemColors::default().transparent,
+                vim_visual_background: SystemColors::default().transparent,
+                vim_visual_line_background: SystemColors::default().transparent,
+                vim_visual_block_background: SystemColors::default().transparent,
+                vim_helix_normal_background: SystemColors::default().transparent,
+                vim_helix_select_background: SystemColors::default().transparent,
+                vim_mode_text: SystemColors::default().transparent,
             },
             status: StatusColors {
                 conflict: yellow,

@@ -4,7 +4,7 @@ use crate::lsp_log_view::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{AppContext as _, SemanticVersion, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, TestAppContext, VisualTestContext};
 use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 use lsp::LanguageServerName;
 use project::{
@@ -73,7 +73,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
     let log_view = window.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(*window, cx);
 
-    language_server.notify::<lsp::notification::LogMessage>(&lsp::LogMessageParams {
+    language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
         message: "hello from the server".into(),
         typ: lsp::MessageType::INFO,
     });
@@ -109,12 +109,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        release_channel::init(SemanticVersion::default(), cx);
-        language::init(cx);
-        client::init_settings(cx);
-        Project::init_settings(cx);
-        editor::init_settings(cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }

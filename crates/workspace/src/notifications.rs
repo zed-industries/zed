@@ -41,7 +41,7 @@ pub enum NotificationId {
 
 impl NotificationId {
     /// Returns a unique [`NotificationId`] for the given type.
-    pub fn unique<T: 'static>() -> Self {
+    pub const fn unique<T: 'static>() -> Self {
         Self::Unique(TypeId::of::<T>())
     }
 
@@ -315,19 +315,17 @@ impl Render for LanguageServerPrompt {
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)
-                                            .tooltip(move |window, cx| {
+                                            .tooltip(move |_window, cx| {
                                                 if suppress {
                                                     Tooltip::for_action(
                                                         "Suppress.\nClose with click.",
                                                         &SuppressNotification,
-                                                        window,
                                                         cx,
                                                     )
                                                 } else {
                                                     Tooltip::for_action(
                                                         "Close.\nSuppress with shift-click.",
                                                         &menu::Cancel,
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -499,7 +497,7 @@ impl NotificationFrame {
     }
 
     /// Determines whether the given notification ID should be suppressible
-    /// Suppressed motifications will not be shown anymore
+    /// Suppressed notifications will not be shown anymore
     pub fn show_suppress_button(mut self, show: bool) -> Self {
         self.show_suppress_button = show;
         self
@@ -556,23 +554,21 @@ impl RenderOnce for NotificationFrame {
                         this.on_modifiers_changed(move |_, _, cx| cx.notify(entity))
                             .child(
                                 IconButton::new(close_id, close_icon)
-                                    .tooltip(move |window, cx| {
+                                    .tooltip(move |_window, cx| {
                                         if suppress {
                                             Tooltip::for_action(
                                                 "Suppress.\nClose with click.",
                                                 &SuppressNotification,
-                                                window,
                                                 cx,
                                             )
                                         } else if show_suppress_button {
                                             Tooltip::for_action(
                                                 "Close.\nSuppress with shift-click.",
                                                 &menu::Cancel,
-                                                window,
                                                 cx,
                                             )
                                         } else {
-                                            Tooltip::for_action("Close", &menu::Cancel, window, cx)
+                                            Tooltip::for_action("Close", &menu::Cancel, cx)
                                         }
                                     })
                                     .on_click({
@@ -597,9 +593,9 @@ pub mod simple_message_notification {
 
     use gpui::{
         AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
-        SharedString, Styled,
+        ScrollHandle, SharedString, Styled,
     };
-    use ui::prelude::*;
+    use ui::{WithScrollbar, prelude::*};
 
     use crate::notifications::NotificationFrame;
 
@@ -621,6 +617,7 @@ pub mod simple_message_notification {
         show_close_button: bool,
         show_suppress_button: bool,
         title: Option<SharedString>,
+        scroll_handle: ScrollHandle,
     }
 
     impl Focusable for MessageNotification {
@@ -665,6 +662,7 @@ pub mod simple_message_notification {
                 show_suppress_button: true,
                 title: None,
                 focus_handle: cx.focus_handle(),
+                scroll_handle: ScrollHandle::new(),
             }
         }
 
@@ -761,8 +759,8 @@ pub mod simple_message_notification {
             self
         }
 
-        /// Determines whether the given notification ID should be supressable
-        /// Suppressed motifications will not be shown anymor
+        /// Determines whether the given notification ID should be suppressible
+        /// Suppressed notifications will not be shown anymor
         pub fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self
@@ -781,7 +779,18 @@ pub mod simple_message_notification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             NotificationFrame::new()
                 .with_title(self.title.clone())
-                .with_content((self.build_content)(window, cx))
+                .with_content(
+                    div()
+                        .child(
+                            div()
+                                .id("message-notification-content")
+                                .max_h(vh(0.6, window))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll_handle.clone())
+                                .child((self.build_content)(window, cx)),
+                        )
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                )
                 .show_close_button(self.show_close_button)
                 .show_suppress_button(self.show_suppress_button)
                 .on_close(cx.listener(|_, suppress, _, cx| {
@@ -1075,9 +1084,9 @@ where
         window.spawn(cx, async move |cx| {
             let result = self.await;
             if let Err(err) = result.as_ref() {
-                log::error!("{err:?}");
+                log::error!("{err:#}");
                 if let Ok(prompt) = cx.update(|window, cx| {
-                    let mut display = format!("{err}");
+                    let mut display = format!("{err:#}");
                     if !display.ends_with('\n') {
                         display.push('.');
                         display.push(' ')

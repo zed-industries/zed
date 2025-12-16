@@ -17,10 +17,12 @@ doctest = false
 anyhow.workspace = true
 log.workspace = true
 simplelog.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

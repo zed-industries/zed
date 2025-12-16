@@ -81,7 +81,7 @@ pub fn python_env_kernel_specifications(
     worktree_id: WorktreeId,
     cx: &mut App,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
-    let python_language = LanguageName::new("Python");
+    let python_language = LanguageName::new_static("Python");
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,
@@ -213,6 +213,13 @@ impl From<&Kernel> for KernelStatus {
             Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                 ExecutionState::Idle => KernelStatus::Idle,
                 ExecutionState::Busy => KernelStatus::Busy,
+                ExecutionState::Unknown => KernelStatus::Error,
+                ExecutionState::Starting => KernelStatus::Starting,
+                ExecutionState::Restarting => KernelStatus::Restarting,
+                ExecutionState::Terminating => KernelStatus::ShuttingDown,
+                ExecutionState::AutoRestarting => KernelStatus::Restarting,
+                ExecutionState::Dead => KernelStatus::Error,
+                ExecutionState::Other(_) => KernelStatus::Error,
             },
             Kernel::StartingKernel(_) => KernelStatus::Starting,
             Kernel::ErroredLaunch(_) => KernelStatus::Error,

@@ -1,41 +1,42 @@
 use anyhow::{Context as _, Result};
-use client::{TelemetrySettings, telemetry::MINIDUMP_ENDPOINT};
-use futures::AsyncReadExt;
-use gpui::{App, AppContext as _};
-use http_client::{self, HttpClient, HttpClientWithUrl};
+use client::{Client, telemetry::MINIDUMP_ENDPOINT};
+use futures::{AsyncReadExt, TryStreamExt};
+use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
+use http_client::{self, AsyncBody, HttpClient, Request};
+use log::info;
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::multipart::{Form, Part};
-use settings::Settings;
 use smol::stream::StreamExt;
-use std::{ffi::OsStr, fs, sync::Arc};
+use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
 use util::ResultExt;
 
-pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>, cx: &mut App) {
-    #[cfg(target_os = "macos")]
-    monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
+use crate::STARTUP_TIME;
 
-    if client::TelemetrySettings::get_global(cx).diagnostics {
-        let client = http_client.clone();
-        let id = installation_id.clone();
+pub fn init(client: Arc<Client>, cx: &mut App) {
+    monitor_hangs(cx);
+
+    if client.telemetry().diagnostics_enabled() {
+        let client = client.clone();
         cx.background_spawn(async move {
-            upload_previous_minidumps(client, id).await.warn_on_err();
+            upload_previous_minidumps(client).await.warn_on_err();
         })
         .detach()
     }
 
     cx.observe_new(move |project: &mut Project, _, cx| {
-        let http_client = http_client.clone();
-        let installation_id = installation_id.clone();
+        let client = client.clone();
 
         let Some(remote_client) = project.remote_client() else {
             return;
         };
-        remote_client.update(cx, |client, cx| {
-            if !TelemetrySettings::get_global(cx).diagnostics {
+        remote_client.update(cx, |remote_client, cx| {
+            if !client.telemetry().diagnostics_enabled() {
                 return;
             }
-            let request = client.proto_client().request(proto::GetCrashFiles {});
+            let request = remote_client
+                .proto_client()
+                .request(proto::GetCrashFiles {});
             cx.background_spawn(async move {
                 let GetCrashFilesResponse { crashes } = request.await?;
 
@@ -48,15 +49,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>
                 } in crashes
                 {
                     if let Some(metadata) = serde_json::from_str(&metadata).log_err() {
-                        upload_minidump(
-                            http_client.clone(),
-                            endpoint,
-                            minidump_contents,
-                            &metadata,
-                            installation_id.clone(),
-                        )
-                        .await
-                        .log_err();
+                        upload_minidump(client.clone(), endpoint, minidump_contents, &metadata)
+                            .await
+                            .log_err();
                     }
                 }
 
@@ -68,91 +63,13 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, installation_id: Option<String>
     .detach();
 }
 
-#[cfg(target_os = "macos")]
-pub fn monitor_main_thread_hangs(
-    http_client: Arc<HttpClientWithUrl>,
-    installation_id: Option<String>,
-    cx: &App,
-) {
-    // This is too noisy to ship to stable for now.
-    if !matches!(
-        ReleaseChannel::global(cx),
-        ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview
-    ) {
-        return;
-    }
-
-    use nix::sys::signal::{
-        SaFlags, SigAction, SigHandler, SigSet,
-        Signal::{self, SIGUSR2},
-        sigaction,
-    };
-
-    use parking_lot::Mutex;
-
-    use http_client::Method;
-    use release_channel::ReleaseChannel;
-    use std::{
-        ffi::c_int,
-        sync::{OnceLock, mpsc},
-        time::Duration,
-    };
-    use telemetry_events::{BacktraceFrame, HangReport};
-
-    use nix::sys::pthread;
+fn monitor_hangs(cx: &App) {
+    let main_thread_id = std::thread::current().id();
 
     let foreground_executor = cx.foreground_executor();
     let background_executor = cx.background_executor();
-    let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    // Initialize SIGUSR2 handler to send a backtrace to a channel.
-    let (backtrace_tx, backtrace_rx) = mpsc::channel();
-    static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
-    static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
-    BACKTRACE_SENDER.get_or_init(|| backtrace_tx);
-    BACKTRACE.lock().reserve(100);
-
-    fn handle_backtrace_signal() {
-        unsafe {
-            extern "C" fn handle_sigusr2(_i: c_int) {
-                unsafe {
-                    // ASYNC SIGNAL SAFETY: This lock is only accessed one other time,
-                    // which can only be triggered by This signal handler. In addition,
-                    // this signal handler is immediately removed by SA_RESETHAND, and this
-                    // signal handler cannot be re-entrant due to the SIGUSR2 mask defined
-                    // below
-                    let mut bt = BACKTRACE.lock();
-                    bt.clear();
-                    backtrace::trace_unsynchronized(|frame| {
-                        if bt.len() < bt.capacity() {
-                            bt.push(frame.clone());
-                            true
-                        } else {
-                            false
-                        }
-                    });
-                }
-
-                BACKTRACE_SENDER.get().unwrap().send(()).ok();
-            }
-
-            let mut mask = SigSet::empty();
-            mask.add(SIGUSR2);
-            sigaction(
-                Signal::SIGUSR2,
-                &SigAction::new(
-                    SigHandler::Handler(handle_sigusr2),
-                    SaFlags::SA_RESTART | SaFlags::SA_RESETHAND,
-                    mask,
-                ),
-            )
-            .log_err();
-        }
-    }
-
-    handle_backtrace_signal();
-    let main_thread = pthread::pthread_self();
-
+    // 3 seconds hang
     let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
     foreground_executor
         .spawn(async move { while (rx.next().await).is_some() {} })
@@ -162,120 +79,79 @@ pub fn monitor_main_thread_hangs(
         .spawn({
             let background_executor = background_executor.clone();
             async move {
+                let mut hang_time = None;
+
+                let mut hanging = false;
                 loop {
                     background_executor.timer(Duration::from_secs(1)).await;
                     match tx.try_send(()) {
-                        Ok(_) => continue,
+                        Ok(_) => {
+                            hang_time = None;
+                            hanging = false;
+                            continue;
+                        }
                         Err(e) => {
-                            if e.into_send_error().is_full() {
-                                pthread::pthread_kill(main_thread, SIGUSR2).log_err();
+                            let is_full = e.into_send_error().is_full();
+                            if is_full && !hanging {
+                                hanging = true;
+                                hang_time = Some(chrono::Local::now());
                             }
-                            // Only detect the first hang
-                            break;
+
+                            if is_full {
+                                save_hang_trace(
+                                    main_thread_id,
+                                    &background_executor,
+                                    hang_time.unwrap(),
+                                );
+                            }
                         }
                     }
                 }
             }
         })
         .detach();
-
-    let app_version = release_channel::AppVersion::global(cx);
-    let os_name = client::telemetry::os_name();
-
-    background_executor
-        .clone()
-        .spawn(async move {
-            let os_version = client::telemetry::os_version();
-
-            loop {
-                while backtrace_rx.recv().is_ok() {
-                    if !telemetry_settings.diagnostics {
-                        return;
-                    }
-
-                    // ASYNC SIGNAL SAFETY: This lock is only accessed _after_
-                    // the backtrace transmitter has fired, which itself is only done
-                    // by the signal handler. And due to SA_RESETHAND  the signal handler
-                    // will not run again until `handle_backtrace_signal` is called.
-                    let raw_backtrace = BACKTRACE.lock().drain(..).collect::<Vec<_>>();
-                    let backtrace: Vec<_> = raw_backtrace
-                        .into_iter()
-                        .map(|frame| {
-                            let mut btf = BacktraceFrame {
-                                ip: frame.ip() as usize,
-                                symbol_addr: frame.symbol_address() as usize,
-                                base: frame.module_base_address().map(|addr| addr as usize),
-                                symbols: vec![],
-                            };
-
-                            backtrace::resolve_frame(&frame, |symbol| {
-                                if let Some(name) = symbol.name() {
-                                    btf.symbols.push(name.to_string());
-                                }
-                            });
-
-                            btf
-                        })
-                        .collect();
-
-                    // IMPORTANT: Don't move this to before `BACKTRACE.lock()`
-                    handle_backtrace_signal();
-
-                    log::error!(
-                        "Suspected hang on main thread:\n{}",
-                        backtrace
-                            .iter()
-                            .flat_map(|bt| bt.symbols.first().as_ref().map(|s| s.as_str()))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    );
-
-                    let report = HangReport {
-                        backtrace,
-                        app_version: Some(app_version),
-                        os_name: os_name.clone(),
-                        os_version: Some(os_version.clone()),
-                        architecture: std::env::consts::ARCH.into(),
-                        installation_id: installation_id.clone(),
-                    };
-
-                    let Some(json_bytes) = serde_json::to_vec(&report).log_err() else {
-                        continue;
-                    };
-
-                    let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes)
-                    else {
-                        continue;
-                    };
-
-                    let Ok(url) = http_client.build_zed_api_url("/telemetry/hangs", &[]) else {
-                        continue;
-                    };
-
-                    let Ok(request) = http_client::Request::builder()
-                        .method(Method::POST)
-                        .uri(url.as_ref())
-                        .header("x-zed-checksum", checksum)
-                        .body(json_bytes.into())
-                    else {
-                        continue;
-                    };
-
-                    if let Some(response) = http_client.send(request).await.log_err()
-                        && response.status() != 200
-                    {
-                        log::error!("Failed to send hang report: HTTP {:?}", response.status());
-                    }
-                }
-            }
-        })
-        .detach()
 }
 
-pub async fn upload_previous_minidumps(
-    http: Arc<HttpClientWithUrl>,
-    installation_id: Option<String>,
-) -> anyhow::Result<()> {
+fn save_hang_trace(
+    main_thread_id: ThreadId,
+    background_executor: &gpui::BackgroundExecutor,
+    hang_time: chrono::DateTime<chrono::Local>,
+) {
+    let thread_timings = background_executor.dispatcher.get_all_timings();
+    let thread_timings = thread_timings
+        .into_iter()
+        .map(|mut timings| {
+            if timings.thread_id == main_thread_id {
+                timings.thread_name = Some("main".to_string());
+            }
+
+            SerializedThreadTaskTimings::convert(*STARTUP_TIME.get().unwrap(), timings)
+        })
+        .collect::<Vec<_>>();
+
+    let trace_path = paths::hang_traces_dir().join(&format!(
+        "hang-{}.miniprof",
+        hang_time.format("%Y-%m-%d_%H-%M-%S")
+    ));
+
+    let Some(timings) = serde_json::to_string(&thread_timings)
+        .context("hang timings serialization")
+        .log_err()
+    else {
+        return;
+    };
+
+    std::fs::write(&trace_path, timings)
+        .context("hang trace file writing")
+        .log_err();
+
+    info!(
+        "hang detected, trace file saved at: {}",
+        trace_path.display()
+    );
+}
+
+pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()> {
     let Some(minidump_endpoint) = MINIDUMP_ENDPOINT.as_ref() else {
         log::warn!("Minidump endpoint not set");
         return Ok(());
@@ -292,13 +168,12 @@ pub async fn upload_previous_minidumps(
         json_path.set_extension("json");
         if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
             && upload_minidump(
-                http.clone(),
+                client.clone(),
                 minidump_endpoint,
                 smol::fs::read(&child_path)
                     .await
                     .context("Failed to read minidump")?,
                 &metadata,
-                installation_id.clone(),
             )
             .await
             .log_err()
@@ -312,11 +187,10 @@ pub async fn upload_previous_minidumps(
 }
 
 async fn upload_minidump(
-    http: Arc<HttpClientWithUrl>,
+    client: Arc<Client>,
     endpoint: &str,
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
-    installation_id: Option<String>,
 ) -> Result<()> {
     let mut form = Form::new()
         .part(
@@ -343,8 +217,19 @@ async fn upload_minidump(
     if let Some(minidump_error) = metadata.minidump_error.clone() {
         form = form.text("minidump_error", minidump_error);
     }
-    if let Some(id) = installation_id.clone() {
-        form = form.text("sentry[user][id]", id)
+
+    if let Some(id) = client.telemetry().metrics_id() {
+        form = form.text("sentry[user][id]", id.to_string());
+        form = form.text(
+            "sentry[user][is_staff]",
+            if client.telemetry().is_staff().unwrap_or_default() {
+                "true"
+            } else {
+                "false"
+            },
+        );
+    } else if let Some(id) = client.telemetry().installation_id() {
+        form = form.text("sentry[user][id]", format!("installation-{}", id))
     }
 
     ::telemetry::event!(
@@ -411,8 +296,14 @@ async fn upload_minidump(
 
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
+    let stream = form
+        .into_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .into_async_read();
+    let body = AsyncBody::from_reader(stream);
+    let req = Request::builder().uri(endpoint).body(body)?;
     let mut response_text = String::new();
-    let mut response = http.send_multipart_form(endpoint, form).await?;
+    let mut response = client.http_client().send(req).await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)

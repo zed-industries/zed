@@ -67,7 +67,7 @@ use thiserror::Error;
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
-    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -108,13 +108,6 @@ actions!(
     ]
 );
 
-///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
-///Scroll multiplier that is set to 3 by default. This will be removed when I
-///Implement scroll bars.
-#[cfg(target_os = "macos")]
-const SCROLL_MULTIPLIER: f32 = 4.;
-#[cfg(not(target_os = "macos"))]
-const SCROLL_MULTIPLIER: f32 = 1.;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
@@ -180,10 +173,6 @@ impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
         self.0.unbounded_send(event).ok();
     }
-}
-
-pub fn init(cx: &mut App) {
-    TerminalSettings::register(cx);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,7 +266,7 @@ pub struct TerminalError {
     pub directory: Option<PathBuf>,
     pub program: Option<String>,
     pub args: Option<Vec<String>>,
-    pub title_override: Option<SharedString>,
+    pub title_override: Option<String>,
     pub source: std::io::Error,
 }
 
@@ -380,14 +369,15 @@ impl TerminalBuilder {
             last_content: Default::default(),
             last_mouse: None,
             matches: Vec::new(),
+
             selection_head: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
+            hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
-            is_ssh_terminal: false,
+            is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
@@ -399,9 +389,12 @@ impl TerminalBuilder {
                 cursor_shape,
                 alternate_scroll,
                 max_scroll_history_lines,
+                path_hyperlink_regexes: Vec::default(),
+                path_hyperlink_timeout_ms: 0,
                 window_id,
             },
             child_exited: None,
+            event_loop_task: Task::ready(Ok(())),
         };
 
         Ok(TerminalBuilder {
@@ -409,6 +402,7 @@ impl TerminalBuilder {
             events_rx,
         })
     }
+
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -417,226 +411,259 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
-        is_ssh_terminal: bool,
+        path_hyperlink_regexes: Vec<String>,
+        path_hyperlink_timeout_ms: u64,
+        is_remote_terminal: bool,
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
-    ) -> Result<TerminalBuilder> {
-        // If the parent environment doesn't have a locale set
-        // (As is the case when launched from a .app on MacOS),
-        // and the Project doesn't have a locale set, then
-        // set a fallback for our child environment to use.
-        if std::env::var("LANG").is_err() {
-            env.entry("LANG".to_string())
-                .or_insert_with(|| "en_US.UTF-8".to_string());
-        }
+    ) -> Task<Result<TerminalBuilder>> {
+        let version = release_channel::AppVersion::global(cx);
+        let fut = async move {
+            // Remove SHLVL so the spawned shell initializes it to 1, matching
+            // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
+            env.remove("SHLVL");
 
-        env.insert("ZED_TERM".to_string(), "true".to_string());
-        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
-        env.insert("TERM".to_string(), "xterm-256color".to_string());
-        env.insert("COLORTERM".to_string(), "truecolor".to_string());
-        env.insert(
-            "TERM_PROGRAM_VERSION".to_string(),
-            release_channel::AppVersion::global(cx).to_string(),
-        );
+            // If the parent environment doesn't have a locale set
+            // (As is the case when launched from a .app on MacOS),
+            // and the Project doesn't have a locale set, then
+            // set a fallback for our child environment to use.
+            if std::env::var("LANG").is_err() {
+                env.entry("LANG".to_string())
+                    .or_insert_with(|| "en_US.UTF-8".to_string());
+            }
 
-        #[derive(Default)]
-        struct ShellParams {
-            program: String,
-            args: Option<Vec<String>>,
-            title_override: Option<SharedString>,
-        }
+            env.insert("ZED_TERM".to_string(), "true".to_string());
+            env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+            env.insert("TERM".to_string(), "xterm-256color".to_string());
+            env.insert("COLORTERM".to_string(), "truecolor".to_string());
+            env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
 
-        impl ShellParams {
-            fn new(
+            #[derive(Default)]
+            struct ShellParams {
                 program: String,
                 args: Option<Vec<String>>,
-                title_override: Option<SharedString>,
-            ) -> Self {
-                log::info!("Using {program} as shell");
-                Self {
+                title_override: Option<String>,
+            }
+
+            impl ShellParams {
+                fn new(
+                    program: String,
+                    args: Option<Vec<String>>,
+                    title_override: Option<String>,
+                ) -> Self {
+                    log::debug!("Using {program} as shell");
+                    Self {
+                        program,
+                        args,
+                        title_override,
+                    }
+                }
+            }
+
+            let shell_params = match shell.clone() {
+                Shell::System => {
+                    if cfg!(windows) {
+                        Some(ShellParams::new(
+                            util::shell::get_windows_system_shell(),
+                            None,
+                            None,
+                        ))
+                    } else {
+                        None
+                    }
+                }
+                Shell::Program(program) => Some(ShellParams::new(program, None, None)),
+                Shell::WithArguments {
                     program,
                     args,
                     title_override,
-                }
-            }
-        }
+                } => Some(ShellParams::new(program, Some(args), title_override)),
+            };
+            let terminal_title_override =
+                shell_params.as_ref().and_then(|e| e.title_override.clone());
 
-        let shell_params = match shell.clone() {
-            Shell::System => {
-                #[cfg(target_os = "windows")]
-                {
-                    Some(ShellParams::new(
-                        util::shell::get_windows_system_shell(),
-                        None,
-                        None,
-                    ))
-                }
-                #[cfg(not(target_os = "windows"))]
-                None
-            }
-            Shell::Program(program) => Some(ShellParams::new(program, None, None)),
-            Shell::WithArguments {
-                program,
-                args,
-                title_override,
-            } => Some(ShellParams::new(program, Some(args), title_override)),
-        };
-        let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
+            #[cfg(windows)]
+            let shell_program = shell_params.as_ref().map(|params| {
+                use util::ResultExt;
 
-        #[cfg(windows)]
-        let shell_program = shell_params.as_ref().map(|params| {
-            use util::ResultExt;
-
-            Self::resolve_path(&params.program)
-                .log_err()
-                .unwrap_or(params.program.clone())
-        });
-
-        let pty_options = {
-            let alac_shell = shell_params.as_ref().map(|params| {
-                alacritty_terminal::tty::Shell::new(
-                    params.program.clone(),
-                    params.args.clone().unwrap_or_default(),
-                )
+                Self::resolve_path(&params.program)
+                    .log_err()
+                    .unwrap_or(params.program.clone())
             });
 
-            alacritty_terminal::tty::Options {
-                shell: alac_shell,
-                working_directory: working_directory.clone(),
-                drain_on_exit: true,
-                env: env.clone().into_iter().collect(),
+            // Note: when remoting, this shell_kind will scrutinize `ssh` or
+            // `wsl.exe` as a shell and fall back to posix or powershell based on
+            // the compilation target. This is fine right now due to the restricted
+            // way we use the return value, but would become incorrect if we
+            // supported remoting into windows.
+            let shell_kind = shell.shell_kind(cfg!(windows));
+
+            let pty_options = {
+                let alac_shell = shell_params.as_ref().map(|params| {
+                    alacritty_terminal::tty::Shell::new(
+                        params.program.clone(),
+                        params.args.clone().unwrap_or_default(),
+                    )
+                });
+
+                alacritty_terminal::tty::Options {
+                    shell: alac_shell,
+                    working_directory: working_directory.clone(),
+                    drain_on_exit: true,
+                    env: env.clone().into_iter().collect(),
+                    #[cfg(windows)]
+                    escape_args: shell_kind.tty_escape_args(),
+                }
+            };
+
+            let default_cursor_style = AlacCursorStyle::from(cursor_shape);
+            let scrolling_history = if task.is_some() {
+                // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
+                // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
+                // cause excessive memory usage over time.
+                MAX_SCROLL_HISTORY_LINES
+            } else {
+                max_scroll_history_lines
+                    .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+                    .min(MAX_SCROLL_HISTORY_LINES)
+            };
+            let config = Config {
+                scrolling_history,
+                default_cursor_style,
+                ..Config::default()
+            };
+
+            //Setup the pty...
+            let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
+                Ok(pty) => pty,
+                Err(error) => {
+                    bail!(TerminalError {
+                        directory: working_directory,
+                        program: shell_params.as_ref().map(|params| params.program.clone()),
+                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                        title_override: terminal_title_override,
+                        source: error,
+                    });
+                }
+            };
+
+            //Spawn a task so the Alacritty EventLoop can communicate with us
+            //TODO: Remove with a bounded sender which can be dispatched on &self
+            let (events_tx, events_rx) = unbounded();
+            //Set up the terminal...
+            let mut term = Term::new(
+                config.clone(),
+                &TerminalBounds::default(),
+                ZedListener(events_tx.clone()),
+            );
+
+            //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
+            if let AlternateScroll::Off = alternate_scroll {
+                term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+            }
+
+            let term = Arc::new(FairMutex::new(term));
+
+            let pty_info = PtyProcessInfo::new(&pty);
+
+            //And connect them together
+            let event_loop = EventLoop::new(
+                term.clone(),
+                ZedListener(events_tx),
+                pty,
+                pty_options.drain_on_exit,
+                false,
+            )
+            .context("failed to create event loop")?;
+
+            let pty_tx = event_loop.channel();
+            let _io_thread = event_loop.spawn(); // DANGER
+
+            let no_task = task.is_none();
+            let terminal = Terminal {
+                task,
+                terminal_type: TerminalType::Pty {
+                    pty_tx: Notifier(pty_tx),
+                    info: pty_info,
+                },
+                completion_tx,
+                term,
+                term_config: config,
+                title_override: terminal_title_override,
+                events: VecDeque::with_capacity(10), //Should never get this high.
+                last_content: Default::default(),
+                last_mouse: None,
+                matches: Vec::new(),
+
+                selection_head: None,
+                breadcrumb_text: String::new(),
+                scroll_px: px(0.),
+                next_link_id: 0,
+                selection_phase: SelectionPhase::Ended,
+                hyperlink_regex_searches: RegexSearches::new(
+                    &path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
+                ),
+                vi_mode_enabled: false,
+                is_remote_terminal,
+                last_mouse_move_time: Instant::now(),
+                last_hyperlink_search_position: None,
                 #[cfg(windows)]
-                escape_args: true,
-            }
-        };
+                shell_program,
+                activation_script: activation_script.clone(),
+                template: CopyTemplate {
+                    shell,
+                    env,
+                    cursor_shape,
+                    alternate_scroll,
+                    max_scroll_history_lines,
+                    path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
+                    window_id,
+                },
+                child_exited: None,
+                event_loop_task: Task::ready(Ok(())),
+            };
 
-        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
-        let scrolling_history = if task.is_some() {
-            // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
-            // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
-            // cause excessive memory usage over time.
-            MAX_SCROLL_HISTORY_LINES
+            if !activation_script.is_empty() && no_task {
+                for activation_script in activation_script {
+                    terminal.write_to_pty(activation_script.into_bytes());
+                    // Simulate enter key press
+                    // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
+                    // and generally mess up the rendering.
+                    terminal.write_to_pty(b"\x0d");
+                }
+                // In order to clear the screen at this point, we have two options:
+                // 1. We can send a shell-specific command such as "clear" or "cls"
+                // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
+                //    and clear the screen using `terminal.clear()` method
+                // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
+                // and while we have sent the activation script to the pty, it will be executed asynchronously.
+                // Therefore, we somehow need to wait for the activation script to finish executing before we
+                // can proceed with clearing the screen.
+                terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+                // Simulate enter key press
+                terminal.write_to_pty(b"\x0d");
+            }
+
+            Ok(TerminalBuilder {
+                terminal,
+                events_rx,
+            })
+        };
+        // the thread we spawn things on has an effect on signal handling
+        if !cfg!(target_os = "windows") {
+            cx.spawn(async move |_| fut.await)
         } else {
-            max_scroll_history_lines
-                .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
-                .min(MAX_SCROLL_HISTORY_LINES)
-        };
-        let config = Config {
-            scrolling_history,
-            default_cursor_style,
-            ..Config::default()
-        };
-
-        //Spawn a task so the Alacritty EventLoop can communicate with us
-        //TODO: Remove with a bounded sender which can be dispatched on &self
-        let (events_tx, events_rx) = unbounded();
-        //Set up the terminal...
-        let mut term = Term::new(
-            config.clone(),
-            &TerminalBounds::default(),
-            ZedListener(events_tx.clone()),
-        );
-
-        //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
-        if let AlternateScroll::Off = alternate_scroll {
-            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+            cx.background_spawn(fut)
         }
-
-        let term = Arc::new(FairMutex::new(term));
-
-        //Setup the pty...
-        let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
-            Ok(pty) => pty,
-            Err(error) => {
-                bail!(TerminalError {
-                    directory: working_directory,
-                    program: shell_params.as_ref().map(|params| params.program.clone()),
-                    args: shell_params.as_ref().and_then(|params| params.args.clone()),
-                    title_override: terminal_title_override,
-                    source: error,
-                });
-            }
-        };
-
-        let pty_info = PtyProcessInfo::new(&pty);
-
-        //And connect them together
-        let event_loop = EventLoop::new(
-            term.clone(),
-            ZedListener(events_tx),
-            pty,
-            pty_options.drain_on_exit,
-            false,
-        )
-        .context("failed to create event loop")?;
-
-        //Kick things off
-        let pty_tx = event_loop.channel();
-        let _io_thread = event_loop.spawn(); // DANGER
-
-        let no_task = task.is_none();
-
-        let mut terminal = Terminal {
-            task,
-            terminal_type: TerminalType::Pty {
-                pty_tx: Notifier(pty_tx),
-                info: pty_info,
-            },
-            completion_tx,
-            term,
-            term_config: config,
-            title_override: terminal_title_override,
-            events: VecDeque::with_capacity(10), //Should never get this high.
-            last_content: Default::default(),
-            last_mouse: None,
-            matches: Vec::new(),
-            selection_head: None,
-            breadcrumb_text: String::new(),
-            scroll_px: px(0.),
-            next_link_id: 0,
-            selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
-            vi_mode_enabled: false,
-            is_ssh_terminal,
-            last_mouse_move_time: Instant::now(),
-            last_hyperlink_search_position: None,
-            #[cfg(windows)]
-            shell_program,
-            activation_script: activation_script.clone(),
-            template: CopyTemplate {
-                shell,
-                env,
-                cursor_shape,
-                alternate_scroll,
-                max_scroll_history_lines,
-                window_id,
-            },
-            child_exited: None,
-        };
-
-        if !activation_script.is_empty() && no_task {
-            for activation_script in activation_script {
-                terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(if cfg!(windows) {
-                    b"\r\n" as &[_]
-                } else {
-                    b"\n"
-                });
-            }
-            terminal.clear();
-        }
-
-        Ok(TerminalBuilder {
-            terminal,
-            events_rx,
-        })
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(async move |terminal, cx| {
+        self.terminal.event_loop_task = cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
@@ -693,11 +720,8 @@ impl TerminalBuilder {
                     smol::future::yield_now().await;
                 }
             }
-
             anyhow::Ok(())
-        })
-        .detach();
-
+        });
         self.terminal
     }
 
@@ -804,15 +828,16 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
+
     pub breadcrumb_text: String,
-    title_override: Option<SharedString>,
+    title_override: Option<String>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
     hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    is_ssh_terminal: bool,
+    is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
     #[cfg(windows)]
@@ -820,6 +845,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    event_loop_task: Task<Result<(), anyhow::Error>>,
 }
 
 struct CopyTemplate {
@@ -828,6 +854,8 @@ struct CopyTemplate {
     cursor_shape: CursorShape,
     alternate_scroll: AlternateScroll,
     max_scroll_history_lines: Option<usize>,
+    path_hyperlink_regexes: Vec<String>,
+    path_hyperlink_timeout_ms: u64,
     window_id: u64,
 }
 
@@ -914,7 +942,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(None, cx),
+            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -971,6 +999,12 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                // If there are matches we need to emit a wake up event to
+                // invalidate the matches and recalculate their locations
+                // in the new terminal layout
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
@@ -1250,15 +1284,11 @@ impl Terminal {
     }
 
     pub fn total_lines(&self) -> usize {
-        let term = self.term.clone();
-        let terminal = term.lock_unfair();
-        terminal.total_lines()
+        self.term.lock_unfair().total_lines()
     }
 
     pub fn viewport_lines(&self) -> usize {
-        let term = self.term.clone();
-        let terminal = term.lock_unfair();
-        terminal.screen_lines()
+        self.term.lock_unfair().screen_lines()
     }
 
     //To test:
@@ -1373,7 +1403,15 @@ impl Terminal {
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            pty_tx.notify(input.into());
+            let input = input.into();
+            if log::log_enabled!(log::Level::Debug) {
+                if let Ok(str) = str::from_utf8(&input) {
+                    log::debug!("Writing to PTY: {:?}", str);
+                } else {
+                    log::debug!("Writing to PTY: {:?}", input);
+                }
+            }
+            pty_tx.notify(input);
         }
     }
 
@@ -1477,14 +1515,14 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke, option_as_meta: bool) -> bool {
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(keystroke, &self.last_content.mode, option_as_meta);
         if let Some(esc) = esc {
             match esc {
                 Cow::Borrowed(string) => self.input(string.as_bytes()),
@@ -1869,10 +1907,11 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) {
         let mouse_mode = self.mouse_mode(e.shift);
+        let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -1905,8 +1944,11 @@ impl Terminal {
         self.word_from_position(window.mouse_position());
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
-        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+    ) -> Option<i32> {
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */
@@ -1946,7 +1988,7 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
-        if self.is_ssh_terminal {
+        if self.is_remote_terminal {
             // We can't yet reliably detect the working directory of a shell on the
             // SSH host. Until we can do that, it doesn't make sense to display
             // the working directory on the client and persist that.
@@ -2135,7 +2177,7 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
+    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2145,7 +2187,9 @@ impl Terminal {
             self.template.cursor_shape,
             self.template.alternate_scroll,
             self.template.max_scroll_history_lines,
-            self.is_ssh_terminal,
+            self.template.path_hyperlink_regexes.clone(),
+            self.template.path_hyperlink_timeout_ms,
+            self.is_remote_terminal,
             self.template.window_id,
             None,
             cx,
@@ -2169,21 +2213,13 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let (success, task_line) = match error_code {
-        Some(0) => (
-            true,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+    let success = error_code == Some(0);
+    let task_line = match error_code {
+        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        Some(error_code) => format!(
+            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
         ),
-        Some(error_code) => (
-            false,
-            format!(
-                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
-            ),
-        ),
-        None => (
-            false,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
-        ),
+        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
     };
     let escaped_command_label = task
         .spawned_task
@@ -2233,7 +2269,8 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
+        if let TerminalType::Pty { pty_tx, info } = &mut self.terminal_type {
+            info.kill_child_process();
             pty_tx.0.send(Msg::Shutdown).ok();
         }
     }
@@ -2377,30 +2414,34 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) =
-            ShellBuilder::new(&Shell::System).build(Some("echo".to_owned()), &["hello".to_owned()]);
-        let terminal = cx.new(|cx| {
-            TerminalBuilder::new(
-                None,
-                None,
-                task::Shell::WithArguments {
-                    program,
-                    args,
-                    title_override: None,
-                },
-                HashMap::default(),
-                CursorShape::default(),
-                AlternateScroll::On,
-                None,
-                false,
-                0,
-                Some(completion_tx),
-                cx,
-                vec![],
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
         assert_eq!(
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
@@ -2429,25 +2470,29 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    Vec::new(),
+                )
+            })
+            .await
+            .unwrap();
         // Build an empty command, which will result in a tty shell spawned.
-        let terminal = cx.new(|cx| {
-            TerminalBuilder::new(
-                None,
-                None,
-                task::Shell::System,
-                HashMap::default(),
-                CursorShape::default(),
-                AlternateScroll::On,
-                None,
-                false,
-                0,
-                Some(completion_tx),
-                cx,
-                Vec::new(),
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
+        let terminal = cx.new(|cx| builder.subscribe(cx));
 
         let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
@@ -2465,9 +2510,7 @@ mod tests {
         })
         .detach();
 
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
@@ -2496,30 +2539,34 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System)
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
-        let terminal = cx.new(|cx| {
-            TerminalBuilder::new(
-                None,
-                None,
-                task::Shell::WithArguments {
-                    program,
-                    args,
-                    title_override: None,
-                },
-                HashMap::default(),
-                CursorShape::default(),
-                AlternateScroll::On,
-                None,
-                false,
-                0,
-                Some(completion_tx),
-                cx,
-                Vec::new(),
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    Vec::new(),
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    Vec::new(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
 
         let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {

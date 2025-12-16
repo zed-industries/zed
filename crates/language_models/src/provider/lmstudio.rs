@@ -20,11 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
+use ui::{ButtonLike, Indicator, InlineCode, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::ui::InstructionListItem;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -569,6 +568,7 @@ impl LmStudioEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_call.arguments,
+                                thought_signature: None,
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -685,12 +685,14 @@ impl Render for ConfigurationView {
                 .child(
                     v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
                         List::new()
-                            .child(InstructionListItem::text_only(
+                            .child(ListBulletItem::new(
                                 "LM Studio needs to be running with at least one model downloaded.",
                             ))
-                            .child(InstructionListItem::text_only(
-                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
-                            )),
+                            .child(
+                                ListBulletItem::new("")
+                                    .child(Label::new("To get your first model, try running"))
+                                    .child(InlineCode::new("lms get qwen2.5-coder-7b")),
+                            ),
                     ),
                 )
                 .child(

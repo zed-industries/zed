@@ -5,8 +5,8 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
-    Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, rems,
+    Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
+    Window, rems,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -448,11 +448,12 @@ impl PickerDelegate for TasksModalDelegate {
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
 
-        let mut tooltip_label_text = if display_label != &template.label {
-            resolved_task.resolved_label.clone()
-        } else {
-            String::new()
-        };
+        let mut tooltip_label_text =
+            if display_label != &template.label || source_kind == &TaskSourceKind::UserInput {
+                resolved_task.resolved_label.clone()
+            } else {
+                String::new()
+            };
 
         if resolved_task.resolved.command_label != resolved_task.resolved_label {
             if !tooltip_label_text.trim().is_empty() {
@@ -525,7 +526,7 @@ impl PickerDelegate for TasksModalDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+            ListItem::new(format!("tasks-modal-{ix}"))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(
@@ -664,10 +665,10 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, window, cx);
+                            let keybind = KeyBinding::for_action(&*action, cx);
 
                             Button::new("edit-current-task", label)
-                                .when_some(keybind, |this, keybind| this.key_binding(keybind))
+                                .key_binding(keybind)
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx);
                                 })
@@ -682,7 +683,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        this.child({
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -690,44 +691,35 @@ impl PickerDelegate for TasksModalDelegate {
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
-                                .key_binding(keybind)
+                                .key_binding(KeyBinding::for_action(&*action, cx))
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx)
                                 })
-                        }))
+                        })
                     } else if current_modifiers.secondary() {
-                        this.children(
-                            KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
-                                |keybind| {
-                                    let label = if is_recent_selected {
-                                        "Rerun Without History"
-                                    } else {
-                                        "Spawn Without History"
-                                    };
-                                    Button::new("spawn", label).key_binding(keybind).on_click(
-                                        move |_, window, cx| {
-                                            window.dispatch_action(
-                                                menu::SecondaryConfirm.boxed_clone(),
-                                                cx,
-                                            )
-                                        },
-                                    )
-                                },
-                            ),
-                        )
+                        this.child({
+                            let label = if is_recent_selected {
+                                "Rerun Without History"
+                            } else {
+                                "Spawn Without History"
+                            };
+                            Button::new("spawn", label)
+                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                })
+                        })
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
-                            |keybind| {
-                                let run_entry_label =
-                                    if is_recent_selected { "Rerun" } else { "Spawn" };
+                        this.child({
+                            let run_entry_label =
+                                if is_recent_selected { "Rerun" } else { "Spawn" };
 
-                                Button::new("spawn", run_entry_label)
-                                    .key_binding(keybind)
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                                    })
-                            },
-                        ))
+                            Button::new("spawn", run_entry_label)
+                                .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                                })
+                        })
                     }
                 })
                 .into_any_element(),

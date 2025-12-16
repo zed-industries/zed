@@ -1,12 +1,13 @@
-use edit_prediction::EditPredictionProvider;
-use gpui::{Entity, prelude::*};
+use edit_prediction_types::EditPredictionDelegate;
+use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
+    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
+    test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -14,7 +15,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
@@ -23,7 +24,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "-273.15");
+        assert_eq!(edits[0].1.as_ref(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -36,7 +37,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let pi = ˇ\"foo\";");
 
@@ -45,7 +46,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "3.14159");
+        assert_eq!(edits[0].1.as_ref(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -58,7 +59,7 @@ async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 2+ lines above the proposed edit
@@ -127,7 +128,7 @@ async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) 
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 3+ lines above the proposed edit
@@ -232,7 +233,7 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeNonZedEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeNonZedEditPredictionDelegate::default());
     assign_editor_completion_provider_non_zed(provider.clone(), &mut cx);
 
     // Cursor is 2+ lines above the proposed edit
@@ -270,9 +271,66 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
     });
 }
 
+#[gpui::test]
+async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Bind `ctrl-shift-a` to accept the provided edit prediction. The actual key
+    // binding here doesn't matter, we simply need to confirm that holding the
+    // binding's modifiers triggers the edit prediction preview.
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-shift-a", AcceptEditPrediction, None)]));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx)
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+    });
+
+    // Simulate pressing the modifiers for `AcceptEditPrediction`, namely
+    // `ctrl-shift`, so that we can confirm that the edit prediction preview is
+    // activated.
+    let modifiers = Modifiers::control_shift();
+    cx.simulate_modifiers_change(modifiers);
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Disable showing edit predictions without issuing a new modifiers changed
+    // event, to confirm that the edit prediction preview is still active.
+    cx.update_editor(|editor, window, cx| {
+        editor.set_show_edit_predictions(Some(false), window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+
+    // Now release the modifiers
+    // Simulate releasing all modifiers, ensuring that even with edit prediction
+    // disabled, the edit prediction preview is cleaned up.
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(!editor.edit_prediction_preview_is_active());
+    });
+}
+
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, Arc<str>)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
@@ -313,7 +371,7 @@ fn accept_completion(cx: &mut EditorTestContext) {
 }
 
 fn propose_edits<T: ToOffset>(
-    provider: &Entity<FakeEditPredictionProvider>,
+    provider: &Entity<FakeEditPredictionDelegate>,
     edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
@@ -325,7 +383,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -335,7 +393,7 @@ fn propose_edits<T: ToOffset>(
 }
 
 fn assign_editor_completion_provider(
-    provider: Entity<FakeEditPredictionProvider>,
+    provider: Entity<FakeEditPredictionDelegate>,
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
@@ -344,7 +402,7 @@ fn assign_editor_completion_provider(
 }
 
 fn propose_edits_non_zed<T: ToOffset>(
-    provider: &Entity<FakeNonZedEditPredictionProvider>,
+    provider: &Entity<FakeNonZedEditPredictionDelegate>,
     edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
@@ -356,7 +414,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -366,7 +424,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 }
 
 fn assign_editor_completion_provider_non_zed(
-    provider: Entity<FakeNonZedEditPredictionProvider>,
+    provider: Entity<FakeNonZedEditPredictionDelegate>,
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
@@ -375,17 +433,20 @@ fn assign_editor_completion_provider_non_zed(
 }
 
 #[derive(Default, Clone)]
-pub struct FakeEditPredictionProvider {
-    pub completion: Option<edit_prediction::EditPrediction>,
+pub struct FakeEditPredictionDelegate {
+    pub completion: Option<edit_prediction_types::EditPrediction>,
 }
 
-impl FakeEditPredictionProvider {
-    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
+impl FakeEditPredictionDelegate {
+    pub fn set_edit_prediction(
+        &mut self,
+        completion: Option<edit_prediction_types::EditPrediction>,
+    ) {
         self.completion = completion;
     }
 }
 
-impl EditPredictionProvider for FakeEditPredictionProvider {
+impl EditPredictionDelegate for FakeEditPredictionDelegate {
     fn name() -> &'static str {
         "fake-completion-provider"
     }
@@ -394,8 +455,8 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         "Fake Completion Provider"
     }
 
-    fn show_completions_in_menu() -> bool {
-        false
+    fn show_predictions_in_menu() -> bool {
+        true
     }
 
     fn supports_jump_to_edit() -> bool {
@@ -411,7 +472,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         true
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &gpui::App) -> bool {
         false
     }
 
@@ -428,7 +489,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _direction: edit_prediction::Direction,
+        _direction: edit_prediction_types::Direction,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -442,23 +503,26 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<edit_prediction::EditPrediction> {
+    ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
 }
 
 #[derive(Default, Clone)]
-pub struct FakeNonZedEditPredictionProvider {
-    pub completion: Option<edit_prediction::EditPrediction>,
+pub struct FakeNonZedEditPredictionDelegate {
+    pub completion: Option<edit_prediction_types::EditPrediction>,
 }
 
-impl FakeNonZedEditPredictionProvider {
-    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
+impl FakeNonZedEditPredictionDelegate {
+    pub fn set_edit_prediction(
+        &mut self,
+        completion: Option<edit_prediction_types::EditPrediction>,
+    ) {
         self.completion = completion;
     }
 }
 
-impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
+impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
     fn name() -> &'static str {
         "fake-non-zed-provider"
     }
@@ -467,7 +531,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         "Fake Non-Zed Provider"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         false
     }
 
@@ -484,7 +548,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         true
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &gpui::App) -> bool {
         false
     }
 
@@ -501,7 +565,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _direction: edit_prediction::Direction,
+        _direction: edit_prediction_types::Direction,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -515,7 +579,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<edit_prediction::EditPrediction> {
+    ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
 }

@@ -128,6 +128,7 @@ pub struct ThemeColors {
     pub tab_inactive_background: Hsla,
     pub tab_active_background: Hsla,
     pub search_match_background: Hsla,
+    pub search_active_match_background: Hsla,
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
     pub panel_indent_guide: Hsla,
@@ -161,6 +162,25 @@ pub struct ThemeColors {
     pub minimap_thumb_active_background: Hsla,
     /// The border color of the minimap thumb.
     pub minimap_thumb_border: Hsla,
+
+    /// Background color for Vim Normal mode indicator.
+    pub vim_normal_background: Hsla,
+    /// Background color for Vim Insert mode indicator.
+    pub vim_insert_background: Hsla,
+    /// Background color for Vim Replace mode indicator.
+    pub vim_replace_background: Hsla,
+    /// Background color for Vim Visual mode indicator.
+    pub vim_visual_background: Hsla,
+    /// Background color for Vim Visual Line mode indicator.
+    pub vim_visual_line_background: Hsla,
+    /// Background color for Vim Visual Block mode indicator.
+    pub vim_visual_block_background: Hsla,
+    /// Background color for Vim Helix Normal mode indicator.
+    pub vim_helix_normal_background: Hsla,
+    /// Background color for Vim Helix Select mode indicator.
+    pub vim_helix_select_background: Hsla,
+    /// Text color for Vim mode indicator label.
+    pub vim_mode_text: Hsla,
 
     // ===
     // Editor
@@ -281,7 +301,10 @@ pub struct ThemeColors {
     pub version_control_conflict: Hsla,
     /// Represents an ignored entry in version control systems.
     pub version_control_ignored: Hsla,
-
+    /// Represents an added word in a word diff.
+    pub version_control_word_added: Hsla,
+    /// Represents a deleted word in a word diff.
+    pub version_control_word_deleted: Hsla,
     /// Represents the "ours" region of a merge conflict.
     pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
@@ -330,6 +353,7 @@ pub enum ThemeColorField {
     TabInactiveBackground,
     TabActiveBackground,
     SearchMatchBackground,
+    SearchActiveMatchBackground,
     PanelBackground,
     PanelFocusedBorder,
     PanelIndentGuide,
@@ -445,6 +469,7 @@ impl ThemeColors {
             ThemeColorField::TabInactiveBackground => self.tab_inactive_background,
             ThemeColorField::TabActiveBackground => self.tab_active_background,
             ThemeColorField::SearchMatchBackground => self.search_match_background,
+            ThemeColorField::SearchActiveMatchBackground => self.search_active_match_background,
             ThemeColorField::PanelBackground => self.panel_background,
             ThemeColorField::PanelFocusedBorder => self.panel_focused_border,
             ThemeColorField::PanelIndentGuide => self.panel_indent_guide,

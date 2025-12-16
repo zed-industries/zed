@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher,
-    buffer_tests::{markdown_inline_lang, markdown_lang},
+    LanguageConfig, LanguageMatcher, buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
+use pretty_assertions::assert_eq;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
-use text::{Buffer, BufferId};
+use text::{Buffer, BufferId, ReplicaId};
 use tree_sitter::Node;
 use unindent::Unindent as _;
 use util::test::marked_text_ranges;
@@ -84,11 +84,11 @@ fn test_splice_included_ranges() {
 #[gpui::test]
 fn test_syntax_map_layers_for_range(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let language = Arc::new(rust_lang());
+    let language = rust_lang();
     registry.add(language.clone());
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             fn a() {
@@ -181,15 +181,15 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
 #[gpui::test]
 fn test_dynamic_language_injection(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let markdown = Arc::new(markdown_lang());
+    let markdown = markdown_lang();
     let markdown_inline = Arc::new(markdown_inline_lang());
     registry.add(markdown.clone());
     registry.add(markdown_inline.clone());
-    registry.add(Arc::new(rust_lang()));
+    registry.add(rust_lang());
     registry.add(Arc::new(ruby_lang()));
 
     let mut buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         r#"
             This is a code block:
@@ -291,7 +291,7 @@ fn test_typing_multiple_new_injections(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["field"],
+        &["property"],
         "fn a() { test_macro!(b.«c»(vec![d.«e»])) }",
     );
 }
@@ -329,16 +329,16 @@ fn test_pasting_new_injection_line_between_others(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["struct"],
+        &["type"],
         "
         fn a() {
-            b!(«B {}»);
-            c!(«C {}»);
-            d!(«D {}»);
-            h!(«H {}»);
-            e!(«E {}»);
-            f!(«F {}»);
-            g!(«G {}»);
+            b!(«B» {});
+            c!(«C» {});
+            d!(«D» {});
+            h!(«H» {});
+            e!(«E» {});
+            f!(«F» {});
+            g!(«G» {});
         }
         ",
     );
@@ -376,7 +376,7 @@ fn test_joining_injections_with_child_injections(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["field"],
+        &["property"],
         "
         fn a() {
             b!(
@@ -811,7 +811,7 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -900,7 +900,7 @@ fn test_random_syntax_map_edits_rust_macros(rng: StdRng, cx: &mut App) {
     .repeat(2);
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let language = Arc::new(rust_lang());
+    let language = rust_lang();
     registry.add(language.clone());
 
     test_random_edits(text, registry, language, rng);
@@ -978,7 +978,7 @@ fn test_random_edits(
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
@@ -1147,11 +1147,11 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(elixir_lang()));
     registry.add(Arc::new(heex_lang()));
-    registry.add(Arc::new(rust_lang()));
+    registry.add(rust_lang());
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
     registry.add(Arc::new(erb_lang()));
-    registry.add(Arc::new(markdown_lang()));
+    registry.add(markdown_lang());
     registry.add(Arc::new(markdown_inline_lang()));
 
     let language = registry
@@ -1159,7 +1159,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());
@@ -1287,35 +1287,6 @@ fn erb_lang() -> Language {
     .unwrap()
 }
 
-fn rust_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    )
-    .with_highlights_query(
-        r#"
-            (field_identifier) @field
-            (struct_expression) @struct
-        "#,
-    )
-    .unwrap()
-    .with_injection_query(
-        r#"
-            (macro_invocation
-                (token_tree) @injection.content
-                (#set! injection.language "rust"))
-        "#,
-    )
-    .unwrap()
-}
-
 fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -1425,6 +1396,7 @@ fn assert_capture_ranges(
             actual_ranges.push(capture.node.byte_range());
         }
     }
+    actual_ranges.dedup();
 
     let (text, expected_ranges) = marked_text_ranges(&marked_string.unindent(), false);
     assert_eq!(text, buffer.text());

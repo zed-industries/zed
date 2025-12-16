@@ -3,7 +3,7 @@ use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
     path_list::PathList,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use collections::IndexSet;
 use db::sqlez::{
@@ -32,6 +32,7 @@ pub(crate) struct RemoteConnectionId(pub u64);
 pub(crate) enum RemoteConnectionKind {
     Ssh,
     Wsl,
+    Docker,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -75,6 +76,7 @@ impl RemoteConnectionKind {
         match self {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
+            RemoteConnectionKind::Docker => "docker",
         }
     }
 
@@ -82,6 +84,7 @@ impl RemoteConnectionKind {
         match text {
             "ssh" => Some(Self::Ssh),
             "wsl" => Some(Self::Wsl),
+            "docker" => Some(Self::Docker),
             _ => None,
         }
     }
@@ -220,6 +223,7 @@ impl SerializedPaneGroup {
                 let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
+                    .context("Could not deserialize pane)")
                     .log_err()?;
 
                 if pane

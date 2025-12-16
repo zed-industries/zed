@@ -69,7 +69,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<HashSet<usize>> {
-        let selection = self.selections.newest::<Point>(cx);
+        let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
         let cursor_row = MultiBufferRow(selection.head().row);
 
         let state = &mut self.active_indent_guides_state;
@@ -181,6 +181,10 @@ pub fn indent_guides_in_range(
         .buffer_snapshot()
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .filter(|indent_guide| {
+            if editor.has_indent_guides_disabled_for_buffer(indent_guide.buffer_id) {
+                return false;
+            }
+
             if editor.is_buffer_folded(indent_guide.buffer_id, cx) {
                 return false;
             }

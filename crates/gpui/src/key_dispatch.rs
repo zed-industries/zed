@@ -121,6 +121,7 @@ pub(crate) struct Replay {
 #[derive(Default, Debug)]
 pub(crate) struct DispatchResult {
     pub(crate) pending: SmallVec<[Keystroke; 1]>,
+    pub(crate) pending_has_binding: bool,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
     pub(crate) context_stack: Vec<KeyContext>,
@@ -480,6 +481,7 @@ impl DispatchTree {
         if pending {
             return DispatchResult {
                 pending: input,
+                pending_has_binding: !bindings.is_empty(),
                 context_stack,
                 ..Default::default()
             };
@@ -572,18 +574,14 @@ impl DispatchTree {
         focus_path
     }
 
-    pub fn view_path(&self, view_id: EntityId) -> SmallVec<[EntityId; 8]> {
-        let mut view_path: SmallVec<[EntityId; 8]> = SmallVec::new();
+    pub fn view_path_reversed(&self, view_id: EntityId) -> impl Iterator<Item = EntityId> {
         let mut current_node_id = self.view_node_ids.get(&view_id).copied();
-        while let Some(node_id) = current_node_id {
-            let node = self.node(node_id);
-            if let Some(view_id) = node.view_id {
-                view_path.push(view_id);
-            }
-            current_node_id = node.parent;
-        }
-        view_path.reverse(); // Reverse the path so it goes from the root to the view node.
-        view_path
+
+        std::iter::successors(
+            current_node_id.map(|node_id| self.node(node_id)),
+            |node_id| Some(self.node(node_id.parent?)),
+        )
+        .filter_map(|node| node.view_id)
     }
 
     pub fn node(&self, node_id: DispatchNodeId) -> &DispatchNode {
@@ -612,9 +610,11 @@ impl DispatchTree {
 #[cfg(test)]
 mod tests {
     use crate::{
-        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, Style,
+        self as gpui, DispatchResult, Element, ElementId, GlobalElementId, InspectorElementId,
+        Keystroke, LayoutId, Style,
     };
     use core::panic;
+    use smallvec::SmallVec;
     use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
@@ -678,6 +678,49 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    #[test]
+    fn test_pending_has_binding_state() {
+        let bindings = vec![
+            KeyBinding::new("ctrl-b h", TestAction, None),
+            KeyBinding::new("space", TestAction, Some("ContextA")),
+            KeyBinding::new("space f g", TestAction, Some("ContextB")),
+        ];
+        let keymap = Rc::new(RefCell::new(Keymap::new(bindings)));
+        let mut registry = ActionRegistry::default();
+        registry.load_action::<TestAction>();
+        let mut tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        type DispatchPath = SmallVec<[super::DispatchNodeId; 32]>;
+        fn dispatch(
+            tree: &mut DispatchTree,
+            pending: SmallVec<[Keystroke; 1]>,
+            key: &str,
+            path: &DispatchPath,
+        ) -> DispatchResult {
+            tree.dispatch_key(pending, Keystroke::parse(key).unwrap(), path)
+        }
+
+        let dispatch_path: DispatchPath = SmallVec::new();
+        let result = dispatch(&mut tree, SmallVec::new(), "ctrl-b", &dispatch_path);
+        assert_eq!(result.pending.len(), 1);
+        assert!(!result.pending_has_binding);
+
+        let result = dispatch(&mut tree, result.pending, "h", &dispatch_path);
+        assert_eq!(result.pending.len(), 0);
+        assert_eq!(result.bindings.len(), 1);
+        assert!(!result.pending_has_binding);
+
+        let node_id = tree.push_node();
+        tree.set_key_context(KeyContext::parse("ContextB").unwrap());
+        tree.pop_node();
+
+        let dispatch_path = tree.dispatch_path(node_id);
+        let result = dispatch(&mut tree, SmallVec::new(), "space", &dispatch_path);
+
+        assert_eq!(result.pending.len(), 1);
+        assert!(!result.pending_has_binding);
     }
 
     #[crate::test]

@@ -37,7 +37,7 @@ where
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
+        .filter_map(|selection| Some((selection.head(), selection.head().text_anchor.buffer_id?)))
         .unique_by(|(_, buffer_id)| *buffer_id)
         .find_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
@@ -60,8 +60,10 @@ async fn lsp_task_context(
     buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
-    let worktree_store = project
-        .read_with(cx, |project, _| project.worktree_store())
+    let (worktree_store, environment) = project
+        .read_with(cx, |project, _| {
+            (project.worktree_store(), project.environment().clone())
+        })
         .ok()?;
 
     let worktree_abs_path = cx
@@ -74,9 +76,9 @@ async fn lsp_task_context(
         })
         .ok()?;
 
-    let project_env = project
-        .update(cx, |project, cx| {
-            project.buffer_environment(buffer, &worktree_store, cx)
+    let project_env = environment
+        .update(cx, |environment, cx| {
+            environment.buffer_environment(buffer, &worktree_store, cx)
         })
         .ok()?
         .await;

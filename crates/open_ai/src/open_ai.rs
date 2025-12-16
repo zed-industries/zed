@@ -1,11 +1,15 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    http::{HeaderMap, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
+use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -87,7 +91,10 @@ pub enum Model {
     FiveMini,
     #[serde(rename = "gpt-5-nano")]
     FiveNano,
-
+    #[serde(rename = "gpt-5.1")]
+    FivePointOne,
+    #[serde(rename = "gpt-5.2")]
+    FivePointTwo,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -126,6 +133,8 @@ impl Model {
             "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
+            "gpt-5.1" => Ok(Self::FivePointOne),
+            "gpt-5.2" => Ok(Self::FivePointTwo),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -148,6 +157,8 @@ impl Model {
             Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
             Self::Custom { name, .. } => name,
         }
     }
@@ -170,6 +181,8 @@ impl Model {
             Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -194,6 +207,8 @@ impl Model {
             Self::FiveCodex => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
+            Self::FivePointOne => 400_000,
+            Self::FivePointTwo => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -219,6 +234,8 @@ impl Model {
             Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
+            Self::FivePointOne => Some(128_000),
+            Self::FivePointTwo => Some(128_000),
         }
     }
 
@@ -258,6 +275,8 @@ impl Model {
             | Self::Five
             | Self::FiveCodex
             | Self::FiveMini
+            | Self::FivePointOne
+            | Self::FivePointTwo
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
@@ -280,7 +299,8 @@ pub struct Request {
     pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
-    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Whether to enable parallel function calling during tool use.
@@ -318,7 +338,7 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
@@ -391,23 +411,40 @@ pub struct ImageUrl {
     pub detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -435,7 +472,7 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -445,12 +482,25 @@ pub struct Usage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessageDelta,
+    pub delta: Option<ResponseMessageDelta>,
     pub finish_reason: Option<String>,
 }
 
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error("HTTP response error from {provider}'s API: status {status_code} - {body:?}")]
+    HttpResponseError {
+        provider: String,
+        status_code: StatusCode,
+        body: String,
+        headers: HeaderMap<HeaderValue>,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-pub struct OpenAiError {
+pub struct ResponseStreamError {
     message: String,
 }
 
@@ -458,7 +508,7 @@ pub struct OpenAiError {
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: OpenAiError },
+    Err { error: ResponseStreamError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -469,10 +519,11 @@ pub struct ResponseStreamEvent {
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
+    provider_name: &str,
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -480,7 +531,12 @@ pub async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -516,27 +572,18 @@ pub async fn stream_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
 
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "API request to {} failed: {}",
-                api_url,
-                response.error.message,
-            )),
-
-            _ => anyhow::bail!(
-                "API request to {} failed with status {}: {}",
-                api_url,
-                response.status(),
-                body,
-            ),
-        }
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
     }
 }
 
@@ -604,12 +651,13 @@ pub fn embed<'a>(
 }
 
 pub mod responses {
-    use super::OpenAiError;
     use anyhow::{Result, anyhow};
     use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
     use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+
+    use crate::RequestError;
 
     #[derive(Serialize, Debug)]
     pub struct Request {
@@ -655,6 +703,11 @@ pub mod responses {
             #[serde(skip_serializing_if = "Option::is_none")]
             strict: Option<bool>,
         },
+    }
+
+    #[derive(Deserialize, Debug)]
+    pub struct Error {
+        pub message: String,
     }
 
     #[derive(Deserialize, Debug)]
@@ -731,9 +784,9 @@ pub mod responses {
         #[serde(rename = "response.failed")]
         Failed { response: ResponseSummary },
         #[serde(rename = "response.error")]
-        Error { error: OpenAiError },
+        Error { error: Error },
         #[serde(rename = "error")]
-        GenericError { error: OpenAiError },
+        GenericError { error: Error },
         #[serde(other)]
         Unknown,
     }
@@ -796,10 +849,11 @@ pub mod responses {
 
     pub async fn stream_response(
         client: &dyn HttpClient,
+        provider_name: &str,
         api_url: &str,
         api_key: &str,
         request: Request,
-    ) -> Result<BoxStream<'static, Result<StreamEvent>>> {
+    ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
         let uri = format!("{api_url}/responses");
         let request_builder = HttpRequest::builder()
             .method(Method::POST)
@@ -808,7 +862,11 @@ pub mod responses {
             .header("Authorization", format!("Bearer {}", api_key.trim()));
 
         let is_streaming = request.stream;
-        let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        let request = request_builder
+            .body(AsyncBody::from(
+                serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+            ))
+            .map_err(|e| RequestError::Other(e.into()))?;
 
         let mut response = client.send(request).await?;
         if response.status().is_success() {
@@ -844,7 +902,11 @@ pub mod responses {
                     .boxed())
             } else {
                 let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
+                response
+                    .body_mut()
+                    .read_to_string(&mut body)
+                    .await
+                    .map_err(|e| RequestError::Other(e.into()))?;
 
                 match serde_json::from_str::<ResponseSummary>(&body) {
                     Ok(response_summary) => {
@@ -903,27 +965,24 @@ pub mod responses {
                             error,
                             body,
                         );
-                        Err(anyhow!(error))
+                        Err(RequestError::Other(anyhow!(error)))
                     }
                 }
             }
         } else {
             let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-            #[derive(Deserialize)]
-            struct ErrorBody {
-                error: OpenAiError,
-            }
+            response
+                .body_mut()
+                .read_to_string(&mut body)
+                .await
+                .map_err(|e| RequestError::Other(e.into()))?;
 
-            match serde_json::from_str::<ErrorBody>(&body) {
-                Ok(error) => Err(anyhow!(error.error.message)),
-                Err(_) => anyhow::bail!(
-                    "API request to {} failed with status {}: {}",
-                    api_url,
-                    response.status(),
-                    body,
-                ),
-            }
+            Err(RequestError::HttpResponseError {
+                provider: provider_name.to_owned(),
+                status_code: response.status(),
+                body,
+                headers: response.headers().clone(),
+            })
         }
     }
 }

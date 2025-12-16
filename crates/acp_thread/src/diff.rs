@@ -50,9 +50,14 @@ impl Diff {
                         let hunk_ranges = {
                             let buffer = buffer.read(cx);
                             let diff = diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                                .collect::<Vec<_>>()
+                            diff.hunks_intersecting_range(
+                                Anchor::min_for_buffer(buffer.remote_id())
+                                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                                buffer,
+                                cx,
+                            )
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                            .collect::<Vec<_>>()
                         };
 
                         multibuffer.set_excerpts_for_path(
@@ -161,7 +166,7 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        self.multibuffer().read(cx).excerpt_paths().next().is_some()
+        self.multibuffer().read(cx).paths().next().is_some()
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {
@@ -236,21 +241,21 @@ impl PendingDiff {
     fn finalize(&self, cx: &mut Context<Diff>) -> FinalizedDiff {
         let ranges = self.excerpt_ranges(cx);
         let base_text = self.base_text.clone();
-        let language_registry = self.new_buffer.read(cx).language_registry();
+        let new_buffer = self.new_buffer.read(cx);
+        let language_registry = new_buffer.language_registry();
 
-        let path = self
-            .new_buffer
-            .read(cx)
+        let path = new_buffer
             .file()
             .map(|file| file.path().display(file.path_style(cx)))
             .unwrap_or("untitled".into())
             .into();
+        let replica_id = new_buffer.replica_id();
 
         // Replace the buffer in the multibuffer with the snapshot
         let buffer = cx.new(|cx| {
             let language = self.new_buffer.read(cx).language().cloned();
             let buffer = TextBuffer::new_normalized(
-                0,
+                replica_id,
                 cx.entity_id().as_non_zero_u64().into(),
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),
@@ -316,7 +321,12 @@ impl PendingDiff {
         let buffer = self.new_buffer.read(cx);
         let diff = self.diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .hunks_intersecting_range(
+                Anchor::min_for_buffer(buffer.remote_id())
+                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                buffer,
+                cx,
+            )
             .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(

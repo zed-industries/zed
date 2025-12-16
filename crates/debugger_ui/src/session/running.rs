@@ -5,16 +5,23 @@ pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    ops::ControlFlow,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use crate::{
     ToggleExpandItem,
+    attach_modal::{AttachModal, ModalIntent},
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
     session::running::memory_view::MemoryView,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -55,6 +62,9 @@ use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
+
+static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
+    LazyLock::new(|| task::VariableName::PickProcessId.template_value());
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -276,10 +286,10 @@ impl Item for SubView {
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id(SharedString::from(format!(
+            .id(format!(
                 "subview-container-{}",
                 self.kind.to_shared_string()
-            )))
+            ))
             .on_hover(cx.listener(|this, hovered, _, cx| {
                 this.hovered = *hovered;
                 cx.notify();
@@ -338,7 +348,7 @@ pub(crate) fn new_debugger_pane(
                         debug_assert!(_previous_subscription.is_none());
                         running
                             .panes
-                            .split(&this_pane, &new_pane, split_direction)?;
+                            .split(&this_pane, &new_pane, split_direction, cx)?;
                         anyhow::Ok(new_pane)
                     })
                 })
@@ -386,6 +396,7 @@ pub(crate) fn new_debugger_pane(
             Default::default(),
             None,
             NoAction.boxed_clone(),
+            true,
             window,
             cx,
         );
@@ -473,10 +484,7 @@ pub(crate) fn new_debugger_pane(
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
-                                    .id(SharedString::from(format!(
-                                        "debugger_tab_{}",
-                                        item.item_id().as_u64()
-                                    )))
+                                    .id(format!("debugger_tab_{}", item.item_id().as_u64()))
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
@@ -565,14 +573,13 @@ pub(crate) fn new_debugger_pane(
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
+                                    move |_window, cx| {
                                         let zoomed_text =
                                             if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
                                             &ToggleExpandItem,
                                             &focus_handle,
-                                            window,
                                             cx,
                                         )
                                     }
@@ -647,6 +654,40 @@ impl RunningState {
                 }
                 if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn contains_substring(config: &serde_json::Value, substring: &str) -> bool {
+        match config {
+            serde_json::Value::Object(obj) => obj
+                .values()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::Array(array) => array
+                .iter()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::String(s) => s.contains(substring),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn substitute_process_id_in_config(config: &mut serde_json::Value, process_id: i32) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.values_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::Array(array) => {
+                array.iter_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::String(s) => {
+                if s.contains(PROCESS_ID_PLACEHOLDER.as_str()) {
+                    *s = s.replace(PROCESS_ID_PLACEHOLDER.as_str(), &process_id.to_string());
                 }
             }
             _ => {}
@@ -937,6 +978,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
             .remote_client()
@@ -953,6 +995,31 @@ impl RunningState {
             } = scenario;
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
+
+            if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER.as_str()) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER.as_str()) {
+                let (tx, rx) = futures::channel::oneshot::channel::<Option<i32>>();
+
+                let weak_workspace_clone = weak_workspace.clone();
+                weak_workspace.update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        AttachModal::new(
+                            ModalIntent::ResolveProcessId(Some(tx)),
+                            weak_workspace_clone,
+                            project,
+                            true,
+                            window,
+                            cx,
+                        )
+                    });
+                }).ok();
+
+                let Some(process_id) = rx.await.ok().flatten() else {
+                    bail!("No process selected with config that contains {}", PROCESS_ID_PLACEHOLDER.as_str())
+                };
+
+                Self::substitute_process_id_in_config(&mut config, process_id);
+            }
 
             let request_type = match dap_registry
                 .adapter(&adapter)
@@ -1029,7 +1096,7 @@ impl RunningState {
                     task.resolved.shell = Shell::Program(remote_shell);
                 }
 
-                let builder = ShellBuilder::new(&task.resolved.shell);
+                let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
                 let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
@@ -1395,7 +1462,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1673,7 +1740,7 @@ impl RunningState {
 
         let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-            matches!(session.mode, session::SessionState::Booting(_))
+            matches!(session.state, session::SessionState::Booting(_))
         });
 
         if is_building {
@@ -1822,9 +1889,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self) {
+    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies();
+        self.panes.invert_axies(cx);
     }
 }
 

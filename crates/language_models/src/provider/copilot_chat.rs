@@ -14,7 +14,8 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
+use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
+use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -25,7 +26,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, prelude::*};
+use ui::prelude::*;
 use util::debug_panic;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
@@ -140,9 +141,11 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         };
 
         let Some(copilot) = Copilot::global(cx) else {
-            return Task::ready( Err(anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ).into()));
+            return Task::ready(Err(anyhow!(concat!(
+                "Copilot must be enabled for Copilot Chat to work. ",
+                "Please enable Copilot and try again."
+            ))
+            .into()));
         };
 
         let err = match copilot.read(cx).status() {
@@ -174,8 +177,18 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new(|cx| {
+            copilot::ConfigurationView::new(
+                |cx| {
+                    CopilotChat::global(cx)
+                        .map(|m| m.read(cx).is_authenticated())
+                        .unwrap_or(false)
+                },
+                copilot::ConfigurationMode::Chat,
+                cx,
+            )
+        })
+        .into()
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -306,6 +319,23 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::EditFile => false,
         });
 
+        if self.model.supports_response() {
+            let responses_request = into_copilot_responses(&self.model, request);
+            let request_limiter = self.request_limiter.clone();
+            let future = cx.spawn(async move |cx| {
+                let request =
+                    CopilotChat::stream_response(responses_request, is_user_initiated, cx.clone());
+                request_limiter
+                    .stream(async move {
+                        let stream = request.await?;
+                        let mapper = CopilotResponsesEventMapper::new();
+                        Ok(mapper.map_stream(stream).boxed())
+                    })
+                    .await
+            });
+            return async move { Ok(future.await?.boxed()) }.boxed();
+        }
+
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -339,17 +369,22 @@ pub fn map_to_language_model_completion_events(
         id: String,
         name: String,
         arguments: String,
+        thought_signature: Option<String>,
     }
 
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
+        reasoning_opaque: Option<String>,
+        reasoning_text: Option<String>,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_calls_by_index: HashMap::default(),
+            reasoning_opaque: None,
+            reasoning_text: None,
         },
         move |mut state| async move {
             if let Some(event) = state.events.next().await {
@@ -380,11 +415,17 @@ pub fn map_to_language_model_completion_events(
                             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                         }
 
-                        for tool_call in &delta.tool_calls {
-                            let entry = state
-                                .tool_calls_by_index
-                                .entry(tool_call.index)
-                                .or_default();
+                        // Capture reasoning data from the delta (e.g. for Gemini 3)
+                        if let Some(opaque) = delta.reasoning_opaque.clone() {
+                            state.reasoning_opaque = Some(opaque);
+                        }
+                        if let Some(text) = delta.reasoning_text.clone() {
+                            state.reasoning_text = Some(text);
+                        }
+
+                        for (index, tool_call) in delta.tool_calls.iter().enumerate() {
+                            let tool_index = tool_call.index.unwrap_or(index);
+                            let entry = state.tool_calls_by_index.entry(tool_index).or_default();
 
                             if let Some(tool_id) = tool_call.id.clone() {
                                 entry.id = tool_id;
@@ -397,6 +438,11 @@ pub fn map_to_language_model_completion_events(
 
                                 if let Some(arguments) = function.arguments.clone() {
                                     entry.arguments.push_str(&arguments);
+                                }
+
+                                if let Some(thought_signature) = function.thought_signature.clone()
+                                {
+                                    entry.thought_signature = Some(thought_signature);
                                 }
                             }
                         }
@@ -419,6 +465,32 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some("tool_calls") => {
+                                // Gemini 3 models send reasoning_opaque/reasoning_text that must
+                                // be preserved and sent back in subsequent requests. Emit as
+                                // ReasoningDetails so the agent stores it in the message.
+                                if state.reasoning_opaque.is_some()
+                                    || state.reasoning_text.is_some()
+                                {
+                                    let mut details = serde_json::Map::new();
+                                    if let Some(opaque) = state.reasoning_opaque.take() {
+                                        details.insert(
+                                            "reasoning_opaque".to_string(),
+                                            serde_json::Value::String(opaque),
+                                        );
+                                    }
+                                    if let Some(text) = state.reasoning_text.take() {
+                                        details.insert(
+                                            "reasoning_text".to_string(),
+                                            serde_json::Value::String(text),
+                                        );
+                                    }
+                                    events.push(Ok(
+                                        LanguageModelCompletionEvent::ReasoningDetails(
+                                            serde_json::Value::Object(details),
+                                        ),
+                                    ));
+                                }
+
                                 events.extend(state.tool_calls_by_index.drain().map(
                                     |(_, tool_call)| {
                                         // The model can output an empty string
@@ -433,11 +505,12 @@ pub fn map_to_language_model_completion_events(
                                         match arguments {
                                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
-                                                id: tool_call.id.clone().into(),
+                                                id: tool_call.id.into(),
                                                 name: tool_call.name.as_str().into(),
                                                 is_input_complete: true,
                                                 input,
-                                                raw_input: tool_call.arguments.clone(),
+                                                raw_input: tool_call.arguments,
+                                                thought_signature: tool_call.thought_signature,
                                             },
                                         )),
                                         Err(error) => Ok(
@@ -475,6 +548,193 @@ pub fn map_to_language_model_completion_events(
         },
     )
     .flat_map(futures::stream::iter)
+}
+
+pub struct CopilotResponsesEventMapper {
+    pending_stop_reason: Option<StopReason>,
+}
+
+impl CopilotResponsesEventMapper {
+    pub fn new() -> Self {
+        Self {
+            pending_stop_reason: None,
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<copilot::copilot_responses::StreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+            })
+        })
+    }
+
+    fn map_event(
+        &mut self,
+        event: copilot::copilot_responses::StreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            copilot::copilot_responses::StreamEvent::OutputItemAdded { item, .. } => match item {
+                copilot::copilot_responses::ResponseOutputItem::Message { id, .. } => {
+                    vec![Ok(LanguageModelCompletionEvent::StartMessage {
+                        message_id: id,
+                    })]
+                }
+                _ => Vec::new(),
+            },
+
+            copilot::copilot_responses::StreamEvent::OutputTextDelta { delta, .. } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Ok(LanguageModelCompletionEvent::Text(delta))]
+                }
+            }
+
+            copilot::copilot_responses::StreamEvent::OutputItemDone { item, .. } => match item {
+                copilot::copilot_responses::ResponseOutputItem::Message { .. } => Vec::new(),
+                copilot::copilot_responses::ResponseOutputItem::FunctionCall {
+                    call_id,
+                    name,
+                    arguments,
+                    thought_signature,
+                    ..
+                } => {
+                    let mut events = Vec::new();
+                    match serde_json::from_str::<serde_json::Value>(&arguments) {
+                        Ok(input) => events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: call_id.into(),
+                                name: name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: arguments.clone(),
+                                thought_signature,
+                            },
+                        ))),
+                        Err(error) => {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: call_id.into(),
+                                tool_name: name.as_str().into(),
+                                raw_input: arguments.clone().into(),
+                                json_parse_error: error.to_string(),
+                            }))
+                        }
+                    }
+                    // Record that we already emitted a tool-use stop so we can avoid duplicating
+                    // a Stop event on Completed.
+                    self.pending_stop_reason = Some(StopReason::ToolUse);
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                    events
+                }
+                copilot::copilot_responses::ResponseOutputItem::Reasoning {
+                    summary,
+                    encrypted_content,
+                    ..
+                } => {
+                    let mut events = Vec::new();
+
+                    if let Some(blocks) = summary {
+                        let mut text = String::new();
+                        for block in blocks {
+                            text.push_str(&block.text);
+                        }
+                        if !text.is_empty() {
+                            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                text,
+                                signature: None,
+                            }));
+                        }
+                    }
+
+                    if let Some(data) = encrypted_content {
+                        events.push(Ok(LanguageModelCompletionEvent::RedactedThinking { data }));
+                    }
+
+                    events
+                }
+            },
+
+            copilot::copilot_responses::StreamEvent::Completed { response } => {
+                let mut events = Vec::new();
+                if let Some(usage) = response.usage {
+                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                        input_tokens: usage.input_tokens.unwrap_or(0),
+                        output_tokens: usage.output_tokens.unwrap_or(0),
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    })));
+                }
+                if self.pending_stop_reason.take() != Some(StopReason::ToolUse) {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+                events
+            }
+
+            copilot::copilot_responses::StreamEvent::Incomplete { response } => {
+                let reason = response
+                    .incomplete_details
+                    .as_ref()
+                    .and_then(|details| details.reason.as_ref());
+                let stop_reason = match reason {
+                    Some(copilot::copilot_responses::IncompleteReason::MaxOutputTokens) => {
+                        StopReason::MaxTokens
+                    }
+                    Some(copilot::copilot_responses::IncompleteReason::ContentFilter) => {
+                        StopReason::Refusal
+                    }
+                    _ => self
+                        .pending_stop_reason
+                        .take()
+                        .unwrap_or(StopReason::EndTurn),
+                };
+
+                let mut events = Vec::new();
+                if let Some(usage) = response.usage {
+                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                        input_tokens: usage.input_tokens.unwrap_or(0),
+                        output_tokens: usage.output_tokens.unwrap_or(0),
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    })));
+                }
+                events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
+                events
+            }
+
+            copilot::copilot_responses::StreamEvent::Failed { response } => {
+                let provider = PROVIDER_NAME;
+                let (status_code, message) = match response.error {
+                    Some(error) => {
+                        let status_code = StatusCode::from_str(&error.code)
+                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                        (status_code, error.message)
+                    }
+                    None => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "response.failed".to_string(),
+                    ),
+                };
+                vec![Err(LanguageModelCompletionError::HttpResponseError {
+                    provider,
+                    status_code,
+                    message,
+                })]
+            }
+
+            copilot::copilot_responses::StreamEvent::GenericError { error } => vec![Err(
+                LanguageModelCompletionError::Other(anyhow!(format!("{error:?}"))),
+            )],
+
+            copilot::copilot_responses::StreamEvent::Created { .. }
+            | copilot::copilot_responses::StreamEvent::Unknown => Vec::new(),
+        }
+    }
 }
 
 fn into_copilot_chat(
@@ -569,6 +829,7 @@ fn into_copilot_chat(
                                 function: copilot::copilot_chat::FunctionContent {
                                     name: tool_use.name.to_string(),
                                     arguments: serde_json::to_string(&tool_use.input)?,
+                                    thought_signature: tool_use.thought_signature.clone(),
                                 },
                             },
                         });
@@ -592,6 +853,22 @@ fn into_copilot_chat(
                     buffer
                 };
 
+                // Extract reasoning_opaque and reasoning_text from reasoning_details
+                let (reasoning_opaque, reasoning_text) =
+                    if let Some(details) = &message.reasoning_details {
+                        let opaque = details
+                            .get("reasoning_opaque")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let text = details
+                            .get("reasoning_text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        (opaque, text)
+                    } else {
+                        (None, None)
+                    };
+
                 messages.push(ChatMessage::Assistant {
                     content: if text_content.is_empty() {
                         ChatMessageContent::empty()
@@ -599,6 +876,8 @@ fn into_copilot_chat(
                         text_content.into()
                     },
                     tool_calls,
+                    reasoning_opaque,
+                    reasoning_text,
                 });
             }
             Role::System => messages.push(ChatMessage::System {
@@ -635,94 +914,571 @@ fn into_copilot_chat(
     })
 }
 
-struct ConfigurationView {
-    copilot_status: Option<copilot::Status>,
-    state: Entity<State>,
-    _subscription: Option<Subscription>,
-}
+fn into_copilot_responses(
+    model: &copilot::copilot_chat::Model,
+    request: LanguageModelRequest,
+) -> copilot::copilot_responses::Request {
+    use copilot::copilot_responses as responses;
 
-impl ConfigurationView {
-    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
-        let copilot = Copilot::global(cx);
+    let LanguageModelRequest {
+        thread_id: _,
+        prompt_id: _,
+        intent: _,
+        mode: _,
+        messages,
+        tools,
+        tool_choice,
+        stop: _,
+        temperature,
+        thinking_allowed: _,
+    } = request;
 
-        Self {
-            copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
-            state,
-            _subscription: copilot.as_ref().map(|copilot| {
-                cx.observe(copilot, |this, model, cx| {
-                    this.copilot_status = Some(model.read(cx).status());
-                    cx.notify();
-                })
-            }),
+    let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
+
+    for message in messages {
+        match message.role {
+            Role::User => {
+                for content in &message.content {
+                    if let MessageContent::ToolResult(tool_result) = content {
+                        let output = if let Some(out) = &tool_result.output {
+                            match out {
+                                serde_json::Value::String(s) => {
+                                    responses::ResponseFunctionOutput::Text(s.clone())
+                                }
+                                serde_json::Value::Null => {
+                                    responses::ResponseFunctionOutput::Text(String::new())
+                                }
+                                other => responses::ResponseFunctionOutput::Text(other.to_string()),
+                            }
+                        } else {
+                            match &tool_result.content {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    responses::ResponseFunctionOutput::Text(text.to_string())
+                                }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    if model.supports_vision() {
+                                        responses::ResponseFunctionOutput::Content(vec![
+                                            responses::ResponseInputContent::InputImage {
+                                                image_url: Some(image.to_base64_url()),
+                                                detail: Default::default(),
+                                            },
+                                        ])
+                                    } else {
+                                        debug_panic!(
+                                            "This should be caught at {} level",
+                                            tool_result.tool_name
+                                        );
+                                        responses::ResponseFunctionOutput::Text(
+                                            "[Tool responded with an image, but this model does not support vision]".into(),
+                                        )
+                                    }
+                                }
+                            }
+                        };
+
+                        input_items.push(responses::ResponseInputItem::FunctionCallOutput {
+                            call_id: tool_result.tool_use_id.to_string(),
+                            output,
+                            status: None,
+                        });
+                    }
+                }
+
+                let mut parts: Vec<responses::ResponseInputContent> = Vec::new();
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) => {
+                            parts.push(responses::ResponseInputContent::InputText {
+                                text: text.clone(),
+                            });
+                        }
+
+                        MessageContent::Image(image) => {
+                            if model.supports_vision() {
+                                parts.push(responses::ResponseInputContent::InputImage {
+                                    image_url: Some(image.to_base64_url()),
+                                    detail: Default::default(),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !parts.is_empty() {
+                    input_items.push(responses::ResponseInputItem::Message {
+                        role: "user".into(),
+                        content: Some(parts),
+                        status: None,
+                    });
+                }
+            }
+
+            Role::Assistant => {
+                for content in &message.content {
+                    if let MessageContent::ToolUse(tool_use) = content {
+                        input_items.push(responses::ResponseInputItem::FunctionCall {
+                            call_id: tool_use.id.to_string(),
+                            name: tool_use.name.to_string(),
+                            arguments: tool_use.raw_input.clone(),
+                            status: None,
+                            thought_signature: tool_use.thought_signature.clone(),
+                        });
+                    }
+                }
+
+                for content in &message.content {
+                    if let MessageContent::RedactedThinking(data) = content {
+                        input_items.push(responses::ResponseInputItem::Reasoning {
+                            id: None,
+                            summary: Vec::new(),
+                            encrypted_content: data.clone(),
+                        });
+                    }
+                }
+
+                let mut parts: Vec<responses::ResponseInputContent> = Vec::new();
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) => {
+                            parts.push(responses::ResponseInputContent::OutputText {
+                                text: text.clone(),
+                            });
+                        }
+                        MessageContent::Image(_) => {
+                            parts.push(responses::ResponseInputContent::OutputText {
+                                text: "[image omitted]".to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !parts.is_empty() {
+                    input_items.push(responses::ResponseInputItem::Message {
+                        role: "assistant".into(),
+                        content: Some(parts),
+                        status: Some("completed".into()),
+                    });
+                }
+            }
+
+            Role::System => {
+                let mut parts: Vec<responses::ResponseInputContent> = Vec::new();
+                for content in &message.content {
+                    if let MessageContent::Text(text) = content {
+                        parts.push(responses::ResponseInputContent::InputText {
+                            text: text.clone(),
+                        });
+                    }
+                }
+
+                if !parts.is_empty() {
+                    input_items.push(responses::ResponseInputItem::Message {
+                        role: "system".into(),
+                        content: Some(parts),
+                        status: None,
+                    });
+                }
+            }
         }
+    }
+
+    let converted_tools: Vec<responses::ToolDefinition> = tools
+        .into_iter()
+        .map(|tool| responses::ToolDefinition::Function {
+            name: tool.name,
+            description: Some(tool.description),
+            parameters: Some(tool.input_schema),
+            strict: None,
+        })
+        .collect();
+
+    let mapped_tool_choice = tool_choice.map(|choice| match choice {
+        LanguageModelToolChoice::Auto => responses::ToolChoice::Auto,
+        LanguageModelToolChoice::Any => responses::ToolChoice::Any,
+        LanguageModelToolChoice::None => responses::ToolChoice::None,
+    });
+
+    responses::Request {
+        model: model.id().to_string(),
+        input: input_items,
+        stream: model.uses_streaming(),
+        temperature,
+        tools: converted_tools,
+        tool_choice: mapped_tool_choice,
+        reasoning: None, // We would need to add support for setting from user settings.
+        include: Some(vec![
+            copilot::copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
+        ]),
     }
 }
 
-impl Render for ConfigurationView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.state.read(cx).is_authenticated(cx) {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Authorized")),
-                )
-                .child(
-                    Button::new("sign_out", "Sign Out")
-                        .label_size(LabelSize::Small)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
-                        }),
-                )
-        } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use copilot::copilot_responses as responses;
+    use futures::StreamExt;
 
-            const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
+    fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
+        futures::executor::block_on(async {
+            CopilotResponsesEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .collect()
+        })
+    }
 
-            match &self.copilot_status {
-                Some(status) => match status {
-                    Status::Starting { task: _ } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Starting Copilot…")),
-                    Status::SigningIn { prompt: _ }
-                    | Status::SignedOut {
-                        awaiting_signing_in: true,
-                    } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…")),
-                    Status::Error(_) => {
-                        const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
-                        v_flex()
-                            .gap_6()
-                            .child(Label::new(LABEL))
-                            .child(svg().size_8().path(IconName::CopilotError.path()))
-                    }
-                    _ => {
-                        const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-
-                        v_flex().gap_2().child(Label::new(LABEL)).child(
-                            Button::new("sign_in", "Sign in to use GitHub Copilot")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Medium)
-                                .full_width()
-                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
-                        )
-                    }
+    #[test]
+    fn responses_stream_maps_text_and_usage() {
+        let events = vec![
+            responses::StreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: responses::ResponseOutputItem::Message {
+                    id: "msg_1".into(),
+                    role: "assistant".into(),
+                    content: Some(Vec::new()),
                 },
-                None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
+            },
+            responses::StreamEvent::OutputTextDelta {
+                item_id: "msg_1".into(),
+                output_index: 0,
+                delta: "Hello".into(),
+            },
+            responses::StreamEvent::Completed {
+                response: responses::Response {
+                    usage: Some(responses::ResponseUsage {
+                        input_tokens: Some(5),
+                        output_tokens: Some(3),
+                        total_tokens: Some(8),
+                    }),
+                    ..Default::default()
+                },
+            },
+        ];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::StartMessage { ref message_id } if message_id == "msg_1"
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Text(ref text) if text == "Hello"
+        ));
+        assert!(matches!(
+            mapped[2],
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 5,
+                output_tokens: 3,
+                ..
+            })
+        ));
+        assert!(matches!(
+            mapped[3],
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_tool_calls() {
+        let events = vec![responses::StreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item: responses::ResponseOutputItem::FunctionCall {
+                id: Some("fn_1".into()),
+                call_id: "call_1".into(),
+                name: "do_it".into(),
+                arguments: "{\"x\":1}".into(),
+                status: None,
+                thought_signature: None,
+            },
+        }];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::ToolUse(ref use_) if use_.id.to_string() == "call_1" && use_.name.as_ref() == "do_it"
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_handles_json_parse_error() {
+        let events = vec![responses::StreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item: responses::ResponseOutputItem::FunctionCall {
+                id: Some("fn_1".into()),
+                call_id: "call_1".into(),
+                name: "do_it".into(),
+                arguments: "{not json}".into(),
+                status: None,
+                thought_signature: None,
+            },
+        }];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::ToolUseJsonParseError { ref id, ref tool_name, .. }
+                if id.to_string() == "call_1" && tool_name.as_ref() == "do_it"
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_reasoning_summary_and_encrypted_content() {
+        let events = vec![responses::StreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item: responses::ResponseOutputItem::Reasoning {
+                id: "r1".into(),
+                summary: Some(vec![responses::ResponseReasoningItem {
+                    kind: "summary_text".into(),
+                    text: "Chain".into(),
+                }]),
+                encrypted_content: Some("ENC".into()),
+            },
+        }];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Thinking { ref text, signature: None } if text == "Chain"
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::RedactedThinking { ref data } if data == "ENC"
+        ));
+    }
+
+    #[test]
+    fn responses_stream_handles_incomplete_max_tokens() {
+        let events = vec![responses::StreamEvent::Incomplete {
+            response: responses::Response {
+                usage: Some(responses::ResponseUsage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(0),
+                    total_tokens: Some(10),
+                }),
+                incomplete_details: Some(responses::IncompleteDetails {
+                    reason: Some(responses::IncompleteReason::MaxOutputTokens),
+                }),
+                ..Default::default()
+            },
+        }];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 0,
+                ..
+            })
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_handles_incomplete_content_filter() {
+        let events = vec![responses::StreamEvent::Incomplete {
+            response: responses::Response {
+                usage: None,
+                incomplete_details: Some(responses::IncompleteDetails {
+                    reason: Some(responses::IncompleteReason::ContentFilter),
+                }),
+                ..Default::default()
+            },
+        }];
+
+        let mapped = map_events(events);
+        assert!(matches!(
+            mapped.last().unwrap(),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_completed_no_duplicate_after_tool_use() {
+        let events = vec![
+            responses::StreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: responses::ResponseOutputItem::FunctionCall {
+                    id: Some("fn_1".into()),
+                    call_id: "call_1".into(),
+                    name: "do_it".into(),
+                    arguments: "{}".into(),
+                    status: None,
+                    thought_signature: None,
+                },
+            },
+            responses::StreamEvent::Completed {
+                response: responses::Response::default(),
+            },
+        ];
+
+        let mapped = map_events(events);
+
+        let mut stop_count = 0usize;
+        let mut saw_tool_use_stop = false;
+        for event in mapped {
+            if let LanguageModelCompletionEvent::Stop(reason) = event {
+                stop_count += 1;
+                if matches!(reason, StopReason::ToolUse) {
+                    saw_tool_use_stop = true;
+                }
             }
         }
+        assert_eq!(stop_count, 1, "should emit exactly one Stop event");
+        assert!(saw_tool_use_stop, "Stop reason should be ToolUse");
+    }
+
+    #[test]
+    fn responses_stream_failed_maps_http_response_error() {
+        let events = vec![responses::StreamEvent::Failed {
+            response: responses::Response {
+                error: Some(responses::ResponseError {
+                    code: "429".into(),
+                    message: "too many requests".into(),
+                }),
+                ..Default::default()
+            },
+        }];
+
+        let mapped_results = futures::executor::block_on(async {
+            CopilotResponsesEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+        });
+
+        assert_eq!(mapped_results.len(), 1);
+        match &mapped_results[0] {
+            Err(LanguageModelCompletionError::HttpResponseError {
+                status_code,
+                message,
+                ..
+            }) => {
+                assert_eq!(*status_code, http_client::StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(message, "too many requests");
+            }
+            other => panic!("expected HttpResponseError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn chat_completions_stream_maps_reasoning_data() {
+        use copilot::copilot_chat::ResponseEvent;
+
+        let events = vec![
+            ResponseEvent {
+                choices: vec![copilot::copilot_chat::ResponseChoice {
+                    index: Some(0),
+                    finish_reason: None,
+                    delta: Some(copilot::copilot_chat::ResponseDelta {
+                        content: None,
+                        role: Some(copilot::copilot_chat::Role::Assistant),
+                        tool_calls: vec![copilot::copilot_chat::ToolCallChunk {
+                            index: Some(0),
+                            id: Some("call_abc123".to_string()),
+                            function: Some(copilot::copilot_chat::FunctionChunk {
+                                name: Some("list_directory".to_string()),
+                                arguments: Some("{\"path\":\"test\"}".to_string()),
+                                thought_signature: None,
+                            }),
+                        }],
+                        reasoning_opaque: Some("encrypted_reasoning_token_xyz".to_string()),
+                        reasoning_text: Some("Let me check the directory".to_string()),
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+            ResponseEvent {
+                choices: vec![copilot::copilot_chat::ResponseChoice {
+                    index: Some(0),
+                    finish_reason: Some("tool_calls".to_string()),
+                    delta: Some(copilot::copilot_chat::ResponseDelta {
+                        content: None,
+                        role: None,
+                        tool_calls: vec![],
+                        reasoning_opaque: None,
+                        reasoning_text: None,
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+        ];
+
+        let mapped = futures::executor::block_on(async {
+            map_to_language_model_completion_events(
+                Box::pin(futures::stream::iter(events.into_iter().map(Ok))),
+                true,
+            )
+            .collect::<Vec<_>>()
+            .await
+        });
+
+        let mut has_reasoning_details = false;
+        let mut has_tool_use = false;
+        let mut reasoning_opaque_value: Option<String> = None;
+        let mut reasoning_text_value: Option<String> = None;
+
+        for event_result in mapped {
+            match event_result {
+                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
+                    has_reasoning_details = true;
+                    reasoning_opaque_value = details
+                        .get("reasoning_opaque")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    reasoning_text_value = details
+                        .get("reasoning_text")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                }
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                    has_tool_use = true;
+                    assert_eq!(tool_use.id.to_string(), "call_abc123");
+                    assert_eq!(tool_use.name.as_ref(), "list_directory");
+                }
+                _ => {}
+            }
+        }
+
+        assert!(
+            has_reasoning_details,
+            "Should emit ReasoningDetails event for Gemini 3 reasoning"
+        );
+        assert!(has_tool_use, "Should emit ToolUse event");
+        assert_eq!(
+            reasoning_opaque_value,
+            Some("encrypted_reasoning_token_xyz".to_string()),
+            "Should capture reasoning_opaque"
+        );
+        assert_eq!(
+            reasoning_text_value,
+            Some("Let me check the directory".to_string()),
+            "Should capture reasoning_text"
+        );
     }
 }

@@ -8,25 +8,21 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::B
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason, env_var,
 };
-use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
-use util::{ResultExt, truncate_and_trailoff};
-use zed_env_vars::{EnvVar, env_var};
-
-use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
+use ui_input::InputField;
+use util::ResultExt;
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -65,12 +61,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = AnthropicLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -79,17 +71,13 @@ impl AnthropicLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
             }
         });
 
@@ -359,6 +347,10 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
         true
     }
 
@@ -711,6 +703,7 @@ impl AnthropicEventMapper {
                                     is_input_complete: false,
                                     raw_input: tool_use.input_json.clone(),
                                     input,
+                                    thought_signature: None,
                                 },
                             ))];
                         }
@@ -734,6 +727,7 @@ impl AnthropicEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_use.input_json.clone(),
+                                thought_signature: None,
                             },
                         )),
                         Err(json_parse_err) => {
@@ -823,7 +817,7 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
     target_agent: ConfigurationViewTargetAgent,
@@ -862,7 +856,7 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: cx.new(|cx| SingleLineInput::new(window, cx, Self::PLACEHOLDER_TEXT)),
+            api_key_editor: cx.new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_TEXT)),
             state,
             load_credentials_task,
             target_agent,
@@ -909,9 +903,21 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
+        let configured_card_label = if env_var_set {
+            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
+        } else {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            if api_url == ANTHROPIC_API_URL {
+                "API key configured".to_string()
+            } else {
+                format!("API key configured for {}", api_url)
+            }
+        };
 
         if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
+            div()
+                .child(Label::new("Loading credentials..."))
+                .into_any_element()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
@@ -923,14 +929,12 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Anthropic's settings", "https://console.anthropic.com/settings/keys"))
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
                         )
                 )
                 .child(self.api_key_editor.clone())
@@ -939,46 +943,20 @@ impl Render for ConfigurationView {
                         format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    .color(Color::Muted)
+                    .mt_0p5(),
                 )
-                .into_any()
+                .into_any_element()
         } else {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-                        } else {
-                            let api_url = AnthropicLanguageModelProvider::api_url(cx);
-                            if api_url == ANTHROPIC_API_URL {
-                                "API key configured".to_string()
-                            } else {
-                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
-                            }
-                        })),
-                )
-                .child(
-                    Button::new("reset-key", "Reset Key")
-                        .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                )
-                .into_any()
+            ConfiguredApiCard::new(configured_card_label)
+                .disabled(env_var_set)
+                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                .when(env_var_set, |this| {
+                    this.tooltip_label(format!(
+                    "To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."
+                ))
+                })
+                .into_any_element()
         }
     }
 }
@@ -1002,6 +980,7 @@ mod tests {
                     MessageContent::Image(language_model::LanguageModelImage::empty()),
                 ],
                 cache: true,
+                reasoning_details: None,
             }],
             thread_id: None,
             prompt_id: None,

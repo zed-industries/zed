@@ -19,7 +19,8 @@ use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
     pub source: SharedString,
-    pub size: Size<DevicePixels>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Size<DevicePixels>>,
 }
 
 impl LanguageModelImage {
@@ -61,7 +62,7 @@ impl LanguageModelImage {
         }
 
         Some(Self {
-            size: size(DevicePixels(width?), DevicePixels(height?)),
+            size: Some(size(DevicePixels(width?), DevicePixels(height?))),
             source: SharedString::from(source.to_string()),
         })
     }
@@ -77,13 +78,13 @@ impl std::fmt::Debug for LanguageModelImage {
 }
 
 /// Anthropic wants uploaded images to be smaller than this in both dimensions.
-const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
+const ANTHROPIC_SIZE_LIMIT: f32 = 1568.;
 
 impl LanguageModelImage {
     pub fn empty() -> Self {
         Self {
             source: "".into(),
-            size: size(DevicePixels(0), DevicePixels(0)),
+            size: None,
         }
     }
 
@@ -99,6 +100,10 @@ impl LanguageModelImage {
                     .and_then(image::DynamicImage::from_decoder),
                 ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
                     .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Bmp => image::codecs::bmp::BmpDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
                 _ => return None,
             }
             .log_err()?;
@@ -108,13 +113,13 @@ impl LanguageModelImage {
             let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
 
             let base64_image = {
-                if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
-                    || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
+                if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
+                    || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
                 {
                     let new_bounds = ObjectFit::ScaleDown.get_bounds(
                         gpui::Bounds {
                             origin: point(px(0.0), px(0.0)),
-                            size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
+                            size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
                         },
                         image_size,
                     );
@@ -135,15 +140,18 @@ impl LanguageModelImage {
             let source = unsafe { String::from_utf8_unchecked(base64_image) };
 
             Some(LanguageModelImage {
-                size: image_size,
+                size: Some(image_size),
                 source: source.into(),
             })
         })
     }
 
     pub fn estimate_tokens(&self) -> usize {
-        let width = self.size.width.0.unsigned_abs() as usize;
-        let height = self.size.height.0.unsigned_abs() as usize;
+        let Some(size) = self.size.as_ref() else {
+            return 0;
+        };
+        let width = size.width.0.unsigned_abs() as usize;
+        let height = size.height.0.unsigned_abs() as usize;
 
         // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
         // Note that are a lot of conditions on Anthropic's API, and OpenAI doesn't use this,
@@ -353,6 +361,8 @@ pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
     pub cache: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 impl LanguageModelRequestMessage {
@@ -457,8 +467,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "base64encodedimagedata");
-                assert_eq!(image.size.width.0, 100);
-                assert_eq!(image.size.height.0, 200);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 100);
+                assert_eq!(size.height.0, 200);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -477,8 +488,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "wrappedimagedata");
-                assert_eq!(image.size.width.0, 50);
-                assert_eq!(image.size.height.0, 75);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 50);
+                assert_eq!(size.height.0, 75);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -497,8 +509,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "caseinsensitive");
-                assert_eq!(image.size.width.0, 30);
-                assert_eq!(image.size.height.0, 40);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 30);
+                assert_eq!(size.height.0, 40);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -535,8 +548,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "directimage");
-                assert_eq!(image.size.width.0, 200);
-                assert_eq!(image.size.height.0, 300);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 200);
+                assert_eq!(size.height.0, 300);
             }
             _ => panic!("Expected Image variant"),
         }

@@ -1,0 +1,119 @@
+# Generated from xtask::workflows::after_release
+# Rebuild with `cargo xtask workflows`.
+name: after_release
+on:
+  release:
+    types:
+    - published
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: tag_name
+        required: true
+        type: string
+      prerelease:
+        description: prerelease
+        required: true
+        type: boolean
+      body:
+        description: body
+        type: string
+        default: ''
+jobs:
+  rebuild_releases_page:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: after_release::rebuild_releases_page::refresh_cloud_releases
+      run: curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name || inputs.tag_name }}
+      shell: bash -euxo pipefail {0}
+    - name: after_release::rebuild_releases_page::redeploy_zed_dev
+      run: npm exec --yes -- vercel@37 --token="$VERCEL_TOKEN" --scope zed-industries redeploy https://zed.dev
+      shell: bash -euxo pipefail {0}
+      env:
+        VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+  post_to_discord:
+    needs:
+    - rebuild_releases_page
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: get-release-url
+      name: after_release::post_to_discord::get_release_url
+      run: |
+        if [ "${{ github.event.release.prerelease || inputs.prerelease }}" == "true" ]; then
+            URL="https://zed.dev/releases/preview"
+        else
+            URL="https://zed.dev/releases/stable"
+        fi
+
+        echo "URL=$URL" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+    - id: get-content
+      name: after_release::post_to_discord::get_content
+      uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
+      with:
+        stringToTruncate: |
+          📣 Zed [${{ github.event.release.tag_name || inputs.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
+
+          ${{ github.event.release.body || inputs.body }}
+        maxLength: 2000
+        truncationSymbol: '...'
+    - name: after_release::post_to_discord::discord_webhook_action
+      uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164
+      with:
+        webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
+        content: ${{ steps.get-content.outputs.string }}
+  publish_winget:
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - id: set-package-name
+      name: after_release::publish_winget::set_package_name
+      run: |
+        if ("${{ github.event.release.prerelease || inputs.prerelease }}" -eq "true") {
+            $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+        } else {
+            $PACKAGE_NAME = "ZedIndustries.Zed"
+        }
+
+        echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+    - name: after_release::publish_winget::winget_releaser
+      uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
+      with:
+        identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
+        release-tag: ${{ github.event.release.tag_name || inputs.tag_name }}
+        max-versions-to-keep: 5
+        token: ${{ secrets.WINGET_TOKEN }}
+  create_sentry_release:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: release::create_sentry_release
+      uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
+      with:
+        environment: production
+      env:
+        SENTRY_ORG: zed-dev
+        SENTRY_PROJECT: zed
+        SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  notify_on_failure:
+    needs:
+    - rebuild_releases_page
+    - post_to_discord
+    - publish_winget
+    - create_sentry_release
+    if: failure()
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::notify_on_failure::notify_slack
+      run: |-
+        curl -X POST -H 'Content-type: application/json'\
+         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      shell: bash -euxo pipefail {0}
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}

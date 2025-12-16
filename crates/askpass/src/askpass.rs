@@ -20,7 +20,7 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe, paths::PathExt};
+use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::ShellKind};
 
 /// Path to the program used for askpass
 ///
@@ -199,13 +199,15 @@ impl PasswordProxy {
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-        let askpass_program = ASKPASS_PROGRAM
-            .get_or_init(|| current_exec)
-            .try_shell_safe()
-            .context("Failed to shell-escape Askpass program path.")?
-            .to_string();
+        // TODO: inferred from the use of powershell.exe in askpass_helper_script
+        let shell_kind = if cfg!(windows) {
+            ShellKind::PowerShell
+        } else {
+            ShellKind::Posix
+        };
+        let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.
-        let askpass_script = generate_askpass_script(&askpass_program, &askpass_socket);
+        let askpass_script = generate_askpass_script(shell_kind, askpass_program, &askpass_socket)?;
         let _task = executor.spawn(async move {
             maybe!(async move {
                 let listener =
@@ -247,10 +249,15 @@ impl PasswordProxy {
         fs::write(&askpass_script_path, askpass_script)
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
-        make_file_executable(&askpass_script_path).await?;
+        make_file_executable(&askpass_script_path)
+            .await
+            .with_context(|| {
+                format!("marking askpass script executable at {askpass_script_path:?}")
+            })?;
+        // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File {}",
+            "powershell.exe -ExecutionPolicy Bypass -File \"{}\"",
             askpass_script_path.display()
         );
 
@@ -328,23 +335,51 @@ pub fn set_askpass_program(path: std::path::PathBuf) {
 
 #[inline]
 #[cfg(not(target_os = "windows"))]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    let print_args = "printf '%s\\0' \"$@\"";
+    let shebang = "#!/bin/sh";
+    Ok(format!(
         "{shebang}\n{print_args} | {askpass_program} --askpass={askpass_socket} 2> /dev/null \n",
-        askpass_socket = askpass_socket.display(),
-        print_args = "printf '%s\\0' \"$@\"",
-        shebang = "#!/bin/sh",
-    )
+    ))
 }
 
 #[inline]
 #[cfg(target_os = "windows")]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & "{askpass_program}" --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
-        askpass_socket = askpass_socket.display(),
-    )
+    ))
 }

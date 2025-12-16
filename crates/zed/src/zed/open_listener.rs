@@ -3,13 +3,14 @@ use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
-use client::parse_zed_link;
+use client::{ZedLink, parse_zed_link};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
+use futures::future;
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::file_diff_view::FileDiffView;
@@ -43,10 +44,20 @@ pub struct OpenRequest {
 #[derive(Debug)]
 pub enum OpenRequestKind {
     CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
-    Extension { extension_id: String },
+    Extension {
+        extension_id: String,
+    },
     AgentPanel,
-    DockMenuAction { index: usize },
-    BuiltinJsonSchema { schema_path: String },
+    DockMenuAction {
+        index: usize,
+    },
+    BuiltinJsonSchema {
+        schema_path: String,
+    },
+    Setting {
+        /// `None` opens settings without navigating to a specific path.
+        setting_path: Option<String>,
+    },
 }
 
 impl OpenRequest {
@@ -93,10 +104,26 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
+            } else if url == "zed://settings" || url == "zed://settings/" {
+                this.kind = Some(OpenRequestKind::Setting { setting_path: None });
+            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+                this.kind = Some(OpenRequestKind::Setting {
+                    setting_path: Some(setting_path.to_string()),
+                });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
-            } else if let Some(request_path) = parse_zed_link(&url, cx) {
-                this.parse_request_path(request_path).log_err();
+            } else if let Some(zed_link) = parse_zed_link(&url, cx) {
+                match zed_link {
+                    ZedLink::Channel { channel_id } => {
+                        this.join_channel = Some(channel_id);
+                    }
+                    ZedLink::ChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
+                        this.open_channel_notes.push((channel_id, heading));
+                    }
+                }
             } else {
                 log::error!("unhandled url: {}", url);
             }
@@ -139,31 +166,6 @@ impl OpenRequest {
         self.remote_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
-    }
-
-    fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
-        let mut parts = request_path.split('/');
-        if parts.next() == Some("channel")
-            && let Some(slug) = parts.next()
-            && let Some(id_str) = slug.split('-').next_back()
-            && let Ok(channel_id) = id_str.parse::<u64>()
-        {
-            let Some(next) = parts.next() else {
-                self.join_channel = Some(channel_id);
-                return Ok(());
-            };
-
-            if let Some(heading) = next.strip_prefix("notes#") {
-                self.open_channel_notes
-                    .push((channel_id, Some(heading.to_string())));
-                return Ok(());
-            }
-            if next == "notes" {
-                self.open_channel_notes.push((channel_id, None));
-                return Ok(());
-            }
-        }
-        anyhow::bail!("invalid zed url: {request_path}")
     }
 }
 
@@ -328,6 +330,7 @@ pub async fn handle_cli_connection(
                 wait,
                 wsl,
                 open_new_workspace,
+                reuse,
                 env,
                 user_data_dir: _,
             } => {
@@ -363,6 +366,7 @@ pub async fn handle_cli_connection(
                     paths,
                     diff_paths,
                     open_new_workspace,
+                    reuse,
                     &responses,
                     wait,
                     app_state.clone(),
@@ -382,6 +386,7 @@ async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
+    reuse: bool,
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
@@ -441,6 +446,7 @@ async fn open_workspaces(
                         workspace_paths,
                         diff_paths.clone(),
                         open_new_workspace,
+                        reuse,
                         wait,
                         responses,
                         env.as_ref(),
@@ -487,22 +493,36 @@ async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
+    reuse: bool,
     wait: bool,
     responses: &IpcSender<CliResponse>,
     env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let mut errored = false;
-
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
-    match open_paths_with_positions(
+
+    // If reuse flag is passed, open a new workspace in an existing window.
+    let (open_new_workspace, replace_window) = if reuse {
+        (
+            Some(true),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
+                .ok()
+                .flatten(),
+        )
+    } else {
+        (open_new_workspace, None)
+    };
+
+    let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
+            replace_window,
+            prefer_focused_window: wait,
             env: env.cloned(),
             ..Default::default()
         },
@@ -510,80 +530,95 @@ async fn open_local_workspace(
     )
     .await
     {
-        Ok((workspace, items)) => {
-            let mut item_release_futures = Vec::new();
-
-            for item in items {
-                match item {
-                    Some(Ok(item)) => {
-                        cx.update(|cx| {
-                            let released = oneshot::channel();
-                            item.on_release(
-                                cx,
-                                Box::new(move |_| {
-                                    let _ = released.0.send(());
-                                }),
-                            )
-                            .detach();
-                            item_release_futures.push(released.1);
-                        })
-                        .log_err();
-                    }
-                    Some(Err(err)) => {
-                        responses
-                            .send(CliResponse::Stderr {
-                                message: err.to_string(),
-                            })
-                            .log_err();
-                        errored = true;
-                    }
-                    None => {}
-                }
-            }
-
-            if wait {
-                let background = cx.background_executor().clone();
-                let wait = async move {
-                    if paths_with_position.is_empty() && diff_paths.is_empty() {
-                        let (done_tx, done_rx) = oneshot::channel();
-                        let _subscription = workspace.update(cx, |_, _, cx| {
-                            cx.on_release(move |_, _| {
-                                let _ = done_tx.send(());
-                            })
-                        });
-                        let _ = done_rx.await;
-                    } else {
-                        let _ = futures::future::try_join_all(item_release_futures).await;
-                    };
-                }
-                .fuse();
-
-                futures::pin_mut!(wait);
-
-                loop {
-                    // Repeatedly check if CLI is still open to avoid wasting resources
-                    // waiting for files or workspaces to close.
-                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                    futures::select_biased! {
-                        _ = wait => break,
-                        _ = timer => {
-                            if responses.send(CliResponse::Ping).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        Ok(result) => result,
         Err(error) => {
-            errored = true;
             responses
                 .send(CliResponse::Stderr {
                     message: format!("error opening {paths_with_position:?}: {error}"),
                 })
                 .log_err();
+            return true;
+        }
+    };
+
+    let mut errored = false;
+    let mut item_release_futures = Vec::new();
+    let mut subscriptions = Vec::new();
+
+    // If --wait flag is used with no paths, or a directory, then wait until
+    // the entire workspace is closed.
+    if wait {
+        let mut wait_for_window_close = paths_with_position.is_empty() && diff_paths.is_empty();
+        for path_with_position in &paths_with_position {
+            if app_state.fs.is_dir(&path_with_position.path).await {
+                wait_for_window_close = true;
+                break;
+            }
+        }
+
+        if wait_for_window_close {
+            let (release_tx, release_rx) = oneshot::channel();
+            item_release_futures.push(release_rx);
+            subscriptions.push(workspace.update(cx, |_, _, cx| {
+                cx.on_release(move |_, _| {
+                    let _ = release_tx.send(());
+                })
+            }));
         }
     }
+
+    for item in items {
+        match item {
+            Some(Ok(item)) => {
+                if wait {
+                    let (release_tx, release_rx) = oneshot::channel();
+                    item_release_futures.push(release_rx);
+                    subscriptions.push(cx.update(|cx| {
+                        item.on_release(
+                            cx,
+                            Box::new(move |_| {
+                                release_tx.send(()).ok();
+                            }),
+                        )
+                    }));
+                }
+            }
+            Some(Err(err)) => {
+                responses
+                    .send(CliResponse::Stderr {
+                        message: err.to_string(),
+                    })
+                    .log_err();
+                errored = true;
+            }
+            None => {}
+        }
+    }
+
+    if wait {
+        let wait = async move {
+            let _subscriptions = subscriptions;
+            let _ = future::try_join_all(item_release_futures).await;
+        }
+        .fuse();
+        futures::pin_mut!(wait);
+
+        let background = cx.background_executor().clone();
+        loop {
+            // Repeatedly check if CLI is still open to avoid wasting resources
+            // waiting for files or workspaces to close.
+            let mut timer = background.timer(Duration::from_secs(1)).fuse();
+            futures::select_biased! {
+                _ = wait => break,
+                _ = timer => {
+                    if responses.send(CliResponse::Ping).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     errored
 }
 
@@ -613,19 +648,19 @@ mod tests {
         ipc::{self},
     };
     use editor::Editor;
-    use gpui::TestAppContext;
+    use futures::poll;
+    use gpui::{AppContext as _, TestAppContext};
+    use language::LineEnding;
     use remote::SshConnectionOptions;
+    use rope::Rope;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
-        cx.update(|cx| {
-            SshSettings::register(cx);
-        });
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
@@ -647,6 +682,7 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
+                connection_timeout: None,
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
@@ -715,6 +751,60 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_wait_with_directory_waits_for_window_close(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": {
+                        "file1.txt": "content1",
+                    },
+                }),
+            )
+            .await;
+
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let workspace_paths = vec![path!("/root/dir1").to_owned()];
+
+        let (done_tx, mut done_rx) = futures::channel::oneshot::channel();
+        cx.spawn({
+            let app_state = app_state.clone();
+            move |mut cx| async move {
+                let errored = open_local_workspace(
+                    workspace_paths,
+                    vec![],
+                    None,
+                    false,
+                    true,
+                    &response_tx,
+                    None,
+                    &app_state,
+                    &mut cx,
+                )
+                .await;
+                let _ = done_tx.send(errored);
+            }
+        })
+        .detach();
+
+        cx.background_executor.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(matches!(poll!(&mut done_rx), Poll::Pending));
+
+        let window = cx.windows()[0];
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let errored = done_rx.await.unwrap();
+        assert!(!errored);
+    }
+
+    #[gpui::test]
     async fn test_open_workspace_with_nonexistent_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -780,6 +870,7 @@ mod tests {
                     vec![],
                     open_new_workspace,
                     false,
+                    false,
                     &response_tx,
                     None,
                     &app_state,
@@ -790,5 +881,103 @@ mod tests {
             .await;
 
         assert!(!errored);
+    }
+
+    #[gpui::test]
+    async fn test_reuse_flag_functionality(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file1_path = if cfg!(windows) {
+            "C:\\root\\file1.txt"
+        } else {
+            "/root/file1.txt"
+        };
+        let file2_path = if cfg!(windows) {
+            "C:\\root\\file2.txt"
+        } else {
+            "/root/file2.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file1_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file1_path),
+                &Rope::from("content1"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file2_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file2_path),
+                &Rope::from("content2"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+
+        // First, open a workspace normally
+        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+        let workspace_paths = vec![file1_path.to_string()];
+
+        let _errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths,
+                        vec![],
+                        None,
+                        false,
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        // Now test the reuse functionality - should replace the existing workspace
+        let workspace_paths_reuse = vec![file1_path.to_string()];
+
+        let errored_reuse = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths_reuse,
+                        vec![],
+                        None, // open_new_workspace will be overridden by reuse logic
+                        true, // reuse = true
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(!errored_reuse);
     }
 }

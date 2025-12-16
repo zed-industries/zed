@@ -671,6 +671,7 @@ impl Database {
                             canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
+                            is_hidden: db_entry.is_hidden,
                             // This is only used in the summarization backlog, so if it's None,
                             // that just means we won't be able to detect when to resummarize
                             // based on total number of backlogged bytes - instead, we'd go
@@ -795,6 +796,8 @@ impl Database {
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
                             stash_entries: Vec::new(),
+                            remote_upstream_url: db_repository.remote_upstream_url.clone(),
+                            remote_origin_url: db_repository.remote_origin_url.clone(),
                         });
                     }
                 }

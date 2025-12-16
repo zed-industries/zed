@@ -1,7 +1,7 @@
 name: "Close Stale Issues"
 on:
   schedule:
-    - cron: "0 7,9,11 * * 3"
+    - cron: "0 8 31 DEC *"
   workflow_dispatch:
 
 jobs:
@@ -15,14 +15,15 @@ jobs:
           stale-issue-message: >
             Hi there! 👋
 
-            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and we will keep it open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, we'll close it in 7 days.
+            We're working to clean up our issue tracker by closing older bugs that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and it will be kept open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, it will close automatically in 14 days.
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
-          days-before-stale: 120
-          days-before-close: 7
-          any-of-issue-labels: "bug,panic / crash"
+          days-before-stale: 60
+          days-before-close: 14
+          only-issue-types: "Bug,Crash"
           operations-per-run: 1000
           ascending: true
           enable-statistics: true
           stale-issue-label: "stale"
+          exempt-issue-labels: "never stale"

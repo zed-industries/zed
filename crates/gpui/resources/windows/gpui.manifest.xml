@@ -1,16 +1,32 @@
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-    <asmv3:application>
-        <asmv3:windowsSettings>
-            <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+        <security>
+            <requestedPrivileges>
+                <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+            </requestedPrivileges>
+        </security>
+    </trustInfo>
+    <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+        <application>
+            <!-- Windows 10 -->
+            <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+        </application>
+    </compatibility>
+    <application xmlns="urn:schemas-microsoft-com:asm.v3">
+        <windowsSettings>
+            <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
             <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
-        </asmv3:windowsSettings>
-    </asmv3:application>
+        </windowsSettings>
+    </application>
     <dependency>
         <dependentAssembly>
-            <assemblyIdentity type='win32'
+            <assemblyIdentity
+                type='win32'
                 name='Microsoft.Windows.Common-Controls'
-                version='6.0.0.0' processorArchitecture='*'
-                publicKeyToken='6595b64144ccf1df' />
+                version='6.0.0.0'
+                processorArchitecture='*'
+                publicKeyToken='6595b64144ccf1df'
+            />
         </dependentAssembly>
     </dependency>
 </assembly>

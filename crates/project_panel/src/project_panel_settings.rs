@@ -3,15 +3,15 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsContent, ShowDiagnostics,
-    ShowIndentGuides,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
@@ -30,7 +30,10 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub hide_hidden: bool,
     pub drag_and_drop: bool,
+    pub auto_open: AutoOpenSettings,
+    pub sort_mode: ProjectPanelSortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -46,6 +49,30 @@ pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct AutoOpenSettings {
+    pub on_create: bool,
+    pub on_paste: bool,
+    pub on_drop: bool,
+}
+
+impl AutoOpenSettings {
+    #[inline]
+    pub fn should_open_on_create(self) -> bool {
+        self.on_create
+    }
+
+    #[inline]
+    pub fn should_open_on_paste(self) -> bool {
+        self.on_paste
+    }
+
+    #[inline]
+    pub fn should_open_on_drop(self) -> bool {
+        self.on_drop
+    }
+}
+
 impl ScrollbarVisibility for ProjectPanelSettings {
     fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
         self.scrollbar
@@ -55,7 +82,7 @@ impl ScrollbarVisibility for ProjectPanelSettings {
 }
 
 impl Settings for ProjectPanelSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let project_panel = content.project_panel.clone().unwrap();
         Self {
             button: project_panel.button.unwrap(),
@@ -79,42 +106,19 @@ impl Settings for ProjectPanelSettings {
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
+            hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(hide_gitignore) = vscode.read_bool("explorer.excludeGitIgnore") {
-            current.project_panel.get_or_insert_default().hide_gitignore = Some(hide_gitignore);
-        }
-        if let Some(auto_reveal) = vscode.read_bool("explorer.autoReveal") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .auto_reveal_entries = Some(auto_reveal);
-        }
-        if let Some(compact_folders) = vscode.read_bool("explorer.compactFolders") {
-            current.project_panel.get_or_insert_default().auto_fold_dirs = Some(compact_folders);
-        }
-
-        if Some(false) == vscode.read_bool("git.decorations.enabled") {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-        }
-        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
-        }
-        if let (Some(false), Some(false)) = (
-            vscode.read_bool("explorer.decorations.badges"),
-            vscode.read_bool("explorer.decorations.colors"),
-        ) {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
+            auto_open: {
+                let auto_open = project_panel.auto_open.unwrap();
+                AutoOpenSettings {
+                    on_create: auto_open.on_create.unwrap(),
+                    on_paste: auto_open.on_paste.unwrap(),
+                    on_drop: auto_open.on_drop.unwrap(),
+                }
+            },
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
         }
     }
 }

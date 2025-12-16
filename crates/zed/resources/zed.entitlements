@@ -22,5 +22,9 @@
 	<true/>
 	<key>com.apple.security.personal-information.photos-library</key>
 	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
 </dict>
 </plist>

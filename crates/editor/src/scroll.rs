@@ -251,7 +251,11 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
+        // Anchor the scroll position to the *left* of the first visible buffer point.
+        //
+        // This prevents the viewport from shifting down when blocks (e.g. expanded diff hunk
+        // deletions) are inserted *above* the first buffer character in the file.
+        let top_anchor = map.buffer_snapshot().anchor_before(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
@@ -494,15 +498,16 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, async move |editor, cx| {
+            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
                 editor
                     .update_in(cx, |editor, window, cx| {
+                        editor.register_visible_buffers(cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.refresh_colors(false, None, window, cx);
+                        editor.update_lsp_data(None, window, cx);
+                        editor.colorize_brackets(false, cx);
                     })
-                    .ok()
-            })
-            .detach()
+                    .ok();
+            });
         }
     }
 
@@ -603,7 +608,7 @@ impl Editor {
             scroll_position
         };
 
-        let editor_was_scrolled = self.scroll_manager.set_scroll_position(
+        self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
             local,
@@ -611,11 +616,7 @@ impl Editor {
             workspace_id,
             window,
             cx,
-        );
-
-        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-        self.refresh_colors(false, None, window, cx);
-        editor_was_scrolled
+        )
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<ScrollOffset> {

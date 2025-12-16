@@ -124,6 +124,8 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
+    optional string remote_upstream_url = 14;
+    optional string remote_origin_url = 15;
 }
 
 message RemoveRepository {
@@ -188,6 +190,25 @@ message GitRenameBranch {
     uint64 repository_id = 2;
     string branch = 3;
     string new_name = 4;
+}
+
+message GitCreateRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+    string remote_url = 4;
+}
+
+message GitRemoveRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+}
+
+message GitDeleteBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch_name = 3;
 }
 
 message GitDiff {
@@ -284,6 +305,29 @@ message GitCheckoutFiles {
     repeated string paths = 5;
 }
 
+message GitFileHistory {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string path = 4;
+    uint64 skip = 5;
+    optional uint64 limit = 6;
+}
+
+message GitFileHistoryResponse {
+    repeated FileHistoryEntry entries = 1;
+    string path = 2;
+}
+
+message FileHistoryEntry {
+    string sha = 1;
+    string subject = 2;
+    string message = 3;
+    int64 commit_timestamp = 4;
+    string author_name = 5;
+    string author_email = 6;
+}
+
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
     string repo_path = 1;
@@ -347,6 +391,7 @@ message Commit {
     string message = 6;
     optional CommitOptions options = 7;
     reserved 8;
+    uint64 askpass_id = 9;
 
     message CommitOptions {
         bool amend = 1;
@@ -388,6 +433,7 @@ message GetRemotes {
     reserved 2;
     uint64 repository_id = 3;
     optional string branch_name = 4;
+    bool is_push = 5;
 }
 
 message GetRemotesResponse {
@@ -403,8 +449,9 @@ message Pull {
     reserved 2;
     uint64 repository_id = 3;
     string remote_name = 4;
-    string branch_name = 5;
+    optional string branch_name = 5;
     uint64 askpass_id = 6;
+    bool rebase = 7;
 }
 
 message RemoteMessageResponse {
@@ -455,8 +502,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        optional string remote_url = 4;
         reserved 3;
+        reserved 4;
     }
 
     optional BlameResponse blame_response = 5;
@@ -471,4 +518,72 @@ message GetDefaultBranch {
 
 message GetDefaultBranchResponse {
     optional string branch = 1;
+}
+
+message GetTreeDiff {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    bool is_merge = 3;
+    string base = 4;
+    string head = 5;
+}
+
+message GetTreeDiffResponse {
+    repeated TreeDiffStatus entries = 1;
+}
+
+message TreeDiffStatus {
+    enum Status {
+        ADDED = 0;
+        MODIFIED = 1;
+        DELETED = 2;
+    }
+
+    Status status = 1;
+    string path = 2;
+    optional string oid = 3;
+}
+
+message GetBlobContent {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string oid =3;
+}
+
+message GetBlobContentResponse {
+    string content = 1;
+}
+
+message GitGetWorktrees {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GitWorktreesResponse {
+    repeated Worktree worktrees = 1;
+}
+
+message Worktree {
+    string path = 1;
+    string ref_name = 2;
+    string sha = 3;
+}
+
+message GitCreateWorktree {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string name = 3;
+    string directory = 4;
+    optional string commit = 5;
+}
+
+message RunGitHook {
+    enum GitHook {
+        PRE_COMMIT = 0;
+        reserved 1;
+    }
+
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    GitHook hook = 3;
 }

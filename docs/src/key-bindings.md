@@ -2,9 +2,9 @@
 
 Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
 
-## Predefined keymaps
+## Predefined Keymaps
 
-If you're used to a specific editor's defaults, you can set a `base_keymap` in your [settings file](./configuring-zed.md).
+If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
 We currently support:
 
 - VS Code (default)
@@ -21,20 +21,37 @@ This setting can also be changed via the command palette through the `zed: toggl
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
-## User keymaps
+## Keymap Editor
 
-Zed reads your keymap from `~/.config/zed/keymap.json`, which you can open with the {#action zed::OpenKeymap} action from the command palette.
-You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymapEditor} action or the {#kb zed::OpenKeymapEditor} keybinding.
+You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
 
-The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set, the bindings are always active. If it is set, the binding is only active when the [context matches](#contexts).
+In there, you can see all of the existing actions in Zed as well as the associated keybindings set to them by default.
 
-Within each binding section, a [key sequence](#keybinding-syntax) is mapped to [an action](#actions). If conflicts are detected, they are resolved as [described below](#precedence).
+You can also customize them right from there, either by clicking on the pencil icon that appears when you hover over a particular action, by double-clicking on the action row, or by pressing the `enter` key.
+
+Anything that you end up doing on the keymap editor also gets reflected on the `keymap.json` file.
+
+## User Keymaps
+
+The keymap file is stored in the following locations for each platform:
+
+- macOS/Linux: `~/.config/zed/keymap.json`
+- Windows: `~\AppData\Roaming\Zed/keymap.json`
+
+You can open the keymap with the {#action zed::OpenKeymapFile} action from the command palette.
+
+This file contains a JSON array of objects with `"bindings"`.
+If no `"context"` is set, the bindings are always active.
+If it is set, the binding is only active when the [context matches](#contexts).
+
+Within each binding section, a [key sequence](#keybinding-syntax) is mapped to [an action](#actions).
+If conflicts are detected, they are resolved as [described below](#precedence).
 
 If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
 For example:
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -51,11 +68,16 @@ For example:
 ]
 ```
 
-You can see all of Zed's default bindings in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
+You can see all of Zed's default bindings for each platform in the default keymaps files:
 
-If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
+- [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json)
+- [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json)
+- [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-### Keybinding syntax
+If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette.
+Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
+
+### Keybinding Syntax
 
 Zed has the ability to match against not just a single keypress, but a sequence of keys typed in order. Each key in the `"bindings"` map is a sequence of keypresses separated with a space.
 
@@ -72,7 +94,7 @@ The keys can be any single Unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```json
+```json [settings]
  "bindings": {
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e
@@ -117,20 +139,20 @@ Context expressions can contain the following syntax:
 For example:
 
 - `"context": "Editor"` - matches any editor (including inline inputs)
-- `"context": "Editor && mode=full"` - matches the main editors used for editing code
+- `"context": "Editor && mode == full"` - matches the main editors used for editing code
 - `"context": "!Editor && !Terminal"` - matches anywhere except where an Editor or Terminal is focused
-- `"context": "os=macos > Editor"` - matches any editor on macOS.
+- `"context": "os == macos > Editor"` - matches any editor on macOS.
 
 It's worth noting that attributes are only available on the node they are defined on. This means that if you want to (for example) only enable a keybinding when the debugger is stopped in vim normal mode, you need to do `debugger_stopped > vim_mode == normal`.
 
-> Note: Before Zed v0.197.x, the `!` operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os=macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
+> Note: Before Zed v0.197.x, the `!` operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os == macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
 
 If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts). Helix mode is built on top of Vim mode and uses the same contexts.
 
 ### Actions
 
 Almost all of Zed's functionality is exposed as actions.
-Although there is no explicitly documented list, you can find most of them by searching in the command palette, by looking in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
+Although there is no explicitly documented list, you can find most of them by searching in the command palette, by looking in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json), [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
 
 Most actions do not require any arguments, and so you can bind them as strings: `"ctrl-a": "language_selector::Toggle"`. Some require a single argument and must be bound as an array: `"cmd-1": ["workspace::ActivatePane", 0]`. Some actions require multiple arguments and are bound as an array of a string and an object: `"ctrl-a": ["pane::DeploySearch", { "replace_enabled": true }]`.
 
@@ -161,7 +183,7 @@ On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
-```json
+```json [keymap]
 [
   {
     "use_key_equivalents": true,
@@ -187,7 +209,7 @@ If you'd like a given binding to do nothing in a given context, you can use
 want to disable it, or if you want to type the character that would be typed by
 the sequence, or if you want to disable multikey bindings starting with that key.
 
-```json
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -202,7 +224,7 @@ A `null` binding follows the same precedence rules as normal actions, so it disa
 
 This is useful for preventing Zed from falling back to a default key binding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that key binding, such as opening the right dock. To prevent this from happening:
 
-```json
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -223,7 +245,7 @@ This is useful for preventing Zed from falling back to a default key binding whe
 
 A common request is to be able to map from a single keystroke to a sequence. You can do this with the `workspace::SendKeystrokes` action.
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -262,7 +284,7 @@ If you're on Linux or Windows, you might find yourself wanting to forward key co
 
 For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
 
-```json
+```json [settings]
 {
   "context": "Terminal",
   "bindings": {

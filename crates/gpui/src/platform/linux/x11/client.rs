@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -18,7 +18,7 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt;
+use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -246,10 +246,6 @@ impl X11ClientStatePtr {
             state.keyboard_focused_window = None;
         }
         state.cursor_styles.remove(&x_window);
-
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -317,7 +313,37 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let mut timing = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
                         });
                     }
                 }
@@ -411,7 +437,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -1047,6 +1073,7 @@ impl X11Client {
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    prefer_character_input: false,
                 }));
             }
             Event::KeyRelease(event) => {
@@ -1448,6 +1475,10 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
+        let parent_window = state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window);
         let x_window = state
             .xcb_connection
             .generate_id()
@@ -1466,6 +1497,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
+            parent_window,
         )?;
         check_reply(
             || "Failed to set XdndAware property",

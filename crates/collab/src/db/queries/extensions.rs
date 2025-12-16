@@ -69,7 +69,7 @@ impl Database {
         extensions: &[extension::Model],
         constraints: Option<&ExtensionVersionConstraints>,
         tx: &DatabaseTransaction,
-    ) -> Result<HashMap<ExtensionId, (extension_version::Model, SemanticVersion)>> {
+    ) -> Result<HashMap<ExtensionId, (extension_version::Model, Version)>> {
         let mut versions = extension_version::Entity::find()
             .filter(
                 extension_version::Column::ExtensionId
@@ -79,11 +79,10 @@ impl Database {
             .await?;
 
         let mut max_versions =
-            HashMap::<ExtensionId, (extension_version::Model, SemanticVersion)>::default();
+            HashMap::<ExtensionId, (extension_version::Model, Version)>::default();
         while let Some(version) = versions.next().await {
             let version = version?;
-            let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
-            else {
+            let Some(extension_version) = Version::from_str(&version.version).log_err() else {
                 continue;
             };
 
@@ -102,7 +101,7 @@ impl Database {
                 }
 
                 if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
-                    if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err() {
+                    if let Some(version) = Version::from_str(wasm_api_version).log_err() {
                         if !constraints.wasm_api_versions.contains(&version) {
                             continue;
                         }
@@ -255,7 +254,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
-                    external_id: ActiveValue::Set(external_id.to_string()),
+                    external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
                     total_download_count: ActiveValue::NotSet,
@@ -309,6 +308,9 @@ impl Database {
                             version
                                 .provides
                                 .contains(&ExtensionProvides::ContextServers),
+                        ),
+                        provides_agent_servers: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::AgentServers),
                         ),
                         provides_slash_commands: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::SlashCommands),
@@ -420,6 +422,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::ContextServers) {
         condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::AgentServers) {
+        condition = condition.add(extension_version::Column::ProvidesAgentServers.eq(true));
     }
 
     if provides_filter.contains(&ExtensionProvides::SlashCommands) {

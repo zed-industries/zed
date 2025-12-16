@@ -267,6 +267,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
@@ -779,6 +780,12 @@ impl UserStore {
         cx.notify();
     }
 
+    pub fn clear_plan_and_usage(&mut self) {
+        self.plan_info = None;
+        self.model_request_usage = None;
+        self.edit_prediction_usage = None;
+    }
+
     fn update_authenticated_user(
         &mut self,
         response: GetAuthenticatedUserResponse,
@@ -943,7 +950,7 @@ impl Collaborator {
     pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
-            replica_id: message.replica_id as ReplicaId,
+            replica_id: ReplicaId::new(message.replica_id as u16),
             user_id: message.user_id as UserId,
             is_host: message.is_host,
             committer_name: message.committer_name,

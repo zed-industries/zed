@@ -1,26 +1,20 @@
-use std::{borrow::Cow, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
-use schemars::{JsonSchema, json_schema};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
-};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize, de::Error as _};
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{ExtendingVec, merge_from};
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
-    #[serde(default)]
     pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
-    #[serde(default)]
     pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
@@ -30,8 +24,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    #[serde(default)]
-    pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
+    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -63,18 +56,18 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 }
 
 /// The settings for enabling/disabling features.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
+    /// Enables the experimental edit prediction context retrieval system.
+    pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
 /// The provider that supplies edit predictions.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -82,6 +75,65 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    Codestral,
+    Experimental(&'static str),
+}
+
+pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
+pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
+
+impl<'de> Deserialize<'de> for EditPredictionProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum Content {
+            None,
+            Copilot,
+            Supermaven,
+            Zed,
+            Codestral,
+            Experimental(String),
+        }
+
+        Ok(match Content::deserialize(deserializer)? {
+            Content::None => EditPredictionProvider::None,
+            Content::Copilot => EditPredictionProvider::Copilot,
+            Content::Supermaven => EditPredictionProvider::Supermaven,
+            Content::Zed => EditPredictionProvider::Zed,
+            Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name) => {
+                return Err(D::Error::custom(format!(
+                    "Unknown experimental edit prediction provider: {}",
+                    name
+                )));
+            }
+        })
+    }
 }
 
 impl EditPredictionProvider {
@@ -90,13 +142,15 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            | EditPredictionProvider::Supermaven
+            | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Experimental(_) => false,
         }
     }
 }
 
 /// The contents of the edit prediction settings.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
@@ -108,12 +162,14 @@ pub struct EditPredictionSettingsContent {
     pub mode: Option<EditPredictionsMode>,
     /// Settings specific to GitHub Copilot.
     pub copilot: Option<CopilotSettingsContent>,
+    /// Settings specific to Codestral.
+    pub codestral: Option<CodestralSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
@@ -130,9 +186,37 @@ pub struct CopilotSettingsContent {
     pub enterprise_uri: Option<String>,
 }
 
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CodestralSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: "codestral-latest"
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 150
+    pub max_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://codestral.mistral.ai"
+    pub api_url: Option<String>,
+}
+
 /// The mode in which edit predictions should be displayed.
 #[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
@@ -176,7 +260,7 @@ pub enum SoftWrap {
 }
 
 /// The settings for a particular language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
@@ -228,7 +312,7 @@ pub struct LanguageSettingsContent {
     /// How to perform a buffer format.
     ///
     /// Default: auto
-    pub formatter: Option<SelectedFormatter>,
+    pub formatter: Option<FormatterList>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -282,12 +366,12 @@ pub struct LanguageSettingsContent {
     /// Inlay hint related settings.
     pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,
-    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    /// when you type '(', Zed will automatically add a closing ')' at the correct position.
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
     /// Whether to automatically surround text with characters for you. For example,
-    /// when you select text and type (, Zed will automatically surround text with ().
+    /// when you select text and type '(', Zed will automatically surround text with ().
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
@@ -304,7 +388,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
-    /// Which code actions to run on save after the formatter.
+    /// Which code actions to run on save before the formatter.
     /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
@@ -342,6 +426,17 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: true
+    pub word_diff_enabled: Option<bool>,
+    /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
+    ///
+    /// Default: false
+    pub colorize_brackets: Option<bool>,
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -377,7 +472,7 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct WhitespaceMapContent {
     pub space: Option<char>,
@@ -409,7 +504,7 @@ pub enum RewrapBehavior {
     Anywhere,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct JsxTagAutoCloseSettingsContent {
     /// Enables or disables auto-closing of JSX tags.
@@ -417,7 +512,7 @@ pub struct JsxTagAutoCloseSettingsContent {
 }
 
 /// The settings for inlay hints.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
@@ -499,7 +594,7 @@ impl InlayHintKind {
 }
 
 /// Controls how completions are processed for this language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettingsContent {
@@ -584,7 +679,7 @@ pub enum WordsCompletionMode {
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
@@ -626,102 +721,6 @@ pub enum FormatOnSave {
     Off,
 }
 
-/// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq, MergeFrom)]
-pub enum SelectedFormatter {
-    /// Format files using Zed's Prettier integration (if applicable),
-    /// or falling back to formatting via language server.
-    #[default]
-    Auto,
-    List(FormatterList),
-}
-
-impl JsonSchema for SelectedFormatter {
-    fn schema_name() -> Cow<'static, str> {
-        "Formatter".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let formatter_schema = Formatter::json_schema(generator);
-
-        json_schema!({
-            "oneOf": [
-                {
-                    "type": "array",
-                    "items": formatter_schema
-                },
-                {
-                    "type": "string",
-                    "enum": ["auto", "language_server"]
-                },
-                formatter_schema
-            ]
-        })
-    }
-}
-
-impl Serialize for SelectedFormatter {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            SelectedFormatter::Auto => serializer.serialize_str("auto"),
-            SelectedFormatter::List(list) => list.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SelectedFormatter {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FormatDeserializer;
-
-        impl<'d> Visitor<'d> for FormatDeserializer {
-            type Value = SelectedFormatter;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid formatter kind")
-            }
-            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "auto" {
-                    Ok(Self::Value::Auto)
-                } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList::Single(
-                        Formatter::LanguageServer { name: None },
-                    )))
-                } else {
-                    let ret: Result<FormatterList, _> =
-                        Deserialize::deserialize(v.into_deserializer());
-                    ret.map(SelectedFormatter::List)
-                }
-            }
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-        }
-        deserializer.deserialize_any(FormatDeserializer)
-    }
-}
-
 /// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
@@ -749,10 +748,11 @@ impl AsRef<[Formatter]> for FormatterList {
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
-    /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
-    /// Format code using Zed's Prettier integration.
+    /// Format files using Zed's Prettier integration (if applicable),
+    /// or falling back to formatting via language server.
     #[default]
+    Auto,
+    /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
     External {
@@ -763,10 +763,77 @@ pub enum Formatter {
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
+    /// Format code using a language server.
+    #[serde(untagged)]
+    LanguageServer(LanguageServerFormatterSpecifier),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(
+    rename_all = "snake_case",
+    // allow specifying language servers as "language_server" or {"language_server": {"name": ...}}
+    from = "LanguageServerVariantContent",
+    into = "LanguageServerVariantContent"
+)]
+pub enum LanguageServerFormatterSpecifier {
+    Specific {
+        name: String,
+    },
+    #[default]
+    Current,
+}
+
+impl From<LanguageServerVariantContent> for LanguageServerFormatterSpecifier {
+    fn from(value: LanguageServerVariantContent) -> Self {
+        match value {
+            LanguageServerVariantContent::Specific {
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            } => Self::Specific { name },
+            _ => Self::Current,
+        }
+    }
+}
+
+impl From<LanguageServerFormatterSpecifier> for LanguageServerVariantContent {
+    fn from(value: LanguageServerFormatterSpecifier) -> Self {
+        match value {
+            LanguageServerFormatterSpecifier::Specific { name } => Self::Specific {
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            },
+            LanguageServerFormatterSpecifier::Current => {
+                Self::Current(CurrentLanguageServerContent::LanguageServer)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case", untagged)]
+enum LanguageServerVariantContent {
+    /// Format code using a specific language server.
+    Specific {
+        language_server: LanguageServerSpecifierContent,
+    },
+    /// Format code using the current language server.
+    Current(CurrentLanguageServerContent),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+enum CurrentLanguageServerContent {
+    #[default]
+    LanguageServer,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+struct LanguageServerSpecifierContent {
+    /// The name of the language server to format with
+    name: Option<String>,
 }
 
 /// The settings for indent guides.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct IndentGuideSettingsContent {
     /// Whether to display indent guides in the editor.
@@ -792,7 +859,7 @@ pub struct IndentGuideSettingsContent {
 }
 
 /// The task settings for a particular language.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
@@ -809,7 +876,7 @@ pub struct LanguageTaskSettingsContent {
 }
 
 /// Map from language name to settings.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
 
@@ -865,45 +932,70 @@ pub enum IndentGuideBackgroundColoring {
 
 #[cfg(test)]
 mod test {
+
+    use crate::{ParseStatus, fallible_options};
+
     use super::*;
 
     #[test]
     fn test_formatter_deserialization() {
         let raw_auto = "{\"formatter\": \"auto\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
-        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::Auto))
+        );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Single(
-                Formatter::LanguageServer { name: None }
+            Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current
             )))
         );
+
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None }
-            ])))
+            Some(FormatterList::Vec(vec![Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current
+            )]))
         );
-        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"language_server\", \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None },
+            Some(FormatterList::Vec(vec![
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 Formatter::Prettier
-            ])))
+            ]))
+        );
+
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": \"ruff\"}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Vec(vec![
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Specific {
+                    name: "ruff".to_string()
+                }),
+                Formatter::Prettier
+            ]))
+        );
+
+        assert_eq!(
+            serde_json::to_string(&LanguageServerFormatterSpecifier::Current).unwrap(),
+            "\"language_server\"",
         );
     }
 
     #[test]
     fn test_formatter_deserialization_invalid() {
         let raw_auto = "{\"formatter\": {}}";
-        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
-        assert!(result.is_err());
+        let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
+        assert!(matches!(result, ParseStatus::Failed { .. }));
     }
 
     #[test]

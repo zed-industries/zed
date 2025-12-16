@@ -1,7 +1,4 @@
-use crate::{
-    Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle,
-    worktree_settings::WorktreeSettings,
-};
+use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
@@ -12,7 +9,7 @@ use pretty_assertions::assert_eq;
 use rand::prelude::*;
 
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::{
     env,
     fmt::Write,
@@ -47,6 +44,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         true,
         fs,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -111,6 +109,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -210,6 +209,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -360,6 +360,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -382,6 +383,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs::RenameOptions {
             overwrite: true,
             ignore_if_exists: true,
+            create_parents: false,
         },
     )
     .await
@@ -436,6 +438,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -600,6 +603,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -700,6 +704,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -734,7 +739,6 @@ async fn test_write_file(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
-
     worktree.read_with(cx, |tree, _| {
         let tracked = tree
             .entry_for_path(rel_path("tracked-dir/file.txt"))
@@ -761,6 +765,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
             "prettier": {
                 "package.json": "{}",
             },
+            "package.json": "//package.json"
         },
         "src": {
             ".DS_Store": "",
@@ -793,6 +798,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -858,6 +864,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -916,6 +923,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1001,6 +1009,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1058,6 +1067,93 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_hidden_files(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({
+        ".gitignore": "**/target\n",
+        ".hidden_file": "content",
+        ".hidden_dir": {
+            "nested.rs": "code",
+        },
+        "src": {
+            "visible.rs": "code",
+        },
+        "logs": {
+            "app.log": "logs",
+            "debug.log": "logs",
+        },
+        "visible.txt": "content",
+    }));
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), true),
+                (rel_path(".hidden_dir"), true),
+                (rel_path(".hidden_dir/nested.rs"), true),
+                (rel_path(".hidden_file"), true),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), false),
+                (rel_path("logs/debug.log"), false),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.hidden_files = Some(vec!["**/*.log".to_string()]);
+            });
+        });
+    });
+    tree.flush_fs_events(cx).await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_hidden))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path(".hidden_dir"), false),
+                (rel_path(".hidden_dir/nested.rs"), false),
+                (rel_path(".hidden_file"), false),
+                (rel_path("logs"), false),
+                (rel_path("logs/app.log"), true),
+                (rel_path("logs/debug.log"), true),
+                (rel_path("src"), false),
+                (rel_path("src/visible.rs"), false),
+                (rel_path("visible.txt"), false),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -1106,6 +1202,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1217,6 +1314,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1255,6 +1353,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         true,
         fs,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1323,6 +1422,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         true,
         fs_fake,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1364,6 +1464,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         true,
         fs_real,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1449,6 +1550,177 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
+    // Tests the behavior of our worktree refresh when a file in a gitignored directory
+    // is created.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored_dir\n",
+            "ignored_dir": {
+                "existing_file.txt": "existing content",
+                "another_file.txt": "another content",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let ignored_dir = tree.entry_for_path(rel_path("ignored_dir")).unwrap();
+        assert!(ignored_dir.is_ignored);
+        assert_eq!(ignored_dir.kind, EntryKind::UnloadedDir);
+    });
+
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("ignored_dir/existing_file.txt"), cx)
+    })
+    .await
+    .unwrap();
+
+    tree.read_with(cx, |tree, _| {
+        let ignored_dir = tree.entry_for_path(rel_path("ignored_dir")).unwrap();
+        assert!(ignored_dir.is_ignored);
+        assert_eq!(ignored_dir.kind, EntryKind::Dir);
+
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/existing_file.txt"))
+                .is_some()
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/another_file.txt"))
+                .is_some()
+        );
+    });
+
+    let entry = tree
+        .update(cx, |tree, cx| {
+            tree.create_entry(rel_path("ignored_dir/new_file.txt").into(), false, None, cx)
+        })
+        .await
+        .unwrap();
+    assert!(entry.into_included().is_some());
+
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        let ignored_dir = tree.entry_for_path(rel_path("ignored_dir")).unwrap();
+        assert!(ignored_dir.is_ignored);
+        assert_eq!(
+            ignored_dir.kind,
+            EntryKind::Dir,
+            "ignored_dir should still be loaded, not UnloadedDir"
+        );
+
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/existing_file.txt"))
+                .is_some(),
+            "existing_file.txt should still be visible"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/another_file.txt"))
+                .is_some(),
+            "another_file.txt should still be visible"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/new_file.txt"))
+                .is_some(),
+            "new_file.txt should be visible"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAppContext) {
+    // Tests the behavior of our worktree refresh when a directory modification for a gitignored directory
+    // is triggered.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored_dir\n",
+            "ignored_dir": {
+                "file1.txt": "content1",
+                "file2.txt": "content2",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load a file to expand the ignored directory
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("ignored_dir/file1.txt"), cx)
+    })
+    .await
+    .unwrap();
+
+    tree.read_with(cx, |tree, _| {
+        let ignored_dir = tree.entry_for_path(rel_path("ignored_dir")).unwrap();
+        assert_eq!(ignored_dir.kind, EntryKind::Dir);
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file1.txt"))
+                .is_some()
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file2.txt"))
+                .is_some()
+        );
+    });
+
+    fs.emit_fs_event("/root/ignored_dir", Some(fs::PathEventKind::Changed));
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        let ignored_dir = tree.entry_for_path(rel_path("ignored_dir")).unwrap();
+        assert_eq!(
+            ignored_dir.kind,
+            EntryKind::Dir,
+            "ignored_dir should still be loaded (Dir), not UnloadedDir"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file1.txt"))
+                .is_some(),
+            "file1.txt should still be visible after directory fs event"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file2.txt"))
+                .is_some(),
+            "file2.txt should still be visible after directory fs event"
+        );
+    });
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_random_worktree_operations_during_initial_scan(
     cx: &mut TestAppContext,
@@ -1475,6 +1747,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1537,7 +1810,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         assert_eq!(
             updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
             final_snapshot.entries(true, 0).collect::<Vec<_>>(),
-            "wrong updates after snapshot {i}: {snapshot:#?} {updates:#?}",
+            "wrong updates after snapshot {i}: {updates:#?}",
         );
     }
 }
@@ -1565,6 +1838,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1637,6 +1911,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             true,
             fs.clone(),
             Default::default(),
+            true,
             &mut cx.to_async(),
         )
         .await
@@ -1903,6 +2178,7 @@ async fn randomly_mutate_fs(
                 fs::RenameOptions {
                     overwrite: true,
                     ignore_if_exists: true,
+                    create_parents: false,
                 },
             )
             .await
@@ -1949,6 +2225,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1981,6 +2258,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         true,
         fs.clone(),
         Arc::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -2058,6 +2336,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         true,
         fs.clone(),
         Arc::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -2183,6 +2462,5 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        WorktreeSettings::register(cx);
     });
 }

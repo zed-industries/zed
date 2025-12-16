@@ -62,7 +62,7 @@ impl CloudApiClient {
         let request = self.build_request(
             Request::builder().method(Method::GET).uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/users/me", &[])?
+                    .build_zed_cloud_url("/client/users/me")?
                     .as_ref(),
             ),
             AsyncBody::default(),
@@ -89,7 +89,7 @@ impl CloudApiClient {
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
         let mut connect_url = self
             .http_client
-            .build_zed_cloud_url("/client/users/connect", &[])?;
+            .build_zed_cloud_url("/client/users/connect")?;
         connect_url
             .set_scheme(match connect_url.scheme() {
                 "https" => "wss",
@@ -123,7 +123,7 @@ impl CloudApiClient {
             .method(Method::POST)
             .uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/llm_tokens", &[])?
+                    .build_zed_cloud_url("/client/llm_tokens")?
                     .as_ref(),
             )
             .when_some(system_id, |builder, system_id| {
@@ -154,7 +154,7 @@ impl CloudApiClient {
         let request = build_request(
             Request::builder().method(Method::GET).uri(
                 self.http_client
-                    .build_zed_cloud_url("/client/users/me", &[])?
+                    .build_zed_cloud_url("/client/users/me")?
                     .as_ref(),
             ),
             AsyncBody::default(),

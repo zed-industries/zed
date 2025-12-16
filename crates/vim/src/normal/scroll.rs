@@ -294,11 +294,10 @@ mod test {
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let (line_height, visible_line_count) = cx.editor(|editor, window, _cx| {
+        let (line_height, visible_line_count) = cx.update_editor(|editor, window, cx| {
             (
                 editor
-                    .style()
-                    .unwrap()
+                    .style(cx)
                     .text
                     .line_height_in_pixels(window.rem_size()),
                 editor.visible_line_count().unwrap(),
@@ -363,7 +362,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(6, 0)..Point::new(6, 0)
             )
         });
@@ -380,7 +382,10 @@ mod test {
                 point(0., 3.0)
             );
             assert_eq!(
-                editor.selections.newest(cx).range(),
+                editor
+                    .selections
+                    .newest(&editor.display_snapshot(cx))
+                    .range(),
                 Point::new(0, 0)..Point::new(6, 1)
             )
         });

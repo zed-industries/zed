@@ -144,6 +144,19 @@ impl TextSize {
             Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx)),
         }
     }
+
+    pub fn pixels(self, cx: &App) -> Pixels {
+        let theme_settings = ThemeSettings::get_global(cx);
+
+        match self {
+            Self::Large => px(16.),
+            Self::Default => px(14.),
+            Self::Small => px(12.),
+            Self::XSmall => px(10.),
+            Self::Ui => theme_settings.ui_font_size(cx),
+            Self::Editor => theme_settings.buffer_font_size(cx),
+        }
+    }
 }
 
 /// The size of a [`Headline`] element

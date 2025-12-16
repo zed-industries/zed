@@ -252,6 +252,7 @@ pub struct Style {
     pub box_shadow: Vec<BoxShadow>,
 
     /// The text style of this element
+    #[refineable]
     pub text: TextStyleRefinement,
 
     /// The mouse cursor style shown when the mouse pointer is over an element.
@@ -403,13 +404,7 @@ impl Default for TextStyle {
         TextStyle {
             color: black(),
             // todo(linux) make this configurable or choose better default
-            font_family: if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                "FreeMono".into()
-            } else if cfg!(target_os = "windows") {
-                "Segoe UI".into()
-            } else {
-                "Helvetica".into()
-            },
+            font_family: ".SystemUIFont".into(),
             font_features: FontFeatures::default(),
             font_fallbacks: None,
             font_size: rems(1.).into(),
@@ -1473,6 +1468,23 @@ mod tests {
                     }
                 )
             ]
+        );
+    }
+
+    #[perf]
+    fn test_text_style_refinement() {
+        let mut style = Style::default();
+        style.refine(&StyleRefinement::default().text_size(px(20.0)));
+        style.refine(&StyleRefinement::default().font_weight(FontWeight::SEMIBOLD));
+
+        assert_eq!(
+            Some(AbsoluteLength::from(px(20.0))),
+            style.text_style().unwrap().font_size
+        );
+
+        assert_eq!(
+            Some(FontWeight::SEMIBOLD),
+            style.text_style().unwrap().font_weight
         );
     }
 }
