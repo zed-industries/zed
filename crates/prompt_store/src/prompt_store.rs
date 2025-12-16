@@ -55,7 +55,6 @@ pub struct PromptMetadata {
 #[serde(tag = "kind")]
 pub enum PromptId {
     User { uuid: UserPromptId },
-    EditWorkflow,
     CommitMessage,
 }
 
@@ -74,20 +73,19 @@ impl PromptId {
     pub fn is_built_in(&self) -> bool {
         match self {
             Self::User { .. } => false,
-            Self::EditWorkflow | Self::CommitMessage => true,
+            Self::CommitMessage => true,
         }
     }
 
     pub fn can_edit(&self) -> bool {
         match self {
             Self::User { .. } | Self::CommitMessage => true,
-            Self::EditWorkflow => false,
         }
     }
 
     pub fn default_content(&self) -> Option<&'static str> {
         match self {
-            Self::User { .. } | Self::EditWorkflow => None,
+            Self::User { .. } => None,
             Self::CommitMessage => Some(include_str!("../../git_ui/src/commit_message_prompt.txt")),
         }
     }
@@ -119,7 +117,6 @@ impl std::fmt::Display for PromptId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
-            PromptId::EditWorkflow => write!(f, "Edit workflow"),
             PromptId::CommitMessage => write!(f, "Commit message"),
         }
     }
@@ -201,11 +198,6 @@ impl PromptStore {
             let mut txn = db_env.write_txn()?;
             let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
             let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
-
-            // Remove edit workflow prompt, as we decided to opt into it using
-            // a slash command instead.
-            metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
-            bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
 
             // Insert default commit message prompt if not present
             if metadata.get(&txn, &PromptId::CommitMessage)?.is_none() {
