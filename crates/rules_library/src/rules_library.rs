@@ -44,14 +44,13 @@ actions!(
         /// Duplicates the selected rule.
         DuplicateRule,
         /// Toggles whether the selected rule is a default rule.
-        ToggleDefaultRule
+        ToggleDefaultRule,
+        /// Restores a built-in rule to its default content.
+        RestoreDefaultContent
     ]
 );
 
-const BUILT_IN_TOOLTIP_TEXT: &str = concat!(
-    "This rule supports special functionality.\n",
-    "It's read-only, but you can remove it from your default rules."
-);
+const BUILT_IN_TOOLTIP_TEXT: &str = "This rule supports special functionality.";
 
 pub trait InlineAssistDelegate {
     fn assist(
@@ -267,40 +266,39 @@ impl PickerDelegate for RulePickerDelegate {
 
         cx.spawn_in(window, async move |this, cx| {
             let (filtered_entries, selected_index) = cx
-            .background_spawn(async move {
-                let matches = search.await;
+                .background_spawn(async move {
+                    let matches = search.await;
 
-                let (built_in_rules, user_rules): (Vec<_>, Vec<_>) =
-                    matches.into_iter().partition(|rule| rule.id.is_built_in());
-                let (default_rules, other_rules): (Vec<_>, Vec<_>) =
-                    user_rules.into_iter().partition(|rule| rule.default);
+                    let (built_in_rules, user_rules): (Vec<_>, Vec<_>) =
+                        matches.into_iter().partition(|rule| rule.id.is_built_in());
+                    let (default_rules, other_rules): (Vec<_>, Vec<_>) =
+                        user_rules.into_iter().partition(|rule| rule.default);
 
-                let mut filtered_entries = Vec::new();
+                    let mut filtered_entries = Vec::new();
 
-                if !built_in_rules.is_empty() {
-                    filtered_entries
-                        .push(RulePickerEntry::Header("Built-in Rules".into()));
+                    if !built_in_rules.is_empty() {
+                        filtered_entries.push(RulePickerEntry::Header("Built-in Rules".into()));
 
-                    for rule in built_in_rules {
-                        filtered_entries.push(RulePickerEntry::Rule(rule));
+                        for rule in built_in_rules {
+                            filtered_entries.push(RulePickerEntry::Rule(rule));
+                        }
+
+                        filtered_entries.push(RulePickerEntry::Separator);
                     }
 
-                    filtered_entries.push(RulePickerEntry::Separator);
-                }
+                    if !default_rules.is_empty() {
+                        filtered_entries.push(RulePickerEntry::Header("Default Rules".into()));
 
-                if !default_rules.is_empty() {
-                    filtered_entries.push(RulePickerEntry::Header("Default Rules".into()));
+                        for rule in default_rules {
+                            filtered_entries.push(RulePickerEntry::Rule(rule));
+                        }
 
-                    for rule in default_rules {
-                        filtered_entries.push(RulePickerEntry::Rule(rule));
+                        filtered_entries.push(RulePickerEntry::Separator);
                     }
 
-                    filtered_entries.push(RulePickerEntry::Separator);
-                }
-
-                for rule in other_rules {
-                    filtered_entries.push(RulePickerEntry::Rule(rule));
-                }
+                    for rule in other_rules {
+                        filtered_entries.push(RulePickerEntry::Rule(rule));
+                    }
 
                     let selected_index = prev_prompt_id
                         .and_then(|prev_prompt_id| {
@@ -394,7 +392,7 @@ impl PickerDelegate for RulePickerDelegate {
                                 .truncate()
                                 .mr_10(),
                         )
-                        .end_slot::<IconButton>(default.then(|| {
+                        .end_slot::<IconButton>((default && !prompt_id.is_built_in()).then(|| {
                             IconButton::new("toggle-default-rule", IconName::Paperclip)
                                 .toggle_state(true)
                                 .icon_color(Color::Accent)
@@ -406,7 +404,16 @@ impl PickerDelegate for RulePickerDelegate {
                         }))
                         .end_hover_slot(
                             h_flex()
-                                .child(if prompt_id.is_built_in() {
+                                .child(if prompt_id.can_delete() {
+                                    IconButton::new("delete-rule", IconName::Trash)
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Delete Rule"))
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            cx.emit(RulePickerEvent::Deleted { prompt_id })
+                                        }))
+                                        .into_any_element()
+                                } else {
                                     div()
                                         .id("built-in-rule")
                                         .child(Icon::new(IconName::FileLock).color(Color::Muted))
@@ -419,46 +426,41 @@ impl PickerDelegate for RulePickerDelegate {
                                             )
                                         })
                                         .into_any()
-                                } else {
-                                    IconButton::new("delete-rule", IconName::Trash)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Delete Rule"))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(RulePickerEvent::Deleted { prompt_id })
-                                        }))
-                                        .into_any_element()
                                 })
-                                .child(
-                                    IconButton::new("toggle-default-rule", IconName::Plus)
-                                        .selected_icon(IconName::Dash)
-                                        .toggle_state(default)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(if default {
-                                            Color::Accent
-                                        } else {
-                                            Color::Muted
-                                        })
-                                        .map(|this| {
-                                            if default {
-                                                this.tooltip(Tooltip::text(
-                                                    "Remove from Default Rules",
-                                                ))
+                                .when(!prompt_id.is_built_in(), |this| {
+                                    this.child(
+                                        IconButton::new("toggle-default-rule", IconName::Plus)
+                                            .selected_icon(IconName::Dash)
+                                            .toggle_state(default)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(if default {
+                                                Color::Accent
                                             } else {
-                                                this.tooltip(move |_window, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Add to Default Rules",
-                                                        None,
-                                                        "Always included in every thread.",
-                                                        cx,
-                                                    )
+                                                Color::Muted
+                                            })
+                                            .map(|this| {
+                                                if default {
+                                                    this.tooltip(Tooltip::text(
+                                                        "Remove from Default Rules",
+                                                    ))
+                                                } else {
+                                                    this.tooltip(move |_window, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Add to Default Rules",
+                                                            None,
+                                                            "Always included in every thread.",
+                                                            cx,
+                                                        )
+                                                    })
+                                                }
+                                            })
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.emit(RulePickerEvent::ToggledDefault {
+                                                    prompt_id,
                                                 })
-                                            }
-                                        })
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
-                                        })),
-                                ),
+                                            })),
+                                    )
+                                }),
                         )
                         .into_any_element(),
                 )
@@ -591,7 +593,7 @@ impl RulesLibrary {
     pub fn save_rule(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
-        if prompt_id.is_built_in() {
+        if !prompt_id.can_edit() {
             return;
         }
 
@@ -679,6 +681,33 @@ impl RulesLibrary {
         }
     }
 
+    pub fn restore_default_content_for_active_rule(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active_rule_id) = self.active_rule_id {
+            self.restore_default_content(active_rule_id, window, cx);
+        }
+    }
+
+    pub fn restore_default_content(
+        &mut self,
+        prompt_id: PromptId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(default_content) = prompt_id.default_content() else {
+            return;
+        };
+
+        if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
+            rule_editor.body_editor.update(cx, |editor, cx| {
+                editor.set_text(default_content, window, cx);
+            });
+        }
+    }
+
     pub fn toggle_default_for_rule(
         &mut self,
         prompt_id: PromptId,
@@ -724,7 +753,7 @@ impl RulesLibrary {
                             let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", window, cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
-                            if prompt_id.is_built_in() {
+                            if !prompt_id.can_rename() {
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
                             }
@@ -739,7 +768,7 @@ impl RulesLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, window, cx);
-                            if prompt_id.is_built_in() {
+                            if !prompt_id.can_edit() {
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
                             }
@@ -1276,7 +1305,21 @@ impl RulesLibrary {
                                                     .color(Color::Muted),
                                                 )
                                         }))
-                                        .child(if prompt_id.is_built_in() {
+                                        .child(if prompt_id.can_delete() {
+                                            IconButton::new("delete-rule", IconName::Trash)
+                                                .tooltip(move |_window, cx| {
+                                                    Tooltip::for_action(
+                                                        "Delete Rule",
+                                                        &DeleteRule,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(|_, window, cx| {
+                                                    window
+                                                        .dispatch_action(Box::new(DeleteRule), cx);
+                                                })
+                                                .into_any_element()
+                                        } else {
                                             div()
                                                 .id("built-in-rule")
                                                 .child(
@@ -1292,20 +1335,27 @@ impl RulesLibrary {
                                                     )
                                                 })
                                                 .into_any()
-                                        } else {
-                                            IconButton::new("delete-rule", IconName::Trash)
+                                        })
+                                        .when(prompt_id.default_content().is_some(), |this| {
+                                            this.child(
+                                                IconButton::new(
+                                                    "restore-default",
+                                                    IconName::RotateCcw,
+                                                )
                                                 .tooltip(move |_window, cx| {
                                                     Tooltip::for_action(
-                                                        "Delete Rule",
-                                                        &DeleteRule,
+                                                        "Restore Default Content",
+                                                        &RestoreDefaultContent,
                                                         cx,
                                                     )
                                                 })
                                                 .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(Box::new(DeleteRule), cx);
-                                                })
-                                                .into_any_element()
+                                                    window.dispatch_action(
+                                                        Box::new(RestoreDefaultContent),
+                                                        cx,
+                                                    );
+                                                }),
+                                            )
                                         })
                                         .child(
                                             IconButton::new("duplicate-rule", IconName::BookCopy)
@@ -1323,42 +1373,42 @@ impl RulesLibrary {
                                                     );
                                                 }),
                                         )
-                                        .child(
-                                            IconButton::new(
-                                                "toggle-default-rule",
-                                                IconName::Paperclip,
-                                            )
-                                            .toggle_state(rule_metadata.default)
-                                            .icon_color(if rule_metadata.default {
-                                                Color::Accent
-                                            } else {
-                                                Color::Muted
-                                            })
-                                            .map(|this| {
-                                                if rule_metadata.default {
-                                                    this.tooltip(Tooltip::text(
-                                                        "Remove from Default Rules",
-                                                    ))
+                                        .when(!prompt_id.is_built_in(), |this| {
+                                            this.child(
+                                                IconButton::new(
+                                                    "toggle-default-rule",
+                                                    IconName::Paperclip,
+                                                )
+                                                .toggle_state(rule_metadata.default)
+                                                .icon_color(if rule_metadata.default {
+                                                    Color::Accent
                                                 } else {
-                                                    this.tooltip(move |_window, cx| {
-                                                        Tooltip::with_meta(
-                                                            "Add to Default Rules",
-                                                            None,
-                                                            "Always included in every thread.",
-                                                            cx,
-                                                        )
-                                                    })
-                                                }
-                                            })
-                                            .on_click(
-                                                |_, window, cx| {
+                                                    Color::Muted
+                                                })
+                                                .map(|this| {
+                                                    if rule_metadata.default {
+                                                        this.tooltip(Tooltip::text(
+                                                            "Remove from Default Rules",
+                                                        ))
+                                                    } else {
+                                                        this.tooltip(move |_window, cx| {
+                                                            Tooltip::with_meta(
+                                                                "Add to Default Rules",
+                                                                None,
+                                                                "Always included in every thread.",
+                                                                cx,
+                                                            )
+                                                        })
+                                                    }
+                                                })
+                                                .on_click(|_, window, cx| {
                                                     window.dispatch_action(
                                                         Box::new(ToggleDefaultRule),
                                                         cx,
                                                     );
-                                                },
-                                            ),
-                                        ),
+                                                }),
+                                            )
+                                        }),
                                 ),
                         )
                         .child(
@@ -1402,6 +1452,9 @@ impl Render for RulesLibrary {
                 }))
                 .on_action(cx.listener(|this, &ToggleDefaultRule, window, cx| {
                     this.toggle_default_for_active_rule(window, cx)
+                }))
+                .on_action(cx.listener(|this, &RestoreDefaultContent, window, cx| {
+                    this.restore_default_content_for_active_rule(window, cx)
                 }))
                 .size_full()
                 .overflow_hidden()

@@ -64,14 +64,45 @@ impl PromptId {
         UserPromptId::new().into()
     }
 
-    pub fn is_built_in(&self) -> bool {
-        !matches!(self, PromptId::User { .. })
-    }
-
     pub fn user_id(&self) -> Option<UserPromptId> {
         match self {
-            PromptId::User { uuid } => Some(*uuid),
+            Self::User { uuid } => Some(*uuid),
             _ => None,
+        }
+    }
+
+    pub fn is_built_in(&self) -> bool {
+        match self {
+            Self::User { .. } => false,
+            Self::EditWorkflow | Self::CommitMessage => true,
+        }
+    }
+
+    pub fn can_edit(&self) -> bool {
+        match self {
+            Self::User { .. } | Self::CommitMessage => true,
+            Self::EditWorkflow => false,
+        }
+    }
+
+    pub fn can_delete(&self) -> bool {
+        match self {
+            Self::User { .. } => true,
+            Self::EditWorkflow | Self::CommitMessage => false,
+        }
+    }
+
+    pub fn can_rename(&self) -> bool {
+        match self {
+            Self::User { .. } => true,
+            Self::EditWorkflow | Self::CommitMessage => false,
+        }
+    }
+
+    pub fn default_content(&self) -> Option<&'static str> {
+        match self {
+            Self::User { .. } | Self::EditWorkflow => None,
+            Self::CommitMessage => Some(include_str!("../../git_ui/src/commit_message_prompt.txt")),
         }
     }
 }
@@ -415,8 +446,8 @@ impl PromptStore {
         body: Rope,
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
-        if id.is_built_in() {
-            return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
+        if !id.can_edit() {
+            return Task::ready(Err(anyhow!("this prompt cannot be edited")));
         }
 
         let prompt_metadata = PromptMetadata {
@@ -458,7 +489,7 @@ impl PromptStore {
     ) -> Task<Result<()>> {
         let mut cache = self.metadata_cache.write();
 
-        if id.is_built_in() {
+        if !id.can_rename() {
             title = cache
                 .metadata_by_id
                 .get(&id)
