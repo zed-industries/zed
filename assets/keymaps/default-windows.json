@@ -43,6 +43,7 @@
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
       "shift-alt-l": "lsp_tool::ToggleMenu",
       "ctrl-shift-alt-c": "editor::DisplayCursorNames",
+      "ctrl-shift-alt-s": "workspace::ToggleWorktreeSecurity",
     },
   },
   {

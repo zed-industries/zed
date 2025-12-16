@@ -12421,6 +12421,7 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
+ "db",
  "extension",
  "fancy-regex",
  "fs",
