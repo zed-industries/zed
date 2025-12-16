@@ -487,7 +487,6 @@ where
 struct ActionDef {
     name: String,
     human_name: String,
-    #[serde(rename = "aliases")]
     deprecated_aliases: Vec<String>,
     #[serde(rename = "documentation")]
     docs: Option<String>,

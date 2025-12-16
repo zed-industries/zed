@@ -1502,14 +1502,14 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
-        aliases: &'static [&'static str],
+        deprecated_aliases: &'static [&'static str],
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.deprecated_aliases,
+            deprecated_aliases: action.deprecated_aliases,
             documentation: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
