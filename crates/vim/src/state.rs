@@ -217,6 +217,7 @@ pub struct VimGlobals {
     pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
     pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
@@ -549,6 +550,10 @@ impl MarksState {
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
+        if self.is_global_mark(&name) && self.global_marks.contains_key(&name) {
+            self.delete_mark(name.clone(), multibuffer, cx);
+        }
+
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
                 .entry(multibuffer.entity_id())
@@ -572,7 +577,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name,
+            name.clone(),
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -580,6 +585,10 @@ impl MarksState {
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
             self.watch_buffer(MarkLocation::Path(abs_path.clone()), &buffer, cx)
+        }
+        if self.is_global_mark(&name) {
+            self.global_marks
+                .insert(name, MarkLocation::Path(abs_path.clone()));
         }
         self.serialize_buffer_marks(abs_path, &buffer, cx)
     }
@@ -605,7 +614,7 @@ impl MarksState {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
+                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -898,6 +907,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -924,6 +934,7 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
                 self.stop_recording_after_next_action = false;
             }
         }

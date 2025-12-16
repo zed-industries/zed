@@ -87,7 +87,8 @@ use language::{
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
-    LanguageServerId, LanguageServerName, LanguageServerSelector, MessageActionItem,
+    LanguageServerBinary, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
@@ -111,10 +112,11 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
+    ffi::OsString,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
-    str,
+    str::{self, FromStr},
     sync::Arc,
     time::Duration,
 };
@@ -925,7 +927,7 @@ impl DirectoryLister {
             .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
-                s.push_str(path_style.separator());
+                s.push_str(path_style.primary_separator());
                 s
             })
             .unwrap_or_else(|| {
@@ -964,6 +966,14 @@ impl DirectoryLister {
             }
         }
     }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        match self {
+            Self::Local(project, ..) | Self::Project(project, ..) => {
+                project.read(cx).path_style(cx)
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -982,6 +992,8 @@ pub enum LspPullDiagnostics {
         server_id: LanguageServerId,
         /// URI of the resource,
         uri: lsp::Uri,
+        /// The ID provided by the dynamic registration that produced diagnostics.
+        registration_id: Option<SharedString>,
         /// The diagnostics produced by this language server.
         diagnostics: PulledDiagnostics,
     },
@@ -992,10 +1004,10 @@ pub enum PulledDiagnostics {
     Unchanged {
         /// An ID the current pulled batch for this file.
         /// If given, can be used to query workspace diagnostics partially.
-        result_id: String,
+        result_id: SharedString,
     },
     Changed {
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         diagnostics: Vec<lsp::Diagnostic>,
     },
 }
@@ -1244,9 +1256,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
-            let global_snippets_dir = paths::snippets_dir().to_owned();
-            let snippets =
-                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let (remote_proto, path_style) =
                 remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
@@ -2620,6 +2630,12 @@ impl Project {
         !self.is_local()
     }
 
+    pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
+        self.worktree_store.update(cx, |worktree_store, _cx| {
+            worktree_store.disable_scanner();
+        });
+    }
+
     #[inline]
     pub fn create_buffer(
         &mut self,
@@ -3111,17 +3127,45 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
-                        if let Some(capabilities) = update
-                            .capabilities
-                            .as_ref()
-                            .and_then(|capabilities| serde_json::from_str(capabilities).ok())
-                        {
-                            self.lsp_store.update(cx, |lsp_store, _| {
+                        self.lsp_store.update(cx, |lsp_store, _| {
+                            if let Some(capabilities) = update
+                                .capabilities
+                                .as_ref()
+                                .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                            {
                                 lsp_store
                                     .lsp_server_capabilities
                                     .insert(*language_server_id, capabilities);
-                            });
-                        }
+                            }
+
+                            if let Some(language_server_status) = lsp_store
+                                .language_server_statuses
+                                .get_mut(language_server_id)
+                            {
+                                if let Some(binary) = &update.binary {
+                                    language_server_status.binary = Some(LanguageServerBinary {
+                                        path: PathBuf::from(&binary.path),
+                                        arguments: binary
+                                            .arguments
+                                            .iter()
+                                            .map(OsString::from)
+                                            .collect(),
+                                        env: None,
+                                    });
+                                }
+
+                                language_server_status.configuration = update
+                                    .configuration
+                                    .as_ref()
+                                    .and_then(|config_str| serde_json::from_str(config_str).ok());
+
+                                language_server_status.workspace_folders = update
+                                    .workspace_folders
+                                    .iter()
+                                    .filter_map(|uri_str| lsp::Uri::from_str(uri_str).ok())
+                                    .collect();
+                            }
+                        });
                     }
                     proto::update_language_server::Variant::RegisteredForBuffer(update) => {
                         if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
@@ -3974,7 +4018,8 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
+        let captures =
+            snapshot.debug_variables_query(Anchor::min_for_buffer(snapshot.remote_id())..range.end);
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)
@@ -5153,7 +5198,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
+            this.running_language_servers_for_local_buffer(buffer, cx)
                 .next()
                 .is_some()
         })

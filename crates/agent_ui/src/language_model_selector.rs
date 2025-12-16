@@ -2,14 +2,19 @@ use std::{cmp::Reverse, sync::Arc};
 
 use collections::IndexMap;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
+use gpui::{
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
+};
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
     LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::prelude::*;
+use zed_actions::agent::OpenSettings;
+
+use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -20,6 +25,7 @@ pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
     popover_styles: bool,
+    focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut Context<LanguageModelSelector>,
 ) -> LanguageModelSelector {
@@ -27,6 +33,7 @@ pub fn language_model_selector(
         get_active_model,
         on_model_changed,
         popover_styles,
+        focus_handle,
         window,
         cx,
     );
@@ -88,6 +95,7 @@ pub struct LanguageModelPickerDelegate {
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
     popover_styles: bool,
+    focus_handle: FocusHandle,
 }
 
 impl LanguageModelPickerDelegate {
@@ -95,6 +103,7 @@ impl LanguageModelPickerDelegate {
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
         popover_styles: bool,
+        focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
@@ -128,6 +137,7 @@ impl LanguageModelPickerDelegate {
                 },
             )],
             popover_styles,
+            focus_handle,
         }
     }
 
@@ -451,28 +461,14 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn render_match(
         &self,
         ix: usize,
-        selected: bool,
+        is_focused: bool,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
-            LanguageModelPickerEntry::Separator(title) => Some(
-                div()
-                    .px_2()
-                    .pb_1()
-                    .when(ix > 1, |this| {
-                        this.mt_1()
-                            .pt_2()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                    })
-                    .child(
-                        Label::new(title)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .into_any_element(),
-            ),
+            LanguageModelPickerEntry::Separator(title) => {
+                Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
+            }
             LanguageModelPickerEntry::Model(model_info) => {
                 let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
@@ -481,35 +477,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
-                let model_icon_color = if is_selected {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                };
-
                 Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .toggle_state(selected)
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(model_info.icon)
-                                        .color(model_icon_color)
-                                        .size(IconSize::Small),
-                                )
-                                .child(Label::new(model_info.model.name().0).truncate()),
-                        )
-                        .end_slot(div().pr_3().when(is_selected, |this| {
-                            this.child(
-                                Icon::new(IconName::Check)
-                                    .color(Color::Accent)
-                                    .size(IconSize::Small),
-                            )
-                        }))
+                    ModelSelectorListItem::new(ix, model_info.model.name().0)
+                        .is_focused(is_focused)
+                        .is_selected(is_selected)
+                        .icon(model_info.icon)
                         .into_any_element(),
                 )
             }
@@ -519,35 +491,15 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn render_footer(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         if !self.popover_styles {
             return None;
         }
 
-        Some(
-            h_flex()
-                .w_full()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1()
-                .gap_4()
-                .justify_between()
-                .child(
-                    Button::new("configure", "Configure")
-                        .icon(IconName::Settings)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                zed_actions::agent::OpenSettings.boxed_clone(),
-                                cx,
-                            );
-                        }),
-                )
-                .into_any(),
-        )
+        let focus_handle = self.focus_handle.clone();
+
+        Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
     }
 }
 

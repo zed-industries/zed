@@ -584,10 +584,11 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 **Options**
 
-There are two options to choose from:
+There are three options to choose from:
 
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
+3. `disabled`: No shell environment will be loaded automatically; direnv must be invoked manually (e.g. with `direnv exec`) to be used.
 
 ## Double Click In Multibuffer
 
@@ -2860,10 +2861,24 @@ Configuration object for defining settings profiles. Example:
 ```json [settings]
 "preview_tabs": {
   "enabled": true,
+  "enable_preview_from_project_panel": true,
   "enable_preview_from_file_finder": false,
-  "enable_preview_from_code_navigation": false,
+  "enable_preview_from_multibuffer": true,
+  "enable_preview_multibuffer_from_code_navigation": false,
+  "enable_preview_file_from_code_navigation": true,
+  "enable_keep_preview_on_code_navigation": false,
 }
 ```
+
+### Enable preview from project panel
+
+- Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
+- Setting: `enable_preview_from_project_panel`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Enable preview from file finder
 
@@ -2875,10 +2890,40 @@ Configuration object for defining settings profiles. Example:
 
 `boolean` values
 
-### Enable preview from code navigation
+### Enable preview from multibuffer
 
-- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-- Setting: `enable_preview_from_code_navigation`
+- Description: Determines whether to open files in preview mode when opened from a multibuffer.
+- Setting: `enable_preview_from_multibuffer`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable preview multibuffer from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a multibuffer.
+- Setting: `enable_preview_multibuffer_from_code_navigation`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Enable preview file from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a single file.
+- Setting: `enable_preview_file_from_code_navigation`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable keep preview on code navigation
+
+- Description: Determines whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
+- Setting: `enable_keep_preview_on_code_navigation`
 - Default: `false`
 
 **Options**
@@ -3097,7 +3142,15 @@ List of strings containing any combination of:
 
 ```json [settings]
 {
-  "restore_on_startup": "none"
+  "restore_on_startup": "empty_tab"
+}
+```
+
+4. Always start with the welcome launchpad:
+
+```json [settings]
+{
+  "restore_on_startup": "launchpad"
 }
 ```
 
@@ -4071,7 +4124,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Will Fallback to the first project directory strategy if unsuccessful
+1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4081,7 +4134,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Will fallback to using this platform's home directory.
+2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4091,7 +4144,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory (if we can find it)
+3. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4264,6 +4317,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "show_project_items": true,
   "show_onboarding_banner": true,
   "show_user_picture": true,
+  "show_user_menu": true,
   "show_sign_in": true,
   "show_menus": false
 }
@@ -4276,6 +4330,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
+- `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 
@@ -4692,6 +4747,34 @@ See the [debugger page](./debugger.md) for more information about debugging supp
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+
+## Git Hosting Providers
+
+- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
+- Setting: `git_hosting_providers`
+- Default: `[]`
+
+**Options**
+
+Each entry accepts:
+
+- `provider`: One of `github`, `gitlab`, or `bitbucket`
+- `name`: Display name for the instance
+- `base_url`: Base URL, e.g. `https://git.example.corp`
+
+You can define these in user or project settings; project settings are merged on top of user settings.
+
+```json [settings]
+{
+  "git_hosting_providers": [
+    {
+      "provider": "github",
+      "name": "BigCorp GitHub",
+      "base_url": "https://git.example.corp"
+    }
+  ]
+}
+```
 
 ## Outline Panel
 

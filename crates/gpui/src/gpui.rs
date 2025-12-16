@@ -31,6 +31,8 @@ mod path_builder;
 mod platform;
 pub mod prelude;
 mod profiler;
+#[cfg(target_os = "linux")]
+mod queue;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -89,16 +91,20 @@ pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
+#[cfg(target_os = "linux")]
+pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;
 pub use shared_uri::*;
 pub use smol::Timer;
+use std::{any::Any, future::Future};
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
 pub(crate) use tab_stop::*;
+use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
@@ -108,9 +114,6 @@ pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
-
-use std::{any::Any, future::Future};
-use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.

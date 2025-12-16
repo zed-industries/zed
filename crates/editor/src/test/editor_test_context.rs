@@ -283,8 +283,7 @@ impl EditorTestContext {
                 .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
-                .style()
-                .unwrap()
+                .style(cx)
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
@@ -490,11 +489,7 @@ impl EditorTestContext {
             );
             assert_eq!(
                 multibuffer_snapshot
-                    .text_for_range(Anchor::range_in_buffer(
-                        excerpt_id,
-                        snapshot.remote_id(),
-                        range.context.clone()
-                    ))
+                    .text_for_range(Anchor::range_in_buffer(excerpt_id, range.context.clone()))
                     .collect::<String>(),
                 expected_text,
                 "{}",
@@ -675,11 +670,7 @@ impl std::fmt::Display for FormatMultiBufferAsMarkedText {
             }
 
             let mut text = multibuffer_snapshot
-                .text_for_range(Anchor::range_in_buffer(
-                    *excerpt_id,
-                    snapshot.remote_id(),
-                    range.context.clone(),
-                ))
+                .text_for_range(Anchor::range_in_buffer(*excerpt_id, range.context.clone()))
                 .collect::<String>();
 
             let selections = selections

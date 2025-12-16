@@ -15,6 +15,7 @@ use util::ResultExt as _;
 use util::{
     asset_str,
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
+    schemars::AllowTrailingCommas,
 };
 
 use crate::SettingsAssets;
@@ -302,19 +303,21 @@ impl KeymapFile {
         if errors.is_empty() {
             KeymapFileLoadResult::Success { key_bindings }
         } else {
-            let mut error_message = "Errors in user keymap file.\n".to_owned();
+            let mut error_message = "Errors in user keymap file.".to_owned();
+
             for (context, section_errors) in errors {
                 if context.is_empty() {
-                    let _ = write!(error_message, "\n\nIn section without context predicate:");
+                    let _ = write!(error_message, "\nIn section without context predicate:");
                 } else {
                     let _ = write!(
                         error_message,
-                        "\n\nIn section with {}:",
+                        "\nIn section with {}:",
                         MarkdownInlineCode(&format!("context = \"{}\"", context))
                     );
                 }
                 let _ = write!(error_message, "{section_errors}");
             }
+
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message: MarkdownString(error_message),
@@ -451,7 +454,9 @@ impl KeymapFile {
     /// Creates a JSON schema generator, suitable for generating json schemas
     /// for actions
     pub fn action_schema_generator() -> schemars::SchemaGenerator {
-        schemars::generate::SchemaSettings::draft2019_09().into_generator()
+        schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(AllowTrailingCommas)
+            .into_generator()
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {

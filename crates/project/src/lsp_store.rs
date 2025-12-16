@@ -93,6 +93,7 @@ use rpc::{
     proto::{LspRequestId, LspRequestMessage as _},
 };
 use serde::Serialize;
+use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use smol::channel::Sender;
@@ -115,6 +116,7 @@ use std::{
         atomic::{self, AtomicUsize},
     },
     time::{Duration, Instant},
+    vec,
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
@@ -199,7 +201,10 @@ pub enum LspFormatTarget {
     Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
-pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct OpenLspBufferHandle(Entity<OpenLspBuffer>);
+
+struct OpenLspBuffer(Entity<Buffer>);
 
 impl FormatTrigger {
     fn from_proto(value: i32) -> FormatTrigger {
@@ -217,7 +222,7 @@ struct UnifiedLanguageServer {
     project_roots: HashSet<Arc<RelPath>>,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct LanguageServerSeed {
     worktree_id: WorktreeId,
     name: LanguageServerName,
@@ -228,7 +233,8 @@ struct LanguageServerSeed {
 #[derive(Debug)]
 pub struct DocumentDiagnosticsUpdate<'a, D> {
     pub diagnostics: D,
-    pub result_id: Option<String>,
+    pub result_id: Option<SharedString>,
+    pub registration_id: Option<SharedString>,
     pub server_id: LanguageServerId,
     pub disk_based_sources: Cow<'a, [String]>,
 }
@@ -282,7 +288,14 @@ pub struct LocalLspStore {
     lsp_tree: LanguageServerTree,
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
-    buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
+    buffer_pull_diagnostics_result_ids: HashMap<
+        LanguageServerId,
+        HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
+    >,
+    workspace_pull_diagnostics_result_ids: HashMap<
+        LanguageServerId,
+        HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
+    >,
 }
 
 impl LocalLspStore {
@@ -435,6 +448,7 @@ impl LocalLspStore {
                         adapter.adapter.clone(),
                         &delegate,
                         toolchain,
+                        None,
                         cx,
                     )
                     .await?;
@@ -683,6 +697,7 @@ impl LocalLspStore {
                                     disk_based_sources: Cow::Borrowed(
                                         &adapter.disk_based_diagnostic_sources,
                                     ),
+                                    registration_id: None,
                                 }],
                                 |_, diagnostic, cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
@@ -719,25 +734,42 @@ impl LocalLspStore {
                                 )
                             })?
                             .context("Expected the LSP store to be in a local mode")?;
-                        let workspace_config = Self::workspace_configuration_for_adapter(
-                            adapter.clone(),
-                            &delegate,
-                            toolchain_for_id,
-                            &mut cx,
-                        )
-                        .await?;
+
+                        let mut scope_uri_to_workspace_config = BTreeMap::new();
+                        for item in &params.items {
+                            let scope_uri = item.scope_uri.clone();
+                            let std::collections::btree_map::Entry::Vacant(new_scope_uri) =
+                                scope_uri_to_workspace_config.entry(scope_uri.clone())
+                            else {
+                                // We've already queried workspace configuration of this URI.
+                                continue;
+                            };
+                            let workspace_config = Self::workspace_configuration_for_adapter(
+                                adapter.clone(),
+                                &delegate,
+                                toolchain_for_id.clone(),
+                                scope_uri,
+                                &mut cx,
+                            )
+                            .await?;
+                            new_scope_uri.insert(workspace_config);
+                        }
 
                         Ok(params
                             .items
                             .into_iter()
-                            .map(|item| {
+                            .filter_map(|item| {
+                                let workspace_config =
+                                    scope_uri_to_workspace_config.get(&item.scope_uri)?;
                                 if let Some(section) = &item.section {
-                                    workspace_config
-                                        .get(section)
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null)
+                                    Some(
+                                        workspace_config
+                                            .get(section)
+                                            .cloned()
+                                            .unwrap_or(serde_json::Value::Null),
+                                    )
                                 } else {
-                                    workspace_config.clone()
+                                    Some(workspace_config.clone())
                                 }
                             })
                             .collect())
@@ -2237,8 +2269,9 @@ impl LocalLspStore {
                     server_id,
                     None,
                     None,
-                    diagnostics,
+                    None,
                     Vec::new(),
+                    diagnostics,
                     cx,
                 )
                 .log_err();
@@ -2316,7 +2349,8 @@ impl LocalLspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
-        result_id: Option<String>,
+        registration_id: Option<Option<SharedString>>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         new_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         reused_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -2389,11 +2423,15 @@ impl LocalLspStore {
 
         let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
         buffer.update(cx, |buffer, cx| {
-            if let Some(abs_path) = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)) {
-                self.buffer_pull_diagnostics_result_ids
-                    .entry(server_id)
-                    .or_default()
-                    .insert(abs_path, result_id);
+            if let Some(registration_id) = registration_id {
+                if let Some(abs_path) = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)) {
+                    self.buffer_pull_diagnostics_result_ids
+                        .entry(server_id)
+                        .or_default()
+                        .entry(registration_id)
+                        .or_default()
+                        .insert(abs_path, result_id);
+                }
             }
 
             buffer.update_diagnostics(server_id, set, cx)
@@ -2683,10 +2721,15 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
-            let _ = self.buffer_snapshots.remove(&buffer.remote_id());
+            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                language_server.unregister_buffer(file_url.clone());
+                if snapshots
+                    .as_mut()
+                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                {
+                    language_server.unregister_buffer(file_url.clone());
+                }
             }
         });
     }
@@ -2740,7 +2783,7 @@ impl LocalLspStore {
         let actions = lsp_store
             .update(cx, move |this, cx| {
                 let request = GetCodeActions {
-                    range: text::Anchor::MIN..text::Anchor::MAX,
+                    range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
                     kinds: Some(code_action_kinds),
                 };
                 let server = LanguageServerToQuery::Other(language_server_id);
@@ -3015,17 +3058,23 @@ impl LocalLspStore {
                         .new_uri
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
-                    fs.rename(
-                        &source_abs_path,
-                        &target_abs_path,
-                        op.options
-                            .map(|options| fs::RenameOptions {
-                                overwrite: options.overwrite.unwrap_or(false),
-                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .await?;
+
+                    let options = fs::RenameOptions {
+                        overwrite: op
+                            .options
+                            .as_ref()
+                            .and_then(|options| options.overwrite)
+                            .unwrap_or(false),
+                        ignore_if_exists: op
+                            .options
+                            .as_ref()
+                            .and_then(|options| options.ignore_if_exists)
+                            .unwrap_or(false),
+                        create_parents: true,
+                    };
+
+                    fs.rename(&source_abs_path, &target_abs_path, options)
+                        .await?;
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
@@ -3235,6 +3284,8 @@ impl LocalLspStore {
                 .remove(server_id_to_remove);
             self.language_servers.remove(server_id_to_remove);
             self.buffer_pull_diagnostics_result_ids
+                .remove(server_id_to_remove);
+            self.workspace_pull_diagnostics_result_ids
                 .remove(server_id_to_remove);
             for buffer_servers in self.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(server_id_to_remove);
@@ -3515,11 +3566,12 @@ impl LocalLspStore {
         adapter: Arc<dyn LspAdapter>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        requested_uri: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(delegate, toolchain, cx)
+            .workspace_configuration(delegate, toolchain, requested_uri, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -3557,6 +3609,21 @@ fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<
             message: proto::update_language_server::Variant::MetadataUpdated(
                 proto::ServerMetadataUpdated {
                     capabilities: Some(capabilities),
+                    binary: Some(proto::LanguageServerBinaryInfo {
+                        path: server.binary().path.to_string_lossy().into_owned(),
+                        arguments: server
+                            .binary()
+                            .arguments
+                            .iter()
+                            .map(|arg| arg.to_string_lossy().into_owned())
+                            .collect(),
+                    }),
+                    configuration: serde_json::to_string(server.configuration()).ok(),
+                    workspace_folders: server
+                        .workspace_folders()
+                        .iter()
+                        .map(|uri| uri.to_string())
+                        .collect(),
                 },
             ),
         });
@@ -3718,8 +3785,11 @@ pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<ProgressToken>,
+    pub progress_tokens: HashSet<ProgressToken>,
     pub worktree: Option<WorktreeId>,
+    pub binary: Option<LanguageServerBinary>,
+    pub configuration: Option<Value>,
+    pub workspace_folders: BTreeSet<Uri>,
 }
 
 #[derive(Clone, Debug)]
@@ -3903,6 +3973,7 @@ impl LspStore {
                 registered_buffers: HashMap::default(),
                 buffers_opened_in_servers: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
+                workspace_pull_diagnostics_result_ids: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -4139,7 +4210,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
-        let handle = cx.new(|_| buffer.clone());
+        let handle = OpenLspBufferHandle(cx.new(|_| OpenLspBuffer(buffer.clone())));
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             if !ignore_refcounts {
@@ -4161,7 +4232,7 @@ impl LspStore {
                 local.register_buffer_with_language_servers(buffer, only_register_servers, cx);
             }
             if !ignore_refcounts {
-                cx.observe_release(&handle, move |lsp_store, buffer, cx| {
+                cx.observe_release(&handle.0, move |lsp_store, buffer, cx| {
                     let refcount = {
                         let local = lsp_store.as_local_mut().unwrap();
                         let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
@@ -4176,9 +4247,50 @@ impl LspStore {
                         lsp_store.lsp_data.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
+
                         local.buffers_opened_in_servers.remove(&buffer_id);
-                        if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                            local.unregister_old_buffer_from_language_servers(buffer, &file, cx);
+                        if let Some(file) = File::from_dyn(buffer.0.read(cx).file()).cloned() {
+                            local.unregister_old_buffer_from_language_servers(&buffer.0, &file, cx);
+
+                            let buffer_abs_path = file.abs_path(cx);
+                            for (_, buffer_pull_diagnostics_result_ids) in
+                                &mut local.buffer_pull_diagnostics_result_ids
+                            {
+                                buffer_pull_diagnostics_result_ids.retain(
+                                    |_, buffer_result_ids| {
+                                        buffer_result_ids.remove(&buffer_abs_path);
+                                        !buffer_result_ids.is_empty()
+                                    },
+                                );
+                            }
+
+                            let diagnostic_updates = local
+                                .language_servers
+                                .keys()
+                                .cloned()
+                                .map(|server_id| DocumentDiagnosticsUpdate {
+                                    diagnostics: DocumentDiagnostics {
+                                        document_abs_path: buffer_abs_path.clone(),
+                                        version: None,
+                                        diagnostics: Vec::new(),
+                                    },
+                                    result_id: None,
+                                    registration_id: None,
+                                    server_id: server_id,
+                                    disk_based_sources: Cow::Borrowed(&[]),
+                                })
+                                .collect::<Vec<_>>();
+
+                            lsp_store
+                                .merge_diagnostic_entries(
+                                    diagnostic_updates,
+                                    |_, diagnostic, _| {
+                                        diagnostic.source_kind != DiagnosticSourceKind::Pulled
+                                    },
+                                    cx,
+                                )
+                                .context("Clearing diagnostics for the closed buffer")
+                                .log_err();
                         }
                     }
                 })
@@ -4240,8 +4352,9 @@ impl LspStore {
                                 for buffer in buffer_store.buffers() {
                                     if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
                                     {
-                                        buffer
-                                            .update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                        buffer.update(cx, |buffer, cx| {
+                                            buffer.set_language_async(None, cx)
+                                        });
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
 
@@ -4304,7 +4417,7 @@ impl LspStore {
                         }
 
                         for buffer in buffers_with_unknown_injections {
-                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                            buffer.update(cx, |buffer, cx| buffer.reparse(cx, false));
                         }
                     })
                     .ok();
@@ -4364,7 +4477,7 @@ impl LspStore {
                 .language()
                 .is_none_or(|old_language| !Arc::ptr_eq(old_language, &new_language))
             {
-                buffer.set_language(Some(new_language.clone()), cx);
+                buffer.set_language_async(Some(new_language.clone()), cx);
             }
         });
 
@@ -6650,9 +6763,11 @@ impl LspStore {
             };
             assert!(any_server_has_diagnostics_provider);
 
+            let identifier = buffer_diagnostic_identifier(&dynamic_caps);
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
-                dynamic_caps,
+                identifier,
+                registration_id: None,
             };
             let request_task = client.request_lsp(
                 upstream_project_id,
@@ -6670,7 +6785,7 @@ impl LspStore {
             })
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
-                self.language_servers_for_local_buffer(buffer, cx)
+                self.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
@@ -6685,19 +6800,27 @@ impl LspStore {
                             .language_server_dynamic_registrations
                             .get(&server_id)
                             .into_iter()
-                            .flat_map(|registrations| registrations.diagnostics.values().cloned())
+                            .flat_map(|registrations| registrations.diagnostics.clone())
                             .collect::<Vec<_>>();
                         Some(
                             providers_with_identifiers
                                 .into_iter()
-                                .map(|dynamic_caps| {
-                                    let result_id = self.result_id(server_id, buffer_id, cx);
+                                .map(|(registration_id, dynamic_caps)| {
+                                    let identifier = buffer_diagnostic_identifier(&dynamic_caps);
+                                    let registration_id = registration_id.map(SharedString::from);
+                                    let result_id = self.result_id_for_buffer_pull(
+                                        server_id,
+                                        buffer_id,
+                                        &registration_id,
+                                        cx,
+                                    );
                                     self.request_lsp(
                                         buffer.clone(),
                                         LanguageServerToQuery::Other(server_id),
                                         GetDocumentDiagnostics {
                                             previous_result_id: result_id,
-                                            dynamic_caps,
+                                            registration_id,
+                                            identifier,
                                         },
                                         cx,
                                     )
@@ -6726,9 +6849,15 @@ impl LspStore {
         ranges: &[Range<text::Anchor>],
         cx: &mut Context<Self>,
     ) -> Vec<Range<BufferRow>> {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
-            .applicable_chunks(ranges)
+            .applicable_chunks(ranges.as_slice())
             .map(|chunk| chunk.row_range())
             .collect()
     }
@@ -6775,6 +6904,12 @@ impl LspStore {
             .map(|(_, known_chunks)| known_chunks)
             .unwrap_or_default();
 
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         let mut hint_fetch_tasks = Vec::new();
         let mut cached_inlay_hints = None;
         let mut ranges_to_query = None;
@@ -6799,9 +6934,7 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let Some(chunk_range) = existing_inlay_hints.chunk_range(row_chunk) else {
-                        continue;
-                    };
+                    let chunk_range = row_chunk.anchor_range();
                     ranges_to_query
                         .get_or_insert_with(Vec::new)
                         .push((row_chunk, chunk_range));
@@ -7062,8 +7195,7 @@ impl LspStore {
                     return;
                 }
 
-                let mut unchanged_buffers = HashSet::default();
-                let mut changed_buffers = HashSet::default();
+                let mut unchanged_buffers = HashMap::default();
                 let server_diagnostics_updates = diagnostics
                     .into_iter()
                     .filter_map(|diagnostics_set| match diagnostics_set {
@@ -7071,24 +7203,25 @@ impl LspStore {
                             server_id,
                             uri,
                             diagnostics,
-                        } => Some((server_id, uri, diagnostics)),
+                            registration_id,
+                        } => Some((server_id, uri, diagnostics, registration_id)),
                         LspPullDiagnostics::Default => None,
                     })
                     .fold(
                         HashMap::default(),
-                        |mut acc, (server_id, uri, diagnostics)| {
+                        |mut acc, (server_id, uri, diagnostics, new_registration_id)| {
                             let (result_id, diagnostics) = match diagnostics {
                                 PulledDiagnostics::Unchanged { result_id } => {
-                                    unchanged_buffers.insert(uri.clone());
+                                    unchanged_buffers
+                                        .entry(new_registration_id.clone())
+                                        .or_insert_with(HashSet::default)
+                                        .insert(uri.clone());
                                     (Some(result_id), Vec::new())
                                 }
                                 PulledDiagnostics::Changed {
                                     result_id,
                                     diagnostics,
-                                } => {
-                                    changed_buffers.insert(uri.clone());
-                                    (result_id, diagnostics)
-                                }
+                                } => (result_id, diagnostics),
                             };
                             let disk_based_sources = Cow::Owned(
                                 lsp_store
@@ -7098,8 +7231,11 @@ impl LspStore {
                                     .unwrap_or(&[])
                                     .to_vec(),
                             );
-                            acc.entry(server_id).or_insert_with(Vec::new).push(
-                                DocumentDiagnosticsUpdate {
+                            acc.entry(server_id)
+                                .or_insert_with(HashMap::default)
+                                .entry(new_registration_id.clone())
+                                .or_insert_with(Vec::new)
+                                .push(DocumentDiagnosticsUpdate {
                                     server_id,
                                     diagnostics: lsp::PublishDiagnosticsParams {
                                         uri,
@@ -7108,37 +7244,35 @@ impl LspStore {
                                     },
                                     result_id,
                                     disk_based_sources,
-                                },
-                            );
+                                    registration_id: new_registration_id,
+                                });
                             acc
                         },
                     );
 
                 for diagnostic_updates in server_diagnostics_updates.into_values() {
-                    lsp_store
-                        .merge_lsp_diagnostics(
-                            DiagnosticSourceKind::Pulled,
-                            diagnostic_updates,
-                            |buffer, old_diagnostic, cx| {
-                                File::from_dyn(buffer.file())
-                                    .and_then(|file| {
-                                        let abs_path = file.as_local()?.abs_path(cx);
-                                        lsp::Uri::from_file_path(abs_path).ok()
-                                    })
-                                    .is_none_or(|buffer_uri| {
-                                        unchanged_buffers.contains(&buffer_uri)
-                                            || match old_diagnostic.source_kind {
-                                                DiagnosticSourceKind::Pulled => {
-                                                    !changed_buffers.contains(&buffer_uri)
-                                                }
-                                                DiagnosticSourceKind::Other
-                                                | DiagnosticSourceKind::Pushed => true,
-                                            }
-                                    })
-                            },
-                            cx,
-                        )
-                        .log_err();
+                    for (registration_id, diagnostic_updates) in diagnostic_updates {
+                        lsp_store
+                            .merge_lsp_diagnostics(
+                                DiagnosticSourceKind::Pulled,
+                                diagnostic_updates,
+                                |document_uri, old_diagnostic, _| match old_diagnostic.source_kind {
+                                    DiagnosticSourceKind::Pulled => {
+                                        old_diagnostic.registration_id != registration_id
+                                            || unchanged_buffers
+                                                .get(&old_diagnostic.registration_id)
+                                                .is_some_and(|unchanged_buffers| {
+                                                    unchanged_buffers.contains(&document_uri)
+                                                })
+                                    }
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        true
+                                    }
+                                },
+                                cx,
+                            )
+                            .log_err();
+                    }
                 }
             })
         })
@@ -7933,6 +8067,7 @@ impl LspStore {
                                                 adapter.adapter.clone(),
                                                 &delegate,
                                                 toolchain,
+                                                None,
                                                 cx,
                                             )
                                             .await
@@ -8000,7 +8135,7 @@ impl LspStore {
         })
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
+    pub fn running_language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
         cx: &mut App,
@@ -8020,6 +8155,17 @@ impl LspStore {
                     _ => None,
                 },
             )
+    }
+
+    pub fn language_servers_for_local_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Vec<LanguageServerId> {
+        let local = self.as_local();
+        local
+            .map(|local| local.language_server_ids_for_buffer(buffer, cx))
+            .unwrap_or_default()
     }
 
     pub fn language_server_for_local_buffer<'a>(
@@ -8130,6 +8276,9 @@ impl LspStore {
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
                         worktree,
+                        binary: None,
+                        configuration: None,
+                        workspace_folders: BTreeSet::new(),
                     },
                 )
             })
@@ -8141,7 +8290,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
@@ -8156,6 +8305,7 @@ impl LspStore {
                 result_id,
                 server_id,
                 disk_based_sources: Cow::Borrowed(&[]),
+                registration_id: None,
             }],
             |_, _, _| false,
             cx,
@@ -8166,7 +8316,7 @@ impl LspStore {
     pub fn merge_diagnostic_entries<'a>(
         &mut self,
         diagnostic_updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&lsp::Uri, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
@@ -8187,13 +8337,15 @@ impl LspStore {
                 path: relative_path,
             };
 
+            let document_uri = lsp::Uri::from_file_path(abs_path)
+                .map_err(|()| anyhow!("Failed to convert buffer path {abs_path:?} to lsp Uri"))?;
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
                 let reused_diagnostics = buffer
                     .buffer_diagnostics(Some(server_id))
                     .iter()
-                    .filter(|v| merge(buffer, &v.diagnostic, cx))
+                    .filter(|v| merge(&document_uri, &v.diagnostic, cx))
                     .map(|v| {
                         let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                         let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
@@ -8209,6 +8361,7 @@ impl LspStore {
                     .update_buffer_diagnostics(
                         &buffer_handle,
                         server_id,
+                        Some(update.registration_id),
                         update.result_id,
                         update.diagnostics.version,
                         update.diagnostics.diagnostics.clone(),
@@ -8217,6 +8370,25 @@ impl LspStore {
                     )?;
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
+            } else if let Some(local) = self.as_local() {
+                let reused_diagnostics = local
+                    .diagnostics
+                    .get(&worktree_id)
+                    .and_then(|diagnostics_for_tree| diagnostics_for_tree.get(&project_path.path))
+                    .and_then(|diagnostics_by_server_id| {
+                        diagnostics_by_server_id
+                            .binary_search_by_key(&server_id, |e| e.0)
+                            .ok()
+                            .map(|ix| &diagnostics_by_server_id[ix].1)
+                    })
+                    .into_iter()
+                    .flatten()
+                    .filter(|v| merge(&document_uri, &v.diagnostic, cx));
+
+                update
+                    .diagnostics
+                    .diagnostics
+                    .extend(reused_diagnostics.cloned());
             }
 
             let updated = worktree.update(cx, |worktree, cx| {
@@ -8301,7 +8473,7 @@ impl LspStore {
             .unwrap_or_default();
 
         let new_summary = DiagnosticSummary::new(&diagnostics);
-        if new_summary.is_empty() {
+        if diagnostics.is_empty() {
             if let Some(diagnostics_by_server_id) = diagnostics_for_tree.get_mut(&path_in_worktree)
             {
                 if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
@@ -9139,6 +9311,9 @@ impl LspStore {
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                     worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    binary: None,
+                    configuration: None,
+                    workspace_folders: BTreeSet::new(),
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -9608,7 +9783,7 @@ impl LspStore {
                 );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
-                let identifier = match progress_params.token {
+                let registration_id = match progress_params.token {
                     lsp::NumberOrString::Number(_) => None,
                     lsp::NumberOrString::String(token) => token
                         .split_once(WORKSPACE_DIAGNOSTICS_TOKEN_START)
@@ -9621,10 +9796,15 @@ impl LspStore {
                     .as_local_mut()
                     .and_then(|local| local.language_servers.get_mut(&language_server_id))
                     && let Some(workspace_diagnostics) =
-                        workspace_diagnostics_refresh_tasks.get_mut(&identifier)
+                        workspace_diagnostics_refresh_tasks.get_mut(&registration_id)
                 {
                     workspace_diagnostics.progress_tx.try_send(()).ok();
-                    self.apply_workspace_diagnostic_report(language_server_id, report, cx)
+                    self.apply_workspace_diagnostic_report(
+                        language_server_id,
+                        report,
+                        registration_id.map(SharedString::from),
+                        cx,
+                    )
                 }
             }
         }
@@ -10884,7 +11064,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         diagnostics: lsp::PublishDiagnosticsParams,
-        result_id: Option<String>,
+        result_id: Option<SharedString>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
@@ -10896,6 +11076,7 @@ impl LspStore {
                 result_id,
                 server_id,
                 disk_based_sources: Cow::Borrowed(disk_based_sources),
+                registration_id: None,
             }],
             |_, _, _| false,
             cx,
@@ -10906,7 +11087,7 @@ impl LspStore {
         &mut self,
         source_kind: DiagnosticSourceKind,
         lsp_diagnostics: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
-        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        merge: impl Fn(&lsp::Uri, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
@@ -10921,10 +11102,12 @@ impl LspStore {
                         update.server_id,
                         update.diagnostics,
                         &update.disk_based_sources,
+                        update.registration_id.clone(),
                     ),
                     result_id: update.result_id,
                     server_id: update.server_id,
                     disk_based_sources: update.disk_based_sources,
+                    registration_id: update.registration_id,
                 })
             })
             .collect();
@@ -10939,6 +11122,7 @@ impl LspStore {
         server_id: LanguageServerId,
         mut lsp_diagnostics: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
+        registration_id: Option<SharedString>,
     ) -> DocumentDiagnostics {
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
@@ -11012,6 +11196,7 @@ impl LspStore {
                         is_unnecessary,
                         underline,
                         data: diagnostic.data.clone(),
+                        registration_id: registration_id.clone(),
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -11039,6 +11224,7 @@ impl LspStore {
                                     is_unnecessary: false,
                                     underline,
                                     data: diagnostic.data.clone(),
+                                    registration_id: registration_id.clone(),
                                 },
                             });
                         }
@@ -11155,6 +11341,9 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
+                binary: Some(language_server.binary().clone()),
+                configuration: Some(language_server.configuration().clone()),
+                workspace_folders: language_server.workspace_folders(),
             },
         );
 
@@ -11785,18 +11974,22 @@ impl LspStore {
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
+            local
+                .workspace_pull_diagnostics_result_ids
+                .remove(&for_server);
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(&for_server);
             }
         }
     }
 
-    pub fn result_id(
+    pub fn result_id_for_buffer_pull(
         &self,
         server_id: LanguageServerId,
         buffer_id: BufferId,
+        registration_id: &Option<SharedString>,
         cx: &App,
-    ) -> Option<String> {
+    ) -> Option<SharedString> {
         let abs_path = self
             .buffer_store
             .read(cx)
@@ -11806,20 +11999,40 @@ impl LspStore {
         self.as_local()?
             .buffer_pull_diagnostics_result_ids
             .get(&server_id)?
+            .get(registration_id)?
             .get(&abs_path)?
             .clone()
     }
 
-    pub fn all_result_ids(&self, server_id: LanguageServerId) -> HashMap<PathBuf, String> {
+    /// Gets all result_ids for a workspace diagnostics pull request.
+    /// First, it tries to find buffer's result_id retrieved via the diagnostics pull; if it fails, it falls back to the workspace disagnostics pull result_id.
+    /// The latter is supposed to be of lower priority as we keep on pulling diagnostics for open buffers eagerly.
+    pub fn result_ids_for_workspace_refresh(
+        &self,
+        server_id: LanguageServerId,
+        registration_id: &Option<SharedString>,
+    ) -> HashMap<PathBuf, SharedString> {
         let Some(local) = self.as_local() else {
             return HashMap::default();
         };
         local
-            .buffer_pull_diagnostics_result_ids
+            .workspace_pull_diagnostics_result_ids
             .get(&server_id)
             .into_iter()
+            .filter_map(|diagnostics| diagnostics.get(registration_id))
             .flatten()
-            .filter_map(|(abs_path, result_id)| Some((abs_path.clone(), result_id.clone()?)))
+            .filter_map(|(abs_path, result_id)| {
+                let result_id = local
+                    .buffer_pull_diagnostics_result_ids
+                    .get(&server_id)
+                    .and_then(|buffer_ids_result_ids| {
+                        buffer_ids_result_ids.get(registration_id)?.get(abs_path)
+                    })
+                    .cloned()
+                    .flatten()
+                    .or_else(|| result_id.clone())?;
+                Some((abs_path.clone(), result_id))
+            })
             .collect()
     }
 
@@ -11864,12 +12077,16 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         report: lsp::WorkspaceDiagnosticReportResult,
+        registration_id: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
         let workspace_diagnostics =
-            GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(report, server_id);
-        let mut unchanged_buffers = HashSet::default();
-        let mut changed_buffers = HashSet::default();
+            GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(
+                report,
+                server_id,
+                registration_id,
+            );
+        let mut unchanged_buffers = HashMap::default();
         let workspace_diagnostics_updates = workspace_diagnostics
             .into_iter()
             .filter_map(
@@ -11878,25 +12095,32 @@ impl LspStore {
                         server_id,
                         uri,
                         diagnostics,
-                    } => Some((server_id, uri, diagnostics, workspace_diagnostics.version)),
+                        registration_id,
+                    } => Some((
+                        server_id,
+                        uri,
+                        diagnostics,
+                        workspace_diagnostics.version,
+                        registration_id,
+                    )),
                     LspPullDiagnostics::Default => None,
                 },
             )
             .fold(
                 HashMap::default(),
-                |mut acc, (server_id, uri, diagnostics, version)| {
+                |mut acc, (server_id, uri, diagnostics, version, new_registration_id)| {
                     let (result_id, diagnostics) = match diagnostics {
                         PulledDiagnostics::Unchanged { result_id } => {
-                            unchanged_buffers.insert(uri.clone());
+                            unchanged_buffers
+                                .entry(new_registration_id.clone())
+                                .or_insert_with(HashSet::default)
+                                .insert(uri.clone());
                             (Some(result_id), Vec::new())
                         }
                         PulledDiagnostics::Changed {
                             result_id,
                             diagnostics,
-                        } => {
-                            changed_buffers.insert(uri.clone());
-                            (result_id, diagnostics)
-                        }
+                        } => (result_id, diagnostics),
                     };
                     let disk_based_sources = Cow::Owned(
                         self.language_server_adapter_for_id(server_id)
@@ -11905,47 +12129,68 @@ impl LspStore {
                             .unwrap_or(&[])
                             .to_vec(),
                     );
-                    acc.entry(server_id)
-                        .or_insert_with(Vec::new)
-                        .push(DocumentDiagnosticsUpdate {
-                            server_id,
-                            diagnostics: lsp::PublishDiagnosticsParams {
-                                uri,
-                                diagnostics,
-                                version,
-                            },
-                            result_id,
-                            disk_based_sources,
-                        });
+
+                    let Some(abs_path) = uri.to_file_path().ok() else {
+                        return acc;
+                    };
+                    let Some((worktree, relative_path)) =
+                        self.worktree_store.read(cx).find_worktree(abs_path.clone(), cx)
+                    else {
+                        log::warn!("skipping workspace diagnostics update, no worktree found for path {abs_path:?}");
+                        return acc;
+                    };
+                    let worktree_id = worktree.read(cx).id();
+                    let project_path = ProjectPath {
+                        worktree_id,
+                        path: relative_path,
+                    };
+                    if let Some(local_lsp_store) = self.as_local_mut() {
+                        local_lsp_store.workspace_pull_diagnostics_result_ids.entry(server_id)
+                            .or_default().entry(new_registration_id.clone()).or_default().insert(abs_path, result_id.clone());
+                    }
+                    // The LSP spec recommends that "diagnostics from a document pull should win over diagnostics from a workspace pull."
+                    // Since we actively pull diagnostics for documents with open buffers, we ignore contents of workspace pulls for these documents.
+                    if self.buffer_store.read(cx).get_by_path(&project_path).is_none() {
+                        acc.entry(server_id)
+                            .or_insert_with(HashMap::default)
+                            .entry(new_registration_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(DocumentDiagnosticsUpdate {
+                                server_id,
+                                diagnostics: lsp::PublishDiagnosticsParams {
+                                    uri,
+                                    diagnostics,
+                                    version,
+                                },
+                                result_id,
+                                disk_based_sources,
+                                registration_id: new_registration_id,
+                            });
+                    }
                     acc
                 },
             );
 
         for diagnostic_updates in workspace_diagnostics_updates.into_values() {
-            self.merge_lsp_diagnostics(
-                DiagnosticSourceKind::Pulled,
-                diagnostic_updates,
-                |buffer, old_diagnostic, cx| {
-                    File::from_dyn(buffer.file())
-                        .and_then(|file| {
-                            let abs_path = file.as_local()?.abs_path(cx);
-                            lsp::Uri::from_file_path(abs_path).ok()
-                        })
-                        .is_none_or(|buffer_uri| {
-                            unchanged_buffers.contains(&buffer_uri)
-                                || match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => {
-                                        !changed_buffers.contains(&buffer_uri)
-                                    }
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
-                                }
-                        })
-                },
-                cx,
-            )
-            .log_err();
+            for (registration_id, diagnostic_updates) in diagnostic_updates {
+                self.merge_lsp_diagnostics(
+                    DiagnosticSourceKind::Pulled,
+                    diagnostic_updates,
+                    |document_uri, old_diagnostic, _| match old_diagnostic.source_kind {
+                        DiagnosticSourceKind::Pulled => {
+                            old_diagnostic.registration_id != registration_id
+                                || unchanged_buffers
+                                    .get(&old_diagnostic.registration_id)
+                                    .is_some_and(|unchanged_buffers| {
+                                        unchanged_buffers.contains(&document_uri)
+                                    })
+                        }
+                        DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
+                    },
+                    cx,
+                )
+                .log_err();
+            }
         }
     }
 
@@ -12224,54 +12469,41 @@ impl LspStore {
                             .diagnostics
                             .insert(Some(reg.id.clone()), caps.clone());
 
-                        if let LanguageServerState::Running {
-                            workspace_diagnostics_refresh_tasks,
-                            ..
-                        } = state
-                            && let Some(task) = lsp_workspace_diagnostics_refresh(
-                                Some(reg.id.clone()),
-                                caps.clone(),
-                                server.clone(),
-                                cx,
-                            )
-                        {
-                            workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
+                        let supports_workspace_diagnostics =
+                            |capabilities: &DiagnosticServerCapabilities| match capabilities {
+                                DiagnosticServerCapabilities::Options(diagnostic_options) => {
+                                    diagnostic_options.workspace_diagnostics
+                                }
+                                DiagnosticServerCapabilities::RegistrationOptions(
+                                    diagnostic_registration_options,
+                                ) => {
+                                    diagnostic_registration_options
+                                        .diagnostic_options
+                                        .workspace_diagnostics
+                                }
+                            };
+
+                        if supports_workspace_diagnostics(&caps) {
+                            if let LanguageServerState::Running {
+                                workspace_diagnostics_refresh_tasks,
+                                ..
+                            } = state
+                                && let Some(task) = lsp_workspace_diagnostics_refresh(
+                                    Some(reg.id.clone()),
+                                    caps.clone(),
+                                    server.clone(),
+                                    cx,
+                                )
+                            {
+                                workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
+                            }
                         }
 
-                        let mut did_update_caps = false;
                         server.update_capabilities(|capabilities| {
-                            if capabilities.diagnostic_provider.as_ref().is_none_or(
-                                |current_caps| {
-                                    let supports_workspace_diagnostics =
-                                        |capabilities: &DiagnosticServerCapabilities| {
-                                            match capabilities {
-                                            DiagnosticServerCapabilities::Options(
-                                                diagnostic_options,
-                                            ) => diagnostic_options.workspace_diagnostics,
-                                            DiagnosticServerCapabilities::RegistrationOptions(
-                                                diagnostic_registration_options,
-                                            ) => {
-                                                diagnostic_registration_options
-                                                    .diagnostic_options
-                                                    .workspace_diagnostics
-                                            }
-                                        }
-                                        };
-                                    // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
-                                    // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
-                                    // as it'll think that they're not supported.
-                                    // If we did not support any workspace diagnostics up to this point but now do, let's update.
-                                    !supports_workspace_diagnostics(current_caps)
-                                        & supports_workspace_diagnostics(&caps)
-                                },
-                            ) {
-                                did_update_caps = true;
-                                capabilities.diagnostic_provider = Some(caps);
-                            }
+                            capabilities.diagnostic_provider = Some(caps);
                         });
-                        if did_update_caps {
-                            notify_server_capabilities_updated(&server, cx);
-                        }
+
+                        notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/documentColor" => {
@@ -12439,31 +12671,29 @@ impl LspStore {
                         .language_servers
                         .get_mut(&server_id)
                         .context("Could not obtain Language Servers state")?;
-                    let options = local
+                    let registrations = local
                         .language_server_dynamic_registrations
                         .get_mut(&server_id)
                         .with_context(|| {
                             format!("Expected dynamic registration to exist for server {server_id}")
-                        })?.diagnostics
+                        })?;
+                    registrations.diagnostics
                         .remove(&Some(unreg.id.clone()))
                         .with_context(|| format!(
                             "Attempted to unregister non-existent diagnostic registration with ID {}",
                             unreg.id)
                         )?;
+                    let removed_last_diagnostic_provider = registrations.diagnostics.is_empty();
 
-                    let mut has_any_diagnostic_providers_still = true;
-                    if let Some(identifier) = diagnostic_identifier(&options)
-                        && let LanguageServerState::Running {
-                            workspace_diagnostics_refresh_tasks,
-                            ..
-                        } = state
+                    if let LanguageServerState::Running {
+                        workspace_diagnostics_refresh_tasks,
+                        ..
+                    } = state
                     {
-                        workspace_diagnostics_refresh_tasks.remove(&identifier);
-                        has_any_diagnostic_providers_still =
-                            !workspace_diagnostics_refresh_tasks.is_empty();
+                        workspace_diagnostics_refresh_tasks.remove(&Some(unreg.id.clone()));
                     }
 
-                    if !has_any_diagnostic_providers_still {
+                    if removed_last_diagnostic_provider {
                         server.update_capabilities(|capabilities| {
                             debug_assert!(capabilities.diagnostic_provider.is_some());
                             capabilities.diagnostic_provider = None;
@@ -12506,10 +12736,11 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
-                .applicable_chunks(&[range])
+                .applicable_chunks(&[range.to_point(&buffer_snapshot)])
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {
@@ -12762,7 +12993,8 @@ fn lsp_workspace_diagnostics_refresh(
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
 ) -> Option<WorkspaceRefreshTask> {
-    let identifier = diagnostic_identifier(&options)?;
+    let identifier = workspace_diagnostic_identifier(&options)?;
+    let registration_id_shared = registration_id.as_ref().map(SharedString::from);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
     let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
@@ -12794,13 +13026,13 @@ fn lsp_workspace_diagnostics_refresh(
 
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
-                        .all_result_ids(server.server_id())
+                        .result_ids_for_workspace_refresh(server.server_id(), &registration_id_shared)
                         .into_iter()
                         .filter_map(|(abs_path, result_id)| {
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
                             Some(lsp::PreviousResultId {
                                 uri,
-                                value: result_id,
+                                value: result_id.to_string(),
                             })
                         })
                         .collect()
@@ -12808,9 +13040,9 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = if let Some(identifier) = &registration_id {
+                let token = if let Some(registration_id) = &registration_id {
                     format!(
-                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{identifier}",
+                        "workspace/diagnostic/{}/{requests}/{WORKSPACE_DIAGNOSTICS_TOKEN_START}{registration_id}",
                         server.server_id(),
                     )
                 } else {
@@ -12860,6 +13092,7 @@ fn lsp_workspace_diagnostics_refresh(
                                 lsp_store.apply_workspace_diagnostic_report(
                                     server.server_id(),
                                     pulled_diagnostics,
+                                    registration_id_shared.clone(),
                                     cx,
                                 )
                             })
@@ -12881,7 +13114,21 @@ fn lsp_workspace_diagnostics_refresh(
     })
 }
 
-fn diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<Option<String>> {
+fn buffer_diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<String> {
+    match &options {
+        lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
+            diagnostic_options.identifier.clone()
+        }
+        lsp::DiagnosticServerCapabilities::RegistrationOptions(registration_options) => {
+            let diagnostic_options = &registration_options.diagnostic_options;
+            diagnostic_options.identifier.clone()
+        }
+    }
+}
+
+fn workspace_diagnostic_identifier(
+    options: &DiagnosticServerCapabilities,
+) -> Option<Option<String>> {
     match &options {
         lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
             if !diagnostic_options.workspace_diagnostics {
@@ -13580,7 +13827,7 @@ pub fn language_server_settings<'a>(
     )
 }
 
-pub(crate) fn language_server_settings_for<'a>(
+pub fn language_server_settings_for<'a>(
     location: SettingsLocation<'a>,
     language: &LanguageServerName,
     cx: &'a App,

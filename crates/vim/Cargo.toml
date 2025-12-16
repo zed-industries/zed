@@ -55,7 +55,7 @@ zed_actions.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
-command_palette.workspace = true
+command_palette = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 git_ui.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
@@ -63,9 +63,12 @@ indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+markdown_preview.workspace = true
 parking_lot.workspace = true
 project_panel.workspace = true
+outline_panel.workspace = true
 release_channel.workspace = true
+semver.workspace = true
 settings_ui.workspace = true
 settings.workspace = true
 perf.workspace = true
