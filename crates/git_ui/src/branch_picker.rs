@@ -1538,7 +1538,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_update_remote_matches_with_query(cx: &mut TestAppContext) {
+    async fn test_branch_filter_shows_all_then_remotes_and_applies_query(cx: &mut TestAppContext) {
         init_test(cx);
 
         let branches = vec![
@@ -1553,46 +1553,49 @@ mod tests {
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
 
-        // Check matches, it should match all existing branches and no option to create new branch
-        branch_list
-            .update_in(cx, |branch_list, window, cx| {
-                branch_list.picker.update(cx, |picker, cx| {
-                    assert_eq!(picker.delegate.matches.len(), 4);
-                    let branches = picker
-                        .delegate
-                        .matches
-                        .iter()
-                        .map(|be| be.name())
-                        .collect::<HashSet<_>>();
-                    assert_eq!(
-                        branches,
-                        ["origin/main", "fork/feature-auth", "feature-ui", "develop"]
-                            .into_iter()
-                            .collect::<HashSet<_>>()
-                    );
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                assert_eq!(picker.delegate.matches.len(), 4);
 
-                    // Locals should be listed before remotes.
-                    let ordered = picker
-                        .delegate
-                        .matches
-                        .iter()
-                        .map(|be| be.name())
-                        .collect::<Vec<_>>();
-                    assert_eq!(
-                        ordered,
-                        vec!["feature-ui", "develop", "origin/main", "fork/feature-auth"]
-                    );
+                let branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    branches,
+                    ["origin/main", "fork/feature-auth", "feature-ui", "develop"]
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                );
 
-                    // Verify the last entry is NOT the "create new branch" option
-                    let last_match = picker.delegate.matches.last().unwrap();
-                    assert!(!last_match.is_new_branch());
-                    assert!(!last_match.is_new_url());
-                    picker.delegate.branch_filter = BranchFilter::Remote;
-                    picker.delegate.update_matches(String::new(), window, cx)
-                })
+                // Locals should be listed before remotes.
+                let ordered = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.name())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    ordered,
+                    vec!["feature-ui", "develop", "origin/main", "fork/feature-auth"]
+                );
+
+                // Verify the last entry is NOT the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(!last_match.is_new_branch());
+                assert!(!last_match.is_new_url());
             })
-            .await;
-        cx.run_until_parked();
+        });
+
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                picker.delegate.branch_filter = BranchFilter::Remote;
+            })
+        });
+
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
