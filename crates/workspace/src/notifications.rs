@@ -325,14 +325,14 @@ impl Render for LanguageServerPrompt {
                                                 if suppress {
                                                     Tooltip::with_meta(
                                                         "Suppress",
-                                                        &SuppressNotification,
+                                                        Some(&SuppressNotification),
                                                         "Click to close",
                                                         cx,
                                                     )
                                                 } else {
                                                     Tooltip::with_meta(
                                                         "Close",
-                                                        &menu::Cancel,
+                                                        Some(&menu::Cancel),
                                                         "Suppress with shift-click",
                                                         cx,
                                                     )
