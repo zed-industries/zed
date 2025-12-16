@@ -960,10 +960,22 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let focus_handle = self.editor.focus_handle(cx);
+
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
-            .tooltip(Tooltip::text("Close Assistant"))
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Close Assistant",
+                        &editor::actions::Cancel,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
             .into_any_element()
     }
