@@ -42,10 +42,10 @@ use search::{
 };
 use settings::{Settings, SettingsStore};
 use ui::{
-    Button, ButtonStyle, Chip, Color, DiffStat, HighlightedLabel, Icon, IconButton,
-    IconButtonShape, IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon, LabelLike,
-    LabelSize, ListItem, ListItemSpacing, Modal, ModalHeader, Section, SpinnerLabel, Tooltip,
-    prelude::*, rems_from_px,
+    Button, ButtonStyle, Chip, Color, DiffStat, Divider, DividerColor, HighlightedLabel, Icon,
+    IconButton, IconButtonShape, IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon,
+    LabelLike, LabelSize, ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*,
+    rems_from_px,
 };
 use workspace::{ModalView, Workspace, item::PreviewTabsSettings};
 
@@ -69,10 +69,11 @@ fn snippet_shared_for_entry(entry: &QuickMatch) -> SharedString {
         .first_line_snippet
         .clone()
         .or_else(|| {
-            entry
-                .snippet
-                .as_ref()
-                .and_then(|s| s.lines().next().map(|line| Arc::<str>::from(line.to_string())))
+            entry.snippet.as_ref().and_then(|s| {
+                s.lines()
+                    .next()
+                    .map(|line| Arc::<str>::from(line.to_string()))
+            })
         })
         .unwrap_or_else(|| Arc::<str>::from(""));
     SharedString::new(snippet_arc)
@@ -340,7 +341,7 @@ impl Layout {
         let modal_width = viewport.width * MODAL_SIZE_FRAC;
         let modal_height = viewport.height * MODAL_SIZE_FRAC;
 
-        let content_height = modal_height - px(60.);
+        let content_height = modal_height;
 
         let preview_min_width_px = rems(PREVIEW_MIN_WIDTH_REM).to_pixels(rem_size);
         let preview_min_height_px = rems(PREVIEW_MIN_HEIGHT_REM).to_pixels(rem_size);
@@ -375,15 +376,11 @@ impl Render for QuickSearch {
             .overflow_hidden()
             .elevation_3(cx)
             .key_context("QuickSearch")
-            .child(
-                Modal::new("quick-search-modal", None)
-                    .header(ModalHeader::new().headline("Quick Search"))
-                    .section(
-                        Section::new()
-                            .padded(true)
-                            .child(self.render_content(&layout, window, cx)),
-                    ),
-            )
+            .bg(cx.theme().colors().panel_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_lg()
+            .child(self.render_content(&layout, window, cx))
     }
 }
 
@@ -402,26 +399,39 @@ impl QuickSearch {
                 .w_full()
                 .h(layout.content_height)
                 .overflow_hidden()
-                .gap_3()
                 .child(list)
+                .child(Divider::vertical().color(DividerColor::Border))
                 .child(preview)
         } else {
             v_flex()
                 .w_full()
                 .h(layout.content_height)
                 .overflow_hidden()
-                .gap_3()
                 .child(list)
+                .child(Divider::horizontal().color(DividerColor::Border))
                 .child(preview)
         }
     }
 
     fn render_list_panel(&self, layout: &Layout, _cx: &mut Context<Self>) -> Div {
-        let list_content = div()
-            .flex_1()
+        let list_content = v_flex()
             .h_full()
             .overflow_hidden()
-            .child(self.picker.clone());
+            .child(
+                div().flex_none().px_2().pt_2().pb_1().child(
+                    Label::new("Quick Search")
+                        .size(LabelSize::Default)
+                        .color(Color::Muted),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .px_1()
+                    .child(self.picker.clone()),
+            );
         if layout.is_horizontal {
             let list_width = layout.modal_width * H_LIST_FRAC;
             v_flex()
@@ -453,14 +463,7 @@ impl QuickSearch {
             Self::render_placeholder("Preview hidden (window too small)")
         };
 
-        let base = v_flex()
-            .bg(cx.theme().colors().panel_background)
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            .rounded_lg()
-            .p_2()
-            .overflow_hidden()
-            .child(content);
+        let base = v_flex().min_w_0().overflow_hidden().child(content);
 
         if layout.is_horizontal {
             base.flex_1().h(layout.content_height)
@@ -543,12 +546,34 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let meta_line = selected
+            .blame
+            .as_ref()
+            .map(|b| b.as_ref())
+            .unwrap_or("Context not available yet");
+
         v_flex()
             .size_full()
             .overflow_hidden()
-            .gap_1()
-            .child(Self::render_preview_header(path_text, selected, highlights))
-            .child(self.render_preview_editor(selected, selected.blame.clone(), true, window, cx))
+            .child(
+                v_flex()
+                    .flex_shrink_0()
+                    .px_2()
+                    .py_1()
+                    .gap_0p5()
+                    .bg(cx.theme().colors().panel_background)
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Self::render_preview_header(path_text, selected, highlights))
+                    .child(
+                        Label::new(meta_line.to_string())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .single_line()
+                            .truncate(),
+                    ),
+            )
+            .child(self.render_preview_editor(selected, None, false, window, cx))
             .into_any_element()
     }
 
@@ -596,7 +621,6 @@ impl QuickSearch {
 
         let header = v_flex()
             .gap_1p5()
-            .flex_shrink_0()
             .child(
                 h_flex()
                     .gap_2()
@@ -672,8 +696,16 @@ impl QuickSearch {
         v_flex()
             .size_full()
             .overflow_hidden()
-            .gap_1()
-            .child(header)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px_2()
+                    .py_2()
+                    .bg(cx.theme().colors().panel_background)
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(header),
+            )
             .child(self.render_preview_editor(selected, None, false, window, cx))
             .into_any_element()
     }
@@ -807,71 +839,19 @@ impl QuickSearch {
 
     fn render_preview_editor(
         &self,
-        selected: &QuickMatch,
-        blame: Option<Arc<str>>,
-        show_meta: bool,
+        _selected: &QuickMatch,
+        _blame: Option<Arc<str>>,
+        _show_meta: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        if !show_meta {
-            return div()
-                .flex_1()
-                .size_full()
-                .bg(cx.theme().colors().editor_background)
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1()
-                .overflow_hidden()
-                .child(self.preview.preview_editor());
-        }
-
-        let mut column = v_flex().gap_1().flex_1().size_full();
-
-        let mut meta = h_flex().gap_2().items_center();
-        let mut has_meta = false;
-        if let Some(loc) = selected.location_label.clone() {
-            meta = meta.child(
-                Label::new(loc)
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted)
-                    .single_line()
-                    .truncate(),
-            );
-            has_meta = true;
-        }
-        if let Some(bl) = blame {
-            meta = meta.child(
-                Label::new(bl)
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted)
-                    .single_line()
-                    .truncate(),
-            );
-            has_meta = true;
-        }
-        if !has_meta {
-            meta = meta.child(
-                Label::new("Context not available yet")
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted)
-                    .single_line(),
-            );
-        }
-        column = column.child(meta);
-
-        column.child(
-            div()
-                .flex_1()
-                .size_full()
-                .bg(cx.theme().colors().editor_background)
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1()
-                .overflow_hidden()
-                .child(self.preview.preview_editor()),
-        )
+        div()
+            .flex_1()
+            .min_h_0()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
+            .overflow_hidden()
+            .child(self.preview.preview_editor())
     }
 }
 
@@ -2038,7 +2018,11 @@ pub(crate) fn apply_source_event(
 
                 let mut changed = false;
                 for (key, patch) in patches {
-                    if picker.delegate.match_list.update_by_key_or_queue(key, patch) {
+                    if picker
+                        .delegate
+                        .match_list
+                        .update_by_key_or_queue(key, patch)
+                    {
                         changed = true;
                     }
                 }
@@ -2607,11 +2591,7 @@ fn render_grouped_match_row(
             .search_options
             .contains(SearchOptions::REGEX);
     let snippet_element = if snippet_known && !is_blank_line {
-        syntax_and_match_snippet_element(
-            entry,
-            &snippet_shared,
-            cx,
-        )
+        syntax_and_match_snippet_element(entry, &snippet_shared, cx)
     } else {
         None
     };
@@ -2734,12 +2714,7 @@ fn render_flat_match_row(
             let snippet_shared = snippet_shared_for_entry(entry);
             let snippet_text = snippet_shared.as_ref();
             let snippet_element = {
-                syntax_and_match_snippet_element(
-                    entry,
-                    &snippet_shared,
-                    cx,
-                )
-                .unwrap_or_else(|| {
+                syntax_and_match_snippet_element(entry, &snippet_shared, cx).unwrap_or_else(|| {
                     let snippet_highlights = if do_highlights {
                         highlight_indices(snippet_text, &delegate.current_query, case_sensitive)
                     } else {

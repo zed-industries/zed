@@ -991,6 +991,7 @@ fn build_preview_editor(
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: true,
                 show_active_line_background: true,
+
                 sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
             },
             preview_multi.clone(),
@@ -1007,8 +1008,12 @@ fn build_preview_editor(
                 multibuffer: preview_multi.downgrade(),
             });
         }
-        editor.set_show_line_numbers(false, cx);
-        editor.set_show_gutter(false, cx);
+        editor.set_show_line_numbers(true, cx);
+        editor.set_show_wrap_guides(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_breakpoints(false, cx);
+        editor.set_show_horizontal_scrollbar(false, cx);
+        editor.set_show_gutter(true, cx);
         editor.set_show_scrollbars(true, cx);
         editor.disable_expand_excerpt_buttons(cx);
         if !include_commit_addon {
