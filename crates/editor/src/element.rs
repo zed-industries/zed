@@ -62,6 +62,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 
+use edit_prediction_types::EditPredictionGranularity;
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -603,7 +604,8 @@ impl EditorElement {
         register_action(editor, window, Editor::display_cursor_names);
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
-        register_action(editor, window, Editor::accept_partial_edit_prediction);
+        register_action(editor, window, Editor::accept_next_word_edit_prediction);
+        register_action(editor, window, Editor::accept_next_line_edit_prediction);
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
@@ -4900,8 +4902,11 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding =
-                            editor.accept_edit_prediction_keybind(false, window, cx);
+                        let accept_binding = editor.accept_edit_prediction_keybind(
+                            EditPredictionGranularity::Full,
+                            window,
+                            cx,
+                        );
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,

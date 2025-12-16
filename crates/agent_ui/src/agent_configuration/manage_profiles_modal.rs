@@ -8,6 +8,7 @@ use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use language_model::{LanguageModel, LanguageModelRegistry};
+use settings::SettingsStore;
 use settings::{
     LanguageModelProviderSetting, LanguageModelSelection, Settings as _, update_settings_file,
 };
@@ -94,6 +95,7 @@ pub struct ViewProfileMode {
     configure_default_model: NavigableEntry,
     configure_tools: NavigableEntry,
     configure_mcps: NavigableEntry,
+    delete_profile: NavigableEntry,
     cancel_item: NavigableEntry,
 }
 
@@ -109,6 +111,7 @@ pub struct ManageProfilesModal {
     active_model: Option<Arc<dyn LanguageModel>>,
     focus_handle: FocusHandle,
     mode: Mode,
+    _settings_subscription: Subscription,
 }
 
 impl ManageProfilesModal {
@@ -148,12 +151,23 @@ impl ManageProfilesModal {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
+        // Keep this modal in sync with settings changes (including profile deletion).
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
+                if matches!(this.mode, Mode::ChooseProfile(_)) {
+                    this.mode = Mode::choose_profile(window, cx);
+                    this.focus_handle(cx).focus(window);
+                    cx.notify();
+                }
+            });
+
         Self {
             fs,
             active_model,
             context_server_registry,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
+            _settings_subscription: settings_subscription,
         }
     }
 
@@ -192,6 +206,7 @@ impl ManageProfilesModal {
             configure_default_model: NavigableEntry::focusable(cx),
             configure_tools: NavigableEntry::focusable(cx),
             configure_mcps: NavigableEntry::focusable(cx),
+            delete_profile: NavigableEntry::focusable(cx),
             cancel_item: NavigableEntry::focusable(cx),
         });
         self.focus_handle(cx).focus(window);
@@ -367,6 +382,42 @@ impl ManageProfilesModal {
             Mode::ConfigureMcps { .. } => {}
             Mode::ConfigureDefaultModel { .. } => {}
         }
+    }
+
+    fn delete_profile(
+        &mut self,
+        profile_id: AgentProfileId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if builtin_profiles::is_builtin(&profile_id) {
+            self.view_profile(profile_id, window, cx);
+            return;
+        }
+
+        let fs = self.fs.clone();
+
+        update_settings_file(fs, cx, move |settings, _cx| {
+            let Some(agent_settings) = settings.agent.as_mut() else {
+                return;
+            };
+
+            let Some(profiles) = agent_settings.profiles.as_mut() else {
+                return;
+            };
+
+            profiles.shift_remove(profile_id.0.as_ref());
+
+            if agent_settings
+                .default_profile
+                .as_deref()
+                .is_some_and(|default_profile| default_profile == profile_id.0.as_ref())
+            {
+                agent_settings.default_profile = Some(AgentProfileId::default().0);
+            }
+        });
+
+        self.choose_profile(window, cx);
     }
 
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -756,6 +807,40 @@ impl ManageProfilesModal {
                                         }),
                                 ),
                         )
+                        .child(
+                            div()
+                                .id("delete-profile")
+                                .track_focus(&mode.delete_profile.focus_handle)
+                                .on_action({
+                                    let profile_id = mode.profile_id.clone();
+                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                        this.delete_profile(profile_id.clone(), window, cx);
+                                    })
+                                })
+                                .child(
+                                    ListItem::new("delete-profile")
+                                        .toggle_state(
+                                            mode.delete_profile
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::Trash)
+                                                .size(IconSize::Small)
+                                                .color(Color::Error),
+                                        )
+                                        .child(Label::new("Delete Profile").color(Color::Error))
+                                        .disabled(builtin_profiles::is_builtin(&mode.profile_id))
+                                        .on_click({
+                                            let profile_id = mode.profile_id.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.delete_profile(profile_id.clone(), window, cx);
+                                            })
+                                        }),
+                                ),
+                        )
                         .child(ListSeparator)
                         .child(
                             div()
@@ -805,6 +890,7 @@ impl ManageProfilesModal {
         .entry(mode.configure_default_model)
         .entry(mode.configure_tools)
         .entry(mode.configure_mcps)
+        .entry(mode.delete_profile)
         .entry(mode.cancel_item)
     }
 }

@@ -309,3 +309,9 @@ pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
         })
         .clone()
 }
+
+pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    mercury_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx)
+    })
+}

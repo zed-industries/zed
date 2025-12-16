@@ -530,6 +530,7 @@ pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+    fn kill(&self, cx: &AsyncApp) -> Result<()>;
 }
 
 pub trait ThreadEnvironment {
@@ -2658,7 +2659,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        // TODO: make this optional?
-        size: gpui::Size::new(0.into(), 0.into()),
+        size: None,
     }
 }

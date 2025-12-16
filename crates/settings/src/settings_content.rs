@@ -930,6 +930,9 @@ pub struct SshConnection {
     pub upload_binary_over_ssh: Option<bool>,
 
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+    /// Timeout in seconds for SSH connection and downloading the remote server binary.
+    /// Defaults to 10 seconds if not specified.
+    pub connection_timeout: Option<u16>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
