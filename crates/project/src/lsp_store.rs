@@ -12647,29 +12647,30 @@ impl LspStore {
                         .language_servers
                         .get_mut(&server_id)
                         .context("Could not obtain Language Servers state")?;
-                    let registrations = local
+                    local
                         .language_server_dynamic_registrations
                         .get_mut(&server_id)
                         .with_context(|| {
                             format!("Expected dynamic registration to exist for server {server_id}")
-                        })?;
-                    registrations.diagnostics
+                        })?.diagnostics
                         .remove(&Some(unreg.id.clone()))
                         .with_context(|| format!(
                             "Attempted to unregister non-existent diagnostic registration with ID {}",
                             unreg.id)
                         )?;
-                    let removed_last_diagnostic_provider = registrations.diagnostics.is_empty();
 
+                    let mut has_any_diagnostic_providers_still = true;
                     if let LanguageServerState::Running {
                         workspace_diagnostics_refresh_tasks,
                         ..
                     } = state
                     {
                         workspace_diagnostics_refresh_tasks.remove(&Some(unreg.id.clone()));
+                        has_any_diagnostic_providers_still =
+                            !workspace_diagnostics_refresh_tasks.is_empty();
                     }
 
-                    if removed_last_diagnostic_provider {
+                    if !has_any_diagnostic_providers_still {
                         server.update_capabilities(|capabilities| {
                             debug_assert!(capabilities.diagnostic_provider.is_some());
                             capabilities.diagnostic_provider = None;
