@@ -456,9 +456,9 @@ impl zed::Extension for CopilotChatProvider {
         _provider_id: &str,
     ) -> Result<LlmDeviceFlowPromptInfo, String> {
         // Step 1: Request device and user verification codes
-        let device_code_response = llm_oauth_send_http_request(&LlmOauthHttpRequest {
+        let device_code_response = llm_oauth_send_http_request(&HttpRequest {
+            method: HttpMethod::Post,
             url: GITHUB_DEVICE_CODE_URL.to_string(),
-            method: "POST".to_string(),
             headers: vec![
                 ("Accept".to_string(), "application/json".to_string()),
                 (
@@ -466,7 +466,10 @@ impl zed::Extension for CopilotChatProvider {
                     "application/x-www-form-urlencoded".to_string(),
                 ),
             ],
-            body: format!("client_id={}&scope=read:user", GITHUB_COPILOT_CLIENT_ID),
+            body: Some(
+                format!("client_id={}&scope=read:user", GITHUB_COPILOT_CLIENT_ID).into_bytes(),
+            ),
+            redirect_policy: RedirectPolicy::NoFollow,
         })?;
 
         if device_code_response.status != 200 {
@@ -487,7 +490,7 @@ impl zed::Extension for CopilotChatProvider {
             interval: u64,
         }
 
-        let device_info: DeviceCodeResponse = serde_json::from_str(&device_code_response.body)
+        let device_info: DeviceCodeResponse = serde_json::from_slice(&device_code_response.body)
             .map_err(|e| format!("Failed to parse device code response: {}", e))?;
 
         // Store device flow state for polling
@@ -534,9 +537,9 @@ impl zed::Extension for CopilotChatProvider {
         for _ in 0..max_attempts {
             thread::sleep(poll_interval);
 
-            let token_response = llm_oauth_send_http_request(&LlmOauthHttpRequest {
+            let token_response = llm_oauth_send_http_request(&HttpRequest {
+                method: HttpMethod::Post,
                 url: GITHUB_ACCESS_TOKEN_URL.to_string(),
-                method: "POST".to_string(),
                 headers: vec![
                     ("Accept".to_string(), "application/json".to_string()),
                     (
@@ -544,10 +547,14 @@ impl zed::Extension for CopilotChatProvider {
                         "application/x-www-form-urlencoded".to_string(),
                     ),
                 ],
-                body: format!(
-                    "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
-                    GITHUB_COPILOT_CLIENT_ID, state.device_code
+                body: Some(
+                    format!(
+                        "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+                        GITHUB_COPILOT_CLIENT_ID, state.device_code
+                    )
+                    .into_bytes(),
                 ),
+                redirect_policy: RedirectPolicy::NoFollow,
             })?;
 
             #[derive(Deserialize)]
@@ -557,7 +564,7 @@ impl zed::Extension for CopilotChatProvider {
                 error_description: Option<String>,
             }
 
-            let token_json: TokenResponse = serde_json::from_str(&token_response.body)
+            let token_json: TokenResponse = serde_json::from_slice(&token_response.body)
                 .map_err(|e| format!("Failed to parse token response: {}", e))?;
 
             if let Some(access_token) = token_json.access_token {

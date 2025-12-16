@@ -1,4 +1,6 @@
 interface llm-provider {
+    use http-client.{http-request, http-response-with-status};
+
     /// Information about a language model provider.
     record provider-info {
         /// Unique identifier for the provider (e.g. "my-extension.my-provider").
@@ -271,28 +273,6 @@ interface llm-provider {
         port: u32,
     }
 
-    /// A generic HTTP request for OAuth token exchange.
-    record oauth-http-request {
-        /// The URL to request.
-        url: string,
-        /// HTTP method (e.g., "POST", "GET").
-        method: string,
-        /// Request headers as key-value pairs.
-        headers: list<tuple<string, string>>,
-        /// Request body as a string (for form-encoded or JSON bodies).
-        body: string,
-    }
-
-    /// Response from an OAuth HTTP request.
-    record oauth-http-response {
-        /// HTTP status code.
-        status: u16,
-        /// Response headers as key-value pairs.
-        headers: list<tuple<string, string>>,
-        /// Response body as a string.
-        body: string,
-    }
-
     /// Get a stored credential for this provider.
     get-credential: func(provider-id: string) -> option<string>;
 
@@ -316,14 +296,15 @@ interface llm-provider {
     /// The extension is responsible for:
     /// - Constructing the auth URL with client_id, redirect_uri, scope, state, etc.
     /// - Parsing the callback URL to extract the authorization code
-    /// - Exchanging the code for tokens using oauth-http-request
+    /// - Exchanging the code for tokens using fetch-fallible from http-client
     oauth-start-web-auth: func(config: oauth-web-auth-config) -> result<oauth-web-auth-result, string>;
 
     /// Make an HTTP request for OAuth token exchange.
     ///
-    /// This is a simple HTTP client for OAuth flows, allowing the extension
-    /// to handle token exchange with full control over serialization.
-    oauth-send-http-request: func(request: oauth-http-request) -> result<oauth-http-response, string>;
+    /// This is a convenience wrapper around http-client's fetch-fallible for OAuth flows.
+    /// Unlike the standard fetch, this does not treat non-2xx responses as errors,
+    /// allowing proper handling of OAuth error responses.
+    oauth-send-http-request: func(request: http-request) -> result<http-response-with-status, string>;
 
     /// Open a URL in the user's default browser.
     ///

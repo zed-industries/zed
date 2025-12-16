@@ -618,6 +618,19 @@ impl http_client::Host for WasmState {
         .to_wasmtime_result()
     }
 
+    async fn fetch_fallible(
+        &mut self,
+        request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<http_client::HttpResponseWithStatus, String>> {
+        maybe!(async {
+            let request = convert_request(&request)?;
+            let mut response = self.host.http_client.send(request).await?;
+            convert_response_with_status(&mut response).await
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
     async fn fetch_stream(
         &mut self,
         request: http_client::HttpRequest,
@@ -719,6 +732,26 @@ async fn convert_response(
         .await?;
 
     Ok(extension_response)
+}
+
+async fn convert_response_with_status(
+    response: &mut ::http_client::Response<AsyncBody>,
+) -> anyhow::Result<http_client::HttpResponseWithStatus> {
+    let status = response.status().as_u16();
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
+    Ok(http_client::HttpResponseWithStatus {
+        status,
+        headers,
+        body,
+    })
 }
 
 impl nodejs::Host for WasmState {
@@ -1376,70 +1409,12 @@ impl llm_provider::Host for WasmState {
 
     async fn oauth_send_http_request(
         &mut self,
-        request: llm_provider::OauthHttpRequest,
-    ) -> wasmtime::Result<Result<llm_provider::OauthHttpResponse, String>> {
-        let http_client = self.host.http_client.clone();
-
-        self.on_main_thread(move |_cx| {
-            async move {
-                let method = match request.method.to_uppercase().as_str() {
-                    "GET" => ::http_client::Method::GET,
-                    "POST" => ::http_client::Method::POST,
-                    "PUT" => ::http_client::Method::PUT,
-                    "DELETE" => ::http_client::Method::DELETE,
-                    "PATCH" => ::http_client::Method::PATCH,
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "Unsupported HTTP method: {}",
-                            request.method
-                        ));
-                    }
-                };
-
-                let mut builder = ::http_client::Request::builder()
-                    .method(method)
-                    .uri(&request.url);
-
-                for (key, value) in &request.headers {
-                    builder = builder.header(key.as_str(), value.as_str());
-                }
-
-                let body = if request.body.is_empty() {
-                    AsyncBody::empty()
-                } else {
-                    AsyncBody::from(request.body.into_bytes())
-                };
-
-                let http_request = builder
-                    .body(body)
-                    .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
-
-                let mut response = http_client
-                    .send(http_request)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
-
-                let status = response.status().as_u16();
-                let headers: Vec<(String, String)> = response
-                    .headers()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                    .collect();
-
-                let mut body_bytes = Vec::new();
-                futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
-
-                let body = String::from_utf8_lossy(&body_bytes).to_string();
-
-                Ok(llm_provider::OauthHttpResponse {
-                    status,
-                    headers,
-                    body,
-                })
-            }
-            .boxed_local()
+        request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<http_client::HttpResponseWithStatus, String>> {
+        maybe!(async {
+            let request = convert_request(&request)?;
+            let mut response = self.host.http_client.send(request).await?;
+            convert_response_with_status(&mut response).await
         })
         .await
         .to_wasmtime_result()
