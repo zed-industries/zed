@@ -4,20 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-OUTPUT_FILE="${1:-assets/generated/actions.json}"
-OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
-
-if [[ ! -d "$OUTPUT_DIR" ]]; then
-    echo "Error: Output directory '$OUTPUT_DIR' does not exist" >&2
-    exit 1
-fi
-
-# Build zed in release mode for faster execution
-echo "Building zed..."
-cargo build --release -p zed
-
-# Generate action metadata
 echo "Generating action metadata..."
-./target/release/zed --dump-all-actions > "$OUTPUT_FILE"
+cargo run -p zed -- --dump-all-actions > assets/generated/actions.json
 
-echo "Generated $OUTPUT_FILE with $(grep -c '"name":' "$OUTPUT_FILE") actions"
+echo "Generated assets/generated/actions.json with $(grep -c '"name":' assets/generated/actions.json) actions"
