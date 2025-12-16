@@ -537,9 +537,10 @@ impl TerminalElement {
 
             // Private Use Area - Powerline separator symbols only
             | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
-            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
-            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
-            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
+            | 0xE0B8..=0xE0BF // Powerline separators: corner triangles
+            | 0xE0C0..=0xE0CA // Powerline separators: flames (E0C0-E0C3), pixelated (E0C4-E0C7), and ice (E0C8 & E0CA)
+            | 0xE0CC..=0xE0D1 // Powerline separators: honeycombs (E0CC-E0CD) and lego (E0CE-E0D1)
+            | 0xE0D2..=0xE0D7 // Powerline separators: trapezoid (E0D2 & E0D4) and inverted triangles (E0D6-E0D7)
         )
     }
 
@@ -1112,9 +1113,7 @@ impl Element for TerminalElement {
                                 len,
                                 font: text_style.font(),
                                 color: theme.colors().terminal_ansi_background,
-                                background_color: None,
-                                underline: Default::default(),
-                                strikethrough: None,
+                                ..Default::default()
                             }],
                             None,
                         )
@@ -1276,7 +1275,7 @@ impl Element for TerminalElement {
                     }
 
                     for (relative_highlighted_range, color) in
-                        layout.relative_highlighted_ranges.iter()
+&                        layout.relative_highlighted_ranges
                     {
                         if let Some((start_y, highlighted_range_lines)) =
                             to_highlighted_range_lines(relative_highlighted_range, layout, origin)
@@ -1322,9 +1321,8 @@ impl Element for TerminalElement {
                                         len: text_to_mark.len(),
                                         font: ime_style.font(),
                                         color: ime_style.color,
-                                        background_color: None,
                                         underline: ime_style.underline,
-                                        strikethrough: None,
+                                        ..Default::default()
                                     }],
                                     None
                                 );
@@ -1544,11 +1542,13 @@ fn to_highlighted_range_lines(
     }
 
     let clamped_start_line = unclamped_start.line.0.max(0) as usize;
+
     let clamped_end_line = unclamped_end
         .line
         .0
         .min(layout.dimensions.num_lines() as i32) as usize;
-    //Convert the start of the range to pixels
+
+    // Convert the start of the range to pixels
     let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
 
     // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
@@ -1558,10 +1558,11 @@ fn to_highlighted_range_lines(
         let mut line_start = 0;
         let mut line_end = layout.dimensions.columns();
 
-        if line == clamped_start_line {
+        if line == clamped_start_line && unclamped_start.line.0 >= 0 {
             line_start = unclamped_start.column.0;
         }
-        if line == clamped_end_line {
+        if line == clamped_end_line && unclamped_end.line.0 <= layout.dimensions.num_lines() as i32
+        {
             line_end = unclamped_end.column.0 + 1; // +1 for inclusive
         }
 
@@ -1664,6 +1665,8 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
         assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
         assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
+        assert!(TerminalElement::is_decorative_character('\u{E0CA}')); // Powerline mirrored ice waveform
+        assert!(TerminalElement::is_decorative_character('\u{E0D7}')); // Powerline left triangle inverted
 
         // Characters that should NOT be considered decorative
         assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
@@ -1842,27 +1845,21 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style2 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style3 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::blue(), // Different color
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1881,9 +1878,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1912,9 +1907,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1944,9 +1937,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));

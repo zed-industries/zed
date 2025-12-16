@@ -748,7 +748,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Refineable, Copy, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Debug + Default + PartialEq> {
@@ -1416,9 +1416,9 @@ where
     /// ```
     pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
-            && point.x <= self.origin.x.clone() + self.size.width.clone()
+            && point.x < self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
-            && point.y <= self.origin.y.clone() + self.size.height.clone()
+            && point.y < self.origin.y.clone() + self.size.height.clone()
     }
 
     /// Checks if this bounds is completely contained within another bounds.
@@ -1675,8 +1675,6 @@ impl Bounds<DevicePixels> {
         }
     }
 }
-
-impl<T: Copy + Clone + Debug + Default + PartialEq> Copy for Bounds<T> {}
 
 /// Represents the edges of a box in a 2D space, such as padding or margin.
 ///
@@ -2650,6 +2648,18 @@ impl Debug for Pixels {
     }
 }
 
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Pixels> for Pixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + *b)
+    }
+}
+
 impl TryFrom<&'_ str> for Pixels {
     type Error = anyhow::Error;
 
@@ -3569,7 +3579,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
-pub fn phi() -> DefiniteLength {
+pub const fn phi() -> DefiniteLength {
     relative(1.618_034)
 }
 
@@ -3582,7 +3592,7 @@ pub fn phi() -> DefiniteLength {
 /// # Returns
 ///
 /// A `Rems` representing the specified number of rems.
-pub fn rems(rems: f32) -> Rems {
+pub const fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
@@ -3610,7 +3620,7 @@ pub const fn px(pixels: f32) -> Pixels {
 /// # Returns
 ///
 /// A `Length` variant set to `Auto`.
-pub fn auto() -> Length {
+pub const fn auto() -> Length {
     Length::Auto
 }
 

@@ -167,7 +167,7 @@ impl TerminalPanel {
                                         // hence we focus that first. Otherwise, we'd end up without a focused element, as
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
-                                            "Spawn task",
+                                            "Spawn Task",
                                             zed_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
@@ -342,7 +342,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(pane);
+                let _removal_result = self.center.remove(pane, cx);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -393,7 +393,10 @@ impl TerminalPanel {
                         };
                         panel
                             .update_in(cx, |panel, window, cx| {
-                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                panel
+                                    .center
+                                    .split(&pane, &new_pane, direction, cx)
+                                    .log_err();
                                 window.focus(&new_pane.focus_handle(cx));
                             })
                             .ok();
@@ -415,7 +418,7 @@ impl TerminalPanel {
                     new_pane.update(cx, |pane, cx| {
                         pane.add_item(item, true, true, None, window, cx);
                     });
-                    self.center.split(&pane, &new_pane, direction).log_err();
+                    self.center.split(&pane, &new_pane, direction, cx).log_err();
                     window.focus(&new_pane.focus_handle(cx));
                 }
             }
@@ -550,7 +553,7 @@ impl TerminalPanel {
 
         let builder = ShellBuilder::new(&shell, is_windows);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-        let (command, args) = builder.build(task.command.clone(), &task.args);
+        let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
 
         let task = SpawnInTerminal {
             command_label,
@@ -1066,7 +1069,7 @@ impl TerminalPanel {
             .find_pane_in_direction(&self.active_pane, direction, cx)
             .cloned()
         {
-            self.center.swap(&self.active_pane, &to);
+            self.center.swap(&self.active_pane, &to, cx);
             cx.notify();
         }
     }
@@ -1074,7 +1077,7 @@ impl TerminalPanel {
     fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction)
+            .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
             cx.notify();
@@ -1189,6 +1192,7 @@ pub fn new_terminal_pane(
                                         &this_pane,
                                         &new_pane,
                                         split_direction,
+                                        cx,
                                     )?;
                                     anyhow::Ok(new_pane)
                                 })
@@ -1482,6 +1486,7 @@ impl Render for TerminalPanel {
                                                     &terminal_panel.active_pane,
                                                     &new_pane,
                                                     SplitDirection::Right,
+                                                    cx,
                                                 )
                                                 .log_err();
                                             let new_pane = new_pane.read(cx);
@@ -1971,10 +1976,6 @@ mod tests {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
             editor::init(cx);
             crate::init(cx);
         });

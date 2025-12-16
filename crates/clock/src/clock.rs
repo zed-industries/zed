@@ -260,7 +260,7 @@ impl fmt::Debug for Lamport {
 impl fmt::Debug for Global {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Global {{")?;
-        for timestamp in self.iter() {
+        for timestamp in self.iter().filter(|t| t.value > 0) {
             if timestamp.replica_id.0 > 0 {
                 write!(f, ", ")?;
             }

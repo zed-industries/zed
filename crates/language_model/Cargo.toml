@@ -17,8 +17,8 @@ test-support = []
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
-open_router.workspace = true
 anyhow.workspace = true
+credentials_provider.workspace = true
 base64.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
@@ -30,15 +30,18 @@ http_client.workspace = true
 icons.workspace = true
 image.workspace = true
 log.workspace = true
+open_ai = { workspace = true, features = ["schemars"] }
+open_router.workspace = true
 parking_lot.workspace = true
 proto.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
-telemetry_events.workspace = true
 thiserror.workspace = true
 util.workspace = true
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

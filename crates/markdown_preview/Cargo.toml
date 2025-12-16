@@ -31,8 +31,10 @@ pulldown-cmark.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }

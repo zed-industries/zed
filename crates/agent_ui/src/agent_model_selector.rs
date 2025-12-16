@@ -25,6 +25,8 @@ impl AgentModelSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle_clone = focus_handle.clone();
+
         Self {
             selector: cx.new(move |cx| {
                 let fs = fs.clone();
@@ -47,6 +49,8 @@ impl AgentModelSelector {
                             }
                         }
                     },
+                    true, // Use popover styles for picker
+                    focus_handle_clone,
                     window,
                     cx,
                 )
@@ -58,6 +62,10 @@ impl AgentModelSelector {
 
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
+    }
+
+    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+        self.selector.read(cx).delegate.active_model(cx)
     }
 }
 
@@ -94,7 +102,7 @@ impl Render for AgentModelSelector {
                 .child(
                     Icon::new(IconName::ChevronDown)
                         .color(color)
-                        .size(IconSize::XSmall),
+                        .size(IconSize::Small),
                 ),
             move |_window, cx| {
                 Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)

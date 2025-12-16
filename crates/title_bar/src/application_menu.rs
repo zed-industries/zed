@@ -110,16 +110,24 @@ impl ApplicationMenu {
                 .into_iter()
                 .fold(menu, |menu, item| match item {
                     OwnedMenuItem::Separator => menu.separator(),
-                    OwnedMenuItem::Action { name, action, .. } => menu.action(name, action),
+                    OwnedMenuItem::Action {
+                        name,
+                        action,
+                        checked,
+                        ..
+                    } => menu.action_checked(name, action, checked),
                     OwnedMenuItem::Submenu(submenu) => {
                         submenu
                             .items
                             .into_iter()
                             .fold(menu, |menu, item| match item {
                                 OwnedMenuItem::Separator => menu.separator(),
-                                OwnedMenuItem::Action { name, action, .. } => {
-                                    menu.action(name, action)
-                                }
+                                OwnedMenuItem::Action {
+                                    name,
+                                    action,
+                                    checked,
+                                    ..
+                                } => menu.action_checked(name, action, checked),
                                 OwnedMenuItem::Submenu(_) => menu,
                                 OwnedMenuItem::SystemMenu(_) => {
                                     // A system menu doesn't make sense in this context, so ignore it
@@ -143,10 +151,10 @@ impl ApplicationMenu {
 
         // Application menu must have same ids as first menu item in standard menu
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })
@@ -176,10 +184,10 @@ impl ApplicationMenu {
             .collect();
 
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })

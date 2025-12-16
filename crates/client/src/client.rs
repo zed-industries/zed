@@ -30,7 +30,7 @@ use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent};
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -95,7 +95,7 @@ actions!(
     ]
 );
 
-#[derive(Deserialize)]
+#[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
 }
@@ -113,7 +113,7 @@ impl Settings for ClientSettings {
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, RegisterSetting)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
@@ -140,12 +140,6 @@ impl Settings for ProxySettings {
     }
 }
 
-pub fn init_settings(cx: &mut App) {
-    TelemetrySettings::register(cx);
-    ClientSettings::register(cx);
-    ProxySettings::register(cx);
-}
-
 pub fn init(client: &Arc<Client>, cx: &mut App) {
     let client = Arc::downgrade(client);
     cx.on_action({
@@ -156,9 +150,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                     .detach_and_log_err(cx);
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
@@ -168,9 +161,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                 .detach();
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
@@ -508,7 +500,7 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Deserialize, Debug, RegisterSetting)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
@@ -1493,7 +1485,7 @@ impl Client {
 
         let url = self
             .http
-            .build_zed_cloud_url("/internal/users/impersonate", &[])?;
+            .build_zed_cloud_url("/internal/users/impersonate")?;
         let request = Request::post(url.as_str())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {api_token}"))
@@ -1728,6 +1720,10 @@ impl ProtoClient for Client {
 
     fn is_via_collab(&self) -> bool {
         true
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
     }
 }
 
@@ -2177,7 +2173,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            init_settings(cx);
         });
     }
 }

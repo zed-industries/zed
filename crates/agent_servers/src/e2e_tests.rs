@@ -6,7 +6,9 @@ use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
 use project::agent_server_store::BuiltinAgentServerSettings;
-use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
+use project::{FakeFs, Project};
+#[cfg(test)]
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -80,26 +82,9 @@ where
         .update(cx, |thread, cx| {
             thread.send(
                 vec![
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: "Read the file ".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        uri: "foo.rs".into(),
-                        name: "foo.rs".into(),
-                        annotations: None,
-                        description: None,
-                        mime_type: None,
-                        size: None,
-                        title: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: " and tell me what the content of the println! is".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
+                    "Read the file ".into(),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    " and tell me what the content of the println! is".into(),
                 ],
                 cx,
             )
@@ -427,7 +412,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -452,35 +437,29 @@ pub use common_e2e_tests;
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
-    use settings::Settings;
-
     env_logger::try_init().ok();
 
     cx.update(|cx| {
         let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
-        Project::init_settings(cx);
-        language::init(cx);
         gpui_tokio::init(cx);
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
-        client::init_settings(cx);
         let client = client::Client::production(cx);
         let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client, cx);
-        agent_settings::init(cx);
-        AllAgentServersSettings::register(cx);
 
         #[cfg(test)]
-        AllAgentServersSettings::override_global(
-            AllAgentServersSettings {
+        project::agent_server_store::AllAgentServersSettings::override_global(
+            project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
                     path: Some("claude-code-acp".into()),
                     args: None,
                     env: None,
                     ignore_system_version: None,
                     default_mode: None,
+                    default_model: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
@@ -489,6 +468,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     env: None,
                     ignore_system_version: None,
                     default_mode: None,
+                    default_model: None,
                 }),
                 custom: collections::HashMap::default(),
             },

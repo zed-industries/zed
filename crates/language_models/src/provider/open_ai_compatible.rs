@@ -4,10 +4,10 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -15,10 +15,8 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
-use util::{ResultExt, truncate_and_trailoff};
-use zed_env_vars::EnvVar;
+use util::ResultExt;
 
-use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
@@ -38,7 +36,6 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 
 pub struct State {
     id: Arc<str>,
-    api_key_env_var: EnvVar,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
 }
@@ -56,12 +53,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state.load_if_needed(
-            api_url,
-            &self.api_key_env_var,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -83,7 +76,6 @@ impl OpenAiCompatibleLanguageModelProvider {
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
-                        &this.api_key_env_var,
                         |this| &mut this.api_key_state,
                         cx,
                     );
@@ -95,8 +87,10 @@ impl OpenAiCompatibleLanguageModelProvider {
             let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
             State {
                 id: id.clone(),
-                api_key_env_var: EnvVar::new(api_key_env_var_name),
-                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                api_key_state: ApiKeyState::new(
+                    SharedString::new(settings.api_url.as_str()),
+                    EnvVar::new(api_key_env_var_name),
+                ),
                 settings,
             }
         });
@@ -205,8 +199,13 @@ impl OpenAiCompatibleLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
@@ -216,7 +215,7 @@ impl OpenAiCompatibleLanguageModel {
                 state.settings.api_url.clone(),
             )
         }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let provider = self.provider_name.clone();
@@ -224,7 +223,13 @@ impl OpenAiCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -426,7 +431,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
-        let env_var_name = &state.api_key_env_var.name;
+        let env_var_name = state.api_key_state.env_var_name();
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
@@ -455,25 +460,39 @@ impl Render for ConfigurationView {
                 .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
+                        .flex_1()
+                        .min_w_0()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {env_var_name} environment variable")
-                        } else {
-                            format!("API key configured for {}", truncate_and_trailoff(&state.settings.api_url, 32))
-                        })),
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_x_hidden()
+                                .text_ellipsis()
+                                .child(Label::new(
+                                    if env_var_set {
+                                        format!("API key set in {env_var_name} environment variable")
+                                    } else {
+                                        format!("API key configured for {}", &state.settings.api_url)
+                                    }
+                                ))
+                        ),
                 )
                 .child(
-                    Button::new("reset-api-key", "Reset API Key")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                    h_flex()
+                        .flex_shrink_0()
+                        .child(
+                            Button::new("reset-api-key", "Reset API Key")
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Undo)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .layer(ElevationIndex::ModalSurface)
+                                .when(env_var_set, |this| {
+                                    this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                        ),
                 )
                 .into_any()
         };

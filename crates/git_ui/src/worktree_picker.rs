@@ -665,7 +665,7 @@ impl PickerDelegate for WorktreeListDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("worktree-menu-{ix}")))
+            ListItem::new(format!("worktree-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

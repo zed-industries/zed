@@ -38,10 +38,11 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -169,6 +170,13 @@ impl Application {
         self
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn with_quit_mode(self, mode: QuitMode) -> Self {
+        self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -237,6 +245,18 @@ type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'st
 type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+
+/// Defines when the application should automatically quit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuitMode {
+    /// Use [`QuitMode::Explicit`] on macOS and [`QuitMode::LastWindowClosed`] on other platforms.
+    #[default]
+    Default,
+    /// Quit automatically when the last window is closed.
+    LastWindowClosed,
+    /// Quit only when requested via [`App::quit`].
+    Explicit,
+}
 
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq)]
@@ -532,12 +552,39 @@ impl SystemWindowTabController {
     }
 }
 
+pub(crate) enum GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    Test {
+        skip_drawing: bool,
+    },
+    Production,
+}
+
+impl GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> Self {
+        GpuiMode::Test {
+            skip_drawing: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn skip_drawing(&self) -> bool {
+        match self {
+            #[cfg(any(test, feature = "test-support"))]
+            GpuiMode::Test { skip_drawing } => *skip_drawing,
+            GpuiMode::Production => false,
+        }
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -588,6 +635,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quit_mode: QuitMode,
     quitting: bool,
 }
 
@@ -615,6 +663,7 @@ impl App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
+                mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
@@ -659,6 +708,7 @@ impl App {
                 inspector_renderer: None,
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
+                quit_mode: QuitMode::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1172,6 +1222,12 @@ impl App {
         self.http_client = new_client;
     }
 
+    /// Configures when the application should automatically quit.
+    /// By default, [`QuitMode::Default`] is used.
+    pub fn set_quit_mode(&mut self, mode: QuitMode) {
+        self.quit_mode = mode;
+    }
+
     /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
@@ -1379,6 +1435,16 @@ impl App {
                     callback(cx);
                     true
                 });
+
+                let quit_on_empty = match cx.quit_mode {
+                    QuitMode::Explicit => false,
+                    QuitMode::LastWindowClosed => true,
+                    QuitMode::Default => cfg!(not(target_os = "macos")),
+                };
+
+                if quit_on_empty && cx.windows.is_empty() {
+                    cx.quit();
+                }
             } else {
                 cx.windows.get_mut(id)?.replace(window);
             }
@@ -1427,6 +1493,24 @@ impl App {
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
+    }
+
+    /// Spawns the future returned by the given function on the main thread with
+    /// the given priority. The closure will be invoked with [AsyncApp], which
+    /// allows the application state to be accessed across await points.
+    pub fn spawn_with_priority<AsyncFn, R>(&self, priority: Priority, f: AsyncFn) -> Task<R>
+    where
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
+        R: 'static,
+    {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+
+        let mut cx = self.to_async();
+
+        self.foreground_executor
+            .spawn_with_priority(priority, async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1693,7 +1777,10 @@ impl App {
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at
     /// the end of the bubble phase for actions, and so will only be invoked if there are no other
     /// handlers or if they called `cx.propagate()`.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut Self) + 'static,
+    ) -> &mut Self {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -1703,6 +1790,7 @@ impl App {
                     listener(action, cx)
                 }
             }));
+        self
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to
@@ -2362,10 +2450,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

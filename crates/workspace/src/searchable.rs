@@ -96,6 +96,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -104,7 +105,6 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -166,6 +166,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize>;
+    fn set_search_is_case_sensitive(&mut self, _: Option<bool>, _: &mut Context<Self>) {}
 }
 
 pub trait SearchableItemHandle: ItemHandle {
@@ -179,13 +180,18 @@ pub trait SearchableItemHandle: ItemHandle {
         handler: Box<dyn Fn(&SearchEvent, &mut Window, &mut App) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, window: &mut Window, cx: &mut App);
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App);
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        active_match_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    );
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
     fn activate_match(
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     );
@@ -234,6 +240,8 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
+
+    fn set_search_is_case_sensitive(&self, is_case_sensitive: Option<bool>, cx: &mut App);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -263,10 +271,16 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
     fn clear_matches(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.clear_matches(window, cx));
     }
-    fn update_matches(&self, matches: &AnyVec<dyn Send>, window: &mut Window, cx: &mut App) {
+    fn update_matches(
+        &self,
+        matches: &AnyVec<dyn Send>,
+        active_match_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.update_matches(matches.as_slice(), window, cx)
+            this.update_matches(matches.as_slice(), active_match_index, window, cx)
         });
     }
     fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {
@@ -276,13 +290,12 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         &self,
         index: usize,
         matches: &AnyVec<dyn Send>,
-        collapse: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
         let matches = matches.downcast_ref().unwrap();
         self.update(cx, |this, cx| {
-            this.activate_match(index, matches.as_slice(), collapse, window, cx)
+            this.activate_match(index, matches.as_slice(), window, cx)
         });
     }
 
@@ -390,17 +403,22 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.toggle_filtered_search_ranges(enabled, window, cx)
         });
     }
+    fn set_search_is_case_sensitive(&self, enabled: Option<bool>, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_search_is_case_sensitive(enabled, cx)
+        });
+    }
 }
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyView {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.to_any_view()
     }
 }
 

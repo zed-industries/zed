@@ -95,27 +95,34 @@ impl SvgRenderer {
     pub(crate) fn render_alpha_mask(
         &self,
         params: &RenderSvgParams,
+        bytes: Option<&[u8]>,
     ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
         anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
-        // Load the tree.
-        let Some(bytes) = self.asset_source.load(&params.path)? else {
-            return Ok(None);
+        let render_pixmap = |bytes| {
+            let pixmap = self.render_pixmap(bytes, SvgSize::Size(params.size))?;
+
+            // Convert the pixmap's pixels into an alpha mask.
+            let size = Size::new(
+                DevicePixels(pixmap.width() as i32),
+                DevicePixels(pixmap.height() as i32),
+            );
+            let alpha_mask = pixmap
+                .pixels()
+                .iter()
+                .map(|p| p.alpha())
+                .collect::<Vec<_>>();
+
+            Ok(Some((size, alpha_mask)))
         };
 
-        let pixmap = self.render_pixmap(&bytes, SvgSize::Size(params.size))?;
-
-        // Convert the pixmap's pixels into an alpha mask.
-        let size = Size::new(
-            DevicePixels(pixmap.width() as i32),
-            DevicePixels(pixmap.height() as i32),
-        );
-        let alpha_mask = pixmap
-            .pixels()
-            .iter()
-            .map(|p| p.alpha())
-            .collect::<Vec<_>>();
-        Ok(Some((size, alpha_mask)))
+        if let Some(bytes) = bytes {
+            render_pixmap(bytes)
+        } else if let Some(bytes) = self.asset_source.load(&params.path)? {
+            render_pixmap(&bytes)
+        } else {
+            Ok(None)
+        }
     }
 
     fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {

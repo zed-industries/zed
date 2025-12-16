@@ -18,6 +18,7 @@ test-support = [
     "client/test-support",
     "language/test-support",
     "settings/test-support",
+    "snippet_provider/test-support",
     "text/test-support",
     "prettier/test-support",
     "worktree/test-support",
@@ -85,10 +86,13 @@ toml.workspace = true
 url.workspace = true
 util.workspace = true
 watch.workspace = true
+wax.workspace = true
 which.workspace = true
 worktree.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
@@ -107,6 +111,10 @@ pretty_assertions.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+snippet_provider = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

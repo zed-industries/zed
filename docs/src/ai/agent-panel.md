@@ -11,7 +11,7 @@ You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
 2. [using your own API keys](./llm-providers.md#use-your-own-keys), either from model providers like Anthropic or model gateways like OpenRouter.
-3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
+3. using an [external agent](./external-agents.md) like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
 
 ## Overview {#overview}
 
@@ -21,7 +21,7 @@ If you need extra room to type, you can expand the message editor with {#kb agen
 You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
 From this point on, you can interact with the many supported features outlined below.
 
-> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below are _not_ currently supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, _model selection_, and others. All of them should hopefully be supported in the future.
+> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others. Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
 
@@ -83,11 +83,13 @@ Although Zed's agent is very efficient at reading through your code base to auto
 In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
 You can type `@` to mention files, directories, symbols, previous threads, and rules files.
 
-Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
-
 Copying images and pasting them in the panel's message editor is also supported.
 
-### Token Usage {#token-usage}
+### Selection as Context
+
+Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
+
+## Token Usage {#token-usage}
 
 Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor. Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
@@ -98,7 +100,8 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
-> The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more. Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
+> The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
+> Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ## Using Tools {#using-tools}
 
@@ -118,19 +121,21 @@ Zed offers three built-in profiles and you can create as many custom ones as you
 - `Ask`: A profile with read-only tools. Best for asking questions about your code base without the concern of the agent making changes.
 - `Minimal`: A profile with no tools. Best for general conversations with the LLM where no knowledge of your code base is necessary.
 
-You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure Profiles…` > the one you want to check out.
+You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure` button > the one you want to check out.
+
+Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
 #### Custom Profiles {#custom-profiles}
 
-You can create a custom profile via the `Configure Profiles…` option in the profile selector.
-From here, you can choose to `Add New Profile` or fork an existing one with a custom name and your preferred set of tools.
+You can also create a custom profile through the Agent Profile modal.
+From there, you can choose to `Add New Profile` or fork an existing one with a custom name and your preferred set of tools.
 
-You can also override built-in profiles.
-With a built-in profile selected, in the profile selector, navigate to `Configure Tools`, and select the tools you'd like.
+It's also possible to override built-in profiles.
+In the Agent Profile modal, select a built-in profile, navigate to `Configure Tools`, and rearrange the tools you'd like to keep or remove.
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
+All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your `settings.json` file.
 
 ### Tool Approval
 
@@ -141,19 +146,24 @@ You can change that by setting this key to `true` in either your `settings.json`
 ### Model Support {#model-support}
 
 Tool calling needs to be individually supported by each model and model provider.
-Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed. You should see a "No tools" label if you select a model that falls into this case.
+Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed.
+You should see a "No tools" label if you select a model that falls into this case.
 
 All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 ### MCP Servers {#mcp-servers}
 
-Similarly to the built-in tools, some models may not support all tools included in a given MCP Server. Zed's UI will inform you about this via a warning icon that appears close to the model selector.
+Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
+Zed's UI will inform you about this via a warning icon that appears close to the model selector.
 
 ## Text Threads {#text-threads}
 
-["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text. With text threads, you have full control over the conversation data. You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
+["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
+With text threads, you have full control over the conversation data.
+You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 
-For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers. We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
+For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
+We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
 
 ## Errors and Debugging {#errors-and-debugging}
 

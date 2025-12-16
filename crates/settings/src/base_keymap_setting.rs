@@ -3,12 +3,14 @@ use std::fmt::{Display, Formatter};
 use crate::{self as settings, settings_content::BaseKeymapContent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, RegisterSetting,
+)]
 pub enum BaseKeymap {
     #[default]
     VSCode,

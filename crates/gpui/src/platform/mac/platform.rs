@@ -2,15 +2,14 @@ use super::{
     BoolExt, MacKeyboardLayout, MacKeyboardMapper,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer,
+    ns_string, renderer,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
-    hash,
+    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -19,7 +18,7 @@ use cocoa::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -47,20 +46,23 @@ use objc::{
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
+use semver::Version;
 use std::{
     cell::Cell,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
-    process::Command,
     ptr,
     rc::Rc,
     slice, str,
     sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
-use util::ResultExt;
+use util::{
+    ResultExt,
+    command::{new_smol_command, new_std_command},
+};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -315,6 +317,7 @@ impl MacPlatform {
                     name,
                     action,
                     os_action,
+                    checked,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -386,7 +389,7 @@ impl MacPlatform {
                                     ns_string(key_to_native(keystroke.key()).as_ref()),
                                 )
                                 .autorelease();
-                            if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
+                            if Self::os_version() >= Version::new(12, 0, 0) {
                                 let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                             }
                             item.setKeyEquivalentModifierMask_(mask);
@@ -407,6 +410,10 @@ impl MacPlatform {
                                 ns_string(""),
                             )
                             .autorelease();
+                    }
+
+                    if *checked {
+                        item.setState_(NSVisualEffectState::Active);
                     }
 
                     let tag = actions.len() as NSInteger;
@@ -445,15 +452,15 @@ impl MacPlatform {
         }
     }
 
-    fn os_version() -> SemanticVersion {
+    fn os_version() -> Version {
         let version = unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             process_info.operatingSystemVersion()
         };
-        SemanticVersion::new(
-            version.majorVersion as usize,
-            version.minorVersion as usize,
-            version.patchVersion as usize,
+        Version::new(
+            version.majorVersion,
+            version.minorVersion,
+            version.patchVersion,
         )
     }
 }
@@ -547,7 +554,7 @@ impl Platform for MacPlatform {
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = new_std_command("/bin/bash")
             .arg("-c")
             .arg(script)
             .arg(app_pid)
@@ -646,9 +653,12 @@ impl Platform for MacPlatform {
 
     fn open_url(&self, url: &str) {
         unsafe {
-            let url = NSURL::alloc(nil)
-                .initWithString_(ns_string(url))
-                .autorelease();
+            let ns_url = NSURL::alloc(nil).initWithString_(ns_string(url));
+            if ns_url.is_null() {
+                log::error!("Failed to create NSURL from string: {}", url);
+                return;
+            }
+            let url = ns_url.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
@@ -658,7 +668,7 @@ impl Platform for MacPlatform {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
-        if Self::os_version() < SemanticVersion::new(12, 0, 0) {
+        if Self::os_version() < Version::new(12, 0, 0) {
             return Task::ready(Err(anyhow!(
                 "macOS 12.0 or later is required to register URL schemes"
             )));
@@ -802,7 +812,7 @@ impl Platform for MacPlatform {
                                     // to break that use-case than breaking `a.sql`.
                                     if chunks.len() == 3
                                         && chunks[1].starts_with(chunks[2])
-                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                        && Self::os_version() >= Version::new(15, 0, 0)
                                     {
                                         let new_filename = OsStr::from_bytes(
                                             &filename.as_bytes()
@@ -859,7 +869,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = smol::process::Command::new("open")
+                if let Some(mut child) = new_smol_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -1038,6 +1048,7 @@ impl Platform for MacPlatform {
                         ClipboardEntry::Image(image) => {
                             self.write_image_to_clipboard(image);
                         }
+                        ClipboardEntry::ExternalPaths(_) => {}
                     },
                     None => {
                         // Writing an empty list of entries just clears the clipboard.
@@ -1050,13 +1061,15 @@ impl Platform for MacPlatform {
                 let attributed_string = {
                     let mut buf = NSMutableAttributedString::alloc(nil)
                         // TODO can we skip this? Or at least part of it?
-                        .init_attributed_string(NSString::alloc(nil).init_str(""));
+                        .init_attributed_string(ns_string(""))
+                        .autorelease();
 
                     for entry in item.entries {
                         if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry
                         {
                             let to_append = NSAttributedString::alloc(nil)
-                                .init_attributed_string(NSString::alloc(nil).init_str(&text));
+                                .init_attributed_string(ns_string(&text))
+                                .autorelease();
 
                             buf.appendAttributedString_(to_append);
                         }
@@ -1530,10 +1543,6 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
             nil
         }
     }
-}
-
-unsafe fn ns_string(string: &str) -> id {
-    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
 }
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {

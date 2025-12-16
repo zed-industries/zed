@@ -1,7 +1,7 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
+    WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -11,15 +11,17 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
+    utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, IsZero, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
     actions, anchored, deferred, prelude::*,
 };
@@ -396,6 +398,10 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+
+    pub in_center_group: bool,
+    pub is_upper_left: bool,
+    pub is_upper_right: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -422,20 +428,15 @@ struct NavHistoryState {
     next_timestamp: Arc<AtomicUsize>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum NavigationMode {
+    #[default]
     Normal,
     GoingBack,
     GoingForward,
     ClosingItem,
     ReopeningClosedItem,
     Disabled,
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 pub struct NavigationEntry {
@@ -545,6 +546,9 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            in_center_group: false,
+            is_upper_left: false,
+            is_upper_right: false,
         }
     }
 
@@ -878,10 +882,35 @@ impl Pane {
         self.preview_item_id == Some(item_id)
     }
 
+    /// Promotes the item with the given ID to not be a preview item.
+    /// This does nothing if it wasn't already a preview item.
+    pub fn unpreview_item_if_preview(&mut self, item_id: EntityId) {
+        if self.is_active_preview_item(item_id) {
+            self.preview_item_id = None;
+        }
+    }
+
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
-    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
-        if PreviewTabsSettings::get_global(cx).enabled {
+    ///
+    /// The old preview item (if there was one) is closed and its index is returned.
+    pub fn replace_preview_item_id(
+        &mut self,
+        item_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let idx = self.close_current_preview_item(window, cx);
+        self.set_preview_item_id(Some(item_id), cx);
+        idx
+    }
+
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    ///
+    /// This is a low-level method. Prefer `unpreview_item_if_preview()` or `set_new_preview_item()`.
+    pub(crate) fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
+        if item_id.is_none() || PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
     }
@@ -900,7 +929,7 @@ impl Pane {
             && preview_item.item_id() == item_id
             && !preview_item.preserve_preview(cx)
         {
-            self.set_preview_item_id(None, cx);
+            self.unpreview_item_if_preview(item_id);
         }
     }
 
@@ -941,14 +970,8 @@ impl Pane {
 
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                // If the item is already open, and the item is a preview item
-                // and we are not allowing items to open as preview, mark the item as persistent.
-                if let Some(preview_item_id) = pane.preview_item_id
-                    && let Some(tab) = pane.items.get(index)
-                    && tab.item_id() == preview_item_id
-                    && !allow_preview
-                {
-                    pane.set_preview_item_id(None, cx);
+                if !allow_preview && let Some(item) = pane.items.get(index) {
+                    pane.unpreview_item_if_preview(item.item_id());
                 }
                 if activate {
                     pane.activate_item(index, focus_item, focus_item, window, cx);
@@ -960,7 +983,7 @@ impl Pane {
                                window: &mut Window,
                                cx: &mut Context<Self>| {
             if allow_preview {
-                pane.set_preview_item_id(Some(new_item.item_id()), cx);
+                pane.replace_preview_item_id(new_item.item_id(), window, cx);
             }
 
             if let Some(text) = new_item.telemetry_event_text(cx) {
@@ -1041,6 +1064,7 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        self.set_preview_item_id(None, cx);
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
@@ -1123,7 +1147,6 @@ impl Pane {
                 false
             }
         });
-
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
 
@@ -1209,7 +1232,7 @@ impl Pane {
     pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = Entity<T>> {
         self.items
             .iter()
-            .filter_map(|item| item.to_any().downcast().ok())
+            .filter_map(|item| item.to_any_view().downcast().ok())
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
@@ -1280,6 +1303,25 @@ impl Pane {
                 cx.focus_self(window);
             }
             cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if !self.zoomed && !self.items.is_empty() {
+            if !self.focus_handle.contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
     }
 
@@ -1987,9 +2029,7 @@ impl Pane {
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
-        if self.is_active_preview_item(item.item_id()) {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item.item_id());
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -2200,9 +2240,7 @@ impl Pane {
 
             if can_save {
                 pane.update_in(cx, |pane, window, cx| {
-                    if pane.is_active_preview_item(item.item_id()) {
-                        pane.set_preview_item_id(None, cx);
-                    }
+                    pane.unpreview_item_if_preview(item.item_id());
                     item.save(
                         SaveOptions {
                             format: should_format,
@@ -2456,8 +2494,8 @@ impl Pane {
             let id = self.item_for_index(ix)?.item_id();
             let should_activate = ix == self.active_item_index;
 
-            if matches!(operation, PinOperation::Pin) && self.is_active_preview_item(id) {
-                self.set_preview_item_id(None, cx);
+            if matches!(operation, PinOperation::Pin) {
+                self.unpreview_item_if_preview(id);
             }
 
             match operation {
@@ -2597,6 +2635,7 @@ impl Pane {
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -2629,12 +2668,9 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
-                    if let Some(id) = pane.preview_item_id
-                        && id == item_id
-                        && event.click_count > 1
-                    {
-                        pane.set_preview_item_id(None, cx);
+                cx.listener(move |pane, event: &MouseDownEvent, _, _| {
+                    if event.click_count > 1 {
+                        pane.unpreview_item_if_preview(item_id);
                     }
                 }),
             )
@@ -2684,12 +2720,6 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
-            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
-                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text)),
-                TabTooltipContent::Custom(element_fn) => {
-                    tab.tooltip(move |window, cx| element_fn(window, cx))
-                }
-            })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
@@ -2730,11 +2760,11 @@ impl Pane {
                 .map(|this| {
                     if is_active {
                         let focus_handle = focus_handle.clone();
-                        this.tooltip(move |_window, cx| {
+                        this.tooltip(move |window, cx| {
                             Tooltip::for_action_in(
                                 end_slot_tooltip_text,
                                 end_slot_action,
-                                &focus_handle,
+                                &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
                                 cx,
                             )
                         })
@@ -2756,7 +2786,15 @@ impl Pane {
                         })
                         .flatten(),
                     )
-                    .child(label),
+                    .child(label)
+                    .id(("pane-tab-content", ix))
+                    .map(|this| match tab_tooltip_content {
+                        Some(TabTooltipContent::Text(text)) => this.tooltip(Tooltip::text(text)),
+                        Some(TabTooltipContent::Custom(element_fn)) => {
+                            this.tooltip(move |window, cx| element_fn(window, cx))
+                        }
+                        None => this,
+                    }),
             );
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
@@ -3023,7 +3061,13 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return gpui::Empty.into_any();
+        };
+
         let focus_handle = self.focus_handle.clone();
+        let is_pane_focused = self.has_focus(window, cx);
+
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
@@ -3037,8 +3081,79 @@ impl Pane {
             .disabled(!self.can_navigate_backward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
+                move |window, cx| {
+                    Tooltip::for_action_in(
+                        "Go Back",
+                        &GoBack,
+                        &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                        cx,
+                    )
+                }
             });
+
+        let open_aside_left = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Left).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                h_flex()
+                    .h_full()
+                    .pr_1p5()
+                    .border_r_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        IconButton::new("open_aside_left", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Left,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
+                    .into_any_element()
+            })
+        };
+
+        let open_aside_right = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Right).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                h_flex()
+                    .h_full()
+                    .when(is_pane_focused, |this| {
+                        this.pl(DynamicSpacing::Base04.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                    })
+                    .child(
+                        IconButton::new("open_aside_right", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Right,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
+                    .into_any_element()
+            })
+        };
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
@@ -3053,8 +3168,13 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |_window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+                move |window, cx| {
+                    Tooltip::for_action_in(
+                        "Go Forward",
+                        &GoForward,
+                        &window.focused(cx).unwrap_or_else(|| focus_handle.clone()),
+                        cx,
+                    )
                 }
             });
 
@@ -3080,7 +3200,45 @@ impl Pane {
         }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
+
+        let render_aside_toggle_left = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_left
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Left)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
+        let render_aside_toggle_right = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_right
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Right)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
         TabBar::new("tab_bar")
+            .map(|tab_bar| {
+                if let Some(open_aside_left) = open_aside_left
+                    && render_aside_toggle_left
+                {
+                    tab_bar.start_child(open_aside_left)
+                } else {
+                    tab_bar
+                }
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
@@ -3103,8 +3261,10 @@ impl Pane {
             .children(pinned_tabs.len().ne(&0).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = !max_scroll.is_zero();
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                // Avoid flickering when max_offset is very small (< 2px).
+                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
+                let is_scrollable = max_scroll > px(2.0);
                 let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
                 h_flex()
                     .children(pinned_tabs)
@@ -3171,6 +3331,15 @@ impl Pane {
                             })),
                     ),
             )
+            .map(|tab_bar| {
+                if let Some(open_aside_right) = open_aside_right
+                    && render_aside_toggle_right
+                {
+                    tab_bar.end_child(open_aside_right)
+                } else {
+                    tab_bar
+                }
+            })
             .into_any_element()
     }
 
@@ -3260,11 +3429,7 @@ impl Pane {
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
-        if let Some(preview_item_id) = self.preview_item_id
-            && item_id == preview_item_id
-        {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item_id);
 
         let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
@@ -3754,6 +3919,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Pane::zoom_in))
+            .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(
@@ -3776,15 +3943,17 @@ impl Render for Pane {
             .on_action(cx.listener(Self::toggle_pin_tab))
             .on_action(cx.listener(Self::unpin_all_tabs))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
-                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
-                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                        if pane.is_active_preview_item(active_item_id) {
-                            pane.set_preview_item_id(None, cx);
-                        } else {
-                            pane.set_preview_item_id(Some(active_item_id), cx);
+                this.on_action(
+                    cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, window, cx| {
+                        if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                            if pane.is_active_preview_item(active_item_id) {
+                                pane.unpreview_item_if_preview(active_item_id);
+                            } else {
+                                pane.replace_preview_item_id(active_item_id, window, cx);
+                            }
                         }
-                    }
-                }))
+                    }),
+                )
             })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
@@ -3872,7 +4041,7 @@ impl Render for Pane {
                                 .size_full()
                                 .overflow_hidden()
                                 .child(self.toolbar.clone())
-                                .child(item.to_any())
+                                .child(item.to_any_view())
                         } else {
                             let placeholder = div
                                 .id("pane_placeholder")
@@ -4042,6 +4211,25 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
+    pub fn clear(&mut self, cx: &mut App) {
+        let mut state = self.0.lock();
+
+        if state.backward_stack.is_empty()
+            && state.forward_stack.is_empty()
+            && state.closed_stack.is_empty()
+            && state.paths_by_item.is_empty()
+        {
+            return;
+        }
+
+        state.mode = NavigationMode::Normal;
+        state.backward_stack.clear();
+        state.forward_stack.clear();
+        state.closed_stack.clear();
+        state.paths_by_item.clear();
+        state.did_update(cx);
+    }
+
     pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
@@ -4103,6 +4291,7 @@ impl NavHistory {
                     is_preview,
                 });
             }
+            NavigationMode::ClosingItem if is_preview => return,
             NavigationMode::ClosingItem => {
                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.closed_stack.pop_front();
@@ -4130,6 +4319,20 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+    }
+
+    pub fn rename_item(
+        &mut self,
+        item_id: EntityId,
+        project_path: ProjectPath,
+        abs_path: Option<PathBuf>,
+    ) {
+        let mut state = self.0.lock();
+        let path_for_item = state.paths_by_item.get_mut(&item_id);
+        if let Some(path_for_item) = path_for_item {
+            path_for_item.0 = project_path;
+            path_for_item.1 = abs_path;
+        }
     }
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
@@ -6602,13 +6805,13 @@ mod tests {
         let tab_bar_scroll_handle =
             pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
         assert_eq!(tab_bar_scroll_handle.children_count(), 6);
-        let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
+        let tab_bounds = cx.debug_bounds("TAB-4").unwrap();
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
-        assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
+        assert!(tab_bounds.right() <= scroll_bounds.right());
+        // -43.0 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-43.0));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
@@ -6860,8 +7063,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(LoadThemes::JustBase, cx);
-            crate::init_settings(cx);
-            Project::init_settings(cx);
         });
     }
 
@@ -6928,7 +7129,7 @@ mod tests {
                 .enumerate()
                 .map(|(ix, item)| {
                     let mut state = item
-                        .to_any()
+                        .to_any_view()
                         .downcast::<TestItem>()
                         .unwrap()
                         .read(cx)

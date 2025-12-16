@@ -12,9 +12,8 @@ CHANNEL="$3"
 
 SHORT_SHA="${COMMIT_SHA:0:8}"
 NEW_BRANCH="cherry-pick-${BRANCH_NAME}-${SHORT_SHA}"
-git fetch origin
-git checkout "$BRANCH_NAME"
-git checkout -B "$NEW_BRANCH"
+git fetch --depth 2 origin +${COMMIT_SHA} ${BRANCH_NAME}
+git checkout --force "origin/$BRANCH_NAME" -B "$NEW_BRANCH"
 
 git cherry-pick "$COMMIT_SHA"
 

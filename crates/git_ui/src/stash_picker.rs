@@ -1,6 +1,5 @@
 use fuzzy::StringMatchCandidate;
 
-use chrono;
 use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -207,9 +206,7 @@ impl StashListDelegate {
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
-        let timezone =
-            UtcOffset::from_whole_seconds(chrono::Local::now().offset().local_minus_utc())
-                .unwrap_or(UtcOffset::UTC);
+        let timezone = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
 
         Self {
             matches: vec![],
@@ -272,6 +269,7 @@ impl StashListDelegate {
             repo.downgrade(),
             self.workspace.clone(),
             Some(stash_index),
+            None,
             window,
             cx,
         );
@@ -466,7 +464,7 @@ impl PickerDelegate for StashListDelegate {
             );
 
         Some(
-            ListItem::new(SharedString::from(format!("stash-{ix}")))
+            ListItem::new(format!("stash-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

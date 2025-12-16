@@ -3,8 +3,9 @@ use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
-use language::LanguageRegistry;
+use language::{LanguageRegistry, language_settings::all_language_settings};
 use project::LspStore;
+use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
@@ -159,14 +160,35 @@ pub fn resolve_schema_request_inner(
             }
         }
         "snippets" => snippet_provider::format::VsSnippetsFile::generate_json_schema(),
+        "jsonc" => jsonc_schema(),
         _ => {
-            anyhow::bail!("Unrecognized builtin JSON schema: {}", schema_name);
+            anyhow::bail!("Unrecognized builtin JSON schema: {schema_name}");
         }
     };
     Ok(schema)
 }
 
-pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
+const JSONC_LANGUAGE_NAME: &str = "JSONC";
+
+pub fn all_schema_file_associations(
+    languages: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> serde_json::Value {
+    let extension_globs = languages
+        .available_language_for_name(JSONC_LANGUAGE_NAME)
+        .map(|language| language.matcher().path_suffixes.clone())
+        .into_iter()
+        .flatten()
+        // Path suffixes can be entire file names or just their extensions.
+        .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
+    let override_globs = all_language_settings(None, cx)
+        .file_types
+        .get(JSONC_LANGUAGE_NAME)
+        .into_iter()
+        .flat_map(|(_, glob_strings)| glob_strings)
+        .cloned();
+    let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
+
     let mut file_associations = serde_json::json!([
         {
             "fileMatch": [
@@ -211,6 +233,10 @@ pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
             "fileMatch": ["package.json"],
             "url": "zed://schemas/package_json"
         },
+        {
+            "fileMatch": &jsonc_globs,
+            "url": "zed://schemas/jsonc"
+        },
     ]);
 
     #[cfg(debug_assertions)]
@@ -233,7 +259,7 @@ pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("zed://schemas/action/{}", normalized_name)
+                "url": format!("zed://schemas/action/{normalized_name}")
             })
         }),
     );
@@ -247,6 +273,26 @@ fn tsconfig_schema() -> serde_json::Value {
 
 fn package_json_schema() -> serde_json::Value {
     serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap()
+}
+
+fn jsonc_schema() -> serde_json::Value {
+    let generator = schemars::generate::SchemaSettings::draft2019_09()
+        .with_transform(DefaultDenyUnknownFields)
+        .with_transform(AllowTrailingCommas)
+        .into_generator();
+    let meta_schema = generator
+        .settings()
+        .meta_schema
+        .as_ref()
+        .expect("meta_schema should be present in schemars settings")
+        .to_string();
+    let defs = generator.definitions();
+    let schema = schemars::json_schema!({
+        "$schema": meta_schema,
+        "allowTrailingCommas": true,
+        "$defs": defs,
+    });
+    serde_json::to_value(schema).unwrap()
 }
 
 fn generate_inspector_style_schema() -> serde_json::Value {

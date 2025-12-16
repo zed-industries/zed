@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
 use collections::HashMap;
-use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
+use gpui::{AbsoluteLength, FontFeatures, FontWeight, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::FontFamilyName;
 
@@ -30,9 +29,44 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: on
     pub detect_venv: Option<VenvSettings>,
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: [
+    ///   // Python-style diagnostics
+    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///   // Common path syntax with optional line, column, description, trailing punctuation, or
+    ///   // surrounding symbols or quotes
+    ///   [
+    ///     "(?x)",
+    ///     "# optionally starts with 0-2 opening prefix symbols",
+    ///     "[({\\[<]{0,2}",
+    ///     "# which may be followed by an opening quote",
+    ///     "(?<quote>[\"'`])?",
+    ///     "# `path` is the shortest sequence of any non-space character",
+    ///     "(?<link>(?<path>[^ ]+?",
+    ///     "    # which may end with a line and optionally a column,",
+    ///     "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
+    ///     "))",
+    ///     "# which must be followed by a matching quote",
+    ///     "(?(<quote>)\\k<quote>)",
+    ///     "# and optionally a single closing symbol",
+    ///     "[)}\\]>]?",
+    ///     "# if line/column matched, may be followed by a description",
+    ///     "(?(<line_column>):[^ 0-9][^ ]*)?",
+    ///     "# which may be followed by trailing punctuation",
+    ///     "[.,:)}\\]>]*",
+    ///     "# and always includes trailing whitespace or end of line",
+    ///     "([ ]+|$)"
+    ///   ]
+    /// ]
+    pub path_hyperlink_regexes: Option<Vec<PathHyperlinkRegex>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 1
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     #[serde(flatten)]
@@ -62,8 +96,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub font_weight: Option<f32>,
+    pub font_weight: Option<FontWeight>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
@@ -116,6 +149,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 10_000
     pub max_scroll_history_lines: Option<usize>,
+    /// The multiplier for scrolling with the mouse wheel.
+    ///
+    /// Default: 1.0
+    pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
     /// Scrollbar-related settings
@@ -184,10 +221,11 @@ pub enum Shell {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
-    /// Use the current file's project directory.  Will Fallback to the
+    /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
-    /// Use the first project in this workspace's directory.
+    /// Use the first project in this workspace's directory. Fallback to using
+    /// this platform's home directory.
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,
@@ -197,7 +235,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
@@ -335,7 +373,7 @@ pub enum AlternateScroll {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
@@ -346,6 +384,22 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CondaManager {
+    /// Automatically detect the conda manager
+    #[default]
+    Auto,
+    /// Use conda
+    Conda,
+    /// Use mamba
+    Mamba,
+    /// Use micromamba
+    Micromamba,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -360,13 +414,18 @@ pub enum VenvSettings {
         activate_script: Option<ActivateScript>,
         venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
+        /// Preferred Conda manager to use when activating Conda environments.
+        ///
+        /// Default: auto
+        conda_manager: Option<CondaManager>,
     },
 }
-#[skip_serializing_none]
+#[with_fallible_options]
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
+    pub conda_manager: CondaManager,
 }
 
 impl VenvSettings {
@@ -377,13 +436,22 @@ impl VenvSettings {
                 activate_script,
                 venv_name,
                 directories,
+                conda_manager,
             } => Some(VenvSettingsContent {
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
                 venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
+                conda_manager: conda_manager.unwrap_or(CondaManager::Auto),
             }),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum PathHyperlinkRegex {
+    SingleLine(String),
+    MultiLine(Vec<String>),
 }
 
 #[derive(

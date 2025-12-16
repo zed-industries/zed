@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use util::{
     ResultExt,
     paths::{PathMatcher, PathStyle},
     rel_path::RelPath,
 };
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, RegisterSetting)]
 pub struct WorktreeSettings {
     pub project_name: Option<String>,
     /// Whether to prevent this project from being shared in public channels.
@@ -25,25 +25,25 @@ pub struct WorktreeSettings {
 impl WorktreeSettings {
     pub fn is_path_private(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.private_files.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.private_files.is_match(ancestor))
     }
 
     pub fn is_path_excluded(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor))
     }
 
     pub fn is_path_always_included(&self, path: &RelPath, is_dir: bool) -> bool {
         if is_dir {
-            self.parent_dir_scan_inclusions.is_match(path.as_std_path())
+            self.parent_dir_scan_inclusions.is_match(path)
         } else {
-            self.file_scan_inclusions.is_match(path.as_std_path())
+            self.file_scan_inclusions.is_match(path)
         }
     }
 
     pub fn is_path_hidden(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.hidden_files.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.hidden_files.is_match(ancestor))
     }
 }
 
@@ -66,7 +66,7 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: worktree.project_name.into_inner(),
+            project_name: worktree.project_name,
             prevent_sharing_in_public_channels: worktree.prevent_sharing_in_public_channels,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()

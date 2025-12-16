@@ -5,8 +5,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, ToPoint, actions::DiffClipboardWithSelectionData};
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, Task, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Task, Window,
 };
 use language::{self, Buffer, Point};
 use project::Project;
@@ -170,7 +170,7 @@ impl TextDiffView {
 
         cx.subscribe(&source_buffer, move |this, _, event, _| match event {
             language::BufferEvent::Edited
-            | language::BufferEvent::LanguageChanged
+            | language::BufferEvent::LanguageChanged(_)
             | language::BufferEvent::Reparsed => {
                 this.buffer_changes_tx.send(()).ok();
             }
@@ -329,17 +329,17 @@ impl Item for TextDiffView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.diff_editor.to_any())
+            Some(self.diff_editor.clone().into())
         } else {
             None
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.diff_editor.clone()))
     }
 
@@ -446,7 +446,7 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::test::editor_test_context::assert_state_with_diff;
+    use editor::{MultiBufferOffset, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -458,10 +458,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            workspace::init_settings(cx);
-            editor::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
@@ -695,7 +691,11 @@ mod tests {
             let (unmarked_text, selection_ranges) = marked_text_ranges(editor_text, false);
             editor.set_text(unmarked_text, window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(selection_ranges)
+                s.select_ranges(
+                    selection_ranges
+                        .into_iter()
+                        .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end)),
+                )
             });
 
             editor

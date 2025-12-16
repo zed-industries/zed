@@ -315,9 +315,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Font, FontFeatures, FontStyle, FontWeight, Hsla, TestAppContext, TestDispatcher, font,
-    };
+    use crate::{Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher, font};
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
     use rand::prelude::*;
@@ -341,10 +339,7 @@ mod tests {
                     weight: FontWeight::default(),
                     style: FontStyle::Normal,
                 },
-                color: Hsla::default(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
+                ..Default::default()
             })
             .collect()
     }
@@ -691,16 +686,12 @@ mod tests {
                 font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
-                strikethrough: None,
-                background_color: None,
+                ..Default::default()
             };
             let bold = TextRun {
                 len: 0,
                 font: font("Helvetica").bold(),
-                color: Default::default(),
-                underline: Default::default(),
-                strikethrough: None,
-                background_color: None,
+                ..Default::default()
             };
 
             let text = "aa bbb cccc ddddd eeee".into();

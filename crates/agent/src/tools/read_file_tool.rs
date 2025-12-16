@@ -1,7 +1,7 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
@@ -12,11 +12,14 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
 ///
 /// - Never attempt to read a path that hasn't been previously mentioned.
+/// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
+///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
+///   Do NOT retry reading the same file without line numbers if you receive an outline.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -42,13 +45,19 @@ pub struct ReadFileToolInput {
 }
 
 pub struct ReadFileTool {
+    thread: WeakEntity<Thread>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
 
 impl ReadFileTool {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub fn new(
+        thread: WeakEntity<Thread>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+    ) -> Self {
         Self {
+            thread,
             project,
             action_log,
         }
@@ -144,14 +153,10 @@ impl AgentTool for ReadFileTool {
 
         let file_path = input.path.clone();
 
-        event_stream.update_fields(ToolCallUpdateFields {
-            locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path.clone(),
-                line: input.start_line.map(|line| line.saturating_sub(1)),
-                meta: None,
-            }]),
-            ..Default::default()
-        });
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                acp::ToolCallLocation::new(&abs_path)
+                    .line(input.start_line.map(|line| line.saturating_sub(1))),
+            ]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -193,6 +198,17 @@ impl AgentTool for ReadFileTool {
                     .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
+            }
+
+            // Record the file read time and mtime
+            if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
+                buffer.file().and_then(|file| file.disk_state().mtime())
+            })? {
+                self.thread
+                    .update(cx, |thread, _| {
+                        thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
+                    })
+                    .ok();
             }
 
             let mut anchor = None;
@@ -237,16 +253,15 @@ impl AgentTool for ReadFileTool {
 
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
-                        This file was too big to read all at once.
+                        SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
+
+                        IMPORTANT: Do NOT retry this call without line numbers - you will get the same outline.
+                        Instead, use the line numbers below to read specific sections by calling this tool again with start_line and end_line parameters.
 
                         {}
 
-                        Using the line numbers in this outline, you can call this tool again
-                        while specifying the start_line and end_line fields to see the
-                        implementations of symbols in the outline.
-
-                        Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content.", buffer_content.text
+                        NEXT STEPS: To read a specific symbol's implementation, call read_file with the same path plus start_line and end_line from the outline above.
+                        For example, to read a function shown as [L100-150], use start_line: 100 and end_line: 150.", buffer_content.text
                     }
                     .into())
                 } else {
@@ -258,7 +273,9 @@ impl AgentTool for ReadFileTool {
                 project.set_agent_location(
                     Some(AgentLocation {
                         buffer: buffer.downgrade(),
-                        position: anchor.unwrap_or(text::Anchor::MIN),
+                        position: anchor.unwrap_or_else(|| {
+                            text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                        }),
                     }),
                     cx,
                 );
@@ -268,12 +285,9 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields {
-                        content: Some(vec![acp::ToolCallContent::Content {
-                            content: markdown.into(),
-                        }]),
-                        ..Default::default()
-                    })
+                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+                    ]));
                 }
             })?;
 
@@ -285,11 +299,14 @@ impl AgentTool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{ContextServerRegistry, Templates, Thread};
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
+    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::sync::Arc;
     use util::path;
 
     #[gpui::test]
@@ -300,7 +317,20 @@ mod test {
         fs.insert_tree(path!("/root"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let (event_stream, _) = ToolCallEventStream::test();
 
         let result = cx
@@ -333,7 +363,20 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -361,9 +404,22 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(rust_lang()));
+        language_registry.add(language::rust_lang());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -378,7 +434,7 @@ mod test {
         let content = result.to_str().unwrap();
 
         assert_eq!(
-            content.lines().skip(4).take(6).collect::<Vec<_>>(),
+            content.lines().skip(7).take(6).collect::<Vec<_>>(),
             vec![
                 "struct Test0 [L1-4]",
                 " a [L2]",
@@ -413,7 +469,7 @@ mod test {
         pretty_assertions::assert_eq!(
             content
                 .lines()
-                .skip(4)
+                .skip(7)
                 .take(expected_content.len())
                 .collect::<Vec<_>>(),
             expected_content
@@ -435,7 +491,20 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -463,7 +532,20 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -509,52 +591,7 @@ mod test {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(
-            r#"
-            (line_comment) @annotation
-
-            (struct_item
-                "struct" @context
-                name: (_) @name) @item
-            (enum_item
-                "enum" @context
-                name: (_) @name) @item
-            (enum_variant
-                name: (_) @name) @item
-            (field_declaration
-                name: (_) @name) @item
-            (impl_item
-                "impl" @context
-                trait: (_)? @name
-                "for"? @context
-                type: (_) @name
-                body: (_ "{" (_)* "}")) @item
-            (function_item
-                "fn" @context
-                name: (_) @name) @item
-            (mod_item
-                "mod" @context
-                name: (_) @name) @item
-            "#,
-        )
-        .unwrap()
     }
 
     #[gpui::test]
@@ -609,7 +646,20 @@ mod test {
 
         let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project, action_log));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
 
         // Reading a file outside the project worktree should fail
         let result = cx
@@ -823,7 +873,24 @@ mod test {
         .await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log.clone(),
+        ));
 
         // Test reading allowed files in worktree1
         let result = cx

@@ -32,8 +32,21 @@ pub struct GrepToolInput {
     /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
     /// A glob pattern for the paths of files to include in the search.
-    /// Supports standard glob patterns like "**/*.rs" or "src/**/*.ts".
+    /// Supports standard glob patterns like "**/*.rs" or "frontend/src/**/*.ts".
     /// If omitted, all files in the project will be searched.
+    ///
+    /// The glob pattern is matched against the full path including the project root directory.
+    ///
+    /// <example>
+    /// If the project has the following root directories:
+    ///
+    /// - /a/b/backend
+    /// - /c/d/frontend
+    ///
+    /// Use "backend/**/*.rs" to search only Rust files in the backend root directory.
+    /// Use "frontend/src/**/*.ts" to search TypeScript files only in the frontend root directory (sub-directory "src").
+    /// Use "**/*.rs" to search Rust files across all root directories.
+    /// </example>
     pub include_pattern: Option<String>,
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
@@ -132,8 +145,7 @@ impl AgentTool for GrepTool {
             let exclude_patterns = global_settings
                 .file_scan_exclusions
                 .sources()
-                .iter()
-                .chain(global_settings.private_files.sources().iter());
+                .chain(global_settings.private_files.sources());
 
             match PathMatcher::new(exclude_patterns, path_style) {
                 Ok(matcher) => matcher,
@@ -310,7 +322,6 @@ mod tests {
 
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -552,7 +563,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         project.update(cx, |project, _cx| {
-            project.languages().add(rust_lang().into())
+            project.languages().add(language::rust_lang())
         });
 
         project
@@ -778,25 +789,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
         });
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(include_str!("../../../languages/src/rust/outline.scm"))
-        .unwrap()
     }
 
     #[gpui::test]

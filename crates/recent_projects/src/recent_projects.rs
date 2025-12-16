@@ -1,7 +1,11 @@
+mod dev_container;
+mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
 mod ssh_config;
+
+use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
@@ -31,11 +35,9 @@ use workspace::{
     WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
     with_active_or_new_workspace,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
-    SshSettings::register(cx);
-
     #[cfg(target_os = "windows")]
     cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
         let create_new_window = open_wsl.create_new_window;
@@ -134,7 +136,8 @@ pub fn init(cx: &mut App) {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
-                RecentProjects::open(workspace, create_new_window, window, cx);
+                let focus_handle = workspace.focus_handle(cx);
+                RecentProjects::open(workspace, create_new_window, window, focus_handle, cx);
                 return;
             };
 
@@ -162,6 +165,95 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+
+    cx.on_action(|_: &OpenDevContainer, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            let replace_window = window.window_handle().downcast::<Workspace>();
+
+            cx.spawn_in(window, async move |_, mut cx| {
+                let (connection, starting_dir) = match dev_container::start_dev_container(
+                    &mut cx,
+                    app_state.node_runtime.clone(),
+                )
+                .await
+                {
+                    Ok((c, s)) => (c, s),
+                    Err(e) => {
+                        log::error!("Failed to start Dev Container: {:?}", e);
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to start Dev Container",
+                            Some(&format!("{:?}", e)),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
+                        return;
+                    }
+                };
+
+                let result = open_remote_project(
+                    connection.into(),
+                    vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+                    app_state,
+                    OpenOptions {
+                        replace_window,
+                        ..OpenOptions::default()
+                    },
+                    &mut cx,
+                )
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Failed to connect: {e:#}");
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Failed to connect",
+                        Some(&e.to_string()),
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                }
+            })
+            .detach();
+
+            let fs = workspace.project().read(cx).fs().clone();
+            let handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::new_dev_container(fs, window, handle, cx)
+            });
+        });
+    });
+
+    // Subscribe to worktree additions to suggest opening the project in a dev container
+    cx.observe_new(
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+            let Some(window) = window else {
+                return;
+            };
+            cx.subscribe_in(
+                workspace.project(),
+                window,
+                move |_, project, event, window, cx| {
+                    if let project::Event::WorktreeUpdatedEntries(worktree_id, updated_entries) =
+                        event
+                    {
+                        dev_container_suggest::suggest_on_worktree_updated(
+                            *worktree_id,
+                            updated_entries,
+                            project,
+                            window,
+                            cx,
+                        );
+                    }
+                },
+            )
+            .detach();
+        },
+    )
+    .detach();
 }
 
 #[cfg(target_os = "windows")]
@@ -248,11 +340,12 @@ impl RecentProjects {
         workspace: &mut Workspace,
         create_new_window: bool,
         window: &mut Window,
+        focus_handle: FocusHandle,
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
+            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
 
             Self::new(delegate, 34., window, cx)
         })
@@ -291,10 +384,16 @@ pub struct RecentProjectsDelegate {
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
     has_any_non_local_projects: bool,
+    focus_handle: FocusHandle,
 }
 
 impl RecentProjectsDelegate {
-    fn new(workspace: WeakEntity<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        render_paths: bool,
+        focus_handle: FocusHandle,
+    ) -> Self {
         Self {
             workspace,
             workspaces: Vec::new(),
@@ -304,6 +403,7 @@ impl RecentProjectsDelegate {
             render_paths,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
+            focus_handle,
         }
     }
 
@@ -534,8 +634,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let prefix = match &location {
-            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
-                Some(SharedString::from(&wsl.distro_name))
+            SerializedWorkspaceLocation::Remote(options) => {
+                Some(SharedString::from(options.display_name()))
             }
             _ => None,
         };
@@ -546,6 +646,43 @@ impl PickerDelegate for RecentProjectsDelegate {
             paths,
         };
 
+        let focus_handle = self.focus_handle.clone();
+
+        let secondary_actions = h_flex()
+            .gap_px()
+            .child(
+                IconButton::new("open_new_window", IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip({
+                        move |_, cx| {
+                            Tooltip::for_action_in(
+                                "Open Project in New Window",
+                                &menu::SecondaryConfirm,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        this.delegate.set_selected_index(ix, window, cx);
+                        this.delegate.confirm(true, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("delete", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Delete from Recent Projects"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+
+                        this.delegate.delete_recent_project(ix, window, cx)
+                    })),
+            )
+            .into_any_element();
+
         Some(
             ListItem::new(ix)
                 .toggle_state(selected)
@@ -553,8 +690,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .id("projecy_info_container")
                         .gap_3()
+                        .flex_grow()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(match location {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
@@ -564,6 +702,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     Icon::new(match options {
                                         RemoteConnectionOptions::Ssh { .. } => IconName::Server,
                                         RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                        RemoteConnectionOptions::Docker(_) => IconName::Box,
                                     })
                                     .color(Color::Muted)
                                     .into_any_element()
@@ -576,35 +715,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 highlighted.paths.clear();
                             }
                             highlighted.render(window, cx)
+                        })
+                        .tooltip(move |_, cx| {
+                            let tooltip_highlighted_location = highlighted_match.clone();
+                            cx.new(|_| MatchTooltip {
+                                highlighted_location: tooltip_highlighted_location,
+                            })
+                            .into()
                         }),
                 )
                 .map(|el| {
-                    let delete_button = div()
-                        .child(
-                            IconButton::new("delete", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-
-                                    this.delegate.delete_recent_project(ix, window, cx)
-                                }))
-                                .tooltip(Tooltip::text("Delete from Recent Projects...")),
-                        )
-                        .into_any_element();
-
                     if self.selected_index() == ix {
-                        el.end_slot::<AnyElement>(delete_button)
+                        el.end_slot(secondary_actions)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button)
+                        el.end_hover_slot(secondary_actions)
                     }
-                })
-                .tooltip(move |_, cx| {
-                    let tooltip_highlighted_location = highlighted_match.clone();
-                    cx.new(|_| MatchTooltip {
-                        highlighted_location: tooltip_highlighted_location,
-                    })
-                    .into()
                 }),
         )
     }
@@ -762,10 +887,9 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
-    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::Project;
+
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -911,12 +1035,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            DebuggerSettings::register(cx);
-            Project::init_settings(cx);
             state
         })
     }

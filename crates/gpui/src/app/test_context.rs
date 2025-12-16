@@ -5,12 +5,14 @@ use crate::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
 use rand::{SeedableRng, rngs::StdRng};
-use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
+};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -130,8 +132,11 @@ impl TestAppContext {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
+        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        app.borrow_mut().mode = GpuiMode::test();
+
         Self {
-            app: App::new_app(platform.clone(), asset_source, http_client),
+            app,
             background_executor,
             foreground_executor,
             dispatcher,
@@ -140,6 +145,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Skip all drawing operations for the duration of this test.
+    pub fn skip_drawing(&mut self) {
+        self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
     }
 
     /// Create a single TestAppContext, for non-multi-client tests
@@ -329,6 +339,13 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Returns true if there's an alert dialog open.
+    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.test_platform.expect_restart.borrow_mut().replace(tx);
+        rx
     }
 
     /// Causes the given sources to be returned if the application queries for screen

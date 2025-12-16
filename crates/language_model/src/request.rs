@@ -357,6 +357,8 @@ pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
     pub cache: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 impl LanguageModelRequestMessage {

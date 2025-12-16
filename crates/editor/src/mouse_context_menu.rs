@@ -8,6 +8,8 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
+use project::DisableAiSettings;
+use settings::Settings;
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -57,7 +59,7 @@ impl MouseContextMenu {
                 x: editor.gutter_dimensions.width,
                 y: Pixels::ZERO,
             };
-        let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, window, cx)?;
         let menu_position = MenuPosition::PinnedToEditor {
             source,
             offset: position - (source_position + content_origin),
@@ -79,7 +81,19 @@ impl MouseContextMenu {
         cx: &mut Context<Editor>,
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
-        window.focus(&context_menu_focus);
+
+        // Since `ContextMenu` is rendered in a deferred fashion its focus
+        // handle is not linked to the Editor's until after the deferred draw
+        // callback runs.
+        // We need to wait for that to happen before focusing it, so that
+        // calling `contains_focused` on the editor's focus handle returns
+        // `true` when the `ContextMenu` is focused.
+        let focus_handle = context_menu_focus.clone();
+        cx.on_next_frame(window, move |_, window, cx| {
+            cx.on_next_frame(window, move |_, window, _cx| {
+                window.focus(&focus_handle);
+            });
+        });
 
         let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
             let context_menu_focus = context_menu_focus.clone();
@@ -202,6 +216,7 @@ pub fn deploy_context_menu(
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
+        let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
@@ -220,7 +235,10 @@ pub fn deploy_context_menu(
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
-                .action("Find All References", Box::new(FindAllReferences))
+                .action(
+                    "Find All References",
+                    Box::new(FindAllReferences::default()),
+                )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
@@ -234,7 +252,9 @@ pub fn deploy_context_menu(
                         quick_launch: false,
                     }),
                 )
-                .action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                .when(!disable_ai && has_selections, |this| {
+                    this.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                })
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
@@ -259,6 +279,11 @@ pub fn deploy_context_menu(
                     !has_git_repo,
                     "Copy Permalink",
                     Box::new(CopyPermalinkToLine),
+                )
+                .action_disabled_when(
+                    !has_git_repo,
+                    "View File History",
+                    Box::new(git::FileHistory),
                 );
             match focus {
                 Some(focus) => builder.context(focus),
@@ -324,8 +349,18 @@ mod tests {
             }
         "});
         cx.editor(|editor, _window, _app| assert!(editor.mouse_context_menu.is_none()));
+
         cx.update_editor(|editor, window, cx| {
-            deploy_context_menu(editor, Some(Default::default()), point, window, cx)
+            deploy_context_menu(editor, Some(Default::default()), point, window, cx);
+
+            // Assert that, even after deploying the editor's mouse context
+            // menu, the editor's focus handle still contains the focused
+            // element. The pane's tab bar relies on this to determine whether
+            // to show the tab bar buttons and there was a small flicker when
+            // deploying the mouse context menu that would cause this to not be
+            // true, making it so that the buttons would disappear for a couple
+            // of frames.
+            assert!(editor.focus_handle.contains_focused(window, cx));
         });
 
         cx.assert_editor_state(indoc! {"

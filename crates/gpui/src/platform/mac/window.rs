@@ -154,6 +154,10 @@ unsafe fn build_classes() {
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
+                    sel!(pressureChangeWithEvent:),
+                    handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
                     sel!(mouseExited:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
@@ -781,7 +785,7 @@ impl MacWindow {
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
-                        let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                        let tabbing_id = ns_string(tabbing_identifier.as_str());
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     } else {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
@@ -904,8 +908,8 @@ impl MacWindow {
     pub fn get_user_tabbing_preference() -> Option<UserTabbingPreference> {
         unsafe {
             let defaults: id = NSUserDefaults::standardUserDefaults();
-            let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
-            let key = NSString::alloc(nil).init_str("AppleWindowTabbingMode");
+            let domain = ns_string("NSGlobalDomain");
+            let key = ns_string("AppleWindowTabbingMode");
 
             let dict: id = msg_send![defaults, persistentDomainForName: domain];
             let value: id = if !dict.is_null() {
@@ -1033,7 +1037,7 @@ impl PlatformWindow for MacWindow {
             }
 
             if let Some(tabbing_identifier) = tabbing_identifier {
-                let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                let tabbing_id = ns_string(tabbing_identifier.as_str());
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
@@ -1059,10 +1063,8 @@ impl PlatformWindow for MacWindow {
                 return None;
             }
             let device_description: id = msg_send![screen, deviceDescription];
-            let screen_number: id = NSDictionary::valueForKey_(
-                device_description,
-                NSString::alloc(nil).init_str("NSScreenNumber"),
-            );
+            let screen_number: id =
+                NSDictionary::valueForKey_(device_description, ns_string("NSScreenNumber"));
 
             let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
 
@@ -1505,8 +1507,8 @@ impl PlatformWindow for MacWindow {
             .spawn(async move {
                 unsafe {
                     let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
-                    let key = NSString::alloc(nil).init_str("AppleActionOnDoubleClick");
+                    let domain = ns_string("NSGlobalDomain");
+                    let key = ns_string("AppleActionOnDoubleClick");
 
                     let dict: id = msg_send![defaults, persistentDomainForName: domain];
                     let action: id = if !dict.is_null() {
@@ -1542,6 +1544,17 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach();
+    }
+
+    fn start_window_move(&self) {
+        let this = self.0.lock();
+        let window = this.native_window;
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let mut event: id = msg_send![app, currentEvent];
+            let _: () = msg_send![window, performWindowDragWithEvent: event];
+        }
     }
 }
 
@@ -1753,9 +1766,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 }
             }
 
-            // Don't send key equivalents to the input handler,
-            // or macOS shortcuts like cmd-` will stop working.
-            if key_equivalent {
+            // Don't send key equivalents to the input handler if there are key modifiers other
+            // than Function key, or macOS shortcuts like cmd-` will stop working.
+            if key_equivalent && key_down_event.keystroke.modifiers != Modifiers::function() {
                 return NO;
             }
 
@@ -1967,10 +1980,36 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     }
 }
 
+// Update the window scale factor and drawable size, and call the resize callback if any.
+fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
+    let mut lock = window_state.as_ref().lock();
+    let scale_factor = lock.scale_factor();
+    let size = lock.content_size();
+    let drawable_size = size.to_device_pixels(scale_factor);
+    unsafe {
+        let _: () = msg_send![
+            lock.renderer.layer(),
+            setContentsScale: scale_factor as f64
+        ];
+    }
+
+    lock.renderer.update_drawable_size(drawable_size);
+
+    if let Some(mut callback) = lock.resize_callback.take() {
+        let content_size = lock.content_size();
+        let scale_factor = lock.scale_factor();
+        drop(lock);
+        callback(content_size, scale_factor);
+        window_state.as_ref().lock().resize_callback = Some(callback);
+    };
+}
+
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.start_display_link();
+    drop(lock);
+    update_window_scale_factor(&window_state);
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -2079,27 +2118,7 @@ extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let scale_factor = lock.scale_factor();
-    let size = lock.content_size();
-    let drawable_size = size.to_device_pixels(scale_factor);
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor as f64
-        ];
-    }
-
-    lock.renderer.update_drawable_size(drawable_size);
-
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        window_state.as_ref().lock().resize_callback = Some(callback);
-    };
+    update_window_scale_factor(&window_state);
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
@@ -2318,6 +2337,7 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
+            prefer_character_input: false,
         }));
         state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }
@@ -2490,7 +2510,7 @@ where
 unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
     unsafe {
         let device_description = NSScreen::deviceDescription(screen);
-        let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+        let screen_number_key: id = ns_string("NSScreenNumber");
         let screen_number = device_description.objectForKey_(screen_number_key);
         let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
         screen_number as CGDirectDisplayID
@@ -2536,7 +2556,7 @@ unsafe fn remove_layer_background(layer: id) {
             // `description` reflects its name and some parameters. Currently `NSVisualEffectView`
             // uses a `CAFilter` named "colorSaturate". If one day they switch to `CIFilter`, the
             // `description` will still contain "Saturat" ("... inputSaturation = ...").
-            let test_string: id = NSString::alloc(nil).init_str("Saturat").autorelease();
+            let test_string: id = ns_string("Saturat");
             let count = NSArray::count(filters);
             for i in 0..count {
                 let description: id = msg_send![filters.objectAtIndex(i), description];

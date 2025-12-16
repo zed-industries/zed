@@ -23,10 +23,6 @@ pub(crate) mod tests {
 }
 
 impl AgentServer for Codex {
-    fn telemetry_id(&self) -> &'static str {
-        "codex"
-    }
-
     fn name(&self) -> SharedString {
         "Codex".into()
     }
@@ -42,7 +38,7 @@ impl AgentServer for Codex {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+            .and_then(|s| s.default_mode.clone().map(acp::SessionModeId::new))
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -53,6 +49,27 @@ impl AgentServer for Codex {
                 .codex
                 .get_or_insert_default()
                 .default_mode = mode_id.map(|m| m.to_string())
+        });
+    }
+
+    fn default_model(&self, cx: &mut App) -> Option<acp::ModelId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).codex.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_model.clone().map(acp::ModelId::new))
+    }
+
+    fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        update_settings_file(fs, cx, |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .codex
+                .get_or_insert_default()
+                .default_model = model_id.map(|m| m.to_string())
         });
     }
 
@@ -68,6 +85,7 @@ impl AgentServer for Codex {
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
+        let default_model = self.default_model(cx);
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -90,6 +108,7 @@ impl AgentServer for Codex {
                 command,
                 root_dir.as_ref(),
                 default_mode,
+                default_model,
                 is_remote,
                 cx,
             )

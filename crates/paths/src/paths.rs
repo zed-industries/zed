@@ -155,6 +155,12 @@ pub fn temp_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the hang traces directory.
+pub fn hang_traces_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| data_dir().join("hang_traces"))
+}
+
 /// Returns the path to the logs directory.
 pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -402,6 +408,12 @@ pub fn remote_servers_dir() -> &'static PathBuf {
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
 }
 
+/// Returns the path to the directory where the devcontainer CLI is installed.
+pub fn devcontainer_dir() -> &'static PathBuf {
+    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
+}
+
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_name() -> &'static str {
     ".zed"
@@ -460,8 +472,12 @@ pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
 
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
+pub fn global_ssh_config_file() -> Option<&'static Path> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(Path::new("/etc/ssh/ssh_config"))
+    }
 }
 
 /// Returns candidate paths for the vscode user settings file
