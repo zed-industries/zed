@@ -86,8 +86,6 @@ Once inside a project:
 
 Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like IntelliJ's Project tool window).
 
-> **Tip:** Need a scratch file? Press `Ctrl+N` (or `Cmd+N` on macOS) to create a temporary buffer. Unlike IntelliJ, these buffers persist across sessions automatically—no need to save them to a special scratch folder.
-
 ## Differences in Keybindings
 
 If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to IntelliJ.
@@ -134,25 +132,12 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### How to Customize Keybindings
 
-To edit your keybindings:
-
 - Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
 - Run `Zed: Open Keymap Editor`
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
 
 Zed also supports key sequences (multi-key shortcuts).
-
-> **Tip:** In IntelliJ, pressing `Esc` always returns focus to the editor. Zed doesn't have this behavior built-in, but you can add it to your keymap:
->
-> ```json
-> {
->   "context": "Dock || Terminal || ProjectPanel",
->   "bindings": {
->     "escape": "workspace::ActivatePreviousPane"
->   }
-> }
-> ```
 
 ## Differences in User Interfaces
 
@@ -175,9 +160,9 @@ The trade-off is real: IntelliJ's index powers features like finding all usages 
 
 IntelliJ has its own language analysis engine built from scratch for each supported language. For Java, Kotlin, and other JVM languages, this engine understands your code deeply: it resolves types, tracks data flow, knows about framework annotations, and offers dozens of specialized refactorings.
 
-Zed uses the Language Server Protocol (LSP). Your code intelligence comes from external language servers—`jdtls` for Java, the Kotlin language server for Kotlin, `rust-analyzer` for Rust, `typescript-language-server` for TypeScript, and so on.
+Zed uses the Language Server Protocol (LSP) for code intelligence. Each language has its own server: `jdtls` for Java, `rust-analyzer` for Rust, and so on.
 
-For some languages, the LSP experience is excellent. TypeScript, Rust, and Go have mature language servers that provide fast, accurate completions, diagnostics, and refactorings. For JVM languages, the gap is more noticeable. The Eclipse-based Java language server is capable, but it won't match IntelliJ's depth for things like:
+For some languages, the LSP experience is excellent. TypeScript, Rust, and Go have mature language servers that provide fast, accurate completions, diagnostics, and refactorings. For JVM languages, the gap might be more noticeable. The Eclipse-based Java language server is capable, but it won't match IntelliJ's depth for things like:
 
 - Spring and Jakarta EE annotation processing
 - Complex refactorings (extract interface, pull members up, change signature with all callers)
@@ -186,10 +171,8 @@ For some languages, the LSP experience is excellent. TypeScript, Rust, and Go ha
 
 **How to adapt:**
 
-- Accept that some refactorings will require manual work or terminal tools
 - Use `Alt+Enter` for available code actions—the list will vary by language server
 - For Java, ensure `jdtls` is properly configured with your JDK path in settings
-- Consider using Zed for languages where LSP is strong (TypeScript, Rust, Go, Python) and keeping IntelliJ available for deep JVM work
 
 ### No Project Model
 
@@ -199,10 +182,10 @@ Zed has no project model. A project is a folder. There's no wizard, no SDK selec
 
 This means:
 
-- No automatic detection of Maven/Gradle projects—you run build commands yourself
-- No managed run configurations—you define tasks manually or use the terminal
-- No SDK management—your language server uses whatever JDK/SDK is on your PATH or configured in its settings
-- No module boundaries—Zed sees your folder structure, nothing more
+- Build commands are manual. Zed doesn't detect Maven or Gradle projects.
+- Run configurations don't exist. You define tasks or use the terminal.
+- SDK management is external. Your language server uses whatever JDK is on your PATH.
+- There are no module boundaries. Zed sees folders, not project structure.
 
 **How to adapt:**
 
