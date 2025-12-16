@@ -21,9 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
-use ui::{
-    Chip, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*,
-};
+use ui::{Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
@@ -49,8 +47,6 @@ actions!(
         RestoreDefaultContent
     ]
 );
-
-const BUILT_IN_TOOLTIP_TEXT: &str = "This rule supports special functionality.";
 
 pub trait InlineAssistDelegate {
     fn assist(
@@ -403,10 +399,10 @@ impl PickerDelegate for RulePickerDelegate {
                                     cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
                                 }))
                         }))
-                        .end_hover_slot(
-                            h_flex()
-                                .when(prompt_id.can_delete(), |this| {
-                                    this.child(
+                        .when(!prompt_id.is_built_in(), |this| {
+                            this.end_hover_slot(
+                                h_flex()
+                                    .child(
                                         IconButton::new("delete-rule", IconName::Trash)
                                             .icon_color(Color::Muted)
                                             .icon_size(IconSize::Small)
@@ -415,9 +411,7 @@ impl PickerDelegate for RulePickerDelegate {
                                                 cx.emit(RulePickerEvent::Deleted { prompt_id })
                                             })),
                                     )
-                                })
-                                .when(!prompt_id.is_built_in(), |this| {
-                                    this.child(
+                                    .child(
                                         IconButton::new("toggle-default-rule", IconName::Plus)
                                             .selected_icon(IconName::Dash)
                                             .toggle_state(default)
@@ -448,9 +442,9 @@ impl PickerDelegate for RulePickerDelegate {
                                                     prompt_id,
                                                 })
                                             })),
-                                    )
-                                }),
-                        )
+                                    ),
+                            )
+                        })
                         .into_any_element(),
                 )
             }
@@ -742,7 +736,7 @@ impl RulesLibrary {
                             let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", window, cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
-                            if !prompt_id.can_rename() {
+                            if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
                             }
@@ -1245,7 +1239,11 @@ impl RulesLibrary {
             .child(
                 IconButton::new("restore-default", IconName::RotateCcw)
                     .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Restore Default Content", &RestoreDefaultContent, cx)
+                        Tooltip::for_action(
+                            "Restore to Default Content",
+                            &RestoreDefaultContent,
+                            cx,
+                        )
                     })
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(RestoreDefaultContent), cx);
