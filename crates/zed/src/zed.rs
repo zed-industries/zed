@@ -32,8 +32,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
-    actions, image_cache, point, px, retain_all,
+    Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
