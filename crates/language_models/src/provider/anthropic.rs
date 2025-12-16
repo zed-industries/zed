@@ -559,7 +559,9 @@ impl LanguageModel for AnthropicModel {
             {
                 Ok(response) => Ok(response.input_tokens),
                 Err(err) => {
-                    log::error!("Anthropic count_tokens API failed, falling back to tiktoken: {err:?}");
+                    log::error!(
+                        "Anthropic count_tokens API failed, falling back to tiktoken: {err:?}"
+                    );
                     count_anthropic_tokens_with_tiktoken(request)
                 }
             }
