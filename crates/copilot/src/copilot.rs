@@ -41,7 +41,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
-use util::{ResultExt, fs::remove_matching, rel_path::RelPath};
+use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;

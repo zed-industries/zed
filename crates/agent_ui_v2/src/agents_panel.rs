@@ -384,8 +384,7 @@ impl Panel for AgentsPanel {
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
             settings.agent.get_or_insert_default().agents_panel_dock = Some(match position {
                 DockPosition::Left => settings::DockSide::Left,
-                DockPosition::Bottom => settings::DockSide::Right,
-                DockPosition::Right => settings::DockSide::Left,
+                DockPosition::Right | DockPosition::Bottom => settings::DockSide::Right,
             });
         });
         self.re_register_utility_pane(window, cx);
@@ -411,7 +410,7 @@ impl Panel for AgentsPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAgent)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAgentTwo)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {

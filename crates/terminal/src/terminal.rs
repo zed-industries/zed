@@ -369,6 +369,7 @@ impl TerminalBuilder {
             last_content: Default::default(),
             last_mouse: None,
             matches: Vec::new(),
+
             selection_head: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
@@ -595,6 +596,7 @@ impl TerminalBuilder {
                 last_content: Default::default(),
                 last_mouse: None,
                 matches: Vec::new(),
+
                 selection_head: None,
                 breadcrumb_text: String::new(),
                 scroll_px: px(0.),
@@ -826,6 +828,7 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
+
     pub breadcrumb_text: String,
     title_override: Option<String>,
     scroll_px: Pixels,
@@ -939,7 +942,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(None, cx),
+            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }

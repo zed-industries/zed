@@ -857,8 +857,6 @@ unexpected_cfgs = { level = "allow" }
 dbg_macro = "deny"
 todo = "deny"
 
-# This is not a style lint, see https://github.com/rust-lang/rust-clippy/pull/15454
-# Remove when the lint gets promoted to `suspicious`.
 declare_interior_mutable_const = "deny"
 
 redundant_clone = "deny"

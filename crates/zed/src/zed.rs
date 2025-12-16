@@ -32,8 +32,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
-    actions, image_cache, point, px, retain_all,
+    Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -1690,6 +1690,7 @@ fn show_keymap_file_json_error(
         cx.new(|cx| {
             MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
+                .primary_icon(IconName::Settings)
                 .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                     cx.emit(DismissEvent);
@@ -1748,16 +1749,18 @@ fn show_markdown_app_notification<F>(
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
                         image_cache(retain_all("notification-cache"))
-                            .text_xs()
-                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                &parsed_markdown.clone(),
-                                Some(workspace_handle.clone()),
-                                window,
-                                cx,
+                            .child(div().text_ui(cx).child(
+                                markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    window,
+                                    cx,
+                                ),
                             ))
                             .into_any()
                     })
                     .primary_message(primary_button_message)
+                    .primary_icon(IconName::Settings)
                     .primary_on_click_arc(primary_button_on_click)
                 })
             })
