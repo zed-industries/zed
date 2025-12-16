@@ -1081,7 +1081,7 @@ impl Element for MarkdownElement {
                                     })
                                     .size_full()
                                     .mb_2()
-                                    .border_1()
+                                    .border_2()
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
                                     .overflow_hidden(),
@@ -1096,15 +1096,18 @@ impl Element for MarkdownElement {
                                 ..Default::default()
                             });
                         }
-                        MarkdownTag::TableRow => {}
+                        MarkdownTag::TableRow => {
+                            builder.table_col_index = 0;
+                        }
                         MarkdownTag::TableCell => {
                             let is_header = builder.in_table_head;
                             let row_index = builder.table_row_index;
+                            let col_index = builder.table_col_index;
 
                             builder.push_div(
                                 div()
-                                    .min_w_0()
-                                    .border(px(0.5))
+                                    .when(col_index > 0, |this| this.border_l_1())
+                                    .when(row_index > 0, |this| this.border_t_1())
                                     .border_color(cx.theme().colors().border)
                                     .px_1()
                                     .py_0p5()
@@ -1230,6 +1233,7 @@ impl Element for MarkdownElement {
                         builder.table_alignments.clear();
                         builder.in_table_head = false;
                         builder.table_row_index = 0;
+                        builder.table_col_index = 0;
                     }
                     MarkdownTagEnd::TableHead => {
                         builder.pop_text_style();
@@ -1240,6 +1244,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
+                        builder.table_col_index += 1;
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
@@ -1508,6 +1513,7 @@ struct MarkdownElementBuilder {
     table_alignments: Vec<Alignment>,
     in_table_head: bool,
     table_row_index: usize,
+    table_col_index: usize,
     syntax_theme: Arc<SyntaxTheme>,
 }
 
@@ -1546,6 +1552,7 @@ impl MarkdownElementBuilder {
             table_alignments: Vec::new(),
             in_table_head: false,
             table_row_index: 0,
+            table_col_index: 0,
             syntax_theme,
         }
     }
