@@ -30,6 +30,7 @@ If you're coming from IntelliJ, the fastest way to feel at home is to use the Je
 3. Select `JetBrains`
 
 Or add this directly to your `settings.json`:
+
 ```json
 {
   "base_keymap": "JetBrains"
@@ -43,19 +44,20 @@ This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` f
 You can configure settings manually in the Settings Editor.
 
 To edit your settings:
+
 1. `Cmd+,` to open the Settings Editor.
 2. Run `zed: open settings` in the Command Palette.
 
 Here's how common IntelliJ settings translate to Zed:
 
-| IntelliJ Setting | Zed Setting | Notes |
-| --- | --- | --- |
-| Editor → Font → Font | `buffer_font_family` | Zed uses Zed Mono by default |
-| Editor → Font → Size | `buffer_font_size` | Set in pixels |
-| Editor → Code Style → Tab size | `tab_size` | Can override per language |
-| Editor → Code Style → Use tab character | `hard_tabs` | Boolean |
-| Code Style → Reformat on save | `format_on_save` | Works with formatter enabled |
-| Editor → General → Soft Wraps | `soft_wrap` | Supports optional wrap column |
+| IntelliJ Setting                        | Zed Setting          | Notes                         |
+| --------------------------------------- | -------------------- | ----------------------------- |
+| Editor → Font → Font                    | `buffer_font_family` | Zed uses Zed Mono by default  |
+| Editor → Font → Size                    | `buffer_font_size`   | Set in pixels                 |
+| Editor → Code Style → Tab size          | `tab_size`           | Can override per language     |
+| Editor → Code Style → Use tab character | `hard_tabs`          | Boolean                       |
+| Code Style → Reformat on save           | `format_on_save`     | Works with formatter enabled  |
+| Editor → General → Soft Wraps           | `soft_wrap`          | Supports optional wrap column |
 
 Zed also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project, similar to how you might use `.idea` folders in IntelliJ.
 
@@ -71,6 +73,7 @@ You can also launch Zed from the terminal inside any folder with:
 `zed .`
 
 Once inside a project:
+
 - Use `Cmd+Shift+O` or `Cmd+E` to jump between files quickly (like IntelliJ's "Recent Files")
 - Use `Cmd+Shift+A` or `Shift Shift` to open the command palette (like IntelliJ's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like IntelliJ's "Go to Class")
@@ -85,47 +88,48 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings (Zed with JetBrains keymap ↔ IntelliJ)
 
-| Action | Shortcut |
-| --- | --- |
-| Search Everywhere | `Shift Shift` |
-| Find Action / Command Palette | `Cmd + Shift + A` |
-| Go to File | `Cmd + Shift + O` |
-| Go to Symbol / Class | `Cmd + O` |
-| Recent Files | `Cmd + E` |
-| Go to Definition | `Cmd + B` |
-| Find Usages | `Alt + F7` |
-| Rename Symbol | `Shift + F6` |
-| Reformat Code | `Cmd + Alt + L` |
-| Toggle Project Panel | `Cmd + 1` |
-| Toggle Terminal | `Alt + F12` |
-| Duplicate Line | `Cmd + D` |
-| Delete Line | `Cmd + Backspace` |
-| Move Line Up/Down | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection | `Alt + Up/Down` |
-| Comment Line | `Cmd + /` |
-| Go Back / Forward | `Cmd + [` / `Cmd + ]` |
-| Toggle Breakpoint | `Ctrl + F8` |
+| Action                        | Shortcut                |
+| ----------------------------- | ----------------------- |
+| Search Everywhere             | `Shift Shift`           |
+| Find Action / Command Palette | `Cmd + Shift + A`       |
+| Go to File                    | `Cmd + Shift + O`       |
+| Go to Symbol / Class          | `Cmd + O`               |
+| Recent Files                  | `Cmd + E`               |
+| Go to Definition              | `Cmd + B`               |
+| Find Usages                   | `Alt + F7`              |
+| Rename Symbol                 | `Shift + F6`            |
+| Reformat Code                 | `Cmd + Alt + L`         |
+| Toggle Project Panel          | `Cmd + 1`               |
+| Toggle Terminal               | `Alt + F12`             |
+| Duplicate Line                | `Cmd + D`               |
+| Delete Line                   | `Cmd + Backspace`       |
+| Move Line Up/Down             | `Shift + Alt + Up/Down` |
+| Expand/Shrink Selection       | `Alt + Up/Down`         |
+| Comment Line                  | `Cmd + /`               |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
+| Toggle Breakpoint             | `Ctrl + F8`             |
 
 ### Different Keybindings (IntelliJ → Zed)
 
-| Action | IntelliJ | Zed (JetBrains keymap) |
-| --- | --- | --- |
-| File Structure | `Cmd + F12` | `Cmd + F12` (outline) |
-| Navigate to Next Error | `F2` | `F2` |
-| Run | `Ctrl + R` | `Ctrl + Alt + R` (tasks) |
-| Debug | `Ctrl + D` | `Alt + Shift + F9` |
-| Stop | `Cmd + F2` | `Ctrl + F2` |
+| Action                 | IntelliJ    | Zed (JetBrains keymap)   |
+| ---------------------- | ----------- | ------------------------ |
+| File Structure         | `Cmd + F12` | `Cmd + F12` (outline)    |
+| Navigate to Next Error | `F2`        | `F2`                     |
+| Run                    | `Ctrl + R`  | `Ctrl + Alt + R` (tasks) |
+| Debug                  | `Ctrl + D`  | `Alt + Shift + F9`       |
+| Stop                   | `Cmd + F2`  | `Ctrl + F2`              |
 
 ### Unique to Zed
 
-| Action | Shortcut | Notes |
-| --- | --- | --- |
-| Toggle Right Dock | `Cmd + R` | Assistant panel, notifications |
-| Split Panes | `Cmd + K`, then arrow keys | Create splits in any direction |
+| Action            | Shortcut                   | Notes                          |
+| ----------------- | -------------------------- | ------------------------------ |
+| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
+| Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
 
 To edit your keybindings:
+
 - Open the command palette (`Cmd+Shift+A` or `Shift Shift`)
 - Run `Zed: Open Keymap Editor`
 
@@ -134,6 +138,7 @@ This opens a list of all available bindings. You can override individual shortcu
 Zed also supports key sequences (multi-key shortcuts).
 
 > **Tip:** In IntelliJ, pressing `Esc` always returns focus to the editor. Zed doesn't have this behavior built-in, but you can add it to your keymap:
+>
 > ```json
 > {
 >   "context": "Dock || Terminal || ProjectPanel",
@@ -154,6 +159,7 @@ Zed doesn't index. You open a folder and start working immediately. File search 
 The trade-off is real: IntelliJ's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting dead code. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
 
 **How to adapt:**
+
 - For project-wide symbol search, use `Cmd+O` / Go to Symbol (relies on your language server)
 - For finding files by name, use `Cmd+Shift+O` / Go to File
 - For text search across files, use `Cmd+Shift+F`—this is fast even on large codebases
@@ -173,6 +179,7 @@ For some languages, the LSP experience is excellent. TypeScript, Rust, and Go ha
 - Automatic import optimization with custom ordering rules
 
 **How to adapt:**
+
 - Accept that some refactorings will require manual work or terminal tools
 - Use `Alt+Enter` for available code actions—the list will vary by language server
 - For Java, ensure `jdtls` is properly configured with your JDK path in settings
@@ -185,12 +192,14 @@ IntelliJ manages projects through `.idea` folders containing XML configuration f
 Zed has no project model. A project is a folder. There's no wizard, no SDK selection screen, no module configuration.
 
 This means:
+
 - No automatic detection of Maven/Gradle projects—you run build commands yourself
 - No managed run configurations—you define tasks manually or use the terminal
 - No SDK management—your language server uses whatever JDK/SDK is on your PATH or configured in its settings
 - No module boundaries—Zed sees your folder structure, nothing more
 
 **How to adapt:**
+
 - Create a `.zed/settings.json` in your project root for project-specific settings
 - Define common commands in `tasks.json` (open via command palette: `zed: open tasks`):
 
@@ -224,6 +233,7 @@ Zed has none of this. There's no Spring plugin, no JPA support, no awareness of 
 Similarly for other ecosystems: no Rails integration, no Django awareness, no Angular/React-specific tooling beyond what the TypeScript language server provides.
 
 **How to adapt:**
+
 - Use grep and file search liberally. `Cmd+Shift+F` with a regex can find endpoint definitions, bean names, or annotation usages.
 - Rely on your language server's "find references" (`Alt+F7`) for navigation—it works, just without framework context
 - For Spring Boot, keep the Actuator endpoints or a separate tool for understanding bean wiring
@@ -238,13 +248,13 @@ The honest assessment: if your daily work depends heavily on framework-aware nav
 IntelliJ organizes auxiliary views into numbered tool windows (Project = 1, Git = 9, Terminal = Alt+F12, etc.). Zed uses a similar concept called "docks":
 
 | IntelliJ Tool Window | Zed Equivalent | Shortcut (JetBrains keymap) |
-| --- | --- | --- |
-| Project (1) | Project Panel | `Cmd + 1` |
-| Git (9 or Cmd+0) | Git Panel | `Cmd + 0` |
-| Terminal (Alt+F12) | Terminal Panel | `Alt + F12` |
-| Structure (7) | Outline Panel | `Cmd + 7` |
-| Problems (6) | Diagnostics | `Cmd + 6` |
-| Debug (5) | Debug Panel | `Cmd + 5` |
+| -------------------- | -------------- | --------------------------- |
+| Project (1)          | Project Panel  | `Cmd + 1`                   |
+| Git (9 or Cmd+0)     | Git Panel      | `Cmd + 0`                   |
+| Terminal (Alt+F12)   | Terminal Panel | `Alt + F12`                 |
+| Structure (7)        | Outline Panel  | `Cmd + 7`                   |
+| Problems (6)         | Diagnostics    | `Cmd + 6`                   |
+| Debug (5)            | Debug Panel    | `Cmd + 5`                   |
 
 Zed has three dock positions: left, bottom, and right. Panels can be moved between docks by dragging or through settings.
 
@@ -267,12 +277,14 @@ The Debug Panel (`Cmd+5`) shows variables, call stack, and breakpoints—similar
 IntelliJ has a massive plugin ecosystem covering everything from language support to database tools to deployment integrations.
 
 Zed's extension ecosystem is smaller and more focused:
+
 - Language support and syntax highlighting
 - Themes
 - Slash commands for AI
 - Context servers
 
 Several features that require plugins in other editors are built into Zed:
+
 - Real-time collaboration with voice chat
 - AI coding assistance
 - Built-in terminal
@@ -319,11 +331,13 @@ Zed exposes advanced settings for power users who want to fine-tune their enviro
 Here are a few useful tweaks:
 
 **Format on Save:**
+
 ```json
 "format_on_save": "on"
 ```
 
 **Enable direnv support:**
+
 ```json
 "load_direnv": "shell_hook"
 ```
