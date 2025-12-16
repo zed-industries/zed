@@ -33,7 +33,7 @@ This opens the current directory in Zed.
 If you're coming from PyCharm, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
 
 1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
-2. Search for `base_keymap`
+2. Search for `Base Keymap`
 3. Select `JetBrains`
 
 Or add this directly to your `settings.json`:
@@ -90,7 +90,7 @@ Open buffers appear as tabs across the top. The sidebar shows your file tree and
 
 If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to PyCharm.
 
-### Common Shared Keybindings (Zed with JetBrains keymap ↔ PyCharm)
+### Common Shared Keybindings
 
 | Action                        | Shortcut                |
 | ----------------------------- | ----------------------- |
@@ -145,7 +145,7 @@ Zed also supports key sequences (multi-key shortcuts).
 
 If you've used PyCharm on large projects, you know the wait: "Indexing..." can take anywhere from 30 seconds to several minutes depending on project size and dependencies. PyCharm builds a comprehensive index of your entire codebase to power its code intelligence, and it re-indexes when dependencies change or when you install new packages.
 
-Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size.
+Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size. For many PyCharm users, this alone is reason enough to switch—no more waiting, no more "Indexing paused" interruptions.
 
 The trade-off is real: PyCharm's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting unused imports project-wide. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
 
@@ -164,6 +164,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For Python, Z
 
 - **basedpyright** (default) — Fast type checking and completions
 - **Ruff** (default) — Linting and formatting
+- **Ty** — Up-and-coming language server from Astral, built for speed
 - **Pyright** — Microsoft's type checker
 - **PyLSP** — Plugin-based server with tool integrations
 
@@ -177,11 +178,10 @@ Where you might notice differences:
 
 **How to adapt:**
 
-- Use
- `Alt+Enter` for available code actions—the list will vary by language server
+- Use `Alt+Enter` for available code actions—the list will vary by language server
 - Ensure your virtual environment is selected so the language server can resolve your dependencies
-- Use Ruff for
- fast, consistent formatting (it's enabled by default)
+- Use Ruff for fast, consistent formatting (it's enabled by default)
+- For code inspection similar to PyCharm's "Inspect Code," run `ruff check .` or check the Diagnostics panel (`Cmd+6`)—basedpyright and Ruff together catch many of the same issues
 
 ### Virtual Environments and Interpreters
 
@@ -211,9 +211,10 @@ Zed has no project model. A project is a folder. There's no wizard, no interpret
 
 This means:
 
-- Run configurations don't exist. You define tasks or use the terminal.
+- Run configurations don't exist. You define tasks or use the terminal. Your existing PyCharm run configs in `.idea/` won't be read—you'll recreate the ones you need in `tasks.json`.
 - Interpreter management is external. Zed discovers environments but doesn't create them.
 - Dependencies are managed through pip, uv, poetry, or conda—not through the editor.
+- There's no Python Console (interactive REPL) panel. Use `python` or `ipython` in the terminal instead.
 
 **How to adapt:**
 
@@ -342,7 +343,7 @@ Several features that require plugins in PyCharm are built into Zed:
 
 To set expectations clearly, here's what PyCharm offers that Zed doesn't have:
 
-- **Scientific Mode / Jupyter integration** — For notebooks, use JupyterLab or VS Code
+- **Scientific Mode / Jupyter integration** — For notebooks and data science workflows, use JupyterLab or VS Code with the Jupyter extension alongside Zed for your Python editing
 - **Database tools** — Use DataGrip, DBeaver, or TablePlus
 - **Django/Flask template navigation** — Use file search and grep
 - **Visual package manager** — Use pip, uv, or poetry from the terminal
