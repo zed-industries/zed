@@ -37,6 +37,7 @@ dependencies = [
  "terminal",
  "ui",
  "url",
+ "urlencoding",
  "util",
  "uuid",
  "watch",
