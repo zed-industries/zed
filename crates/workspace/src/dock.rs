@@ -1,5 +1,4 @@
 use crate::persistence::model::DockData;
-use crate::utility_pane::utility_slot_for_dock_position;
 use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -705,7 +704,7 @@ impl Dock {
         panel: &Entity<T>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
@@ -724,15 +723,12 @@ impl Dock {
                 }
             }
 
-            let slot = utility_slot_for_dock_position(self.position);
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.clear_utility_pane_if_provider(slot, Entity::entity_id(panel), cx);
-                });
-            }
-
             self.panel_entries.remove(panel_ix);
             cx.notify();
+
+            true
+        } else {
+            false
         }
     }
 
