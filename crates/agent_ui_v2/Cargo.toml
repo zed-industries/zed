@@ -12,6 +12,10 @@ workspace = true
 path = "src/agent_ui_v2.rs"
 doctest = false
 
+[features]
+test-support = ["agent/test-support"]
+
+
 [dependencies]
 agent.workspace = true
 agent_servers.workspace = true
@@ -38,3 +42,6 @@ time_format.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }

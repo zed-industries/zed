@@ -604,7 +604,7 @@ impl DebugTerminal {
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
             if let Some(terminal) = this.terminal.as_ref() {
-                terminal.focus_handle(cx).focus(window);
+                terminal.focus_handle(cx).focus(window, cx);
             }
         });
 

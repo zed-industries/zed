@@ -562,7 +562,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |context, window, cx| {
                 if let Some(context) = &context {
-                    window.focus(context);
+                    window.focus(context, cx);
                 }
                 window.dispatch_action(action.boxed_clone(), cx);
             }),
@@ -594,7 +594,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |context, window, cx| {
                 if let Some(context) = &context {
-                    window.focus(context);
+                    window.focus(context, cx);
                 }
                 window.dispatch_action(action.boxed_clone(), cx);
             }),

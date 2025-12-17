@@ -58,6 +58,9 @@ pub enum OpenRequestKind {
         /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
     },
+    GitCommit {
+        sha: String,
+    },
 }
 
 impl OpenRequest {
@@ -110,6 +113,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
+            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+                this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(zed_link) = parse_zed_link(&url, cx) {
@@ -136,6 +141,28 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
+        // Format: <sha>?repo=<path>
+        let (sha, query) = commit_path
+            .split_once('?')
+            .context("invalid git commit url: missing query string")?;
+        anyhow::ensure!(!sha.is_empty(), "invalid git commit url: missing sha");
+
+        let repo = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git commit url: missing repo query parameter")?
+            .to_string();
+
+        self.open_paths.push(repo);
+
+        self.kind = Some(OpenRequestKind::GitCommit {
+            sha: sha.to_string(),
+        });
+
+        Ok(())
     }
 
     fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
@@ -686,6 +713,86 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_commit_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        // Test basic git commit URL
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?repo=path/to/repo".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        // Verify path was added to open_paths for workspace routing
+        assert_eq!(request.open_paths, vec!["path/to/repo"]);
+
+        // Test with URL encoded path
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/def456?repo=path%20with%20spaces".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "def456");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        assert_eq!(request.open_paths, vec!["path with spaces"]);
+
+        // Test with empty path
+        cx.update(|cx| {
+            assert!(
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec!["zed://git/commit/abc123?repo=".into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo")
+            );
+        });
+
+        // Test error case: missing SHA
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?foo=bar".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo query parameter")
+        );
     }
 
     #[gpui::test]

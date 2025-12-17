@@ -38,6 +38,9 @@ pub struct AgentSettingsContent {
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// Favorite models to show at the top of the model selector.
+    #[serde(default)]
+    pub favorite_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant when streaming tools are enabled.
@@ -175,6 +178,16 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
+        if !self.favorite_models.contains(&model) {
+            self.favorite_models.push(model);
+        }
+    }
+
+    pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
+        self.favorite_models.retain(|m| m != model);
     }
 }
 

@@ -66,8 +66,8 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
-    RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -253,7 +253,7 @@ impl ThreadFeedbackState {
             editor
         });
 
-        editor.read(cx).focus_handle(cx).focus(window);
+        editor.read(cx).focus_handle(cx).focus(window, cx);
         editor
     }
 }
@@ -388,6 +388,17 @@ impl AcpThreadView {
                 Self::handle_agent_servers_updated,
             ),
         ];
+
+        cx.on_release(|this, cx| {
+            for window in this.notifications.drain(..) {
+                window
+                    .update(cx, |_, window, _| {
+                        window.remove_window();
+                    })
+                    .ok();
+            }
+        })
+        .detach();
 
         let show_codex_windows_warning = cfg!(windows)
             && project.read(cx).is_local()
@@ -671,7 +682,7 @@ impl AcpThreadView {
                             })
                         });
 
-                        this.message_editor.focus_handle(cx).focus(window);
+                        this.message_editor.focus_handle(cx).focus(window, cx);
 
                         cx.notify();
                     }
@@ -773,7 +784,7 @@ impl AcpThreadView {
                 _subscription: subscription,
             };
             if this.message_editor.focus_handle(cx).is_focused(window) {
-                this.focus_handle.focus(window)
+                this.focus_handle.focus(window, cx)
             }
             cx.notify();
         })
@@ -793,7 +804,7 @@ impl AcpThreadView {
                 ThreadState::LoadError(LoadError::Other(format!("{:#}", err).into()))
         }
         if self.message_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
         cx.notify();
     }
@@ -1259,7 +1270,7 @@ impl AcpThreadView {
                 }
             })
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -1311,11 +1322,11 @@ impl AcpThreadView {
                 .await?;
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             })?;
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn open_edited_buffer(
@@ -1454,7 +1465,7 @@ impl AcpThreadView {
                 self.thread_retry_status.take();
                 self.thread_state = ThreadState::LoadError(error.clone());
                 if self.message_editor.focus_handle(cx).is_focused(window) {
-                    self.focus_handle.focus(window)
+                    self.focus_handle.focus(window, cx)
                 }
             }
             AcpThreadEvent::TitleUpdated => {
@@ -1887,6 +1898,17 @@ impl AcpThreadView {
         })
     }
 
+    pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
+        self.thread().is_some_and(|thread| {
+            thread.read(cx).entries().iter().any(|entry| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
+                )
+            })
+        })
+    }
+
     fn authorize_tool_call(
         &mut self,
         tool_call_id: acp::ToolCallId,
@@ -1940,6 +1962,16 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let is_indented = entry.is_indented();
+        let is_first_indented = is_indented
+            && self.thread().is_some_and(|thread| {
+                thread
+                    .read(cx)
+                    .entries()
+                    .get(entry_ix.saturating_sub(1))
+                    .is_none_or(|entry| !entry.is_indented())
+            });
+
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1972,7 +2004,9 @@ impl AcpThreadView {
                 v_flex()
                     .id(("user_message", entry_ix))
                     .map(|this| {
-                        if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
+                        if is_first_indented {
+                            this.pt_0p5()
+                        } else if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
                             this.pt(rems_from_px(18.))
                         } else if rules_item.is_some() {
                             this.pt_3()
@@ -2018,6 +2052,9 @@ impl AcpThreadView {
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
+                                    .when(is_indented, |this| {
+                                        this.py_2().px_2().shadow_sm()
+                                    })
                                     .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
                                     .map(|this|{
@@ -2112,7 +2149,10 @@ impl AcpThreadView {
                     )
                     .into_any()
             }
-            AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
+            AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks,
+                indented: _,
+            }) => {
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -2146,6 +2186,7 @@ impl AcpThreadView {
                 v_flex()
                     .px_5()
                     .py_1p5()
+                    .when(is_first_indented, |this| this.pt_0p5())
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
@@ -2155,19 +2196,48 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().map(|this| {
-                    if has_terminals {
-                        this.children(tool_call.terminals().map(|terminal| {
-                            self.render_terminal_tool_call(
-                                entry_ix, terminal, tool_call, window, cx,
-                            )
-                        }))
-                    } else {
-                        this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
-                    }
-                })
+                div()
+                    .w_full()
+                    .map(|this| {
+                        if has_terminals {
+                            this.children(tool_call.terminals().map(|terminal| {
+                                self.render_terminal_tool_call(
+                                    entry_ix, terminal, tool_call, window, cx,
+                                )
+                            }))
+                        } else {
+                            this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
+                        }
+                    })
+                    .into_any()
             }
-            .into_any(),
+        };
+
+        let primary = if is_indented {
+            let line_top = if is_first_indented {
+                rems_from_px(-12.0)
+            } else {
+                rems_from_px(0.0)
+            };
+
+            div()
+                .relative()
+                .w_full()
+                .pl(rems_from_px(20.0))
+                .bg(cx.theme().colors().panel_background.opacity(0.2))
+                .child(
+                    div()
+                        .absolute()
+                        .left(rems_from_px(18.0))
+                        .top(line_top)
+                        .bottom_0()
+                        .w_px()
+                        .bg(cx.theme().colors().border.opacity(0.6)),
+                )
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
         };
 
         let needs_confirmation = if let AgentThreadEntry::ToolCall(tool_call) = entry {
@@ -4051,6 +4121,8 @@ impl AcpThreadView {
                                 .ml_1p5()
                         });
 
+                        let full_path = path.display(path_style).to_string();
+
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                             .map(Icon::from_path)
                             .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
@@ -4084,7 +4156,6 @@ impl AcpThreadView {
                                     .relative()
                                     .pr_8()
                                     .w_full()
-                                    .overflow_x_scroll()
                                     .child(
                                         h_flex()
                                             .id(("file-name-path", index))
@@ -4096,7 +4167,14 @@ impl AcpThreadView {
                                             .child(file_icon)
                                             .children(file_name)
                                             .children(file_path)
-                                            .tooltip(Tooltip::text("Go to File"))
+                                            .tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "Go to File",
+                                                    None,
+                                                    full_path.clone(),
+                                                    cx,
+                                                )
+                                            })
                                             .on_click({
                                                 let buffer = buffer.clone();
                                                 cx.listener(move |this, _, window, cx| {
@@ -4232,6 +4310,13 @@ impl AcpThreadView {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
                 }
             }))
             .p_2()
@@ -4994,8 +5079,8 @@ impl AcpThreadView {
         });
 
         if let Some(screen_window) = cx
-            .open_window(options, |_, cx| {
-                cx.new(|_| {
+            .open_window(options, |_window, cx| {
+                cx.new(|_cx| {
                     AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
                 })
             })
@@ -6418,6 +6503,57 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected no notification when notify_when_agent_waiting is Never"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let weak_view = thread_view.downgrade();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify notification is shown
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification to be shown"
+        );
+
+        // Drop the thread view (simulating navigation to a new thread)
+        drop(thread_view);
+        drop(message_editor);
+        // Trigger an update to flush effects, which will call release_dropped_entities
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        // Verify the entity was actually released
+        assert!(
+            !weak_view.is_upgradable(),
+            "Thread view entity should be released after dropping"
+        );
+
+        // The notification should be automatically closed via on_release
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Notification should be closed when thread view is dropped"
         );
     }
 

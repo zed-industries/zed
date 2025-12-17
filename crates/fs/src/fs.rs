@@ -434,7 +434,18 @@ impl RealFs {
         for component in path.components() {
             match component {
                 std::path::Component::Prefix(_) => {
-                    let canonicalized = std::fs::canonicalize(component)?;
+                    let component = component.as_os_str();
+                    let canonicalized = if component
+                        .to_str()
+                        .map(|e| e.ends_with("\\"))
+                        .unwrap_or(false)
+                    {
+                        std::fs::canonicalize(component)
+                    } else {
+                        let mut component = component.to_os_string();
+                        component.push("\\");
+                        std::fs::canonicalize(component)
+                    }?;
 
                     let mut strip = PathBuf::new();
                     for component in canonicalized.components() {
@@ -3392,6 +3403,26 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
+    }
+
+    #[gpui::test]
+    #[cfg(target_os = "windows")]
+    async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
+        use util::paths::SanitizedPath;
+
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("test (1).txt");
+        let file = SanitizedPath::new(&file);
+        std::fs::write(&file, "test").unwrap();
+
+        let canonicalized = fs.canonicalize(file.as_path()).await;
+        assert!(canonicalized.is_ok());
     }
 
     #[gpui::test]

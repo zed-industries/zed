@@ -315,6 +315,6 @@ impl DiagnosticBlock {
         editor.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range.start..range.start]);
         });
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
     }
 }

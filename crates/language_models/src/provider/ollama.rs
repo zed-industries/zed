@@ -23,8 +23,8 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, InlineCode, List, ListBulletItem,
-    Tooltip, prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
+    prelude::*,
 };
 use ui_input::InputField;
 
@@ -724,7 +724,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_instructions() -> Div {
+    fn render_instructions(cx: &mut Context<Self>) -> Div {
         v_flex()
             .gap_2()
             .child(Label::new(
@@ -742,7 +742,7 @@ impl ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Start Ollama and download a model:"))
-                            .child(InlineCode::new("ollama run gpt-oss:20b")),
+                            .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
                     )
                     .child(ListBulletItem::new(
                         "Click 'Connect' below to start using Ollama in Zed",
@@ -833,7 +833,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
-            .child(Self::render_instructions())
+            .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(

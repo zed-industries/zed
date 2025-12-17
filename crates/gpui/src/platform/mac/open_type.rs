@@ -52,6 +52,11 @@ pub fn apply_features_and_fallbacks(
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks,
         );
+
+        for value in &values {
+            CFRelease(*value as _);
+        }
+
         let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
         CFRelease(attrs as _);
         let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
