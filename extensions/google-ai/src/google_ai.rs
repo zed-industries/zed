@@ -128,7 +128,7 @@ fn validate_generate_content_request(request: &GenerateContentRequest) -> Result
 
 // Extension implementation
 
-const PROVIDER_ID: &str = "google-ai";
+const PROVIDER_ID: &str = "google";
 const PROVIDER_NAME: &str = "Google AI";
 
 struct GoogleAiExtension {
@@ -343,7 +343,7 @@ fn get_default_models() -> Vec<LlmModelInfo> {
                 supports_tool_choice_auto: true,
                 supports_tool_choice_any: true,
                 supports_tool_choice_none: true,
-                supports_thinking: true,
+                supports_thinking: false,
                 tool_input_format: LlmToolInputFormat::JsonSchemaSubset,
             },
             is_default: false,

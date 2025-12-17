@@ -66,12 +66,16 @@ use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::llm_provider::ExtensionLanguageModelProvider;
 use wasm_host::{
     WasmExtension, WasmHost,
-    wit::{LlmModelInfo, LlmProviderInfo, is_supported_wasm_api_version, wasm_api_version_range},
+    wit::{
+        LlmCacheConfiguration, LlmModelInfo, LlmProviderInfo, is_supported_wasm_api_version,
+        wasm_api_version_range,
+    },
 };
 
 struct LlmProviderWithModels {
     provider_info: LlmProviderInfo,
     models: Vec<LlmModelInfo>,
+    cache_configs: collections::HashMap<String, LlmCacheConfiguration>,
     is_authenticated: bool,
     icon_path: Option<SharedString>,
     auth_config: Option<extension::LanguageModelAuthConfig>,
@@ -1635,6 +1639,32 @@ impl ExtensionStore {
                                         }
                                     };
 
+                                    // Query cache configurations for each model
+                                    let mut cache_configs = collections::HashMap::default();
+                                    for model in &models {
+                                        let cache_config_result = wasm_extension
+                                            .call({
+                                                let provider_id = provider_info.id.clone();
+                                                let model_id = model.id.clone();
+                                                |ext, store| {
+                                                    async move {
+                                                        ext.call_llm_cache_configuration(
+                                                            store,
+                                                            &provider_id,
+                                                            &model_id,
+                                                        )
+                                                        .await
+                                                    }
+                                                    .boxed()
+                                                }
+                                            })
+                                            .await;
+
+                                        if let Ok(Ok(Some(config))) = cache_config_result {
+                                            cache_configs.insert(model.id.clone(), config);
+                                        }
+                                    }
+
                                     // Query initial authentication state
                                     let is_authenticated = wasm_extension
                                         .call({
@@ -1677,6 +1707,7 @@ impl ExtensionStore {
                                     llm_providers_with_models.push(LlmProviderWithModels {
                                         provider_info,
                                         models,
+                                        cache_configs,
                                         is_authenticated,
                                         icon_path,
                                         auth_config,
@@ -1776,6 +1807,7 @@ impl ExtensionStore {
                         let wasm_ext = extension.as_ref().clone();
                         let pinfo = llm_provider.provider_info.clone();
                         let mods = llm_provider.models.clone();
+                        let cache_cfgs = llm_provider.cache_configs.clone();
                         let auth = llm_provider.is_authenticated;
                         let icon = llm_provider.icon_path.clone();
                         let auth_config = llm_provider.auth_config.clone();
@@ -1784,7 +1816,7 @@ impl ExtensionStore {
                             provider_id.clone(),
                             Box::new(move |cx: &mut App| {
                                 let provider = Arc::new(ExtensionLanguageModelProvider::new(
-                                    wasm_ext, pinfo, mods, auth, icon, auth_config, cx,
+                                    wasm_ext, pinfo, mods, cache_cfgs, auth, icon, auth_config, cx,
                                 ));
                                 language_model::LanguageModelRegistry::global(cx).update(
                                     cx,

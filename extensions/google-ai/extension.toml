@@ -6,8 +6,8 @@ schema_version = 1
 authors = ["Zed Team"]
 repository = "https://github.com/zed-industries/zed"
 
-[language_model_providers.google-ai]
+[language_model_providers.google]
 name = "Google AI"
 
-[language_model_providers.google-ai.auth]
+[language_model_providers.google.auth]
 env_vars = ["GEMINI_API_KEY", "GOOGLE_AI_API_KEY"]
