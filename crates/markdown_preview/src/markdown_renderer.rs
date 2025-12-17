@@ -4,6 +4,7 @@ use crate::markdown_elements::{
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
+use editor::Editor;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
@@ -743,21 +744,40 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             link_ranges,
                             move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
                                 Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
+                                Link::Path { path: path_with_pos } => {
                                     if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    normalize_path(path.clone().as_path()),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
+                                        let path_with_pos = path_with_pos.clone();
+                                        let open_task = workspace.update(cx, |workspace, cx| {
+                                            workspace.open_abs_path(
+                                                normalize_path(path_with_pos.path.as_path()),
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
+                                                window,
+                                                cx,
+                                            )
                                         });
+
+                                        if let Ok(open_task) = open_task {
+                                            if let Some(row) = path_with_pos.row {
+                                                window.spawn(cx, async move |cx| {
+                                                    let item = open_task.await.ok()?;
+                                                    if let Some(editor) = item.downcast::<Editor>() {
+                                                        editor.downgrade().update_in(cx, |editor, window, cx| {
+                                                            let point = language::Point::new(
+                                                                row.saturating_sub(1),
+                                                                path_with_pos.column.unwrap_or(1).saturating_sub(1),
+                                                            );
+                                                            editor.go_to_singleton_buffer_point(point, window, cx);
+                                                        }).ok();
+                                                    }
+                                                    Some(())
+                                                }).detach();
+                                            } else {
+                                                open_task.detach();
+                                            }
+                                        }
                                     }
                                 }
                             },
@@ -784,7 +804,7 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
 fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
     let image_resource = match image.link.clone() {
         Link::Web { url } => Resource::Uri(url.into()),
-        Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+        Link::Path { path } => Resource::Path(Arc::from(path.path.as_path())),
     };
 
     let element_id = cx.next_id(&image.source_range);
@@ -821,21 +841,40 @@ fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
                 if window.modifiers().secondary() {
                     match &link {
                         Link::Web { url } => cx.open_url(url),
-                        Link::Path { path, .. } => {
+                        Link::Path { path: path_with_pos } => {
                             if let Some(workspace) = &workspace {
-                                _ = workspace.update(cx, |workspace, cx| {
-                                    workspace
-                                        .open_abs_path(
-                                            path.clone(),
-                                            OpenOptions {
-                                                visible: Some(OpenVisible::None),
-                                                ..Default::default()
-                                            },
-                                            window,
-                                            cx,
-                                        )
-                                        .detach();
+                                let path_with_pos = path_with_pos.clone();
+                                let open_task = workspace.update(cx, |workspace, cx| {
+                                    workspace.open_abs_path(
+                                        path_with_pos.path.clone(),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
                                 });
+
+                                if let Ok(open_task) = open_task {
+                                    if let Some(row) = path_with_pos.row {
+                                        window.spawn(cx, async move |cx| {
+                                            let item = open_task.await.ok()?;
+                                            if let Some(editor) = item.downcast::<Editor>() {
+                                                editor.downgrade().update_in(cx, |editor, window, cx| {
+                                                    let point = language::Point::new(
+                                                        row.saturating_sub(1),
+                                                        path_with_pos.column.unwrap_or(1).saturating_sub(1),
+                                                    );
+                                                    editor.go_to_singleton_buffer_point(point, window, cx);
+                                                }).ok();
+                                            }
+                                            Some(())
+                                        }).detach();
+                                    } else {
+                                        open_task.detach();
+                                    }
+                                }
                             }
                         }
                     }
