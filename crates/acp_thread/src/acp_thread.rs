@@ -43,6 +43,7 @@ pub struct UserMessage {
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<Checkpoint>,
+    pub indented: bool,
 }
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ impl UserMessage {
 #[derive(Debug, PartialEq)]
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
+    pub indented: bool,
 }
 
 impl AssistantMessage {
@@ -123,6 +125,14 @@ pub enum AgentThreadEntry {
 }
 
 impl AgentThreadEntry {
+    pub fn is_indented(&self) -> bool {
+        match self {
+            Self::UserMessage(message) => message.indented,
+            Self::AssistantMessage(message) => message.indented,
+            Self::ToolCall(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -1185,6 +1195,16 @@ impl AcpThread {
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
+        self.push_user_content_block_with_indent(message_id, chunk, false, cx)
+    }
+
+    pub fn push_user_content_block_with_indent(
+        &mut self,
+        message_id: Option<UserMessageId>,
+        chunk: acp::ContentBlock,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
@@ -1194,8 +1214,10 @@ impl AcpThread {
                 id,
                 content,
                 chunks,
+                indented: existing_indented,
                 ..
             }) = last_entry
+            && *existing_indented == indented
         {
             *id = message_id.or(id.take());
             content.append(chunk.clone(), &language_registry, path_style, cx);
@@ -1210,6 +1232,7 @@ impl AcpThread {
                     content,
                     chunks: vec![chunk],
                     checkpoint: None,
+                    indented,
                 }),
                 cx,
             );
@@ -1222,11 +1245,25 @@ impl AcpThread {
         is_thought: bool,
         cx: &mut Context<Self>,
     ) {
+        self.push_assistant_content_block_with_indent(chunk, is_thought, false, cx)
+    }
+
+    pub fn push_assistant_content_block_with_indent(
+        &mut self,
+        chunk: acp::ContentBlock,
+        is_thought: bool,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
+            && let AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks,
+                indented: existing_indented,
+            }) = last_entry
+            && *existing_indented == indented
         {
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
@@ -1255,6 +1292,7 @@ impl AcpThread {
             self.push_entry(
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
+                    indented,
                 }),
                 cx,
             );
@@ -1704,6 +1742,7 @@ impl AcpThread {
                         content: block,
                         chunks: message,
                         checkpoint: None,
+                        indented: false,
                     }),
                     cx,
                 );

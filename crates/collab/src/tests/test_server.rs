@@ -761,6 +761,7 @@ impl TestClient {
         &self,
         root_path: impl AsRef<Path>,
         ssh: Entity<RemoteClient>,
+        init_worktree_trust: bool,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
@@ -771,6 +772,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                init_worktree_trust,
                 cx,
             )
         });
@@ -839,6 +841,7 @@ impl TestClient {
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
                 None,
+                false,
                 cx,
             )
         })

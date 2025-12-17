@@ -972,6 +972,8 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "restore_file_from_disk": true,
+          "save_file": true,
           "open": true,
           "grep": true,
           "terminal": true,
@@ -2060,6 +2062,12 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to skip worktree trust checks.
+    // When trusted, project settings are synchronized automatically,
+    // language and MCP servers are downloaded and started automatically.
+    //
+    // Default: false
+    "trust_all_worktrees": false,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier

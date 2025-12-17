@@ -24,8 +24,8 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
-    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemotePlatform,
-    remote_client::CommandTemplate,
+    RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
+    RemotePlatform, remote_client::CommandTemplate,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -70,7 +70,7 @@ impl DockerExecConnection {
         let remote_platform = this.check_remote_platform().await?;
 
         this.path_style = match remote_platform.os {
-            "windows" => Some(PathStyle::Windows),
+            RemoteOs::Windows => Some(PathStyle::Windows),
             _ => Some(PathStyle::Posix),
         };
 
@@ -124,8 +124,8 @@ impl DockerExecConnection {
         };
 
         let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
+            "Darwin" => RemoteOs::MacOs,
+            "Linux" => RemoteOs::Linux,
             _ => anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
             ),
@@ -136,9 +136,9 @@ impl DockerExecConnection {
             || arch.starts_with("arm64")
             || arch.starts_with("aarch64")
         {
-            "aarch64"
+            RemoteArch::Aarch64
         } else if arch.starts_with("x86") {
-            "x86_64"
+            RemoteArch::X86_64
         } else {
             anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"

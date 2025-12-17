@@ -1,7 +1,7 @@
 use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
-use git::GITIGNORE;
+use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -2408,6 +2408,94 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
             &["bar"],
             &["foo", "sub/bar", "baz", "subrepo/bar"],
             &[],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": ".env.*"
+                }
+            },
+            ".env.example": "secret=xxxx",
+            ".env.local": "secret=1234",
+            ".gitignore": "!.env.example",
+            "README.md": "# Repo Exclude",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .gitignore overrides .git/info/exclude
+    worktree.update(cx, |worktree, _cx| {
+        let expected_excluded_paths = [];
+        let expected_ignored_paths = [".env.local"];
+        let expected_tracked_paths = [".env.example", "README.md", "src/main.rs"];
+        let expected_included_paths = [];
+
+        check_worktree_entries(
+            worktree,
+            &expected_excluded_paths,
+            &expected_ignored_paths,
+            &expected_tracked_paths,
+            &expected_included_paths,
+        );
+    });
+
+    // Ignore statuses are updated when .git/info/exclude file changes
+    fs.write(
+        &project_dir.join(DOT_GIT).join(REPO_EXCLUDE),
+        ".env.example".as_bytes(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        let expected_excluded_paths = [];
+        let expected_ignored_paths = [];
+        let expected_tracked_paths = [".env.example", ".env.local", "README.md", "src/main.rs"];
+        let expected_included_paths = [];
+
+        check_worktree_entries(
+            worktree,
+            &expected_excluded_paths,
+            &expected_ignored_paths,
+            &expected_tracked_paths,
+            &expected_included_paths,
         );
     });
 }

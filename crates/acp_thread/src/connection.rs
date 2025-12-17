@@ -202,6 +202,12 @@ pub trait AgentModelSelector: 'static {
     fn should_render_footer(&self) -> bool {
         false
     }
+
+    /// Whether this selector supports the favorites feature.
+    /// Only the native agent uses the model ID format that maps to settings.
+    fn supports_favorites(&self) -> bool {
+        false
+    }
 }
 
 /// Icon for a model in the model selector.
@@ -247,6 +253,10 @@ impl AgentModelList {
             AgentModelList::Flat(models) => models.is_empty(),
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
+    }
+
+    pub fn is_flat(&self) -> bool {
+        matches!(self, AgentModelList::Flat(_))
     }
 }
 
