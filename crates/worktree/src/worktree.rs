@@ -5842,7 +5842,6 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-
 fn decode_byte(bytes: Vec<u8>) -> (String, &'static Encoding, bool) {
     // check BOM
     if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {

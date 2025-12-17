@@ -19,8 +19,7 @@ use std::{
     sync::Arc,
 };
 use util::{
-    ResultExt,
-    path,
+    ResultExt, path,
     paths::PathStyle,
     rel_path::{RelPath, rel_path},
     test::TempTree,
@@ -2633,7 +2632,7 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
                 0xE3, 0x81, 0xAF, // は
             ],
             "こんにちは",
-        )
+        ),
     ];
 
     let root_path = if cfg!(windows) {
