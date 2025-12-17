@@ -822,6 +822,14 @@ impl AtlasKey {
                 if params.is_emoji {
                     AtlasTextureKind::Polychrome
                 } else {
+                    #[cfg(target_os = "windows")]
+                    if crate::ENABLE_SUBPIXEL_TEXT_RENDERING {
+                        AtlasTextureKind::Subpixel
+                    } else {
+                        AtlasTextureKind::Monochrome
+                    }
+
+                    #[cfg(not(target_os = "windows"))]
                     AtlasTextureKind::Monochrome
                 }
             }
@@ -922,6 +930,7 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
+    Subpixel = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
