@@ -533,8 +533,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::download_remote_server_release(
                 release_channel,
                 version.clone(),
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
@@ -564,8 +564,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::get_remote_server_release_url(
                 release_channel,
                 version,
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 cx,
             )
             .await

@@ -49,10 +49,58 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteOs {
+    Linux,
+    MacOs,
+    Windows,
+}
+
+impl RemoteOs {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "linux",
+            RemoteOs::MacOs => "macos",
+            RemoteOs::Windows => "windows",
+        }
+    }
+
+    pub fn is_windows(&self) -> bool {
+        matches!(self, RemoteOs::Windows)
+    }
+}
+
+impl std::fmt::Display for RemoteOs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteArch {
+    X86_64,
+    Aarch64,
+}
+
+impl RemoteArch {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteArch::X86_64 => "x86_64",
+            RemoteArch::Aarch64 => "aarch64",
+        }
+    }
+}
+
+impl std::fmt::Display for RemoteArch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct RemotePlatform {
-    pub os: &'static str,
-    pub arch: &'static str,
+    pub os: RemoteOs,
+    pub arch: RemoteArch,
 }
 
 #[derive(Clone, Debug)]
@@ -89,7 +137,8 @@ pub trait RemoteClientDelegate: Send + Sync {
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-const INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+const INITIAL_CONNECTION_TIMEOUT: Duration =
+    Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
 const MAX_RECONNECT_ATTEMPTS: usize = 3;
 

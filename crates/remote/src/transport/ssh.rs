@@ -1,5 +1,5 @@
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
@@ -402,30 +402,50 @@ impl RemoteConnection for SshRemoteConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        const VARS: [&str; 3] = ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"];
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_path) = self.remote_binary_path.clone() else {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
-        let mut proxy_args = vec![];
-        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
-            if let Some(value) = std::env::var(env_var).ok() {
-                proxy_args.push(format!("{}='{}'", env_var, value));
+        let mut ssh_command = if self.ssh_platform.os.is_windows() {
+            // TODO: Set the `VARS` environment variables, we do not have `env` on windows
+            // so this needs a different approach
+            let mut proxy_args = vec![];
+            proxy_args.push("proxy".to_owned());
+            proxy_args.push("--identifier".to_owned());
+            proxy_args.push(unique_identifier);
+
+            if reconnect {
+                proxy_args.push("--reconnect".to_owned());
             }
-        }
-        proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
-        proxy_args.push("proxy".to_owned());
-        proxy_args.push("--identifier".to_owned());
-        proxy_args.push(unique_identifier);
+            self.socket.ssh_command(
+                self.ssh_shell_kind,
+                &remote_binary_path.display(self.path_style()),
+                &proxy_args,
+                false,
+            )
+        } else {
+            let mut proxy_args = vec![];
+            for env_var in VARS {
+                if let Some(value) = std::env::var(env_var).ok() {
+                    proxy_args.push(format!("{}='{}'", env_var, value));
+                }
+            }
+            proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
+            proxy_args.push("proxy".to_owned());
+            proxy_args.push("--identifier".to_owned());
+            proxy_args.push(unique_identifier);
 
-        if reconnect {
-            proxy_args.push("--reconnect".to_owned());
-        }
+            if reconnect {
+                proxy_args.push("--reconnect".to_owned());
+            }
+            self.socket
+                .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)
+        };
 
-        let ssh_proxy_process = match self
-            .socket
-            .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)
+        let ssh_proxy_process = match ssh_command
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -545,22 +565,20 @@ impl SshRemoteConnection {
         .await?;
         drop(askpass);
 
-        let ssh_shell = socket.shell().await;
+        let is_windows = socket.probe_is_windows().await;
+        log::info!("Remote is windows: {}", is_windows);
+
+        let ssh_shell = socket.shell(is_windows).await;
         log::info!("Remote shell discovered: {}", ssh_shell);
-        let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
+
+        let ssh_shell_kind = ShellKind::new(&ssh_shell, is_windows);
+        let ssh_platform = socket.platform(ssh_shell_kind, is_windows).await?;
         log::info!("Remote platform discovered: {:?}", ssh_platform);
-        let ssh_path_style = match ssh_platform.os {
-            "windows" => PathStyle::Windows,
-            _ => PathStyle::Posix,
+
+        let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
+            RemoteOs::Windows => (PathStyle::Windows, ssh_shell.clone()),
+            _ => (PathStyle::Posix, String::from("/bin/sh")),
         };
-        let ssh_default_system_shell = String::from("/bin/sh");
-        let ssh_shell_kind = ShellKind::new(
-            &ssh_shell,
-            match ssh_platform.os {
-                "windows" => true,
-                _ => false,
-            },
-        );
 
         let mut this = Self {
             socket,
@@ -596,9 +614,14 @@ impl SshRemoteConnection {
             _ => version.to_string(),
         };
         let binary_name = format!(
-            "zed-remote-server-{}-{}",
+            "zed-remote-server-{}-{}{}",
             release_channel.dev_name(),
-            version_str
+            version_str,
+            if self.ssh_platform.os.is_windows() {
+                ".exe"
+            } else {
+                ""
+            }
         );
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
@@ -710,14 +733,19 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
-            self.socket
+            let res = self
+                .socket
                 .run_command(
                     self.ssh_shell_kind,
                     "mkdir",
                     &["-p", parent.display(self.path_style()).as_ref()],
                     true,
                 )
-                .await?;
+                .await;
+            if !self.ssh_platform.os.is_windows() {
+                // mkdir fails on windows if the path already exists ...
+                res?;
+            }
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
@@ -805,17 +833,24 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
-            self.socket
+            let res = self
+                .socket
                 .run_command(
                     self.ssh_shell_kind,
                     "mkdir",
                     &["-p", parent.display(self.path_style()).as_ref()],
                     true,
                 )
-                .await?;
+                .await;
+            if !self.ssh_platform.os.is_windows() {
+                // mkdir fails on windows if the path already exists ...
+                res?;
+            }
         }
 
-        let src_stat = fs::metadata(&src_path).await?;
+        let src_stat = fs::metadata(&src_path)
+            .await
+            .with_context(|| format!("failed to get metadata for {:?}", src_path))?;
         let size = src_stat.len();
 
         let t0 = Instant::now();
@@ -866,7 +901,7 @@ impl SshRemoteConnection {
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
         self.socket
-            .run_command(shell_kind, "sh", &args, true)
+            .run_command(self.ssh_shell_kind, "sh", &args, true)
             .await?;
         Ok(())
     }
@@ -1054,6 +1089,7 @@ impl SshSocket {
     ) -> Result<String> {
         let mut command = self.ssh_command(shell_kind, program, args, allow_pseudo_tty);
         let output = command.output().await?;
+        log::debug!("{:?}: {:?}", command, output);
         anyhow::ensure!(
             output.status.success(),
             "failed to run command {command:?}: {}",
@@ -1125,12 +1161,71 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let output = self.run_command(shell, "uname", &["-sm"], false).await?;
+    async fn platform(&self, shell: ShellKind, is_windows: bool) -> Result<RemotePlatform> {
+        if is_windows {
+            self.platform_windows(shell).await
+        } else {
+            self.platform_posix(shell).await
+        }
+    }
+
+    async fn platform_posix(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let output = self
+            .run_command(shell, "uname", &["-sm"], false)
+            .await
+            .context("Failed to run 'uname -sm' to determine platform")?;
         parse_platform(&output)
     }
 
-    async fn shell(&self) -> String {
+    async fn platform_windows(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let output = self
+            .run_command(
+                shell,
+                "cmd",
+                &["/c", "echo", "%PROCESSOR_ARCHITECTURE%"],
+                false,
+            )
+            .await
+            .context(
+                "Failed to run 'echo %PROCESSOR_ARCHITECTURE%' to determine Windows architecture",
+            )?;
+
+        Ok(RemotePlatform {
+            os: RemoteOs::Windows,
+            arch: match output.trim() {
+                "AMD64" => RemoteArch::X86_64,
+                "ARM64" => RemoteArch::Aarch64,
+                arch => anyhow::bail!(
+                    "Prebuilt remote servers are not yet available for windows-{arch}. See https://zed.dev/docs/remote-development"
+                ),
+            },
+        })
+    }
+
+    /// Probes whether the remote host is running Windows.
+    ///
+    /// This is done by attempting to run a simple Windows-specific command.
+    /// If it succeeds and returns Windows-like output, we assume it's Windows.
+    async fn probe_is_windows(&self) -> bool {
+        match self
+            .run_command(ShellKind::PowerShell, "cmd", &["/c", "ver"], false)
+            .await
+        {
+            // Windows 'ver' command outputs something like "Microsoft Windows [Version 10.0.19045.5011]"
+            Ok(output) => output.trim().contains("indows"),
+            Err(_) => false,
+        }
+    }
+
+    async fn shell(&self, is_windows: bool) -> String {
+        if is_windows {
+            self.shell_windows().await
+        } else {
+            self.shell_posix().await
+        }
+    }
+
+    async fn shell_posix(&self) -> String {
         const DEFAULT_SHELL: &str = "sh";
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
@@ -1142,6 +1237,13 @@ impl SshSocket {
                 DEFAULT_SHELL.to_owned()
             }
         }
+    }
+
+    async fn shell_windows(&self) -> String {
+        // powershell is always the default, and cannot really be removed from the system
+        // so we can rely on that fact and reasonably assume that we will be running in a
+        // powershell environment
+        "powershell.exe".to_owned()
     }
 }
 
