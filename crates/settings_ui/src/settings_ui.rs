@@ -3365,13 +3365,13 @@ impl SettingsWindow {
         });
         self.sub_page_scroll_handle
             .set_offset(point(px(0.), px(0.)));
-        self.content_focus_handle.focus_handle(cx).focus(window);
+        self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         sub_page_stack_mut().pop();
-        self.content_focus_handle.focus_handle(cx).focus(window);
+        self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
