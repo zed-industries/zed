@@ -22,12 +22,17 @@ pub trait ModalView: ManagedView {
     fn fade_out_background(&self) -> bool {
         false
     }
+
+    fn render_bare(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
+    fn render_bare(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -41,6 +46,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
+    }
+
+    fn render_bare(&self, cx: &mut App) -> bool {
+        self.read(cx).render_bare()
     }
 }
 
@@ -167,8 +176,12 @@ impl ModalLayer {
 impl Render for ModalLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
-            return div();
+            return div().into_any_element();
         };
+
+        if active_modal.modal.render_bare(cx) {
+            return active_modal.modal.view().into_any_element();
+        }
 
         div()
             .absolute()
@@ -195,5 +208,6 @@ impl Render for ModalLayer {
                             }),
                     ),
             )
+            .into_any_element()
     }
 }

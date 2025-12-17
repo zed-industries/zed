@@ -19121,6 +19121,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "which_key"
+version = "0.1.0"
+dependencies = [
+ "command_palette",
+ "gpui",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20730,6 +20744,7 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
+ "which_key",
  "windows 0.61.3",
  "winresource",
  "workspace",
