@@ -64,10 +64,10 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
     LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
-    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Toolchain, Transaction, Unclipped,
+    ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
-    point_to_lsp,
+    modeline, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
         serialize_lsp_edit, serialize_version,
@@ -4254,6 +4254,10 @@ impl LspStore {
                 self.on_buffer_saved(buffer, cx);
             }
 
+            language::BufferEvent::Reloaded => {
+                self.on_buffer_reloaded(buffer, cx);
+            }
+
             _ => {}
         }
     }
@@ -4268,12 +4272,19 @@ impl LspStore {
         })
         .detach();
 
+        self.parse_modeline(buffer, cx);
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
         }
 
         Ok(())
+    }
+
+    fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if self.parse_modeline(&buffer, cx) {
+            self.detect_language_for_buffer(&buffer, cx);
+        }
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4498,6 +4509,54 @@ impl LspStore {
         })
     }
 
+    fn parse_modeline(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) -> bool {
+        let buffer = buffer_handle.read(cx);
+        let content = buffer.as_rope();
+
+        let modeline_settings = {
+            let settings_store = cx.global::<SettingsStore>();
+            let modeline_lines = settings_store
+                .raw_user_settings()
+                .and_then(|s| s.content.modeline_lines)
+                .or(settings_store.raw_default_settings().modeline_lines)
+                .unwrap_or(5);
+
+            const MAX_MODELINE_BYTES: usize = 1024;
+
+            let first_bytes = content.len().min(MAX_MODELINE_BYTES);
+            let mut first_lines = Vec::new();
+            let mut lines = content.chunks_in_range(0..first_bytes).lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    first_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let first_lines_ref: Vec<_> = first_lines.iter().map(|line| line.as_str()).collect();
+
+            let last_start = content.len().saturating_sub(MAX_MODELINE_BYTES);
+            let mut last_lines = Vec::new();
+            let mut lines = content
+                .reversed_chunks_in_range(last_start..content.len())
+                .lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    last_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let last_lines_ref: Vec<_> =
+                last_lines.iter().rev().map(|line| line.as_str()).collect();
+            modeline::parse_modeline(&first_lines_ref, &last_lines_ref)
+        };
+
+        log::info!("Parsed modeline settings: {:?}", modeline_settings);
+
+        buffer_handle.update(cx, |buffer, _cx| buffer.set_modeline(modeline_settings))
+    }
+
     fn detect_language_for_buffer(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -4506,9 +4565,19 @@ impl LspStore {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
         let file = buffer.file()?;
-
         let content = buffer.as_rope();
-        let available_language = self.languages.language_for_file(file, Some(content), cx);
+        let modeline_settings = buffer.modeline().map(Arc::as_ref);
+
+        let available_language = if let Some(ModelineSettings {
+            mode: Some(mode_name),
+            ..
+        }) = modeline_settings
+        {
+            self.languages
+                .available_language_for_modeline_name(mode_name)
+        } else {
+            self.languages.language_for_file(file, Some(content), cx)
+        };
         if let Some(available_language) = &available_language {
             if let Some(Ok(Ok(new_language))) = self
                 .languages
