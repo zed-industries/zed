@@ -73,11 +73,7 @@ pub use multi_buffer::{
 pub use split::SplittableEditor;
 pub use text::Bias;
 
-use ::git::{
-    Restore,
-    blame::{BlameEntry, ParsedCommitMessage},
-    status::FileStatus,
-};
+use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
