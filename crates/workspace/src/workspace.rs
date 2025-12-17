@@ -1647,12 +1647,12 @@ impl Workspace {
                         );
 
                         workspace.centered_layout = centered_layout;
-                        
+
                         // Call init callback to add items before window renders
                         if let Some(init) = init {
                             init(&mut workspace, window, cx);
                         }
-                        
+
                         workspace
                     });
                 })?;
@@ -1696,12 +1696,12 @@ impl Workspace {
                                 cx,
                             );
                             workspace.centered_layout = centered_layout;
-                            
+
                             // Call init callback to add items before window renders
                             if let Some(init) = init {
                                 init(&mut workspace, window, cx);
                             }
-                            
+
                             workspace
                         })
                     }
@@ -7612,7 +7612,14 @@ pub fn join_channel(
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, None, cx)
+                    Workspace::new_local(
+                        vec![],
+                        app_state.clone(),
+                        requesting_window,
+                        None,
+                        None,
+                        cx,
+                    )
                 })?
                 .await?;
 
