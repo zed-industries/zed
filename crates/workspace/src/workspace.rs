@@ -1557,18 +1557,30 @@ impl Workspace {
                 })
             }),
             cx.intercept_keystrokes(|event, window, cx| {
-                if event.keystroke.modifiers.platform
-                    || event.keystroke.modifiers.control
-                    || event.keystroke.modifiers.alt
+                // TODO - find a better way
+                let is_undo_redo = event.keystroke.modifiers.platform
+                    && (event.keystroke.key == "z" || event.keystroke.key == "Z");
+
+                if !is_undo_redo
+                    && (event.keystroke.modifiers.platform
+                        || event.keystroke.modifiers.control
+                        || event.keystroke.modifiers.alt)
                 {
                     return;
                 }
 
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
                     cx.defer(move |cx| {
-                        workspace.update(cx, |workspace, cx| workspace.hide_mouse_cursor(cx))
+                        workspace
+                            .update(cx, |workspace, _window, cx| {
+                                if !workspace.mouse_cursor_hidden {
+                                    workspace.mouse_cursor_hidden = true;
+                                    cx.notify();
+                                }
+                            })
+                            .log_err();
                     });
-                };
+                }
             }),
         ];
 
@@ -6648,20 +6660,6 @@ impl Workspace {
         // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
         self.update_history(cx);
     }
-
-    fn hide_mouse_cursor(&mut self, cx: &mut Context<Self>) {
-        if !self.mouse_cursor_hidden {
-            self.mouse_cursor_hidden = true;
-            cx.notify();
-        }
-    }
-
-    fn show_mouse_cursor(&mut self, cx: &mut Context<Self>) {
-        if self.mouse_cursor_hidden {
-            self.mouse_cursor_hidden = false;
-            cx.notify();
-        }
-    }
 }
 
 fn leader_border_for_pane(
@@ -6985,7 +6983,6 @@ impl Render for Workspace {
             (None, None)
         };
         let ui_font = theme::setup_ui_font(window, cx);
-        let workspace = cx.entity();
         let theme = cx.theme().clone();
         let colors = theme.colors();
         let notification_entities = self
@@ -7008,11 +7005,6 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
-                .on_mouse_move(move |_event, _window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.show_mouse_cursor(cx);
-                    })
-                })
                 .children(self.titlebar_item.clone())
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
@@ -7026,19 +7018,6 @@ impl Render for Workspace {
                         .flex_1()
                         .flex()
                         .flex_col()
-                        .child({
-                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
-                            canvas(
-                                |_bounds, _window, _cx| {},
-                                move |_bounds, _hitbox, window, _cx| {
-                                    if mouse_cursor_hidden {
-                                        window.set_window_cursor_style(CursorStyle::None);
-                                    }
-                                },
-                            )
-                            .absolute()
-                            .size_full()
-                        })
                         .child(
                             div()
                                 .id("workspace")
@@ -7503,7 +7482,20 @@ impl Render for Workspace {
                             parent.child(self.status_bar.clone())
                         })
                         .child(self.modal_layer.clone())
-                        .child(self.toast_layer.clone()),
+                        .child(self.toast_layer.clone())
+                        .child({
+                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
+                            canvas(
+                                |_bounds, _window, _cx| {},
+                                move |_bounds, _hitbox, window, _cx| {
+                                    if mouse_cursor_hidden {
+                                        window.set_window_cursor_style(CursorStyle::None);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
             window,
             cx,
@@ -8558,7 +8550,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
-/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
+/// Add client-side decorations (rounded corners, shadows, resize, cursor visibility handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -8677,7 +8669,20 @@ pub fn client_side_decorations(
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, _, cx| {
+                .on_mouse_move(|_e, window, cx| {
+                    if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
+                        cx.defer(move |cx| {
+                            workspace
+                                .update(cx, |workspace, _window, cx| {
+                                    if workspace.mouse_cursor_hidden {
+                                        workspace.mouse_cursor_hidden = false;
+                                        cx.notify();
+                                    }
+                                })
+                                .log_err();
+                        });
+                    }
+
                     cx.stop_propagation();
                 })
                 .size_full()
