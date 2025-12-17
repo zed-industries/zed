@@ -26,6 +26,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
+use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
@@ -1376,6 +1377,7 @@ impl SettingsWindow {
         })
         .detach();
 
+        let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
 
@@ -1385,7 +1387,12 @@ impl SettingsWindow {
             // instruct the `ListState` to re-measure the list items, as the
             // list item heights may have changed depending on the new font
             // size.
-            this.list_state.clone().measure_all();
+            let new_ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+            if new_ui_font_size != ui_font_size {
+                ui_font_size = new_ui_font_size;
+                this.list_state.clone().measure_all();
+            }
+
             cx.notify();
         })
         .detach();
