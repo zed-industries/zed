@@ -44,7 +44,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::clear_target_dir_if_large

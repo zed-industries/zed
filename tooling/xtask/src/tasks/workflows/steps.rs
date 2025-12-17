@@ -101,10 +101,12 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
+pub const CLIPPY_STEP_ID: &str = "clippy";
+
 pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        Platform::Windows => named::pwsh("./script/clippy.ps1").id(CLIPPY_STEP_ID),
+        _ => named::bash("./script/clippy").id(CLIPPY_STEP_ID),
     }
 }
 
@@ -343,16 +345,6 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
-}
-
-pub fn trigger_autofix(run_clippy: bool) -> Step<Run> {
-    named::bash(format!(
-        "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy={run_clippy}"
-    ))
-    .if_condition(Expression::new(
-        "failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
-    ))
-    .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

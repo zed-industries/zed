@@ -26,7 +26,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
@@ -71,15 +72,10 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
-    - name: steps::trigger_autofix
-      if: failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
-      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=true
-      shell: bash -euxo pipefail {0}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -93,6 +89,8 @@ jobs:
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
+    outputs:
+      clippy_failed: ${{ steps.clippy.outcome == 'failure' }}
     timeout-minutes: 60
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -111,7 +109,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::clear_target_dir_if_large
