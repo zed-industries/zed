@@ -1,24 +1,12 @@
 # All Settings
 
-This is a comprehensive reference of all settings available in Zed. For an introduction to how settings work, see the [Appearance overview](../appearance.md).
+This is the complete reference for all Zed settings. For an introduction to how settings work, see [Configuring Zed](../configuring-zed.md).
 
 You may also want to change your [theme](../themes.md), configure your [key bindings](../key-bindings.md), set up [tasks](../tasks.md), or install [extensions](../extensions.md).
 
-## How to Edit Settings
+# Settings
 
-Open the **Settings Editor** with {#kb zed::OpenSettings} to browse and modify settings through a searchable UI.
-
-To edit settings as JSON, open your settings file with {#kb zed::OpenSettingsFile}. The file is located at:
-- macOS/Linux: `~/.config/zed/settings.json`
-- Windows: `%APPDATA%\Zed\settings.json`
-
-For project-specific settings, run {#action zed::OpenProjectSettings} to create a `.zed/settings.json` file in your project root.
-
-> **Tip:** View the default values for all settings by running {#action zed::OpenDefaultSettings} from the command palette.
-
----
-
-# Settings Reference
+Find below an extensive run-through of many supported settings by Zed.
 
 ## Active Pane Modifiers
 
@@ -167,7 +155,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](../extensions/installing-extensions.md#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On macOS:
 
@@ -2233,7 +2221,7 @@ Example:
 
 ## Helix Mode
 
-- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](../helix.md) for more details.
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
 - Setting: `helix_mode`
 - Default: `false`
 
@@ -4661,7 +4649,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Collaboration Panel
 
@@ -4702,7 +4690,7 @@ Visit [the Configuration page](../ai/configuration.md) under the AI section to l
 }
 ```
 
-See the [debugger page](../debugger.md) for more information about debugging support within Zed.
+See the [debugger page](./debugger.md) for more information about debugging support within Zed.
 
 ## Git Panel
 
