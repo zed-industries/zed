@@ -238,7 +238,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::setup_pnpm())
             .add_step(steps::script("./script/prettier"))
             .add_step(steps::cargo_fmt())
-            .add_step(steps::trigger_autofix())
+            .add_step(steps::trigger_autofix(false))
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos()),
@@ -327,7 +327,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::trigger_autofix())
+                job.add_step(steps::trigger_autofix(true))
                     .add_step(steps::cargo_install_nextest())
             })
             .add_step(steps::clear_target_dir_if_large(platform))

@@ -18,6 +18,12 @@ pub fn autofix_pr() -> Workflow {
                 .add_input(pr_number.name, pr_number.input())
                 .add_input(run_clippy.name, run_clippy.input()),
         ))
+        .concurrency(
+            Concurrency::new(Expression::new(format!(
+                "${{{{ github.workflow }}}}-{pr_number}"
+            )))
+            .cancel_in_progress(true),
+        )
         .add_job(run_autofix.name.clone(), run_autofix.job)
         .add_job(commit_changes.name, commit_changes.job)
 }

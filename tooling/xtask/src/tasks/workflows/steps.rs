@@ -345,12 +345,12 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     ))
 }
 
-pub fn trigger_autofix() -> Step<Run> {
-    named::bash(indoc::indoc! {r#"
-        gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }}
-    "#})
+pub fn trigger_autofix(run_clippy: bool) -> Step<Run> {
+    named::bash(format!(
+        "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy={run_clippy}"
+    ))
     .if_condition(Expression::new(
-        "failure() && github.event_name == 'pull_request'",
+        "failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
     ))
     .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
 }

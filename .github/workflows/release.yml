@@ -75,9 +75,8 @@ jobs:
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::trigger_autofix
-      if: failure() && github.event_name == 'pull_request'
-      run: |
-        gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }}
+      if: failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
+      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=true
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

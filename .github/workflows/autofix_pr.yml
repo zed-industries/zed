@@ -123,3 +123,6 @@ jobs:
         GIT_AUTHOR_NAME: Zed Zippy
         GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.pr_number }}
+  cancel-in-progress: true
