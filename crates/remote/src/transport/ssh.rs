@@ -1,5 +1,5 @@
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
@@ -409,7 +409,7 @@ impl RemoteConnection for SshRemoteConnection {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
-        let mut ssh_command = if self.ssh_platform.os == "windows" {
+        let mut ssh_command = if self.ssh_platform.os.is_windows() {
             // TODO: Set the `VARS` environment variables, we do not have `env` on windows
             // so this needs a different approach
             let mut proxy_args = vec![];
@@ -571,7 +571,7 @@ impl SshRemoteConnection {
         log::info!("Remote platform discovered: {:?}", ssh_platform);
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
             // TODO: powershell could in theory not exist, we should also be probing for pwsh if its installed
-            "windows" => (PathStyle::Windows, String::from("powershell.exe")),
+            RemoteOs::Windows => (PathStyle::Windows, String::from("powershell.exe")),
             _ => (PathStyle::Posix, String::from("/bin/sh")),
         };
         let ssh_shell_kind = ShellKind::new(&ssh_shell, ssh_path_style.is_windows());
@@ -613,7 +613,7 @@ impl SshRemoteConnection {
             "zed-remote-server-{}-{}{}",
             release_channel.dev_name(),
             version_str,
-            if self.ssh_platform.os == "windows" {
+            if self.ssh_platform.os.is_windows() {
                 ".exe"
             } else {
                 ""
@@ -738,7 +738,7 @@ impl SshRemoteConnection {
                     true,
                 )
                 .await;
-            if self.ssh_platform.os != "windows" {
+            if !self.ssh_platform.os.is_windows() {
                 // mkdir fails on windows if the path already exists ...
                 res?;
             }
@@ -838,7 +838,7 @@ impl SshRemoteConnection {
                     true,
                 )
                 .await;
-            if self.ssh_platform.os != "windows" {
+            if !self.ssh_platform.os.is_windows() {
                 // mkdir fails on windows if the path already exists ...
                 res?;
             }
@@ -1174,13 +1174,13 @@ impl SshSocket {
                 match res {
                     Ok(output) if !cfg!(debug_assertions) => anyhow::bail!(
                         "Prebuilt remote servers are not yet available for windows-{}. See https://zed.dev/docs/remote-development",
-                        arch.trim()
+                        output.trim()
                     ),
                     Ok(output) => Ok(RemotePlatform {
-                        os: "windows",
+                        os: RemoteOs::Windows,
                         arch: match output.trim() {
-                            "AMD64" => "x86_64",
-                            "ARM64" => "aarch64",
+                            "AMD64" => RemoteArch::X86_64,
+                            "ARM64" => RemoteArch::Aarch64,
                             arch => anyhow::bail!(
                                 "Prebuilt remote servers are not yet available for windows-{arch}. See https://zed.dev/docs/remote-development"
                             ),

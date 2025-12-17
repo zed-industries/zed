@@ -1,5 +1,5 @@
 use crate::{
-    RemotePlatform,
+    RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
 };
@@ -26,8 +26,8 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
     };
 
     let os = match os {
-        "Darwin" => "macos",
-        "Linux" => "linux",
+        "Darwin" => RemoteOs::MacOs,
+        "Linux" => RemoteOs::Linux,
         _ => anyhow::bail!(
             "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
         ),
@@ -39,9 +39,9 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
         || arch.starts_with("arm64")
         || arch.starts_with("aarch64")
     {
-        "aarch64"
+        RemoteArch::Aarch64
     } else if arch.starts_with("x86") {
-        "x86_64"
+        RemoteArch::X86_64
     } else {
         anyhow::bail!(
             "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
@@ -204,16 +204,15 @@ async fn build_remote_server_from_source(
         "{}-{}",
         platform.arch,
         match platform.os {
-            "linux" =>
+            RemoteOs::Linux =>
                 if use_musl {
                     "unknown-linux-musl"
                 } else {
                     "unknown-linux-gnu"
                 },
-            "macos" => "apple-darwin",
-            "windows" if cfg!(windows) => "pc-windows-msvc",
-            "windows" => "pc-windows-gnu",
-            _ => anyhow::bail!("can't compile for: {:?}", platform),
+            RemoteOs::MacOs => "apple-darwin",
+            RemoteOs::Windows if cfg!(windows) => "pc-windows-msvc",
+            RemoteOs::Windows => "pc-windows-gnu",
         }
     );
     let mut rust_flags = match std::env::var("RUSTFLAGS") {
@@ -224,7 +223,7 @@ async fn build_remote_server_from_source(
             String::new()
         }
     };
-    if platform.os == "linux" && use_musl {
+    if platform.os == RemoteOs::Linux && use_musl {
         rust_flags.push_str(" -C target-feature=+crt-static");
 
         if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
@@ -235,7 +234,9 @@ async fn build_remote_server_from_source(
         rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
     }
 
-    if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+    if platform.arch.as_str() == std::env::consts::ARCH
+        && platform.os.as_str() == std::env::consts::OS
+    {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
@@ -312,7 +313,7 @@ async fn build_remote_server_from_source(
         .join(&triple)
         .join("debug")
         .join("remote_server")
-        .with_extension(if platform.os == "windows" { "exe" } else { "" });
+        .with_extension(if platform.os.is_windows() { "exe" } else { "" });
 
     let path = if !build_remote_server.contains("nocompress") {
         delegate.set_status(Some("Compressing binary"), cx);
@@ -378,35 +379,44 @@ mod tests {
     #[test]
     fn test_parse_platform() {
         let result = parse_platform("Linux x86_64\n").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
 
         let result = parse_platform("Darwin arm64\n").unwrap();
-        assert_eq!(result.os, "macos");
-        assert_eq!(result.arch, "aarch64");
+        assert_eq!(result.os, RemoteOs::MacOs);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
 
         let result = parse_platform("Linux x86_64").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
 
         let result = parse_platform("some shell init output\nLinux aarch64\n").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "aarch64");
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
 
         let result = parse_platform("some shell init output\nLinux aarch64").unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "aarch64");
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::Aarch64);
 
-        assert_eq!(parse_platform("Linux armv8l\n").unwrap().arch, "aarch64");
-        assert_eq!(parse_platform("Linux aarch64\n").unwrap().arch, "aarch64");
-        assert_eq!(parse_platform("Linux x86_64\n").unwrap().arch, "x86_64");
+        assert_eq!(
+            parse_platform("Linux armv8l\n").unwrap().arch,
+            RemoteArch::Aarch64
+        );
+        assert_eq!(
+            parse_platform("Linux aarch64\n").unwrap().arch,
+            RemoteArch::Aarch64
+        );
+        assert_eq!(
+            parse_platform("Linux x86_64\n").unwrap().arch,
+            RemoteArch::X86_64
+        );
 
         let result = parse_platform(
             r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
         )
         .unwrap();
-        assert_eq!(result.os, "linux");
-        assert_eq!(result.arch, "x86_64");
+        assert_eq!(result.os, RemoteOs::Linux);
+        assert_eq!(result.arch, RemoteArch::X86_64);
 
         assert!(parse_platform("Windows x86_64\n").is_err());
         assert!(parse_platform("Linux armv7l\n").is_err());
