@@ -275,12 +275,6 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
-    - name: cargo build -p collab
-      run: cargo build -p collab
-      shell: bash -euxo pipefail {0}
-    - name: cargo build --workspace --bins --examples
-      run: cargo build --workspace --bins --examples
-      shell: bash -euxo pipefail {0}
     - name: ./script/generate-action-metadata
       run: ./script/generate-action-metadata
       shell: bash -euxo pipefail {0}
@@ -291,6 +285,12 @@ jobs:
           echo "Please run './script/generate-action-metadata' locally and commit the changes"
           exit 1
         fi
+      shell: bash -euxo pipefail {0}
+    - name: cargo build -p collab
+      run: cargo build -p collab
+      shell: bash -euxo pipefail {0}
+    - name: cargo build --workspace --bins --examples
+      run: cargo build --workspace --bins --examples
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()

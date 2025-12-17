@@ -308,10 +308,10 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
-            .add_step(steps::script("cargo build -p collab"))
-            .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(ensure_actions_asset_is_up_to_date())
+            .add_step(steps::script("cargo build -p collab"))
+            .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
