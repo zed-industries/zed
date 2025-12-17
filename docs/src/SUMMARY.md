@@ -30,24 +30,32 @@
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
 
-# Using Zed
+# Working with Code
 
-- [Multibuffers](./multibuffers.md)
-- [Command Palette](./command-palette.md)
-- [Command-line Interface](./command-line-interface.md)
-- [Outline Panel](./outline-panel.md)
-- [Code Completions](./completions.md)
-- [Collaboration](./collaboration/overview.md)
+- [Editing Code](./completions.md)
+  - [Code Completions](./completions.md)
+  - [Diagnostics & Quick Fixes](./diagnostics.md)
+  - [Multibuffers](./multibuffers.md)
+- [Finding & Navigating](./command-palette.md)
+  - [Command Palette](./command-palette.md)
+  - [Outline Panel](./outline-panel.md)
+  - [Tab Switcher](./tab-switcher.md)
+- [Running & Testing](./tasks.md)
+  - [Tasks](./tasks.md)
+  - [Debugger](./debugger.md)
+  - [REPL](./repl.md)
+- [Git](./git.md)
+
+# Collaboration
+
+- [Overview](./collaboration/overview.md)
   - [Channels](./collaboration/channels.md)
   - [Contacts and Private Calls](./collaboration/contacts-and-private-calls.md)
-- [Git](./git.md)
-- [Debugger](./debugger.md)
-- [Diagnostics](./diagnostics.md)
-- [Tasks](./tasks.md)
-- [Tab Switcher](./tab-switcher.md)
+
+# Remote Development
+
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
-- [REPL](./repl.md)
 
 # Platform Support
 
@@ -168,6 +176,10 @@
 - [Yara](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
+
+# Reference
+
+- [Command-line Interface](./command-line-interface.md)
 
 # Developing Zed
 
