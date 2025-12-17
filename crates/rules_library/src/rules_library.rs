@@ -206,13 +206,8 @@ impl PickerDelegate for RulePickerDelegate {
         self.filtered_entries.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
-        let text = if self.store.read(cx).prompt_count() == 0 {
-            "No rules.".into()
-        } else {
-            "No rules found matching your search.".into()
-        };
-        Some(text)
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No rules found matching your search.".into())
     }
 
     fn selected_index(&self) -> usize {
@@ -1428,31 +1423,7 @@ impl Render for RulesLibrary {
                             this.border_t_1().border_color(cx.theme().colors().border)
                         })
                         .child(self.render_rule_list(cx))
-                        .map(|el| {
-                            if self.store.read(cx).prompt_count() == 0 {
-                                el.child(
-                                    v_flex()
-                                        .h_full()
-                                        .flex_1()
-                                        .items_center()
-                                        .justify_center()
-                                        .border_l_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_background)
-                                        .child(
-                                            Button::new("create-rule", "New Rule")
-                                                .style(ButtonStyle::Outlined)
-                                                .key_binding(KeyBinding::for_action(&NewRule, cx))
-                                                .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(NewRule.boxed_clone(), cx)
-                                                }),
-                                        ),
-                                )
-                            } else {
-                                el.child(self.render_active_rule(cx))
-                            }
-                        }),
+                        .child(self.render_active_rule(cx)),
                 ),
             window,
             cx,

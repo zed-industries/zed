@@ -58,6 +58,11 @@ pub enum BuiltInPrompt {
 }
 
 impl BuiltInPrompt {
+    /// Returns all built-in prompt variants.
+    pub fn all() -> &'static [BuiltInPrompt] {
+        &[BuiltInPrompt::CommitMessage]
+    }
+
     /// Returns the default content for this built-in prompt.
     pub fn default_content(&self) -> &'static str {
         match self {
@@ -174,10 +179,30 @@ impl MetadataCache {
         txn: &RoTxn,
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
+
+        for builtin in BuiltInPrompt::all() {
+            let builtin_id = PromptId::BuiltIn(*builtin);
+            let metadata = PromptMetadata {
+                id: builtin_id,
+                title: Some(builtin.default_title().into()),
+                default: false,
+                saved_at: DateTime::default(),
+            };
+            cache.metadata.push(metadata.clone());
+            cache.metadata_by_id.insert(builtin_id, metadata);
+        }
+
         for result in db.iter(txn)? {
             let (prompt_id, metadata) = result?;
-            cache.metadata.push(metadata.clone());
-            cache.metadata_by_id.insert(prompt_id, metadata);
+            if cache.metadata_by_id.contains_key(&prompt_id) {
+                if let Some(existing) = cache.metadata.iter_mut().find(|m| m.id == prompt_id) {
+                    *existing = metadata.clone();
+                }
+                cache.metadata_by_id.insert(prompt_id, metadata);
+            } else {
+                cache.metadata.push(metadata.clone());
+                cache.metadata_by_id.insert(prompt_id, metadata);
+            }
         }
         cache.sort();
         Ok(cache)
@@ -373,11 +398,6 @@ impl PromptStore {
         })
     }
 
-    /// Returns the number of prompts in the store.
-    pub fn prompt_count(&self) -> usize {
-        self.metadata_cache.read().metadata.len()
-    }
-
     pub fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
         self.metadata_cache.read().metadata_by_id.get(&id).cloned()
     }
@@ -452,7 +472,17 @@ impl PromptStore {
             .is_some_and(|builtin| body_string.trim() == builtin.default_content().trim());
 
         if is_default_content {
-            self.metadata_cache.write().remove(id);
+            if let Some(builtin) = id.as_built_in() {
+                let default_metadata = PromptMetadata {
+                    id,
+                    title: Some(builtin.default_title().into()),
+                    default: false,
+                    saved_at: DateTime::default(),
+                };
+                self.metadata_cache.write().insert(default_metadata);
+            } else {
+                self.metadata_cache.write().remove(id);
+            }
         } else {
             let prompt_metadata = PromptMetadata {
                 id,
@@ -560,9 +590,7 @@ mod tests {
         let store = cx.update(|cx| PromptStore::new(db_path, cx)).await.unwrap();
         let store = cx.new(|_cx| store);
 
-        let commit_message_id = PromptId::BuiltIn {
-            builtin: BuiltInPrompt::CommitMessage,
-        };
+        let commit_message_id = PromptId::BuiltIn(BuiltInPrompt::CommitMessage);
 
         let loaded_content = store
             .update(cx, |store, cx| store.load(commit_message_id, cx))
@@ -575,11 +603,20 @@ mod tests {
             "Loading a built-in prompt not in DB should return default content"
         );
 
+        let metadata = store.read_with(cx, |store, _| store.metadata(commit_message_id));
         assert!(
-            store
-                .read_with(cx, |store, _| store.metadata(commit_message_id))
-                .is_none(),
-            "Built-in prompt should not have metadata until customized"
+            metadata.is_some(),
+            "Built-in prompt should always have metadata"
+        );
+        assert!(
+            store.read_with(cx, |store, _| {
+                store
+                    .metadata_cache
+                    .read()
+                    .metadata_by_id
+                    .contains_key(&commit_message_id)
+            }),
+            "Built-in prompt should always be in cache"
         );
 
         let custom_content = "Custom commit message prompt";
@@ -626,11 +663,18 @@ mod tests {
             .await
             .unwrap();
 
+        let metadata_after_reset =
+            store.read_with(cx, |store, _| store.metadata(commit_message_id));
         assert!(
-            store
-                .read_with(cx, |store, _| store.metadata(commit_message_id))
-                .is_none(),
-            "Saving default content should remove metadata from cache"
+            metadata_after_reset.is_some(),
+            "Built-in prompt should still have metadata after reset"
+        );
+        assert_eq!(
+            metadata_after_reset
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            Some("Commit message"),
+            "Built-in prompt should have default title after reset"
         );
 
         let loaded_after_reset = store
