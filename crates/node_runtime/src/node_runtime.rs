@@ -9,8 +9,6 @@ use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::fmt::Display;
-use std::future::Future;
-use std::pin::Pin;
 use std::{
     env::{self, consts},
     ffi::OsString,
@@ -48,7 +46,6 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
-    trust_task: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 impl NodeRuntime {
@@ -56,11 +53,9 @@ impl NodeRuntime {
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
-        trust_task: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
-            trust_task,
             instance: None,
             last_options: None,
             options,
@@ -75,15 +70,11 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
-            trust_task: None,
         })))
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
         let mut state = self.0.lock().await;
-        if let Some(trust_task) = state.trust_task.take() {
-            trust_task.await;
-        }
 
         let options = loop {
             if let Some(options) = state.options.borrow().as_ref() {
