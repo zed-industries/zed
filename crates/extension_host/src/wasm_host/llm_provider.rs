@@ -1880,7 +1880,7 @@ fn convert_request_to_wit(request: LanguageModelRequest) -> LlmCompletionRequest
         tool_choice,
         stop_sequences: request.stop,
         temperature: request.temperature,
-        thinking_allowed: false,
+        thinking_allowed: request.thinking_allowed,
         max_tokens: None,
     }
 }
