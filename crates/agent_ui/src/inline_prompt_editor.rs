@@ -357,7 +357,7 @@ impl<T: 'static> PromptEditor<T> {
             creases = insert_message_creases(&mut editor, &existing_creases, window, cx);
 
             if focus {
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             }
             editor
         });

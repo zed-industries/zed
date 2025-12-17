@@ -3216,6 +3216,7 @@ impl BufferSnapshot {
         struct StartPosition {
             start: Point,
             suffix: SharedString,
+            language: Arc<Language>,
         }
 
         // Find the suggested indentation ranges based on the syntax tree.
@@ -3259,6 +3260,7 @@ impl BufferSnapshot {
                     start_positions.push(StartPosition {
                         start: Point::from_ts_point(capture.node.start_position()),
                         suffix: suffix.clone(),
+                        language: mat.language.clone(),
                     });
                 }
             }
@@ -3319,7 +3321,7 @@ impl BufferSnapshot {
 
         // Find the suggested indentation increases and decreased based on regexes.
         let mut regex_outdent_map = HashMap::default();
-        let mut last_seen_suffix: HashMap<String, Vec<Point>> = HashMap::default();
+        let mut last_seen_suffix: HashMap<String, Vec<StartPosition>> = HashMap::default();
         let mut start_positions_iter = start_positions.iter().peekable();
 
         let mut indent_change_rows = Vec::<(u32, Ordering)>::new();
@@ -3327,14 +3329,21 @@ impl BufferSnapshot {
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
                 ..Point::new(row_range.end, 0),
             |row, line| {
-                if config
+                let indent_len = self.indent_size_for_line(row).len;
+                let row_language = self.language_at(Point::new(row, indent_len)).cloned();
+                let row_language_config = row_language
+                    .as_ref()
+                    .map(|lang| lang.config())
+                    .unwrap_or(config);
+
+                if row_language_config
                     .decrease_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
                 {
                     indent_change_rows.push((row, Ordering::Less));
                 }
-                if config
+                if row_language_config
                     .increase_indent_pattern
                     .as_ref()
                     .is_some_and(|regex| regex.is_match(line))
@@ -3343,16 +3352,16 @@ impl BufferSnapshot {
                 }
                 while let Some(pos) = start_positions_iter.peek() {
                     if pos.start.row < row {
-                        let pos = start_positions_iter.next().unwrap();
+                        let pos = start_positions_iter.next().unwrap().clone();
                         last_seen_suffix
                             .entry(pos.suffix.to_string())
                             .or_default()
-                            .push(pos.start);
+                            .push(pos);
                     } else {
                         break;
                     }
                 }
-                for rule in &config.decrease_indent_patterns {
+                for rule in &row_language_config.decrease_indent_patterns {
                     if rule.pattern.as_ref().is_some_and(|r| r.is_match(line)) {
                         let row_start_column = self.indent_size_for_line(row).len;
                         let basis_row = rule
@@ -3360,10 +3369,16 @@ impl BufferSnapshot {
                             .iter()
                             .filter_map(|valid_suffix| last_seen_suffix.get(valid_suffix))
                             .flatten()
-                            .filter(|start_point| start_point.column <= row_start_column)
-                            .max_by_key(|start_point| start_point.row);
-                        if let Some(outdent_to_row) = basis_row {
-                            regex_outdent_map.insert(row, outdent_to_row.row);
+                            .filter(|pos| {
+                                row_language
+                                    .as_ref()
+                                    .or(self.language.as_ref())
+                                    .is_some_and(|lang| Arc::ptr_eq(lang, &pos.language))
+                            })
+                            .filter(|pos| pos.start.column <= row_start_column)
+                            .max_by_key(|pos| pos.start.row);
+                        if let Some(outdent_to) = basis_row {
+                            regex_outdent_map.insert(row, outdent_to.start.row);
                         }
                         break;
                     }

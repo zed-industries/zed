@@ -477,7 +477,7 @@ pub fn initialize_workspace(
         initialize_panels(prompt_builder.clone(), window, cx);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window);
+        workspace.focus_handle(cx).focus(window, cx);
     })
     .detach();
 }
@@ -1111,7 +1111,21 @@ fn register_actions(
                         cx,
                         |workspace, window, cx| {
                             cx.activate(true);
-                            Editor::new_file(workspace, &Default::default(), window, cx)
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
                         },
                     )
                     .detach();

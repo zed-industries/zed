@@ -267,7 +267,7 @@
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-c": "markdown::Copy",
+      "ctrl-c": "markdown::CopyAsMarkdown",
     },
   },
   {

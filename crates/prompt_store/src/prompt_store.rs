@@ -199,24 +199,8 @@ impl PromptStore {
             let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
             let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
 
-            // Insert default commit message prompt if not present
-            if metadata.get(&txn, &PromptId::CommitMessage)?.is_none() {
-                metadata.put(
-                    &mut txn,
-                    &PromptId::CommitMessage,
-                    &PromptMetadata {
-                        id: PromptId::CommitMessage,
-                        title: Some("Git Commit Message".into()),
-                        default: false,
-                        saved_at: Utc::now(),
-                    },
-                )?;
-            }
-            if bodies.get(&txn, &PromptId::CommitMessage)?.is_none() {
-                let commit_message_prompt =
-                    include_str!("../../git_ui/src/commit_message_prompt.txt");
-                bodies.put(&mut txn, &PromptId::CommitMessage, commit_message_prompt)?;
-            }
+            metadata.delete(&mut txn, &PromptId::CommitMessage)?;
+            bodies.delete(&mut txn, &PromptId::CommitMessage)?;
 
             txn.commit()?;
 

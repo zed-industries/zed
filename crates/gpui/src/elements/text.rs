@@ -6,6 +6,7 @@ use crate::{
     register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -597,14 +598,14 @@ impl TextLayout {
             .unwrap()
             .lines
             .iter()
-            .map(|s| s.text.to_string())
-            .collect::<Vec<_>>()
+            .map(|s| &s.text)
             .join("\n")
     }
 
     /// The text for this layout (with soft-wraps as newlines)
     pub fn wrapped_text(&self) -> String {
-        let mut lines = Vec::new();
+        let mut accumulator = String::new();
+
         for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
             let mut seen = 0;
             for boundary in wrapped.layout.wrap_boundaries.iter() {
@@ -612,13 +613,16 @@ impl TextLayout {
                     [boundary.glyph_ix]
                     .index;
 
-                lines.push(wrapped.text[seen..index].to_string());
+                accumulator.push_str(&wrapped.text[seen..index]);
+                accumulator.push('\n');
                 seen = index;
             }
-            lines.push(wrapped.text[seen..].to_string());
+            accumulator.push_str(&wrapped.text[seen..]);
+            accumulator.push('\n');
         }
-
-        lines.join("\n")
+        // Remove trailing newline
+        accumulator.pop();
+        accumulator
     }
 }
 

@@ -253,7 +253,7 @@ impl ThreadFeedbackState {
             editor
         });
 
-        editor.read(cx).focus_handle(cx).focus(window);
+        editor.read(cx).focus_handle(cx).focus(window, cx);
         editor
     }
 }
@@ -682,7 +682,7 @@ impl AcpThreadView {
                             })
                         });
 
-                        this.message_editor.focus_handle(cx).focus(window);
+                        this.message_editor.focus_handle(cx).focus(window, cx);
 
                         cx.notify();
                     }
@@ -784,7 +784,7 @@ impl AcpThreadView {
                 _subscription: subscription,
             };
             if this.message_editor.focus_handle(cx).is_focused(window) {
-                this.focus_handle.focus(window)
+                this.focus_handle.focus(window, cx)
             }
             cx.notify();
         })
@@ -804,7 +804,7 @@ impl AcpThreadView {
                 ThreadState::LoadError(LoadError::Other(format!("{:#}", err).into()))
         }
         if self.message_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
         cx.notify();
     }
@@ -1270,7 +1270,7 @@ impl AcpThreadView {
                 }
             })
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -1322,7 +1322,7 @@ impl AcpThreadView {
                 .await?;
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1465,7 +1465,7 @@ impl AcpThreadView {
                 self.thread_retry_status.take();
                 self.thread_state = ThreadState::LoadError(error.clone());
                 if self.message_editor.focus_handle(cx).is_focused(window) {
-                    self.focus_handle.focus(window)
+                    self.focus_handle.focus(window, cx)
                 }
             }
             AcpThreadEvent::TitleUpdated => {
@@ -1895,6 +1895,17 @@ impl AcpThreadView {
                 terminal.update(cx, |terminal, _| terminal.kill_active_task())?;
                 Ok(())
             }
+        })
+    }
+
+    pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
+        self.thread().is_some_and(|thread| {
+            thread.read(cx).entries().iter().any(|entry| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
+                )
+            })
         })
     }
 
@@ -4110,6 +4121,8 @@ impl AcpThreadView {
                                 .ml_1p5()
                         });
 
+                        let full_path = path.display(path_style).to_string();
+
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                             .map(Icon::from_path)
                             .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
@@ -4143,7 +4156,6 @@ impl AcpThreadView {
                                     .relative()
                                     .pr_8()
                                     .w_full()
-                                    .overflow_x_scroll()
                                     .child(
                                         h_flex()
                                             .id(("file-name-path", index))
@@ -4155,7 +4167,14 @@ impl AcpThreadView {
                                             .child(file_icon)
                                             .children(file_name)
                                             .children(file_path)
-                                            .tooltip(Tooltip::text("Go to File"))
+                                            .tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "Go to File",
+                                                    None,
+                                                    full_path.clone(),
+                                                    cx,
+                                                )
+                                            })
                                             .on_click({
                                                 let buffer = buffer.clone();
                                                 cx.listener(move |this, _, window, cx| {

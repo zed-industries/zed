@@ -1341,7 +1341,7 @@ impl TextThreadEditor {
         if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) {
             active_editor_view.update(cx, |editor, cx| {
                 editor.insert(&text, window, cx);
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
             })
         }
     }

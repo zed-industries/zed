@@ -151,6 +151,8 @@ actions!(
     [
         /// Copies the selected text to the clipboard.
         Copy,
+        /// Copies the selected text as markdown to the clipboard.
+        CopyAsMarkdown
     ]
 );
 
@@ -292,6 +294,14 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selection.end <= self.selection.start {
+            return;
+        }
+        let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -697,7 +707,7 @@ impl MarkdownElement {
                                 pending: true,
                                 mode,
                             };
-                            window.focus(&markdown.focus_handle);
+                            window.focus(&markdown.focus_handle, cx);
                         }
 
                         window.prevent_default();
@@ -1356,6 +1366,14 @@ impl Element for MarkdownElement {
                 }
             }
         });
+        window.on_action(std::any::TypeId::of::<crate::CopyAsMarkdown>(), {
+            let entity = self.markdown.clone();
+            move |_, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
+                }
+            }
+        });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
@@ -1919,7 +1937,7 @@ impl RenderedText {
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
-        let mut ret = vec![];
+        let mut accumulator = String::new();
 
         for line in self.lines.iter() {
             if range.start > line.source_end {
@@ -1944,9 +1962,12 @@ impl RenderedText {
             }
             .min(text.len());
 
-            ret.push(text[start..end].to_string());
+            accumulator.push_str(&text[start..end]);
+            accumulator.push('\n');
         }
-        ret.join("\n")
+        // Remove trailing newline
+        accumulator.pop();
+        accumulator
     }
 
     fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
