@@ -2157,7 +2157,7 @@
     // Whether to show the which-key popup when holding down key combinations.
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
-    "delay_ms": 1000
+    "delay_ms": 1000,
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
