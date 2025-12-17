@@ -1,6 +1,6 @@
+use crate::Oid;
 use crate::commit::get_messages;
 use crate::repository::RepoPath;
-use crate::Oid;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
