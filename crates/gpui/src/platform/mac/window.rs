@@ -1190,6 +1190,7 @@ impl PlatformWindow for MacWindow {
             let (done_tx, done_rx) = oneshot::channel();
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |answer: NSInteger| {
+                let _: () = msg_send![alert, release];
                 if let Some(done_tx) = done_tx.take() {
                     let _ = done_tx.send(answer.try_into().unwrap());
                 }
