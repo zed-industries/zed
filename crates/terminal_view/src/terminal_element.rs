@@ -632,7 +632,7 @@ impl TerminalElement {
     ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
             if steal_focus {
-                window.focus(&focus_handle);
+                window.focus(&focus_handle, cx);
             } else if !focus_handle.is_focused(window) {
                 return;
             }
@@ -661,7 +661,7 @@ impl TerminalElement {
             let terminal_view = terminal_view.clone();
 
             move |e, window, cx| {
-                window.focus(&focus);
+                window.focus(&focus, cx);
 
                 let scroll_top = terminal_view.read(cx).scroll_top;
                 terminal.update(cx, |terminal, cx| {
@@ -1275,7 +1275,7 @@ impl Element for TerminalElement {
                     }
 
                     for (relative_highlighted_range, color) in
-                        layout.relative_highlighted_ranges.iter()
+&                        layout.relative_highlighted_ranges
                     {
                         if let Some((start_y, highlighted_range_lines)) =
                             to_highlighted_range_lines(relative_highlighted_range, layout, origin)
@@ -1542,11 +1542,13 @@ fn to_highlighted_range_lines(
     }
 
     let clamped_start_line = unclamped_start.line.0.max(0) as usize;
+
     let clamped_end_line = unclamped_end
         .line
         .0
         .min(layout.dimensions.num_lines() as i32) as usize;
-    //Convert the start of the range to pixels
+
+    // Convert the start of the range to pixels
     let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
 
     // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
@@ -1556,10 +1558,11 @@ fn to_highlighted_range_lines(
         let mut line_start = 0;
         let mut line_end = layout.dimensions.columns();
 
-        if line == clamped_start_line {
+        if line == clamped_start_line && unclamped_start.line.0 >= 0 {
             line_start = unclamped_start.column.0;
         }
-        if line == clamped_end_line {
+        if line == clamped_end_line && unclamped_end.line.0 <= layout.dimensions.num_lines() as i32
+        {
             line_end = unclamped_end.column.0 + 1; // +1 for inclusive
         }
 

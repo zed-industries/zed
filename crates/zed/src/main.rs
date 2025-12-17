@@ -3,7 +3,7 @@ mod zed;
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -29,7 +29,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -39,7 +39,8 @@ use std::{
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
@@ -51,8 +52,8 @@ use workspace::{
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
     derive_paths_with_position, edit_prediction_registry, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
-    initialize_workspace, open_paths_with_positions,
+    handle_keymap_file_changes, handle_settings_file_changes, initialize_workspace,
+    open_paths_with_positions,
 };
 
 use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
@@ -131,6 +132,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
@@ -163,8 +165,11 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
+pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
+    STARTUP_TIME.get_or_init(|| Instant::now());
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -237,6 +242,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -246,10 +252,12 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
-    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
+    let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
 
     if args.system_specs {
         let system_specs = system_specs::SystemSpecs::new_stateless(
@@ -262,7 +270,7 @@ pub fn main() {
     }
 
     rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
+        .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
         .thread_name(|ix| format!("RayonWorker{}", ix))
         .build_global()
@@ -283,14 +291,16 @@ pub fn main() {
 
     let app = Application::new().with_assets(Assets);
 
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
+    let system_id = app.background_executor().spawn(system_id());
+    let installation_id = app.background_executor().spawn(installation_id());
     let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
+    let session = app
+        .background_executor()
+        .spawn(Session::new(session_id.clone()));
 
     app.background_executor()
         .spawn(crashes::init(InitCrashHandler {
-            session_id: session_id.clone(),
+            session_id,
             zed_version: app_version.to_string(),
             binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
@@ -338,7 +348,9 @@ pub fn main() {
         } else {
             None
         };
-    log::info!("Using git binary path: {:?}", git_binary_path);
+    if let Some(git_binary_path) = &git_binary_path {
+        log::info!("Using git binary path: {:?}", git_binary_path);
+    }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
@@ -396,6 +408,14 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        let trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx) {
+            Ok(trusted_paths) => trusted_paths,
+            Err(e) => {
+                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                HashMap::default()
+            }
+        };
+        trusted_worktrees::init(trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -406,12 +426,7 @@ pub fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(
-            user_settings_file_rx,
-            global_settings_file_rx,
-            cx,
-            handle_settings_changed,
-        );
+        handle_settings_file_changes(user_settings_file_rx, global_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         let user_agent = format!(
@@ -469,6 +484,7 @@ pub fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
+
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
@@ -504,11 +520,16 @@ pub fn main() {
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
+
+        let system_id = cx.background_executor().block(system_id).ok();
+        let installation_id = cx.background_executor().block(installation_id).ok();
+        let session = cx.background_executor().block(session);
+
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
             installation_id.as_ref().map(|id| id.to_string()),
-            session_id.clone(),
+            session.id().to_owned(),
             cx,
         );
 
@@ -544,11 +565,7 @@ pub fn main() {
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            cx,
-        );
+        reliability::init(client.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -577,7 +594,7 @@ pub fn main() {
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
-        zeta2_tools::init(cx);
+        edit_prediction_ui::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -591,6 +608,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -636,9 +654,11 @@ pub fn main() {
         settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
-        zeta::init(cx);
+        edit_prediction::init(cx);
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
+        miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
+        which_key::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -794,7 +814,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window);
+                            panel.focus_handle(cx).focus(window, cx);
                         }
                     })
                 })
@@ -885,6 +905,44 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace.focus_panel::<ProjectPanel>(window, cx);
                     }),
                 );
+            }
+            OpenRequestKind::GitCommit { sha } => {
+                cx.spawn(async move |cx| {
+                    let paths_with_position =
+                        derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+                    let (workspace, _results) = open_paths_with_positions(
+                        &paths_with_position,
+                        &[],
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                    .await?;
+
+                    workspace
+                        .update(cx, |workspace, window, cx| {
+                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                            else {
+                                log::error!("no active repository found for commit view");
+                                return Err(anyhow::anyhow!("no active repository found"));
+                            };
+
+                            git_ui::commit_view::CommitView::open(
+                                sha,
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                            Ok(())
+                        })
+                        .log_err();
+
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
 
@@ -1160,7 +1218,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
                 },
             )
         })?
@@ -1239,6 +1303,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::hang_traces_dir(),
     ]
     .into_iter()
     .fold(HashMap::default(), |mut errors, path| {
@@ -1254,7 +1319,7 @@ pub fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
@@ -1269,11 +1334,12 @@ struct Args {
     diff: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
+    ///
     /// This overrides the default platform-specific data directory location.
     /// On macOS, the default is `~/Library/Application Support/Zed`.
     /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
     /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", verbatim_doc_comment)]
     user_data_dir: Option<String>,
 
     /// The username and WSL distribution to use when opening paths. If not specified,
@@ -1293,8 +1359,11 @@ struct Args {
     #[arg(long)]
     dev_server_token: Option<String>,
 
-    /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
-    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    /// Prints system specs.
+    ///
+    /// Useful for submitting issues on GitHub when encountering a bug that
+    /// prevents Zed from starting, so you can't run `zed: copy system specs to
+    /// clipboard`
     #[arg(long)]
     system_specs: bool,
 

@@ -128,9 +128,11 @@ You can use the following configuration:
   "lsp": {
     "basedpyright": {
       "settings": {
-        "analysis": {
+        "basedpyright.analysis": {
           "diagnosticMode": "workspace",
-          "inlayHints.callArgumentNames": false
+          "inlayHints": {
+            "callArgumentNames": false
+          }
         }
       }
     }
@@ -255,6 +257,25 @@ quote-style = "single"
 ```
 
 For more details, refer to the Ruff documentation about [configuration files](https://docs.astral.sh/ruff/configuration/) and [language server settings](https://docs.astral.sh/ruff/editors/settings/), and the [list of options](https://docs.astral.sh/ruff/settings/).
+
+### Embedded Language Highlighting
+
+Zed supports syntax highlighting for code embedded in Python strings by adding a comment with the language name.
+
+```python
+# sql
+query = "SELECT * FROM users"
+
+#sql
+query = """
+    SELECT *
+    FROM users
+"""
+
+result = func( #sql
+    "SELECT * FROM users"
+)
+```
 
 ## Debugging
 

@@ -165,7 +165,15 @@ To update an extension, open a PR to [the `zed-industries/extensions` repo](http
 
 In your PR do the following:
 
-1. Update the extension's submodule to the commit of the new version.
+1. Update the extension's submodule to the commit of the new version. For this, you can run
+
+```sh
+# From the root of the repository:
+git submodule update --remote extensions/your-extension-name
+```
+
+to update your extension to the latest commit available in your remote repository.
+
 2. Update the `version` field for the extension in `extensions.toml`
    - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
 

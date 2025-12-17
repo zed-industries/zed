@@ -5,11 +5,11 @@ use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use ollama::{
@@ -22,13 +22,13 @@ use std::pin::Pin;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
+    prelude::*,
+};
 use ui_input::InputField;
-use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
-use crate::api_key::ApiKeyState;
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -43,6 +43,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
+    pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -80,12 +81,9 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        );
+        let task = self
+            .api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
 
         // Always try to fetch models - if no API key is needed (local Ollama), it will work
         // If API key is needed and provided, it will work
@@ -185,7 +183,7 @@ impl OllamaLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
-                    api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                    api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 }
             }),
         };
@@ -241,10 +239,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let settings = OllamaLanguageModelProvider::settings(cx);
 
         // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            models.insert(model.name.clone(), model.clone());
+        if settings.auto_discover {
+            for model in self.state.read(cx).fetched_models.iter() {
+                models.insert(model.name.clone(), model.clone());
+            }
         }
 
         // Override with available models from settings
@@ -381,10 +382,13 @@ impl OllamaLanguageModel {
                                 thinking = Some(text)
                             }
                             MessageContent::ToolUse(tool_use) => {
-                                tool_calls.push(OllamaToolCall::Function(OllamaFunctionCall {
-                                    name: tool_use.name.to_string(),
-                                    arguments: tool_use.input,
-                                }));
+                                tool_calls.push(OllamaToolCall {
+                                    id: Some(tool_use.id.to_string()),
+                                    function: OllamaFunctionCall {
+                                        name: tool_use.name.to_string(),
+                                        arguments: tool_use.input,
+                                    },
+                                });
                             }
                             _ => (),
                         }
@@ -575,25 +579,24 @@ fn map_to_language_model_completion_events(
                     }
 
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
-                        match tool_call {
-                            OllamaToolCall::Function(function) => {
-                                let tool_id = format!(
-                                    "{}-{}",
-                                    &function.name,
-                                    TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                                );
-                                let event =
-                                    LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                                        id: LanguageModelToolUseId::from(tool_id),
-                                        name: Arc::from(function.name),
-                                        raw_input: function.arguments.to_string(),
-                                        input: function.arguments,
-                                        is_input_complete: true,
-                                    });
-                                events.push(Ok(event));
-                                state.used_tools = true;
-                            }
-                        }
+                        let OllamaToolCall { id, function } = tool_call;
+                        let id = id.unwrap_or_else(|| {
+                            format!(
+                                "{}-{}",
+                                &function.name,
+                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            )
+                        });
+                        let event = LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(id),
+                            name: Arc::from(function.name),
+                            raw_input: function.arguments.to_string(),
+                            input: function.arguments,
+                            is_input_complete: true,
+                            thought_signature: None,
+                        });
+                        events.push(Ok(event));
+                        state.used_tools = true;
                     } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
@@ -721,7 +724,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_instructions() -> Div {
+    fn render_instructions(cx: &mut Context<Self>) -> Div {
         v_flex()
             .gap_2()
             .child(Label::new(
@@ -731,15 +734,17 @@ impl ConfigurationView {
             .child(Label::new("To use local Ollama:"))
             .child(
                 List::new()
-                    .child(InstructionListItem::new(
-                        "Download and install Ollama from",
-                        Some("ollama.com"),
-                        Some("https://ollama.com/download"),
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Start Ollama and download a model: `ollama run gpt-oss:20b`",
-                    ))
-                    .child(InstructionListItem::text_only(
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Download and install Ollama from"))
+                            .child(ButtonLink::new("ollama.com", "https://ollama.com/download")),
+                    )
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Start Ollama and download a model:"))
+                            .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
+                    )
+                    .child(ListBulletItem::new(
                         "Click 'Connect' below to start using Ollama in Zed",
                     )),
             )
@@ -828,7 +833,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
-            .child(Self::render_instructions())
+            .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(

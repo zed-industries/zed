@@ -305,6 +305,7 @@ impl Room {
 
     pub(crate) fn leave(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.notify();
+        self.emit_video_track_unsubscribed_events(cx);
         self.leave_internal(cx)
     }
 
@@ -350,6 +351,14 @@ impl Room {
         self.live_kit.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
+    }
+
+    fn emit_video_track_unsubscribed_events(&self, cx: &mut Context<Self>) {
+        for participant in self.remote_participants.values() {
+            for sid in participant.video_tracks.keys() {
+                cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
+            }
+        }
     }
 
     async fn maintain_connection(
@@ -522,6 +531,16 @@ impl Room {
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    pub fn room_id(&self) -> impl Future<Output = Option<String>> + 'static {
+        let room = self.live_kit.as_ref().map(|lk| lk.room.clone());
+        async move {
+            let room = room?;
+            let sid = room.sid().await;
+            let name = room.name();
+            Some(format!("{} (sid: {sid})", name))
+        }
     }
 
     pub fn status(&self) -> RoomStatus {
@@ -871,6 +890,9 @@ impl Room {
                                 cx.emit(Event::RemoteProjectUnshared {
                                     project_id: project.id,
                                 });
+                            }
+                            for sid in participant.video_tracks.keys() {
+                                cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
                             }
                             false
                         }
@@ -1683,7 +1705,9 @@ impl LiveKitRoom {
     }
 }
 
+#[derive(Default)]
 enum LocalTrack<Stream: ?Sized> {
+    #[default]
     None,
     Pending {
         publish_id: usize,
@@ -1692,12 +1716,6 @@ enum LocalTrack<Stream: ?Sized> {
         track_publication: LocalTrackPublication,
         _stream: Box<Stream>,
     },
-}
-
-impl<T: ?Sized> Default for LocalTrack<T> {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

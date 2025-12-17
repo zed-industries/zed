@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
 use collections::HashMap;
 use core_foundation::{
+    array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
@@ -21,8 +22,10 @@ use core_graphics::{
 };
 use core_text::{
     font::CTFont,
+    font_collection::CTFontCollectionRef,
     font_descriptor::{
-        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
+        CTFontDescriptor, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
+        kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -97,7 +100,26 @@ impl PlatformTextSystem for MacTextSystem {
     fn all_font_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
-        let Some(descriptors) = collection.get_descriptors() else {
+        // NOTE: We intentionally avoid using `collection.get_descriptors()` here because
+        // it has a memory leak bug in core-text v21.0.0. The upstream code uses
+        // `wrap_under_get_rule` but `CTFontCollectionCreateMatchingFontDescriptors`
+        // follows the Create Rule (caller owns the result), so it should use
+        // `wrap_under_create_rule`. We call the function directly with correct memory management.
+        unsafe extern "C" {
+            fn CTFontCollectionCreateMatchingFontDescriptors(
+                collection: CTFontCollectionRef,
+            ) -> CFArrayRef;
+        }
+        let descriptors: Option<CFArray<CTFontDescriptor>> = unsafe {
+            let array_ref =
+                CTFontCollectionCreateMatchingFontDescriptors(collection.as_concrete_TypeRef());
+            if array_ref.is_null() {
+                None
+            } else {
+                Some(CFArray::wrap_under_create_rule(array_ref))
+            }
+        };
+        let Some(descriptors) = descriptors else {
             return names;
         };
         for descriptor in descriptors.into_iter() {
@@ -435,6 +457,7 @@ impl MacTextSystemState {
 
         {
             let mut text = text;
+            let mut break_ligature = true;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
@@ -444,7 +467,8 @@ impl MacTextSystemState {
                 string.replace_str(&CFString::new(text_run), CFRange::init(utf16_start, 0));
                 let utf16_end = string.char_len();
 
-                let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
+                let length = utf16_end - utf16_start;
+                let cf_range = CFRange::init(utf16_start, length);
                 let font = &self.fonts[run.font_id.0];
 
                 let font_metrics = font.metrics();
@@ -452,6 +476,11 @@ impl MacTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
+                let font_size = if break_ligature {
+                    px(font_size.0.next_up())
+                } else {
+                    font_size
+                };
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -459,6 +488,7 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
+                break_ligature = !break_ligature;
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.

@@ -139,7 +139,7 @@ impl CommitModal {
                             && !git_panel.amend_pending()
                         {
                             git_panel.set_amend_pending(true, cx);
-                            git_panel.load_last_commit_message_if_empty(cx);
+                            git_panel.load_last_commit_message(cx);
                         }
                     }
                     ForceMode::Commit => {
@@ -337,6 +337,7 @@ impl CommitModal {
             active_repo,
             is_amend_pending,
             is_signoff_enabled,
+            workspace,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
             let title = git_panel.commit_button_title();
@@ -354,6 +355,7 @@ impl CommitModal {
                 active_repo,
                 is_amend_pending,
                 is_signoff_enabled,
+                git_panel.workspace.clone(),
             )
         });
 
@@ -375,7 +377,14 @@ impl CommitModal {
             .style(ButtonStyle::Transparent);
 
         let branch_picker = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(branch_picker::popover(active_repo.clone(), window, cx)))
+            .menu(move |window, cx| {
+                Some(branch_picker::popover(
+                    workspace.clone(),
+                    active_repo.clone(),
+                    window,
+                    cx,
+                ))
+            })
             .with_handle(self.branch_list_handle.clone())
             .trigger_with_tooltip(
                 branch_picker_button,
@@ -492,60 +501,27 @@ impl CommitModal {
         }
     }
 
-    fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.git_panel.read(cx).amend_pending() {
-            return;
+    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.commit(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
+            telemetry::event!("Git Committed", source = "Git Modal");
+            cx.emit(DismissEvent);
         }
-        telemetry::event!("Git Committed", source = "Git Modal");
-        self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(
-                CommitOptions {
-                    amend: false,
-                    signoff: git_panel.signoff_enabled(),
-                },
-                window,
-                cx,
-            )
-        });
-        cx.emit(DismissEvent);
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .git_panel
-            .read(cx)
-            .active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).head_commit.as_ref())
-            .is_none()
-        {
-            return;
-        }
-        if !self.git_panel.read(cx).amend_pending() {
-            self.git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_amend_pending(true, cx);
-                git_panel.load_last_commit_message_if_empty(cx);
-            });
-        } else {
+    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.amend(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
             telemetry::event!("Git Amended", source = "Git Modal");
-            self.git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_amend_pending(false, cx);
-                git_panel.commit_changes(
-                    CommitOptions {
-                        amend: true,
-                        signoff: git_panel.signoff_enabled(),
-                    },
-                    window,
-                    cx,
-                );
-            });
             cx.emit(DismissEvent);
         }
     }
 
     fn toggle_branch_selector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.branch_list_handle.is_focused(window, cx) {
-            self.focus_handle(cx).focus(window)
+            self.focus_handle(cx).focus(window, cx)
         } else {
             self.branch_list_handle.toggle(window, cx);
         }
@@ -564,8 +540,8 @@ impl Render for CommitModal {
             .id("commit-modal")
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::commit))
-            .on_action(cx.listener(Self::amend))
+            .on_action(cx.listener(Self::on_commit))
+            .on_action(cx.listener(Self::on_amend))
             .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
                 this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
                     this.git_panel.update(cx, |panel, cx| {
@@ -611,8 +587,8 @@ impl Render for CommitModal {
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                        window.focus(&editor_focus_handle);
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                        window.focus(&editor_focus_handle, cx);
                     }))
                     .child(
                         div()

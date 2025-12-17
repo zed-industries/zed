@@ -89,12 +89,32 @@ To do this:
 
 #### Cross-Region Inference
 
-The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
+The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) to improve availability and throughput.
 With Cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
 
-For example, if you use `Claude Sonnet 3.7 Thinking` from `us-east-1`, it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
-Cross-Region inference requests are kept within the AWS Regions that are part of the geography where the data originally resides.
-For example, a request made within the US is kept within the AWS Regions in the US.
+##### Regional vs Global Inference Profiles
+
+Bedrock supports two types of cross-region inference profiles:
+
+- **Regional profiles** (default): Route requests within a specific geography (US, EU, APAC). For example, `us-east-1` uses the `us.*` profile which routes across `us-east-1`, `us-east-2`, and `us-west-2`.
+- **Global profiles**: Route requests across all commercial AWS Regions for maximum availability and performance.
+
+By default, Zed uses **regional profiles** which keep your data within the same geography. You can opt into global profiles by adding `"allow_global": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_global": true
+    }
+  }
+}
+```
+
+**Note:** Only select newer models support global inference profiles. See the [AWS Bedrock supported models documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html#inference-profiles-support-system) for the current list of models that support global inference. If you encounter availability issues with a model in your region, enabling `allow_global` may resolve them.
 
 Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
 All data will be transmitted encrypted across Amazon's secure network.
@@ -326,6 +346,33 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
    ```
 
 3. In the Agent Panel, select one of the Ollama models using the model dropdown.
+
+#### Ollama Autodiscovery
+
+Zed will automatically discover models that Ollama has pulled. You can turn this off by setting
+the `auto_discover` field in the Ollama settings. If you do this, you should manually specify which
+models are available.
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "auto_discover": false,
+      "available_models": [
+        {
+          "name": "qwen2.5-coder",
+          "display_name": "qwen 2.5 coder",
+          "max_tokens": 32768,
+          "supports_tools": true,
+          "supports_thinking": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
 
 #### Ollama Context Length {#ollama-context}
 
@@ -587,7 +634,7 @@ These routing controls let you fine‑tune cost, capability, and reliability tra
 
 ### Vercel v0 {#vercel-v0}
 
-[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://v0.app/docs/api/model) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
 The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.

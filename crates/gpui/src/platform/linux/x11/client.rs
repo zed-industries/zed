@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -18,7 +18,7 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt;
+use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},
@@ -29,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, ModMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -313,7 +313,37 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let mut timing = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
+                            };
+
+                            let end = Instant::now();
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
                         });
                     }
                 }
@@ -407,7 +437,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -988,6 +1018,12 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -1052,6 +1088,11 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -2485,4 +2526,20 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
+    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
+    let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+    let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+    xkb.update_mask(
+        depressed_mods.into(),
+        latched_mods,
+        locked_mods,
+        0,
+        0,
+        locked_layout,
+    );
 }

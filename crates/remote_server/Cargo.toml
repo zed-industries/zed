@@ -26,6 +26,7 @@ anyhow.workspace = true
 askpass.workspace = true
 clap.workspace = true
 client.workspace = true
+collections.workspace = true
 dap_adapters.workspace = true
 debug_adapter_extension.workspace = true
 env_logger.workspace = true
@@ -55,6 +56,7 @@ remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true
 rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -77,10 +79,9 @@ minidumper.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-agent.workspace = true
+agent = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
-collections.workspace = true
 dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
@@ -92,8 +93,10 @@ node_runtime = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+prompt_store.workspace = true
 unindent.workspace = true
 serde_json.workspace = true
 zlog.workspace = true

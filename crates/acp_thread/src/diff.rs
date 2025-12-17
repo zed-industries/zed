@@ -50,9 +50,14 @@ impl Diff {
                         let hunk_ranges = {
                             let buffer = buffer.read(cx);
                             let diff = diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
-                                .collect::<Vec<_>>()
+                            diff.hunks_intersecting_range(
+                                Anchor::min_for_buffer(buffer.remote_id())
+                                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                                buffer,
+                                cx,
+                            )
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+                            .collect::<Vec<_>>()
                         };
 
                         multibuffer.set_excerpts_for_path(
@@ -161,7 +166,7 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        self.multibuffer().read(cx).excerpt_paths().next().is_some()
+        self.multibuffer().read(cx).paths().next().is_some()
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {
@@ -316,7 +321,12 @@ impl PendingDiff {
         let buffer = self.new_buffer.read(cx);
         let diff = self.diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .hunks_intersecting_range(
+                Anchor::min_for_buffer(buffer.remote_id())
+                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                buffer,
+                cx,
+            )
             .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(

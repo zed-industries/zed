@@ -182,6 +182,11 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
+
+        // Vietnamese (https://vietunicode.sourceforge.net/charset/)
+        matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
+        matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
@@ -618,7 +623,12 @@ mod tests {
         #[track_caller]
         fn assert_word(word: &str) {
             for c in word.chars() {
-                assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+                assert!(
+                    LineWrapper::is_word_char(c),
+                    "assertion failed for '{}' (unicode 0x{:x})",
+                    c,
+                    c as u32
+                );
             }
         }
 
@@ -661,6 +671,8 @@ mod tests {
         assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
         // Cyrillic
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
+        // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
+        assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
 
         // non-word characters
         assert_not_word("你好");

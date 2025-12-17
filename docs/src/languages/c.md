@@ -11,6 +11,7 @@ C support is available natively in Zed.
 Clangd out of the box assumes mixed C++/C projects. If you have a C-only project you may wish to instruct clangd to treat all files as C using the `-xc` flag. To do this, create a `.clangd` file in the root of your project with the following:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add: [-xc]
 ```
@@ -27,9 +28,10 @@ By default clang and gcc will recognize `*.C` and `*.H` (uppercase extensions) a
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C code like the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
 ---
 BasedOnStyle: GNU
 IndentWidth: 2
