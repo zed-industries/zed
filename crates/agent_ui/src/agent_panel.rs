@@ -1817,6 +1817,13 @@ impl AgentPanel {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
                                 .truncate()
                                 .color(Color::Muted)
+                                .with_animation(
+                                    "generating_title",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                    |label, delta| label.alpha(delta),
+                                )
                                 .into_any_element()
                         }
                     }
