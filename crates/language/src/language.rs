@@ -330,6 +330,10 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
+    pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        self.adapter.process_prompt_response(context, cx)
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -353,6 +357,17 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+}
+
+/// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
+/// This allows adapters to intercept preference selections (like "Always" or "Never")
+/// and potentially persist them to Zed's settings.
+#[derive(Debug, Clone)]
+pub struct PromptResponseContext {
+    /// The original message shown to the user
+    pub message: String,
+    /// The action (button) the user selected
+    pub selected_action: lsp::MessageActionItem,
 }
 
 #[async_trait(?Send)]
@@ -511,6 +526,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn is_extension(&self) -> bool {
         false
     }
+
+    /// Called when a user responds to a ShowMessageRequest from this language server.
+    /// This allows adapters to intercept preference selections (like "Always" or "Never")
+    /// for settings that should be persisted to Zed's settings file.
+    fn process_prompt_response(&self, _context: &PromptResponseContext, _cx: &mut AsyncApp) {}
 }
 
 pub trait LspInstaller {
