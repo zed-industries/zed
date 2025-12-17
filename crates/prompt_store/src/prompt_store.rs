@@ -53,11 +53,11 @@ pub struct PromptMetadata {
 
 /// Built-in prompts that have default content and can be customized by users.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BuiltInPromptId {
+pub enum BuiltInPrompt {
     CommitMessage,
 }
 
-impl BuiltInPromptId {
+impl BuiltInPrompt {
     /// Returns the default content for this built-in prompt.
     pub fn default_content(&self) -> &'static str {
         match self {
@@ -66,7 +66,7 @@ impl BuiltInPromptId {
     }
 }
 
-impl std::fmt::Display for BuiltInPromptId {
+impl std::fmt::Display for BuiltInPrompt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CommitMessage => write!(f, "Commit message"),
@@ -78,7 +78,7 @@ impl std::fmt::Display for BuiltInPromptId {
 #[serde(tag = "kind")]
 pub enum PromptId {
     User { uuid: UserPromptId },
-    BuiltIn { builtin: BuiltInPromptId },
+    BuiltIn(BuiltInPrompt),
 }
 
 impl PromptId {
@@ -93,10 +93,10 @@ impl PromptId {
         }
     }
 
-    pub fn as_built_in(&self) -> Option<BuiltInPromptId> {
+    pub fn as_built_in(&self) -> Option<BuiltInPrompt> {
         match self {
             Self::User { .. } => None,
-            Self::BuiltIn { builtin } => Some(*builtin),
+            Self::BuiltIn(builtin) => Some(*builtin),
         }
     }
 
@@ -107,16 +107,16 @@ impl PromptId {
     pub fn can_edit(&self) -> bool {
         match self {
             Self::User { .. } => true,
-            Self::BuiltIn { builtin } => match builtin {
-                BuiltInPromptId::CommitMessage => true,
+            Self::BuiltIn(builtin) => match builtin {
+                BuiltInPrompt::CommitMessage => true,
             },
         }
     }
 }
 
-impl From<BuiltInPromptId> for PromptId {
-    fn from(builtin: BuiltInPromptId) -> Self {
-        PromptId::BuiltIn { builtin }
+impl From<BuiltInPrompt> for PromptId {
+    fn from(builtin: BuiltInPrompt) -> Self {
+        PromptId::BuiltIn(builtin)
     }
 }
 
@@ -146,7 +146,7 @@ impl std::fmt::Display for PromptId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
-            PromptId::BuiltIn { builtin } => write!(f, "{}", builtin),
+            PromptId::BuiltIn(builtin) => write!(f, "{}", builtin),
         }
     }
 }
@@ -557,14 +557,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("prompts-db");
 
-        let store = cx
-            .update(|cx| PromptStore::new(db_path, cx))
-            .await
-            .unwrap();
+        let store = cx.update(|cx| PromptStore::new(db_path, cx)).await.unwrap();
         let store = cx.new(|_cx| store);
 
         let commit_message_id = PromptId::BuiltIn {
-            builtin: BuiltInPromptId::CommitMessage,
+            builtin: BuiltInPrompt::CommitMessage,
         };
 
         let loaded_content = store
@@ -574,12 +571,14 @@ mod tests {
 
         assert_eq!(
             loaded_content.trim(),
-            BuiltInPromptId::CommitMessage.default_content().trim(),
+            BuiltInPrompt::CommitMessage.default_content().trim(),
             "Loading a built-in prompt not in DB should return default content"
         );
 
         assert!(
-            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_none(),
+            store
+                .read_with(cx, |store, _| store.metadata(commit_message_id))
+                .is_none(),
             "Built-in prompt should not have metadata until customized"
         );
 
@@ -608,7 +607,9 @@ mod tests {
         );
 
         assert!(
-            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_some(),
+            store
+                .read_with(cx, |store, _| store.metadata(commit_message_id))
+                .is_some(),
             "Built-in prompt should have metadata after customization"
         );
 
@@ -618,7 +619,7 @@ mod tests {
                     commit_message_id,
                     Some("Commit message".into()),
                     false,
-                    Rope::from(BuiltInPromptId::CommitMessage.default_content()),
+                    Rope::from(BuiltInPrompt::CommitMessage.default_content()),
                     cx,
                 )
             })
@@ -626,7 +627,9 @@ mod tests {
             .unwrap();
 
         assert!(
-            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_none(),
+            store
+                .read_with(cx, |store, _| store.metadata(commit_message_id))
+                .is_none(),
             "Saving default content should remove metadata from cache"
         );
 
@@ -636,7 +639,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             loaded_after_reset.trim(),
-            BuiltInPromptId::CommitMessage.default_content().trim(),
+            BuiltInPrompt::CommitMessage.default_content().trim(),
             "After saving default content, load should return default"
         );
     }

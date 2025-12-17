@@ -58,7 +58,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::{PromptId, PromptStore, RULES_FILE_NAMES};
+use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -2467,7 +2467,9 @@ impl GitPanel {
         let load = async {
             let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
             store
-                .update(cx, |s, cx| s.load(PromptId::CommitMessage, cx))
+                .update(cx, |s, cx| {
+                    s.load(PromptId::BuiltIn(BuiltInPrompt::CommitMessage), cx)
+                })
                 .ok()?
                 .await
                 .ok()
