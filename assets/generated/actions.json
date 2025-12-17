@@ -355,6 +355,24 @@
     "documentation": "Toggle the visibility of the agents panel."
   },
   {
+    "name": "app_menu::ActivateMenuLeft",
+    "human_name": "app menu: activate menu left",
+    "deprecated_aliases": [],
+    "documentation": "Activates the menu on the left in the client-side application menu.\n\nDoes not apply to platform menu bars (e.g. on macOS)."
+  },
+  {
+    "name": "app_menu::ActivateMenuRight",
+    "human_name": "app menu: activate menu right",
+    "deprecated_aliases": [],
+    "documentation": "Activates the menu on the right in the client-side application menu.\n\nDoes not apply to platform menu bars (e.g. on macOS)."
+  },
+  {
+    "name": "app_menu::OpenApplicationMenu",
+    "human_name": "app menu: open application menu",
+    "deprecated_aliases": [],
+    "documentation": "Opens the named menu in the client-side application menu.\n\nDoes not apply to platform menu bars (e.g. on macOS)."
+  },
+  {
     "name": "assistant::Assist",
     "human_name": "assistant: assist",
     "deprecated_aliases": [],
