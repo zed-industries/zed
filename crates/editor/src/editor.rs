@@ -23390,7 +23390,7 @@ fn documentation_delimiter_for_newline(
         tab_size: len,
     } = language.documentation_comment()?;
     let is_within_block_comment = buffer
-        .language_scope_at(start_point.clone())
+        .language_scope_at(*start_point)
         .is_some_and(|scope| scope.override_name() == Some("comment"));
     if !is_within_block_comment {
         return None;
