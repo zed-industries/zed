@@ -1,0 +1,125 @@
+# Generated from xtask::workflows::autofix_pr
+# Rebuild with `cargo xtask workflows`.
+name: autofix_pr
+run-name: 'autofix PR #${{ inputs.pr_number }}'
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: pr_number
+        required: true
+        type: string
+      run_clippy:
+        description: run_clippy
+        type: boolean
+        default: 'true'
+jobs:
+  run_autofix:
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: autofix_pr::run_autofix::checkout_pr
+      run: gh pr checkout ${{ inputs.pr_number }}
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::setup_pnpm
+      uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
+      with:
+        version: '9'
+    - name: autofix_pr::run_autofix::run_prettier_fix
+      run: ./script/prettier --write
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_cargo_fmt
+      run: cargo fmt --all
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_clippy_fix
+      if: ${{ inputs.run_clippy }}
+      run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
+      shell: bash -euxo pipefail {0}
+    - id: create-patch
+      name: autofix_pr::run_autofix::create_patch
+      run: |
+        if git diff --quiet; then
+            echo "No changes to commit"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+        else
+            git diff > autofix.patch
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+        fi
+      shell: bash -euxo pipefail {0}
+    - name: upload artifact autofix-patch
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: autofix-patch
+        path: autofix.patch
+        if-no-files-found: ignore
+        retention-days: '1'
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+      shell: bash -euxo pipefail {0}
+    outputs:
+      has_changes: ${{ steps.create-patch.outputs.has_changes }}
+  commit_changes:
+    needs:
+    - run_autofix
+    if: needs.run_autofix.outputs.has_changes == 'true'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: get-app-token
+      name: autofix_pr::commit_changes::authenticate_as_zippy
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo_with_token
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        token: ${{ steps.get-app-token.outputs.token }}
+    - name: autofix_pr::commit_changes::checkout_pr
+      run: gh pr checkout ${{ inputs.pr_number }}
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+    - name: autofix_pr::download_patch_artifact
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        name: autofix-patch
+    - name: autofix_pr::commit_changes::apply_patch
+      run: git apply autofix.patch
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::commit_changes::commit_and_push
+      run: |
+        git commit -am "Autofix"
+        git push
+      shell: bash -euxo pipefail {0}
+      env:
+        GIT_COMMITTER_NAME: Zed Zippy
+        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+        GIT_AUTHOR_NAME: Zed Zippy
+        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}

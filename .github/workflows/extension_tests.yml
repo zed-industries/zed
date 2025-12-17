@@ -7,12 +7,7 @@ env:
   CARGO_INCREMENTAL: '0'
   ZED_EXTENSION_CLI_SHA: 7cfce605704d41ca247e3f84804bf323f6c6caaf
 on:
-  workflow_call:
-    inputs:
-      run_tests:
-        description: Whether the workflow should run rust tests
-        required: true
-        type: boolean
+  workflow_call: {}
 jobs:
   orchestrate:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -73,12 +68,12 @@ jobs:
       run: cargo clippy --release --all-targets --all-features -- --deny warnings
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
-      if: inputs.run_tests
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
-      if: inputs.run_tests
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+      env:
+        NEXTEST_NO_TESTS: warn
     timeout-minutes: 3
   check_extension:
     needs:
@@ -108,7 +103,7 @@ jobs:
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
       shell: bash -euxo pipefail {0}
-    timeout-minutes: 1
+    timeout-minutes: 2
   tests_pass:
     needs:
     - orchestrate

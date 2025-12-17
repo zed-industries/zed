@@ -69,7 +69,10 @@ pub fn run_test(
                         std::mem::forget(error);
                     } else {
                         if is_multiple_runs {
-                            eprintln!("failing seed: {}", seed);
+                            eprintln!("failing seed: {seed}");
+                            eprintln!(
+                                "You can rerun from this seed by setting the environmental variable SEED to {seed}"
+                            );
                         }
                         if let Some(on_fail_fn) = on_fail_fn {
                             on_fail_fn()

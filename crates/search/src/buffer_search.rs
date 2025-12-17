@@ -518,7 +518,7 @@ impl BufferSearchBar {
 
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, window, cx| {
-            this.query_editor.focus_handle(cx).focus(window);
+            this.query_editor.focus_handle(cx).focus(window, cx);
             this.select_query(window, cx);
         }));
         registrar.register_handler(ForDeployed(
@@ -706,7 +706,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, window, cx);
             active_editor.toggle_filtered_search_ranges(None, window, cx);
             let handle = active_editor.item_focus_handle(cx);
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
         }
 
         cx.emit(Event::UpdateLocation);
@@ -729,12 +729,14 @@ impl BufferSearchBar {
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
             self.sync_select_next_case_sensitivity(cx);
-            self.replace_enabled = deploy.replace_enabled;
-            self.selection_search_enabled = if deploy.selection_search_enabled {
-                Some(FilteredSearchRange::Default)
-            } else {
-                None
-            };
+            self.replace_enabled |= deploy.replace_enabled;
+            self.selection_search_enabled =
+                self.selection_search_enabled
+                    .or(if deploy.selection_search_enabled {
+                        Some(FilteredSearchRange::Default)
+                    } else {
+                        None
+                    });
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
@@ -747,7 +749,7 @@ impl BufferSearchBar {
                     self.select_query(window, cx);
                 }
 
-                window.focus(&handle);
+                window.focus(&handle, cx);
             }
             return true;
         }
@@ -876,7 +878,7 @@ impl BufferSearchBar {
     }
 
     pub fn focus_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(&self.replacement_editor.focus_handle(cx), window);
+        self.focus(&self.replacement_editor.focus_handle(cx), window, cx);
         cx.notify();
     }
 
@@ -907,7 +909,7 @@ impl BufferSearchBar {
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
-            window.focus(&handle);
+            window.focus(&handle, cx);
         }
     }
 
@@ -1031,7 +1033,7 @@ impl BufferSearchBar {
             let new_match_index = searchable_item
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
             searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
@@ -1045,7 +1047,7 @@ impl BufferSearchBar {
             if matches.is_empty() {
                 return;
             }
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(0), window, cx);
             searchable_item.activate_match(0, matches, window, cx);
         }
     }
@@ -1060,7 +1062,7 @@ impl BufferSearchBar {
                 return;
             }
             let new_match_index = matches.len() - 1;
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
             searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
@@ -1300,7 +1302,12 @@ impl BufferSearchBar {
                                 if matches.is_empty() {
                                     active_searchable_item.clear_matches(window, cx);
                                 } else {
-                                    active_searchable_item.update_matches(matches, window, cx);
+                                    active_searchable_item.update_matches(
+                                        matches,
+                                        this.active_match_index,
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 let _ = done_tx.send(());
                             }
@@ -1335,6 +1342,18 @@ impl BufferSearchBar {
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
+            if !self.dismissed {
+                if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        if !matches.is_empty() {
+                            searchable_item.update_matches(matches, new_index, window, cx);
+                        }
+                    }
+                }
+            }
             cx.notify();
         }
     }
@@ -1365,7 +1384,7 @@ impl BufferSearchBar {
             Direction::Prev => (current_index - 1) % handles.len(),
         };
         let next_focus_handle = &handles[new_index];
-        self.focus(next_focus_handle, window);
+        self.focus(next_focus_handle, window, cx);
         cx.stop_propagation();
     }
 
@@ -1412,9 +1431,9 @@ impl BufferSearchBar {
         }
     }
 
-    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window) {
+    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut App) {
         window.invalidate_character_coordinates();
-        window.focus(handle);
+        window.focus(handle, cx);
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
@@ -1425,7 +1444,7 @@ impl BufferSearchBar {
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
             cx.notify();
         }
     }
@@ -2019,7 +2038,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.activate_current_match(window, cx);
                 });
                 assert!(
@@ -2037,7 +2056,7 @@ mod tests {
                 search_bar.update(cx, |search_bar, cx| {
                     assert_eq!(search_bar.active_match_index, Some(0));
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
                 assert!(
@@ -2090,7 +2109,7 @@ mod tests {
                         "Match index should be updated to the next one"
                     );
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
             })
@@ -2156,7 +2175,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.search("abas_nonexistent_match", None, true, window, cx)
                 })
             })

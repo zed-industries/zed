@@ -1,3 +1,4 @@
+mod api_key;
 mod model;
 mod rate_limiter;
 mod registry;
@@ -30,6 +31,7 @@ use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
 
+pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
 pub use crate::registry::*;
@@ -37,6 +39,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
+pub use zed_env_vars::{EnvVar, env_var};
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -609,6 +612,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns whether this model or provider supports streaming tool calls;
+    fn supports_streaming_tools(&self) -> bool {
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
@@ -707,6 +715,40 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
+    fn stream_completion_tool(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelToolUse, LanguageModelCompletionError>> {
+        let future = self.stream_completion(request, cx);
+
+        async move {
+            let events = future.await?;
+            let mut events = events.fuse();
+
+            // Iterate through events until we find a complete ToolUse
+            while let Some(event) = events.next().await {
+                match event {
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                        if tool_use.is_input_complete =>
+                    {
+                        return Ok(tool_use);
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Stream ended without a complete tool use
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "Stream ended without receiving a complete tool use"
+            )))
+        }
+        .boxed()
+    }
+
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
     }
@@ -728,6 +770,21 @@ pub trait LanguageModelExt: LanguageModel {
     }
 }
 impl LanguageModelExt for dyn LanguageModel {}
+
+impl std::fmt::Debug for dyn LanguageModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("<dyn LanguageModel>")
+            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("provider_id", &self.provider_id())
+            .field("provider_name", &self.provider_name())
+            .field("upstream_provider_name", &self.upstream_provider_name())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("supports_streaming_tools", &self.supports_streaming_tools())
+            .finish()
+    }
+}
 
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]

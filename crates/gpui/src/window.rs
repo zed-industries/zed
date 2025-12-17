@@ -9,14 +9,15 @@ use crate::{
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
+    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -344,8 +345,8 @@ impl FocusHandle {
     }
 
     /// Moves the focus to the element associated with this handle.
-    pub fn focus(&self, window: &mut Window) {
-        window.focus(self)
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(self, cx)
     }
 
     /// Obtains whether the element associated with this handle is currently focused.
@@ -596,7 +597,7 @@ pub enum HitboxBehavior {
     /// ```
     ///
     /// This has effects beyond event handling - any use of hitbox checking, such as hover
-    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// styles and tooltips. These other behaviors are the main point of this mechanism. An
     /// alternative might be to not affect mouse event handling - but this would allow
     /// inconsistent UI where clicks and moves interact with elements that are not considered to
     /// be hovered.
@@ -624,7 +625,7 @@ pub enum HitboxBehavior {
     /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
     ///
     /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
-    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// hover styles and tooltips. These other behaviors are the main point of this mechanism.
     /// An alternative might be to not affect mouse event handling - but this would allow
     /// inconsistent UI where clicks and moves interact with elements that are not considered to
     /// be hovered.
@@ -918,86 +919,69 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
-    #[cfg(target_os = "macos")]
-    {
-        const CASCADE_OFFSET: f32 = 25.0;
+fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
+    // TODO, BUG: if you open a window with the currently active window
+    // on the stack, this will erroneously fallback to `None`
+    //
+    // TODO these should be the initial window bounds not considering maximized/fullscreen
+    let active_window_bounds = cx
+        .active_window()
+        .and_then(|w| w.update(cx, |_, window, _| window.window_bounds()).ok());
 
-        let display = display_id
-            .map(|id| cx.find_display(id))
-            .unwrap_or_else(|| cx.primary_display());
+    const CASCADE_OFFSET: f32 = 25.0;
 
-        let display_bounds = display
-            .as_ref()
-            .map(|d| d.bounds())
-            .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
+    let display = display_id
+        .map(|id| cx.find_display(id))
+        .unwrap_or_else(|| cx.primary_display());
 
-        // TODO, BUG: if you open a window with the currently active window
-        // on the stack, this will erroneously select the 'unwrap_or_else'
-        // code path
-        let (base_origin, base_size) = cx
-            .active_window()
-            .and_then(|w| {
-                w.update(cx, |_, window, _| {
-                    let bounds = window.bounds();
-                    (bounds.origin, bounds.size)
-                })
-                .ok()
-            })
-            .unwrap_or_else(|| {
-                let default_bounds = display
-                    .as_ref()
-                    .map(|d| d.default_bounds())
-                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE));
-                (default_bounds.origin, default_bounds.size)
-            });
+    let default_placement = || Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE);
 
-        let cascade_offset = point(px(CASCADE_OFFSET), px(CASCADE_OFFSET));
-        let proposed_origin = base_origin + cascade_offset;
-        let proposed_bounds = Bounds::new(proposed_origin, base_size);
+    // Use visible_bounds to exclude taskbar/dock areas
+    let display_bounds = display
+        .as_ref()
+        .map(|d| d.visible_bounds())
+        .unwrap_or_else(default_placement);
 
-        let display_right = display_bounds.origin.x + display_bounds.size.width;
-        let display_bottom = display_bounds.origin.y + display_bounds.size.height;
-        let window_right = proposed_bounds.origin.x + proposed_bounds.size.width;
-        let window_bottom = proposed_bounds.origin.y + proposed_bounds.size.height;
+    let (
+        Bounds {
+            origin: base_origin,
+            size: base_size,
+        },
+        window_bounds_ctor,
+    ): (_, fn(Bounds<Pixels>) -> WindowBounds) = match active_window_bounds {
+        Some(bounds) => match bounds {
+            WindowBounds::Windowed(bounds) => (bounds, WindowBounds::Windowed),
+            WindowBounds::Maximized(bounds) => (bounds, WindowBounds::Maximized),
+            WindowBounds::Fullscreen(bounds) => (bounds, WindowBounds::Fullscreen),
+        },
+        None => (
+            display
+                .as_ref()
+                .map(|d| d.default_bounds())
+                .unwrap_or_else(default_placement),
+            WindowBounds::Windowed,
+        ),
+    };
 
-        let fits_horizontally = window_right <= display_right;
-        let fits_vertically = window_bottom <= display_bottom;
+    let cascade_offset = point(px(CASCADE_OFFSET), px(CASCADE_OFFSET));
+    let proposed_origin = base_origin + cascade_offset;
+    let proposed_bounds = Bounds::new(proposed_origin, base_size);
 
-        let final_origin = match (fits_horizontally, fits_vertically) {
-            (true, true) => proposed_origin,
-            (false, true) => point(display_bounds.origin.x, base_origin.y),
-            (true, false) => point(base_origin.x, display_bounds.origin.y),
-            (false, false) => display_bounds.origin,
-        };
+    let display_right = display_bounds.origin.x + display_bounds.size.width;
+    let display_bottom = display_bounds.origin.y + display_bounds.size.height;
+    let window_right = proposed_bounds.origin.x + proposed_bounds.size.width;
+    let window_bottom = proposed_bounds.origin.y + proposed_bounds.size.height;
 
-        Bounds::new(final_origin, base_size)
-    }
+    let fits_horizontally = window_right <= display_right;
+    let fits_vertically = window_bottom <= display_bottom;
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
-
-        // TODO, BUG: if you open a window with the currently active window
-        // on the stack, this will erroneously select the 'unwrap_or_else'
-        // code path
-        cx.active_window()
-            .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
-            .map(|mut bounds| {
-                bounds.origin += DEFAULT_WINDOW_OFFSET;
-                bounds
-            })
-            .unwrap_or_else(|| {
-                let display = display_id
-                    .map(|id| cx.find_display(id))
-                    .unwrap_or_else(|| cx.primary_display());
-
-                display
-                    .as_ref()
-                    .map(|display| display.default_bounds())
-                    .unwrap_or_else(|| Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE))
-            })
-    }
+    let final_origin = match (fits_horizontally, fits_vertically) {
+        (true, true) => proposed_origin,
+        (false, true) => point(display_bounds.origin.x, base_origin.y),
+        (true, false) => point(base_origin.x, display_bounds.origin.y),
+        (false, false) => display_bounds.origin,
+    };
+    window_bounds_ctor(Bounds::new(final_origin, base_size))
 }
 
 impl Window {
@@ -1024,13 +1008,11 @@ impl Window {
             tabbing_identifier,
         } = options;
 
-        let bounds = window_bounds
-            .map(|bounds| bounds.get_bounds())
-            .unwrap_or_else(|| default_bounds(display_id, cx));
+        let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
-                bounds,
+                bounds: window_bounds.get_bounds(),
                 titlebar,
                 kind,
                 is_movable,
@@ -1071,12 +1053,10 @@ impl Window {
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
         platform_window.set_background_appearance(window_background);
 
-        if let Some(ref window_open_state) = window_bounds {
-            match window_open_state {
-                WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
-                WindowBounds::Maximized(_) => platform_window.zoom(),
-                WindowBounds::Windowed(_) => {}
-            }
+        match window_bounds {
+            WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
+            WindowBounds::Maximized(_) => platform_window.zoom(),
+            WindowBounds::Windowed(_) => {}
         }
 
         platform_window.on_close(Box::new({
@@ -1456,13 +1436,25 @@ impl Window {
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
-    pub fn focus(&mut self, handle: &FocusHandle) {
+    pub fn focus(&mut self, handle: &FocusHandle, cx: &mut App) {
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
 
         self.focus = Some(handle.id);
         self.clear_pending_keystrokes();
+
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+
         self.refresh();
     }
 
@@ -1483,24 +1475,24 @@ impl Window {
     }
 
     /// Move focus to next tab stop.
-    pub fn focus_next(&mut self) {
+    pub fn focus_next(&mut self, cx: &mut App) {
         if !self.focus_enabled {
             return;
         }
 
         if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
-            self.focus(&handle)
+            self.focus(&handle, cx)
         }
     }
 
     /// Move focus to previous tab stop.
-    pub fn focus_prev(&mut self) {
+    pub fn focus_prev(&mut self, cx: &mut App) {
         if !self.focus_enabled {
             return;
         }
 
         if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
-            self.focus(&handle)
+            self.focus(&handle, cx)
         }
     }
 
@@ -1518,7 +1510,8 @@ impl Window {
         style
     }
 
-    /// Check if the platform window is maximized
+    /// Check if the platform window is maximized.
+    ///
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {
         self.platform_window.is_maximized()
@@ -1745,6 +1738,27 @@ impl Window {
         })
     }
 
+    /// Spawn the future returned by the given closure on the application thread
+    /// pool, with the given priority. The closure is provided a handle to the
+    /// current window and an `AsyncWindowContext` for use within your future.
+    #[track_caller]
+    pub fn spawn_with_priority<AsyncFn, R>(
+        &self,
+        priority: Priority,
+        cx: &App,
+        f: AsyncFn,
+    ) -> Task<R>
+    where
+        R: 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
+    {
+        let handle = self.handle;
+        cx.spawn_with_priority(priority, async move |app| {
+            let mut async_window_cx = AsyncWindowContext::new_context(app.clone(), handle);
+            f(&mut async_window_cx).await
+        })
+    }
+
     fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
@@ -1959,9 +1973,17 @@ impl Window {
     }
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
-    pub fn is_action_available(&self, action: &dyn Action, cx: &mut App) -> bool {
+    pub fn is_action_available(&self, action: &dyn Action, cx: &App) -> bool {
         let node_id =
             self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
+        self.rendered_frame
+            .dispatch_tree
+            .is_action_available(action, node_id)
+    }
+
+    /// Determine whether the given action is available along the dispatch path to the given focus_handle.
+    pub fn is_action_available_in(&self, action: &dyn Action, focus_handle: &FocusHandle) -> bool {
+        let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
         self.rendered_frame
             .dispatch_tree
             .is_action_available(action, node_id)
@@ -2006,7 +2028,9 @@ impl Window {
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
-        self.draw_roots(cx);
+        if !cx.mode.skip_drawing() {
+            self.draw_roots(cx);
+        }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -3701,6 +3725,9 @@ impl Window {
                 self.modifiers = mouse_up.modifiers;
                 PlatformInput::MouseUp(mouse_up)
             }
+            PlatformInput::MousePressure(mouse_pressure) => {
+                PlatformInput::MousePressure(mouse_pressure)
+            }
             PlatformInput::MouseExited(mouse_exited) => {
                 self.modifiers = mouse_exited.modifiers;
                 PlatformInput::MouseExited(mouse_exited)
@@ -4005,7 +4032,7 @@ impl Window {
         self.dispatch_keystroke_observers(event, None, context_stack, cx);
     }
 
-    fn pending_input_changed(&mut self, cx: &mut App) {
+    pub(crate) fn pending_input_changed(&mut self, cx: &mut App) {
         self.pending_input_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -5079,6 +5106,18 @@ impl From<i32> for ElementId {
 impl From<SharedString> for ElementId {
     fn from(name: SharedString) -> Self {
         ElementId::Name(name)
+    }
+}
+
+impl From<String> for ElementId {
+    fn from(name: String) -> Self {
+        ElementId::Name(name.into())
+    }
+}
+
+impl From<Arc<str>> for ElementId {
+    fn from(name: Arc<str>) -> Self {
+        ElementId::Name(name.into())
     }
 }
 

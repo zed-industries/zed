@@ -116,7 +116,7 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_modal.focus_handle(cx));
+            window.focus(&new_modal.focus_handle(cx), cx);
         });
         cx.notify();
     }
@@ -144,7 +144,7 @@ impl ModalLayer {
             if let Some(previous_focus) = active_modal.previous_focus_handle
                 && active_modal.focus_handle.contains_focused(window, cx)
             {
-                previous_focus.focus(window);
+                previous_focus.focus(window, cx);
             }
             cx.notify();
         }
@@ -171,28 +171,19 @@ impl Render for ModalLayer {
         };
 
         div()
-            .occlude()
             .absolute()
             .size_full()
-            .top_0()
-            .left_0()
-            .when(active_modal.modal.fade_out_background(cx), |el| {
+            .inset_0()
+            .occlude()
+            .when(active_modal.modal.fade_out_background(cx), |this| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
-                el.bg(background)
+                this.bg(background)
             })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.hide_modal(window, cx);
-                }),
-            )
             .child(
                 v_flex()
                     .h(px(0.0))
                     .top_20()
-                    .flex()
-                    .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
                     .child(

@@ -44,6 +44,47 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
     text_diff_with_options(old_text, new_text, DiffOptions::default())
 }
 
+/// Computes word-level diff ranges between two strings.
+///
+/// Returns a tuple of (old_ranges, new_ranges) where each vector contains
+/// the byte ranges of changed words in the respective text.
+pub fn word_diff_ranges(
+    old_text: &str,
+    new_text: &str,
+    options: DiffOptions,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let mut input: InternedInput<&str> = InternedInput::default();
+    input.update_before(tokenize(old_text, options.language_scope.clone()));
+    input.update_after(tokenize(new_text, options.language_scope));
+
+    let mut old_ranges: Vec<Range<usize>> = Vec::new();
+    let mut new_ranges: Vec<Range<usize>> = Vec::new();
+
+    diff_internal(&input, |old_byte_range, new_byte_range, _, _| {
+        if !old_byte_range.is_empty() {
+            if let Some(last) = old_ranges.last_mut()
+                && last.end >= old_byte_range.start
+            {
+                last.end = old_byte_range.end;
+            } else {
+                old_ranges.push(old_byte_range);
+            }
+        }
+
+        if !new_byte_range.is_empty() {
+            if let Some(last) = new_ranges.last_mut()
+                && last.end >= new_byte_range.start
+            {
+                last.end = new_byte_range.end;
+            } else {
+                new_ranges.push(new_byte_range);
+            }
+        }
+    });
+
+    (old_ranges, new_ranges)
+}
+
 pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
     pub max_word_diff_len: usize,

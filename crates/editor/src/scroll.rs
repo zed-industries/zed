@@ -251,7 +251,11 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
+        // Anchor the scroll position to the *left* of the first visible buffer point.
+        //
+        // This prevents the viewport from shifting down when blocks (e.g. expanded diff hunk
+        // deletions) are inserted *above* the first buffer character in the file.
+        let top_anchor = map.buffer_snapshot().anchor_before(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
