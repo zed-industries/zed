@@ -11619,7 +11619,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    DisplayRow(0),
                     &snapshot,
                     window,
                     cx,
@@ -11704,7 +11704,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11764,7 +11764,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11815,7 +11815,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::from_iter([(DisplayRow(0), LineHighlightSpec::default())]),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
