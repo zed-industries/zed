@@ -4,6 +4,7 @@ use std::{
     path,
     path::Path,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use file_icons::FileIcons;
@@ -18,7 +19,7 @@ use theme::ThemeSettings;
 use ui::{Color, IconName, LabelSize, SpinnerLabel};
 use ui::prelude::*;
 
-use crate::types::{GroupHeader, GroupInfo, QuickMatch, QuickMatchBuilder};
+use crate::types::{GroupHeader, GroupInfo, MatchKey, QuickMatch, QuickMatchBuilder};
 use log::debug;
 use project::{HoverBlock, HoverBlockKind, ProjectPath};
 use project::search::{SearchQuery, SearchResult};
@@ -38,6 +39,10 @@ struct GrepHoverFooter {
     host_state: Entity<crate::core::PreviewFooterHostState>,
     markdown: Option<Entity<Markdown>>,
     message: Option<Arc<str>>,
+    selected_key: Option<MatchKey>,
+    loading_overlay_visible: bool,
+    loading_overlay_nonce: u64,
+    last_loading: bool,
     _subscription: gpui::Subscription,
 }
 
@@ -45,6 +50,7 @@ impl GrepHoverFooter {
     fn clear(&mut self) {
         self.markdown = None;
         self.message = None;
+        self.selected_key = None;
     }
 
     fn set_markdown(&mut self, markdown: Entity<Markdown>) {
@@ -61,33 +67,11 @@ impl GrepHoverFooter {
 impl Render for GrepHoverFooter {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let host_state = self.host_state.read(cx);
-        let loading = host_state.loading;
-        let loading_label = host_state
-            .loading_label
-            .clone()
-            .unwrap_or_else(|| Arc::<str>::from("Loading details…"));
+        let show_overlay = host_state.loading && self.loading_overlay_visible;
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         div()
+            .relative()
             .w_full()
-            .when(loading, |this| {
-                this.child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(
-                            SpinnerLabel::new()
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            div()
-                                .text_size(buffer_font_size)
-                                .text_color(Color::Muted.color(cx))
-                                .child(loading_label.to_string()),
-                        ),
-                )
-                .p_2()
-            })
             .when_some(self.markdown.clone(), |this, markdown| {
                 let mut style = hover_markdown_style(window, cx);
                 style.base_text_style.refine(&gpui::TextStyleRefinement {
@@ -118,7 +102,7 @@ impl Render for GrepHoverFooter {
                 )
                 .p_2()
             })
-            .when(!loading && self.markdown.is_none() && self.message.is_none(), |this| {
+            .when(!host_state.loading && self.markdown.is_none() && self.message.is_none(), |this| {
                 this.child(
                     div()
                         .text_size(buffer_font_size)
@@ -126,6 +110,15 @@ impl Render for GrepHoverFooter {
                         .child("No details available"),
                 )
                 .p_2()
+            })
+            .when(show_overlay, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(rems_from_px(8.))
+                        .right(rems_from_px(8.))
+                        .child(SpinnerLabel::new().size(LabelSize::Small).color(Color::Muted)),
+                )
             })
     }
 }
@@ -192,11 +185,51 @@ impl QuickSearchSource for TextGrepSource {
         let host = crate::core::PreviewFooterHost::new(cx);
         let host_state = host.state_entity().clone();
         let footer = cx.new(|cx| {
-            let subscription = cx.observe(&host_state, |_, _, cx| cx.notify());
+            let subscription = cx.observe(&host_state, move |this: &mut GrepHoverFooter, state, cx| {
+                let loading = state.read(cx).loading;
+                if loading && !this.last_loading {
+                    this.last_loading = true;
+                    this.loading_overlay_visible = false;
+                    this.loading_overlay_nonce = this.loading_overlay_nonce.wrapping_add(1);
+                    let nonce = this.loading_overlay_nonce;
+                    let footer = cx.entity().downgrade();
+                    cx.spawn(move |_, app: &mut AsyncApp| {
+                        let mut app = app.clone();
+                        async move {
+                            smol::Timer::after(Duration::from_millis(75)).await;
+                            let Some(footer) = footer.upgrade() else {
+                                return;
+                            };
+                            if let Err(err) = footer.update(&mut app, |footer, cx| {
+                                if !footer.last_loading || footer.loading_overlay_nonce != nonce {
+                                    return;
+                                }
+                                footer.loading_overlay_visible = true;
+                                cx.notify();
+                            }) {
+                                debug!(
+                                    "quick_search: failed to show grep footer loading overlay: {:?}",
+                                    err
+                                );
+                            }
+                        }
+                    })
+                    .detach();
+                } else if !loading && this.last_loading {
+                    this.last_loading = false;
+                    this.loading_overlay_visible = false;
+                }
+
+                cx.notify();
+            });
             GrepHoverFooter {
                 host_state,
                 markdown: None,
                 message: None,
+                selected_key: None,
+                loading_overlay_visible: false,
+                loading_overlay_nonce: 0,
+                last_loading: false,
                 _subscription: subscription,
             }
         });
@@ -217,19 +250,26 @@ impl QuickSearchSource for TextGrepSource {
                 crate::core::FooterEvent::OpenChanged(_open) => {}
                 crate::core::FooterEvent::ContextChanged(ctx) => {
                     host_for_events.set_loading(false, cx);
-                    host_for_events.set_has_content(false, cx);
                     host_for_events.set_loading_label(None, cx);
-                    if let Err(err) = footer_weak.update(cx, |footer, cx| {
-                        footer.clear();
-                        cx.notify();
-                    }) {
-                        debug!("quick_search: failed to clear grep footer view: {:?}", err);
-                    }
 
                     let Some(selected) = ctx.selected else {
+                        host_for_events.set_has_content(false, cx);
+                        if let Err(err) = footer_weak.update(cx, |footer, cx| {
+                            footer.clear();
+                            cx.notify();
+                        }) {
+                            debug!("quick_search: failed to clear grep footer view: {:?}", err);
+                        }
                         return;
                     };
                     let Some(buffer_id) = selected.buffer_id() else {
+                        host_for_events.set_has_content(false, cx);
+                        if let Err(err) = footer_weak.update(cx, |footer, cx| {
+                            footer.clear();
+                            cx.notify();
+                        }) {
+                            debug!("quick_search: failed to clear grep footer view: {:?}", err);
+                        }
                         return;
                     };
                     let Some(match_range) = selected
@@ -237,8 +277,24 @@ impl QuickSearchSource for TextGrepSource {
                         .and_then(|ranges| ranges.first())
                         .cloned()
                     else {
+                        host_for_events.set_has_content(false, cx);
+                        if let Err(err) = footer_weak.update(cx, |footer, cx| {
+                            footer.clear();
+                            cx.notify();
+                        }) {
+                            debug!("quick_search: failed to clear grep footer view: {:?}", err);
+                        }
                         return;
                     };
+
+                    host_for_events.set_has_content(true, cx);
+                    if let Err(err) = footer_weak.update(cx, |footer, cx| {
+                        footer.selected_key = Some(selected.key);
+                        cx.notify();
+                    }) {
+                        debug!("quick_search: failed to update grep footer selection key: {:?}", err);
+                    }
+                    let selected_key = selected.key;
                     let point = match_range.start;
                     let end_point = if match_range.end.column > 0 {
                         Point::new(
@@ -416,6 +472,9 @@ impl QuickSearchSource for TextGrepSource {
 
                             if language_name.is_none() {
                                 if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                    if footer.selected_key != Some(selected_key) {
+                                        return;
+                                    }
                                     footer.set_message(Arc::from("No language detected for this file."));
                                     cx.notify();
                                 }) {
@@ -434,6 +493,9 @@ impl QuickSearchSource for TextGrepSource {
                                 let label =
                                     format!("No language server configured for {language_name}.");
                                 if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                    if footer.selected_key != Some(selected_key) {
+                                        return;
+                                    }
                                     footer.set_message(Arc::from(label.clone()));
                                     cx.notify();
                                 }) {
@@ -561,6 +623,9 @@ impl QuickSearchSource for TextGrepSource {
                                     consecutive_idle_empty_responses = 0;
                                     set_loading_label(Some(Arc::from("Starting language server…")), cx);
                                     if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        if footer.selected_key != Some(selected_key) {
+                                            return;
+                                        }
                                         footer.set_message(Arc::<str>::from(
                                             "Language server still starting…",
                                         ));
@@ -610,6 +675,9 @@ impl QuickSearchSource for TextGrepSource {
                                             set_loading_label(None, cx);
                                             if let Err(err) =
                                                 footer_for_task.update(cx, |footer, cx| {
+                                                    if footer.selected_key != Some(selected_key) {
+                                                        return;
+                                                    }
                                                     footer.set_message(Arc::from(
                                                         "Failed to request hover.",
                                                     ));
@@ -711,6 +779,9 @@ impl QuickSearchSource for TextGrepSource {
                                             Arc::<str>::from("Waiting for language server hover…")
                                         };
                                         if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            if footer.selected_key != Some(selected_key) {
+                                                return;
+                                            }
                                             footer.set_message(message);
                                             cx.notify();
                                         }) {
@@ -736,6 +807,9 @@ impl QuickSearchSource for TextGrepSource {
                                             Arc::<str>::from("Language server busy… Waiting for hover…")
                                         };
                                         if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            if footer.selected_key != Some(selected_key) {
+                                                return;
+                                            }
                                             footer.set_message(message);
                                             cx.notify();
                                         }) {
@@ -755,6 +829,9 @@ impl QuickSearchSource for TextGrepSource {
                                         consecutive_idle_empty_responses.saturating_add(1);
                                     if consecutive_idle_empty_responses < 2 {
                                         if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            if footer.selected_key != Some(selected_key) {
+                                                return;
+                                            }
                                             footer.set_message(Arc::<str>::from(
                                                 "Waiting for hover information…",
                                             ));
@@ -776,6 +853,9 @@ impl QuickSearchSource for TextGrepSource {
                                         .saturating_duration_since(started_at);
                                     if elapsed < min_time_before_no_hover {
                                         if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            if footer.selected_key != Some(selected_key) {
+                                                return;
+                                            }
                                             footer.set_message(Arc::<str>::from(
                                                 "Waiting for hover information…",
                                             ));
@@ -794,6 +874,9 @@ impl QuickSearchSource for TextGrepSource {
                                     }
 
                                     if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        if footer.selected_key != Some(selected_key) {
+                                            return;
+                                        }
                                         footer.set_message(Arc::<str>::from(
                                             "No hover information at this position.",
                                         ));
@@ -823,6 +906,9 @@ impl QuickSearchSource for TextGrepSource {
                                         )
                                     };
                                     if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        if footer.selected_key != Some(selected_key) {
+                                            return;
+                                        }
                                         footer.set_message(message);
                                         cx.notify();
                                     }) {
@@ -871,6 +957,9 @@ impl QuickSearchSource for TextGrepSource {
                                 };
 
                                 if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                    if footer.selected_key != Some(selected_key) {
+                                        return;
+                                    }
                                     footer.set_markdown(markdown);
                                     cx.notify();
                                 }) {
