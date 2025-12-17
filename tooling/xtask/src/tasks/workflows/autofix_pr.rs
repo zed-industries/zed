@@ -1,6 +1,7 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
+    run_tests::install_cargo_machete,
     runners,
     steps::{self, FluentBuilder, NamedJob, named},
     vars::{self, StepOutput, WorkflowInput},
@@ -73,6 +74,10 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         named::bash("./script/prettier --write")
     }
 
+    fn run_cargo_machete_fix() -> Step<Run> {
+        named::bash("cargo machete --fix")
+    }
+
     fn create_patch() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             if git diff --quiet; then
@@ -101,6 +106,8 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::setup_pnpm())
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
+            .add_step(install_cargo_machete())
+            .add_step(run_cargo_machete_fix())
             .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())

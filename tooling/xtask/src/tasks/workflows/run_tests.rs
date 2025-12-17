@@ -245,24 +245,19 @@ fn check_style() -> NamedJob {
     )
 }
 
-fn check_dependencies() -> NamedJob {
-    fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "install"))
-        .add_with(("args", "cargo-machete@0.7.0"))
-    }
+pub fn install_cargo_machete() -> Step<Use> {
+    named::uses(
+        "clechasseur",
+        "rs-cargo",
+        "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+    )
+    .add_with(("command", "install"))
+    .add_with(("args", "cargo-machete@0.7.0"))
+}
 
-    fn run_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "machete"))
+fn check_dependencies() -> NamedJob {
+    fn run_cargo_machete() -> Step<Run> {
+        named::bash("cargo machete")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -286,6 +281,7 @@ fn check_dependencies() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_cargo_machete())
             .add_step(run_cargo_machete())
+            .add_step(steps::trigger_autofix(false))
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
     )
