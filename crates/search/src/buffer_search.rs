@@ -7,7 +7,6 @@ use crate::{
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
-use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset,
@@ -638,11 +637,15 @@ impl BufferSearchBar {
                 .read(cx)
                 .set_language_registry(languages.clone());
 
+            #[cfg(not(any(test, feature = "test-support")))]
             cx.spawn(async move |buffer_search_bar, cx| {
+                use anyhow::Context as _;
+
                 let regex_language = languages
                     .language_for_name("regex")
                     .await
                     .context("loading regex language")?;
+
                 buffer_search_bar
                     .update(cx, |buffer_search_bar, cx| {
                         buffer_search_bar.regex_language = Some(regex_language);
