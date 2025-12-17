@@ -3,23 +3,23 @@ mod profile_modal_header;
 use std::sync::Arc;
 
 use agent::ContextServerRegistry;
-use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{builtin_profiles, AgentProfile, AgentProfileId, AgentSettings};
 use editor::Editor;
 use fs::Fs;
-use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
+use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use settings::SettingsStore;
 use settings::{
-    LanguageModelProviderSetting, LanguageModelSelection, Settings as _, update_settings_file,
+    update_settings_file, LanguageModelProviderSetting, LanguageModelSelection, Settings as _,
 };
 use ui::{
-    KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
+    prelude::*, KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry,
 };
 use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::language_model_selector::{LanguageModelSelector, language_model_selector};
+use crate::language_model_selector::{language_model_selector, LanguageModelSelector};
 use crate::{AgentPanel, ManageProfiles};
 
 enum Mode {
@@ -156,7 +156,7 @@ impl ManageProfilesModal {
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 if matches!(this.mode, Mode::ChooseProfile(_)) {
                     this.mode = Mode::choose_profile(window, cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 }
             });
