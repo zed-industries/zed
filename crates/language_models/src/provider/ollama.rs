@@ -742,7 +742,7 @@ impl ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Start Ollama and download a model:"))
-                            .child(InlineCode::new("ollama run gpt-oss:20b")),
+                            .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
                     )
                     .child(ListBulletItem::new(
                         "Click 'Connect' below to start using Ollama in Zed",

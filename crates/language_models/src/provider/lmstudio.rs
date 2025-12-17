@@ -691,7 +691,7 @@ impl Render for ConfigurationView {
                             .child(
                                 ListBulletItem::new("")
                                     .child(Label::new("To get your first model, try running"))
-                                    .child(InlineCode::new("lms get qwen2.5-coder-7b")),
+                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
                             ),
                     ),
                 )
