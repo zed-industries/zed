@@ -161,11 +161,11 @@ fn trim_completion(
     );
     completion_range.end = completion_range.end.saturating_sub(suffix_len);
     let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-    if !completion_range.is_empty() || completion_text.trim().is_empty() {
+    if completion_text.trim().is_empty() {
         None
     } else {
         let completion_range =
-            buffer.anchor_before(completion_range.start)..buffer.anchor_after(completion_range.end);
+            buffer.anchor_after(completion_range.start)..buffer.anchor_after(completion_range.end);
 
         Some((completion_range, Arc::from(completion_text)))
     }
@@ -655,13 +655,8 @@ mod tests {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\n\nthree\n");
-
             // Deleting across the original suggestion range invalidates it.
             editor.backspace(&Default::default(), window, cx);
-        });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\nthree\n");
             assert_eq!(editor.text(cx), "one\nthree\n");
