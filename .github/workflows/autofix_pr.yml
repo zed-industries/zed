@@ -90,7 +90,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-app-token
-      name: autofix_pr::commit_changes::authenticate_as_zippy
+      name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
