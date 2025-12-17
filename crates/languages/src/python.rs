@@ -280,7 +280,7 @@ impl LspInstaller for TyLspAdapter {
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         let release =
-            latest_github_release("astral-sh/ty", true, true, delegate.http_client()).await?;
+            latest_github_release("astral-sh/ty", true, false, delegate.http_client()).await?;
         let (_, asset_name) = Self::build_asset_name()?;
         let asset = release
             .assets
