@@ -29,15 +29,18 @@ zed [OPTIONS] [PATHS...]
 
 | Option | Description |
 |--------|-------------|
-| `-n`, `--new` | Open in a new window instead of reusing an existing one |
-| `-w`, `--wait` | Wait for the file to be closed before returning |
-| `-a`, `--add` | Add files to the current workspace |
+| `-w`, `--wait` | Wait for all given paths to be opened/closed before exiting |
+| `-a`, `--add` | Add files to the currently open workspace |
+| `-n`, `--new` | Create a new workspace |
+| `-r`, `--reuse` | Reuse an existing window, replacing its workspace |
 | `-` | Read from stdin |
-| `--foreground` | Start Zed with logs output to the terminal |
-| `--dev-server-token <TOKEN>` | Start as a dev server with the given token |
-| `--uninstall` | Uninstall Zed and all related files |
-| `-h`, `--help` | Show help information |
-| `-v`, `--version` | Show version information |
+| `--foreground` | Run Zed in the foreground (useful for debugging, shows all logs) |
+| `--zed <PATH>` | Custom path to Zed.app or the zed binary |
+| `--dev-server-token <TOKEN>` | Run Zed in dev-server mode with the given token |
+| `--diff <OLD_PATH> <NEW_PATH>` | Open a diff view comparing two files (can be used multiple times) |
+| `--user-data-dir <DIR>` | Set a custom directory for all user data (database, extensions, logs) |
+| `--uninstall` | Uninstall Zed and all related files (Linux/macOS only) |
+| `--version` | Print Zed's version and the app path |
 
 ## Opening Files at a Specific Line
 
@@ -72,4 +75,16 @@ Open multiple files in a new window:
 
 ```sh
 zed -n src/main.rs src/lib.rs
+```
+
+Compare two files:
+
+```sh
+zed --diff old_version.rs new_version.rs
+```
+
+Add files to an existing workspace:
+
+```sh
+zed -a additional_file.rs
 ```

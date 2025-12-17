@@ -37,8 +37,9 @@ These are the most commonly used default bindings. Platform-specific keys are sh
 | Undo | `Cmd+Z` | `Ctrl+Z` |
 | Redo | `Cmd+Shift+Z` | `Ctrl+Shift+Z` |
 | Save | `Cmd+S` | `Ctrl+S` |
-| Find | `Cmd+F` | `Ctrl+F` |
-| Find and replace | `Cmd+H` | `Ctrl+H` |
+| Find in buffer | `Cmd+F` | `Ctrl+F` |
+| Replace in buffer | `Cmd+Alt+F` | `Ctrl+H` |
+| Project search with replace | `Cmd+Shift+H` | `Ctrl+Shift+H` |
 | Comment line | `Cmd+/` | `Ctrl+/` |
 | Format document | `Cmd+Shift+I` | `Ctrl+Shift+I` |
 
@@ -47,18 +48,19 @@ These are the most commonly used default bindings. Platform-specific keys are sh
 | Action | macOS | Linux/Windows |
 |--------|-------|---------------|
 | Go to line | `Ctrl+G` | `Ctrl+G` |
-| Go to definition | `F12` or `Cmd+Click` | `F12` or `Ctrl+Click` |
-| Go to references | `Shift+F12` | `Shift+F12` |
-| Go to symbol | `Cmd+Shift+O` | `Ctrl+Shift+O` |
-| Go back | `Ctrl+-` | `Alt+Left` |
-| Go forward | `Ctrl+Shift+-` | `Alt+Right` |
+| Go to definition | `F12` | `F12` |
+| Go to implementation | `Shift+F12` | `Shift+F12` (Linux), `Ctrl+F12` (Windows) |
+| Find all references | `Alt+Shift+F12` | `Alt+Shift+F12` (Linux), `Shift+Alt+F12` (Windows) |
+| Go to symbol in file | `Cmd+Shift+O` | `Ctrl+Shift+O` |
+| Go back | `Ctrl+-` | `Ctrl+Alt+-` (Linux), `Alt+Left` (Windows) |
+| Go forward | `Ctrl+_` | `Ctrl+Alt+_` (Linux), `Alt+Right` (Windows) |
 
 ### Multi-cursor
 
 | Action | macOS | Linux/Windows |
 |--------|-------|---------------|
-| Add cursor above | `Cmd+Alt+Up` | `Ctrl+Alt+Up` |
-| Add cursor below | `Cmd+Alt+Down` | `Ctrl+Alt+Down` |
+| Add cursor above | `Cmd+Alt+Up` | `Shift+Alt+Up` (Linux), `Ctrl+Alt+Up` (Windows) |
+| Add cursor below | `Cmd+Alt+Down` | `Shift+Alt+Down` (Linux), `Ctrl+Alt+Down` (Windows) |
 | Select next occurrence | `Cmd+D` | `Ctrl+D` |
 | Select all occurrences | `Cmd+Shift+L` | `Ctrl+Shift+L` |
 
@@ -67,13 +69,15 @@ These are the most commonly used default bindings. Platform-specific keys are sh
 | Action | macOS | Linux/Windows |
 |--------|-------|---------------|
 | Project panel | `Cmd+Shift+E` | `Ctrl+Shift+E` |
-| Outline panel | `Cmd+Shift+O` | `Ctrl+Shift+O` |
-| Git panel | `Cmd+Shift+G` | `Ctrl+Shift+G` |
-| Agent panel | `Cmd+Shift+A` | `Ctrl+Shift+A` |
+| Outline panel | `Cmd+Shift+B` | `Ctrl+Shift+B` |
+| Git panel | `Ctrl+Shift+G` | `Ctrl+Shift+G` |
+| Agent panel | `Cmd+?` | `Ctrl+?` (Linux), `Ctrl+Shift+/` (Windows) |
 
 ## Predefined Keymaps
 
-If you prefer another editor's bindings, change the `base_keymap` setting:
+If you prefer another editor's bindings, open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and search for `base_keymap`. Select your preferred keymap from the dropdown.
+
+Or add this to your settings.json:
 
 ```json
 {
@@ -83,11 +87,11 @@ If you prefer another editor's bindings, change the `base_keymap` setting:
 
 Available options:
 - `VSCode` (default)
-- `Atom`
-- `Emacs`
 - `JetBrains`
 - `SublimeText`
+- `Atom`
 - `TextMate`
+- `Emacs`
 - `Cursor`
 - `None`
 
