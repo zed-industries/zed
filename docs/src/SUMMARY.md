@@ -92,6 +92,9 @@
 
 - [VS Code](./migrate/vs-code.md)
 - [IntelliJ IDEA](./migrate/intellij.md)
+- [PyCharm](./migrate/pycharm.md)
+- [WebStorm](./migrate/webstorm.md)
+- [RustRover](./migrate/rustrover.md)
 
 # Language Support
 
