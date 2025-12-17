@@ -223,7 +223,7 @@ impl From<RemoteConnectionOptions> for RemoteHostLocation {
         let (user_name, host_name) = match options {
             RemoteConnectionOptions::Ssh(ssh) => (
                 ssh.username.map(SharedString::new),
-                SharedString::new(ssh.host),
+                SharedString::new(ssh.host.to_string()),
             ),
             RemoteConnectionOptions::Wsl(wsl) => (
                 wsl.user.map(SharedString::new),

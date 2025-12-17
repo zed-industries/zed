@@ -1508,11 +1508,27 @@ impl Workspace {
                             && let Ok(display_uuid) = display.uuid()
                         {
                             let window_bounds = window.inner_window_bounds();
+                            let has_paths = !this.root_paths(cx).is_empty();
+                            if !has_paths {
+                                cx.background_executor()
+                                    .spawn(persistence::write_default_window_bounds(
+                                        window_bounds,
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
+                            }
                             if let Some(database_id) = workspace_id {
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
                                         database_id,
                                         SerializedWindowBounds(window_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
+                            } else {
+                                cx.background_executor()
+                                    .spawn(persistence::write_default_window_bounds(
+                                        window_bounds,
                                         display_uuid,
                                     ))
                                     .detach_and_log_err(cx);
@@ -1611,6 +1627,7 @@ impl Workspace {
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
         env: Option<HashMap<String, String>>,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         cx: &mut App,
     ) -> Task<
         anyhow::Result<(
@@ -1718,12 +1735,19 @@ impl Workspace {
                         );
 
                         workspace.centered_layout = centered_layout;
+
+                        // Call init callback to add items before window renders
+                        if let Some(init) = init {
+                            init(&mut workspace, window, cx);
+                        }
+
                         workspace
                     });
                 })?;
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
+                let is_empty_workspace = project_paths.is_empty();
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
@@ -1733,6 +1757,13 @@ impl Workspace {
                         (workspace.display, workspace.window_bounds.as_ref())
                     {
                         (Some(bounds.0), Some(display))
+                    } else {
+                        (None, None)
+                    }
+                } else if is_empty_workspace {
+                    // Empty workspace - try to restore the last known no-project window bounds
+                    if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+                        (Some(bounds), Some(display))
                     } else {
                         (None, None)
                     }
@@ -1761,6 +1792,12 @@ impl Workspace {
                                 cx,
                             );
                             workspace.centered_layout = centered_layout;
+
+                            // Call init callback to add items before window renders
+                            if let Some(init) = init {
+                                init(&mut workspace, window, cx);
+                            }
+
                             workspace
                         })
                     }
@@ -2326,7 +2363,7 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
             cx.spawn_in(window, async move |_vh, cx| {
                 let (workspace, _) = task.await?;
                 workspace.update(cx, callback)
@@ -7734,7 +7771,14 @@ pub fn join_channel(
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, cx)
+                    Workspace::new_local(
+                        vec![],
+                        app_state.clone(),
+                        requesting_window,
+                        None,
+                        None,
+                        cx,
+                    )
                 })?
                 .await?;
 
@@ -7800,7 +7844,7 @@ pub async fn get_any_active_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, cx))?
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))?
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -7967,6 +8011,7 @@ pub fn open_paths(
                     app_state.clone(),
                     open_options.replace_window,
                     open_options.env,
+                    None,
                     cx,
                 )
             })?
@@ -8011,14 +8056,17 @@ pub fn open_new(
     cx: &mut App,
     init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
-    cx.spawn(async move |cx| {
-        let (workspace, opened_paths) = task.await?;
-        workspace.update(cx, |workspace, window, cx| {
-            if opened_paths.is_empty() {
-                init(workspace, window, cx)
-            }
-        })?;
+    let task = Workspace::new_local(
+        Vec::new(),
+        app_state,
+        None,
+        open_options.env,
+        Some(Box::new(init)),
+        cx,
+    );
+    cx.spawn(async move |_cx| {
+        let (_workspace, _opened_paths) = task.await?;
+        // Init callback is called synchronously during workspace creation
         Ok(())
     })
 }
@@ -8820,14 +8868,13 @@ pub fn remote_workspace_position_from_db(
         } else {
             let restorable_bounds = serialized_workspace
                 .as_ref()
-                .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                .or_else(|| {
-                    let (display, window_bounds) = DB.last_window().log_err()?;
-                    Some((display?, window_bounds?))
-                });
+                .and_then(|workspace| {
+                    Some((workspace.display?, workspace.window_bounds.map(|b| b.0)?))
+                })
+                .or_else(|| persistence::read_default_window_bounds());
 
-            if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                (Some(serialized_status.0), Some(serialized_display))
+            if let Some((serialized_display, serialized_bounds)) = restorable_bounds {
+                (Some(serialized_bounds), Some(serialized_display))
             } else {
                 (None, None)
             }
