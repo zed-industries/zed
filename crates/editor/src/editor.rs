@@ -25009,6 +25009,53 @@ impl EditorSnapshot {
         let digit_count = self.widest_line_number().ilog10() + 1;
         column_pixels(style, digit_count as usize, window)
     }
+
+    /// Returns the line delta from `line1` to `line2` in the multibuffer, ignoring wrapped lines.
+    ///
+    /// This is positive if `line1` is before `line2`.
+    fn relative_line_delta(&self, line1: DisplayRow, line2: DisplayRow) -> i64 {
+        let point1 = DisplayPoint::new(line1, 0).to_point(self);
+        let point2 = DisplayPoint::new(line2, 0).to_point(self);
+        point2.row as i64 - point1.row as i64
+    }
+
+    /// Returns the line delta from `line1` to `line2` in the multibuffer, counting wrapped lines.
+    ///
+    /// This is positive if `line1` is before `line2`.
+    fn relative_wrapped_line_delta(&self, line1: DisplayRow, line2: DisplayRow) -> i64 {
+        let point1 = DisplayPoint::new(line1, 0).to_point(self);
+        let point2 = DisplayPoint::new(line2, 0).to_point(self);
+        let wrap_snapshot = self.wrap_snapshot();
+        let wrap_row1 = wrap_snapshot.make_wrap_point(point1, Bias::Left).row();
+        let wrap_row2 = wrap_snapshot.make_wrap_point(point2, Bias::Left).row();
+        wrap_row2.0 as i64 - wrap_row1.0 as i64
+    }
+
+    /// Returns the unsigned relative line number to display for each row in `rows`.
+    ///
+    /// Wrapped rows are excluded from the hashmap if `count_relative_lines` is `false`.
+    pub fn calculate_relative_line_numbers(
+        &self,
+        rows: &Range<DisplayRow>,
+        relative_to: DisplayRow,
+        count_wrapped_lines: bool,
+    ) -> HashMap<DisplayRow, u32> {
+        let initial_offset = if count_wrapped_lines {
+            self.relative_wrapped_line_delta(relative_to, rows.start)
+        } else {
+            self.relative_line_delta(relative_to, rows.start)
+        };
+        let display_row_infos = self
+            .row_infos(rows.start)
+            .take(rows.len())
+            .enumerate()
+            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info));
+        display_row_infos
+            .filter(|(_row, row_info)| row_info.buffer_row.is_some() || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some()))
+            .enumerate()
+            .map(|(i, (row, _row_info))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .collect()
+    }
 }
 
 pub fn column_pixels(style: &EditorStyle, column: usize, window: &Window) -> Pixels {

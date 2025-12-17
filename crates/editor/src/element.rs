@@ -198,8 +198,6 @@ pub struct EditorElement {
     style: EditorStyle,
 }
 
-type DisplayRowDelta = u32;
-
 impl EditorElement {
     pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
 
@@ -3231,64 +3229,6 @@ impl EditorElement {
             .collect()
     }
 
-    fn calculate_relative_line_numbers(
-        &self,
-        snapshot: &EditorSnapshot,
-        rows: &Range<DisplayRow>,
-        relative_to: Option<DisplayRow>,
-        count_wrapped_lines: bool,
-    ) -> HashMap<DisplayRow, DisplayRowDelta> {
-        let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
-        let Some(relative_to) = relative_to else {
-            return relative_rows;
-        };
-
-        let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        let buffer_rows = snapshot
-            .row_infos(start)
-            .take(1 + end.minus(start) as usize)
-            .collect::<Vec<_>>();
-
-        let head_idx = relative_to.minus(start);
-        let mut delta = 1;
-        let mut i = head_idx + 1;
-        let should_count_line = |row_info: &RowInfo| {
-            if count_wrapped_lines {
-                row_info.buffer_row.is_some() || row_info.wrapped_buffer_row.is_some()
-            } else {
-                row_info.buffer_row.is_some()
-            }
-        };
-        while i < buffer_rows.len() as u32 {
-            if should_count_line(&buffer_rows[i as usize]) {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            }
-            i += 1;
-        }
-        delta = 1;
-        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !count_wrapped_lines {
-            i -= 1;
-        }
-
-        while i > 0 {
-            i -= 1;
-            if should_count_line(&buffer_rows[i as usize]) {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            }
-        }
-
-        relative_rows
-    }
-
     fn layout_line_numbers(
         &self,
         gutter_hitbox: Option<&Hitbox>,
@@ -3332,10 +3272,16 @@ impl EditorElement {
         });
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_to = relative_line_numbers_enabled.then(|| newest_selection_head.row());
+        let relative_rows = if relative_line_numbers_enabled {
+            snapshot.calculate_relative_line_numbers(
+                &rows,
+                newest_selection_head.row(),
+                relative.wrapped(),
+            )
+        } else {
+            Default::default()
+        };
 
-        let relative_rows =
-            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
         let mut line_number = String::new();
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
@@ -11616,7 +11562,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_shape_line_numbers(cx: &mut TestAppContext) {
+    fn test_layout_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -11668,10 +11614,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     false,
                 )
             })
@@ -11687,10 +11632,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(3)..DisplayRow(6)),
-                    Some(DisplayRow(1)),
+                    DisplayRow(1),
                     false,
                 )
             })
@@ -11704,10 +11648,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(3)),
-                    Some(DisplayRow(6)),
+                    DisplayRow(6),
                     false,
                 )
             })
@@ -11759,7 +11702,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_shape_line_numbers_wrapping(cx: &mut TestAppContext) {
+    fn test_layout_line_numbers_wrapping(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -11816,10 +11759,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     true,
                 )
             })
@@ -11871,10 +11813,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     true,
                 )
             })
