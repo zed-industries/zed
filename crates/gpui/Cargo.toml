@@ -253,6 +253,7 @@ rand.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 util = { workspace = true, features = ["test-support"] }
+png = "0.17"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
@@ -330,6 +331,14 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "screenshot"
+path = "examples/screenshot.rs"
+
+[[example]]
+name = "capture_zed"
+path = "examples/capture_zed.rs"
 
 [[example]]
 name = "mouse_pressure"
