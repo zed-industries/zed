@@ -175,6 +175,63 @@ You can configure ESLint's `workingDirectory` setting:
 }
 ```
 
+## Using the Tailwind CSS Language Server with JavaScript
+
+It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in JavaScript files.
+
+In order to do that you need to update your `settings.json`, to include the 
+Tailwind CSS language server for JavaScript and configure the `classRegex` 
+settings to recognize Tailwind CSS classes in JavaScript code:
+
+```json [settings]
+{
+  "languages": {
+    "JavaScript": {
+      "language_servers": ["tailwindcss-language-server", "..."]
+    }
+  },
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "experimental": {
+          "classRegex": [
+            "\\.className\\s*[+]?=\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttributeNS\\(.*,\\s*['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttribute\\(['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.add\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.remove\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.toggle\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.contains\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\(\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\([^,)]+,\\s*['\"]([^'\"]*)['\"]"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+You can now get Tailwind CSS IntelliSense features in your TypeScript files.
+
+Example:
+```js
+const element = document.getElementById("my-element");
+if (element) {
+	element.className = "bg-yellow-500 <completion here>";
+	element.className += "bg-white <completion here>";
+	element.classList.add("text-sky-500 <completion here>");
+	element.classList.remove("shadow-amber-400 <completion here>");
+	element.classList.toggle("shadow-amber-100 <completion here>");
+	element.classList.replace("to-red-500 <completion here>", "to-blue-500 <completion here>");
+	element.classList.contains("bg-green-500 <completion here>");
+	element.setAttributeNS(null, "class", "bg-purple-500 <completion here>");
+	element.setAttribute("class", "via-black <completion here>");
+}
+```
+
+Note: For JSX files please refer to: [Tailwind CSS Configuration](./tailwindcss.md)
+
 ## Debugging
 
 Zed supports debugging JavaScript code out of the box with `vscode-js-debug`.
