@@ -9164,6 +9164,15 @@ impl Element for EditorElement {
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
 
+                    // Calculate how much of the editor is clipped by parent containers (e.g., List).
+                    // This allows us to only render lines that are actually visible, which is
+                    // critical for performance when large AutoHeight editors are inside Lists.
+                    let visible_bounds = window.content_mask().bounds;
+                    let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
+                    let clipped_top_in_lines = f64::from(clipped_top / line_height);
+                    let visible_height_in_lines =
+                        f64::from(visible_bounds.size.height / line_height);
+
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
                         snapshot.mode,
@@ -9220,10 +9229,16 @@ impl Element for EditorElement {
                     let mut scroll_position = snapshot.scroll_position();
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
-                    let start_row = DisplayRow(scroll_position.y as u32);
+                    // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
+                    // but we don't modify scroll_position itself since the parent handles positioning.
                     let max_row = snapshot.max_point().row();
+                    let start_row = cmp::min(
+                        DisplayRow((scroll_position.y + clipped_top_in_lines).floor() as u32),
+                        max_row,
+                    );
                     let end_row = cmp::min(
-                        (scroll_position.y + height_in_lines).ceil() as u32,
+                        (scroll_position.y + clipped_top_in_lines + visible_height_in_lines).ceil()
+                            as u32,
                         max_row.next_row().0,
                     );
                     let end_row = DisplayRow(end_row);

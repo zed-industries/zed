@@ -52,7 +52,7 @@ impl SshSettings {
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
         for conn in self.ssh_connections() {
-            if conn.host == options.host
+            if conn.host == options.host.to_string()
                 && conn.username == options.username
                 && conn.port == options.port
             {
@@ -72,7 +72,7 @@ impl SshSettings {
         username: Option<String>,
     ) -> SshConnectionOptions {
         let mut options = SshConnectionOptions {
-            host,
+            host: host.into(),
             port,
             username,
             ..Default::default()

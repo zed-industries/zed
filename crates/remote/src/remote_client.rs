@@ -921,10 +921,12 @@ impl RemoteClient {
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
     ) -> (RemoteConnectionOptions, AnyProtoClient) {
+        use crate::transport::ssh::SshConnectionHost;
+
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
         let opts = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "<fake>".to_string(),
+            host: SshConnectionHost::from("<fake>".to_string()),
             port: Some(port),
             ..Default::default()
         });
@@ -1089,7 +1091,7 @@ pub enum RemoteConnectionOptions {
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
         }

@@ -1919,7 +1919,7 @@ impl RenderedText {
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
-        let mut ret = vec![];
+        let mut accumulator = String::new();
 
         for line in self.lines.iter() {
             if range.start > line.source_end {
@@ -1944,9 +1944,12 @@ impl RenderedText {
             }
             .min(text.len());
 
-            ret.push(text[start..end].to_string());
+            accumulator.push_str(&text[start..end]);
+            accumulator.push('\n');
         }
-        ret.join("\n")
+        // Remove trailing newline
+        accumulator.pop();
+        accumulator
     }
 
     fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {

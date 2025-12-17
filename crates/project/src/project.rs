@@ -2483,13 +2483,11 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            self.worktree_store.update(cx, |worktree_store, cx| {
-                for worktree in worktree_store.worktrees() {
-                    store
-                        .clear_local_settings(worktree.read(cx).id(), cx)
-                        .log_err();
-                }
-            });
+            for worktree_metadata in &message.worktrees {
+                store
+                    .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                    .log_err();
+            }
         });
 
         self.join_project_response_message_id = message_id;
@@ -4729,6 +4727,14 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    for worktree_metadata in &envelope.payload.worktrees {
+                        store
+                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                            .log_err();
+                    }
+                });
+
                 this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             }
             Ok(())
