@@ -73,7 +73,9 @@ You can follow the following setups:
  * [Tailwind CLI Guide](https://tailwindcss.com/docs/installation/tailwind-cli)
  * [Tailwind Play CDN](https://tailwindcss.com/docs/installation/play-cdn)
 
-We will follow the CDN approach for this example.
+We will follow the CDN approach for this example for brevity.
+
+Note: "The Play CDN is designed for development purposes only, and is not intended for production."
 
 Firstly you need to update your `settings.json`, to include the
 Tailwind CSS language server for HTML files and configure the `classRegex`

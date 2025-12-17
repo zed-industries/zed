@@ -82,7 +82,7 @@ settings to recognize Tailwind CSS classes in TypeScript code:
 }
 ```
 
-You can now get Tailwind CSS IntelliSense features in your TypeScript files.
+You can now get Tailwind CSS autocomplete, linting, and hover previews in your TypeScript files.
 
 Example:
 ```ts

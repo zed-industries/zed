@@ -179,8 +179,8 @@ You can configure ESLint's `workingDirectory` setting:
 
 It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in JavaScript files.
 
-In order to do that you need to update your `settings.json`, to include the 
-Tailwind CSS language server for JavaScript and configure the `classRegex` 
+In order to do that you need to update your `settings.json`, to include the
+Tailwind CSS language server for JavaScript and configure the `classRegex`
 settings to recognize Tailwind CSS classes in JavaScript code:
 
 ```json [settings]
@@ -212,7 +212,7 @@ settings to recognize Tailwind CSS classes in JavaScript code:
 }
 ```
 
-You can now get Tailwind CSS IntelliSense features in your TypeScript files.
+You can now get Tailwind CSS autocomplete, linting, and hover previews in your JavaScript files.
 
 Example:
 ```js
