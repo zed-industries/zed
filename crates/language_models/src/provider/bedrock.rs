@@ -1364,10 +1364,11 @@ impl Render for ConfigurationView {
 
         let tooltip_label = if env_var_set {
             Some(format!(
-                "To reset your credentials, unset the {}, {}, and {} environment variables.",
+                "To reset your credentials, unset the {}, {}, and {} or {} environment variables.",
                 ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
                 ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                ZED_BEDROCK_REGION_VAR.name
+                ZED_BEDROCK_SESSION_TOKEN_VAR.name,
+                ZED_BEDROCK_BEARER_TOKEN_VAR.name
             ))
         } else if is_settings_derived {
             Some(
