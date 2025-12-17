@@ -65,6 +65,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
+use encoding_rs;
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -5461,13 +5462,22 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
+            let has_bom = file.has_bom;
+
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        new_text.into(),
+                        line_ending,
+                        encoding_rs::UTF_8,
+                        has_bom,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;

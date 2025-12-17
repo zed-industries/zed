@@ -512,6 +512,8 @@ pub enum Model {
     Gemini25Pro,
     #[serde(rename = "gemini-3-pro-preview")]
     Gemini3Pro,
+    #[serde(rename = "gemini-3-flash-preview")]
+    Gemini3Flash,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -534,6 +536,7 @@ impl Model {
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini3Pro => "gemini-3-pro-preview",
+            Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -543,6 +546,7 @@ impl Model {
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini3Pro => "gemini-3-pro-preview",
+            Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -553,6 +557,7 @@ impl Model {
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
             Self::Gemini3Pro => "Gemini 3 Pro",
+            Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -565,6 +570,7 @@ impl Model {
             Self::Gemini25Flash => 1_048_576,
             Self::Gemini25Pro => 1_048_576,
             Self::Gemini3Pro => 1_048_576,
+            Self::Gemini3Flash => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -575,6 +581,7 @@ impl Model {
             Model::Gemini25Flash => Some(65_536),
             Model::Gemini25Pro => Some(65_536),
             Model::Gemini3Pro => Some(65_536),
+            Model::Gemini3Flash => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -599,6 +606,7 @@ impl Model {
                     budget_tokens: None,
                 }
             }
+            Self::Gemini3Flash => GoogleModelMode::Default,
             Self::Custom { mode, .. } => *mode,
         }
     }

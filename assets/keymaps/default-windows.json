@@ -908,10 +908,10 @@
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
+      "up": "git_panel::PreviousEntry",
+      "down": "git_panel::NextEntry",
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
-      "up": "menu::SelectPrevious",
-      "down": "menu::SelectNext",
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "shift-alt-y": "git::UnstageFile",

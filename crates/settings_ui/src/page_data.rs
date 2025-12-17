@@ -1233,6 +1233,49 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             }
                         }).collect(),
                     }),
+                    SettingsPageItem::SectionHeader("Which-key Menu"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Which-key Menu",
+                        description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending.",
+                        field: Box::new(SettingField {
+                            json_path: Some("which_key.enabled"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .which_key
+                                    .as_ref()
+                                    .and_then(|settings| settings.enabled.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .which_key
+                                    .get_or_insert_default()
+                                    .enabled = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Menu Delay",
+                        description: "Delay in milliseconds before the which-key menu appears.",
+                        field: Box::new(SettingField {
+                            json_path: Some("which_key.delay_ms"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .which_key
+                                    .as_ref()
+                                    .and_then(|settings| settings.delay_ms.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .which_key
+                                    .get_or_insert_default()
+                                    .delay_ms = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Double Click In Multibuffer",
