@@ -4698,7 +4698,7 @@ impl GitPanel {
                                         // Magic number to align the tree item is 3 here
                                         // because we're using 12px as the left-side padding
                                         // and 3 makes the alignment work with the bounding box of the icon
-                                        let left_offset = px(TREE_INDENT + 3 as f32);
+                                        let left_offset = px(TREE_INDENT + 3_f32);
                                         let indent_size = params.indent_size;
                                         let item_height = params.item_height;
 
