@@ -264,9 +264,9 @@
   {
     "context": "AgentPanel > Markdown",
     "bindings": {
-      "copy": "markdown::Copy",
-      "ctrl-insert": "markdown::Copy",
-      "ctrl-c": "markdown::Copy",
+      "copy": "markdown::CopyAsMarkdown",
+      "ctrl-insert": "markdown::CopyAsMarkdown",
+      "ctrl-c": "markdown::CopyAsMarkdown",
     },
   },
   {
