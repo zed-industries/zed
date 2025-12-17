@@ -42,7 +42,9 @@ use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
 
-use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
+use crate::provider::anthropic::{
+    AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
+};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 use crate::provider::x_ai::count_xai_tokens;
@@ -667,9 +669,9 @@ impl LanguageModel for CloudLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic => {
-                count_anthropic_tokens(request, cx)
-            }
+            cloud_llm_client::LanguageModelProvider::Anthropic => cx
+                .background_spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
+                .boxed(),
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,

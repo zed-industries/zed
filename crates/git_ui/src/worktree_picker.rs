@@ -421,6 +421,7 @@ async fn open_remote_worktree(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            true,
             cx,
         )
     })?;

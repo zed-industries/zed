@@ -911,7 +911,7 @@ pub fn surrounding_html_tag(
     while let Some(cur_node) = last_child_node {
         if cur_node.child_count() >= 2 {
             let first_child = cur_node.child(0);
-            let last_child = cur_node.child(cur_node.child_count() - 1);
+            let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
             if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));

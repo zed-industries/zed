@@ -9,6 +9,7 @@ pub mod pane_group;
 mod path_list;
 mod persistence;
 pub mod searchable;
+mod security_modal;
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
@@ -16,6 +17,7 @@ mod theme_preview;
 mod toast_layer;
 mod toolbar;
 pub mod utility_pane;
+pub mod welcome;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -76,7 +78,9 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
+    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -85,7 +89,9 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
+use settings::{
+    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -136,6 +142,7 @@ use crate::{
         SerializedAxis,
         model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
+    security_modal::SecurityModal,
     utility_pane::{DraggedUtilityPane, UtilityPaneFrame, UtilityPaneSlot, UtilityPaneState},
 };
 
@@ -276,6 +283,12 @@ actions!(
         ZoomIn,
         /// Zooms out of the active pane.
         ZoomOut,
+        /// If any worktrees are in restricted mode, shows a modal with possible actions.
+        /// If the modal is shown already, closes it without trusting any worktree.
+        ToggleWorktreeSecurity,
+        /// Clears all trusted worktrees, placing them in restricted mode on next open.
+        /// Requires restart to take effect on already opened projects.
+        ClearTrustedWorktrees,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1171,6 +1184,7 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
+    _schedule_serialize_worktree_trust: Task<()>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1216,6 +1230,44 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
+                if let TrustedWorktreesEvent::Trusted(..) = e {
+                    let (new_trusted_workspaces, new_trusted_worktrees) = worktrees_store
+                        .update(cx, |worktrees_store, cx| {
+                            worktrees_store.trusted_paths_for_serialization(cx)
+                        });
+                    // Do not persist auto trusted worktrees
+                    if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                        workspace._schedule_serialize_worktree_trust =
+                            cx.background_spawn(async move {
+                                timeout.await;
+                                persistence::DB
+                                    .save_trusted_worktrees(
+                                        new_trusted_worktrees,
+                                        new_trusted_workspaces,
+                                    )
+                                    .await
+                                    .log_err();
+                            });
+                    }
+                }
+            })
+            .detach();
+
+            cx.observe_global::<SettingsStore>(|_, cx| {
+                if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.auto_trust_all(cx);
+                        })
+                    }
+                }
+            })
+            .detach();
+        }
+
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
@@ -1226,11 +1278,25 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
-                    this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.update_history(cx);
+                project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                }
+
+                project::Event::WorktreeRemoved(_) => {
+                    this.update_worktree_data(window, cx);
+                }
+
+                project::Event::WorktreeAdded(worktree_id) => {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(*worktree_id, cx);
+                        });
+                    }
+                    this.update_worktree_data(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1473,7 +1539,7 @@ impl Workspace {
             }),
         ];
 
-        cx.defer_in(window, |this, window, cx| {
+        cx.defer_in(window, move |this, window, cx| {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
@@ -1516,6 +1582,7 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _schedule_serialize_ssh_paths: None,
+            _schedule_serialize_worktree_trust: Task::ready(()),
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -1558,6 +1625,7 @@ impl Workspace {
             app_state.languages.clone(),
             app_state.fs.clone(),
             env,
+            true,
             cx,
         );
 
@@ -5938,6 +6006,27 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleWorktreeSecurity, window, cx| {
+                    workspace.show_worktree_trust_security_modal(true, window, cx);
+                },
+            ))
+            .on_action(
+                cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktrees.update(cx, |trusted_worktrees, _| {
+                            trusted_worktrees.clear_trusted_paths()
+                        });
+                        let clear_task = persistence::DB.clear_trusted_worktrees();
+                        cx.spawn(async move |_, cx| {
+                            if clear_task.await.log_err().is_some() {
+                                cx.update(|cx| reload(cx)).ok();
+                            }
+                        })
+                        .detach();
+                    }
+                }),
+            )
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
@@ -6416,6 +6505,48 @@ impl Workspace {
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
+    }
+
+    pub fn show_worktree_trust_security_modal(
+        &mut self,
+        toggle: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
+            if toggle {
+                security_modal.update(cx, |security_modal, cx| {
+                    security_modal.dismiss(cx);
+                })
+            } else {
+                security_modal.update(cx, |security_modal, cx| {
+                    security_modal.refresh_restricted_paths(cx);
+                });
+            }
+        } else {
+            let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .map(|trusted_worktrees| {
+                    trusted_worktrees
+                        .read(cx)
+                        .has_restricted_worktrees(&self.project().read(cx).worktree_store(), cx)
+                })
+                .unwrap_or(false);
+            if has_restricted_worktrees {
+                let project = self.project().read(cx);
+                let remote_host = project.remote_connection_options(cx);
+                let worktree_store = project.worktree_store().downgrade();
+                self.toggle_modal(window, cx, |_, cx| {
+                    SecurityModal::new(worktree_store, remote_host, cx)
+                });
+            }
+        }
+    }
+
+    fn update_worktree_data(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.update_window_title(window, cx);
+        self.serialize_workspace(window, cx);
+        // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+        self.update_history(cx);
     }
 }
 
@@ -7967,6 +8098,7 @@ pub fn open_remote_project_with_new_connection(
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
                 app_state.fs.clone(),
+                true,
                 cx,
             )
         })?;
