@@ -1898,6 +1898,17 @@ impl AcpThreadView {
         })
     }
 
+    pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
+        self.thread().is_some_and(|thread| {
+            thread.read(cx).entries().iter().any(|entry| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
+                )
+            })
+        })
+    }
+
     fn authorize_tool_call(
         &mut self,
         tool_call_id: acp::ToolCallId,
