@@ -291,7 +291,9 @@ fn group_bindings(
         // Remove duplicates within each group
         group_bindings.dedup_by_key(|(keystrokes, _)| keystrokes.clone());
 
-        if let Some(first_key) = first_key && group_bindings.len() > 1 {
+        if let Some(first_key) = first_key
+            && group_bindings.len() > 1
+        {
             // This is a group - create a single entry with just the first keystroke
             let first_keystroke = vec![first_key];
             let count = group_bindings.len();
