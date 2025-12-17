@@ -526,6 +526,14 @@ struct PreviewFooterState {
     instances: HashMap<core::SourceId, core::FooterInstance>,
     open_by_source: HashMap<core::SourceId, bool>,
     cancellation_by_source: HashMap<core::SourceId, core::SearchCancellation>,
+    last_context_by_source: HashMap<core::SourceId, FooterContextKey>,
+    last_selected_by_source: HashMap<core::SourceId, QuickMatch>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct FooterContextKey {
+    query: Arc<str>,
+    selected_key: Option<MatchKey>,
 }
 
 impl PreviewFooterState {
@@ -559,10 +567,17 @@ impl PreviewFooterState {
             instances,
             open_by_source,
             cancellation_by_source: HashMap::new(),
+            last_context_by_source: HashMap::new(),
+            last_selected_by_source: HashMap::new(),
         }
     }
 
     fn set_preview_visible(&mut self, preview_visible: bool) {
+        if self.preview_visible && !preview_visible {
+            for cancellation in self.cancellation_by_source.values() {
+                cancellation.cancel();
+            }
+        }
         self.preview_visible = preview_visible;
     }
 
@@ -586,6 +601,7 @@ impl PreviewFooterState {
         &mut self,
         selected: Option<QuickMatch>,
         query: Arc<str>,
+        preview_buffer: Option<Entity<Buffer>>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
@@ -594,6 +610,48 @@ impl PreviewFooterState {
             return;
         };
 
+        if !self.preview_visible || query.is_empty() {
+            if let Some(prev) = self.cancellation_by_source.get(&self.active_source) {
+                prev.cancel();
+            }
+            instance.host.set_loading(false, cx);
+            instance.host.set_has_content(false, cx);
+            self.last_selected_by_source.remove(&self.active_source);
+            self.last_context_by_source.remove(&self.active_source);
+            return;
+        }
+
+        if let Some(selected) = selected.as_ref() {
+            self.last_selected_by_source
+                .insert(self.active_source.clone(), selected.clone());
+        }
+
+        let context_key = FooterContextKey {
+            query: query.clone(),
+            selected_key: selected.as_ref().map(|selected| selected.key),
+        };
+
+        if selected.is_none() {
+            if self
+                .last_context_by_source
+                .get(&self.active_source)
+                .is_some_and(|prev| prev.query == query && prev.selected_key.is_some())
+            {
+                return;
+            }
+        }
+
+        if self
+            .last_context_by_source
+            .get(&self.active_source)
+            .is_some_and(|prev| prev == &context_key)
+        {
+            return;
+        }
+
+        self.last_context_by_source
+            .insert(self.active_source.clone(), context_key);
+
         if let Some(prev) = self.cancellation_by_source.get(&self.active_source) {
             prev.cancel();
         }
@@ -601,13 +659,6 @@ impl PreviewFooterState {
         let cancellation = core::SearchCancellation::new(Arc::new(AtomicBool::new(false)));
         self.cancellation_by_source
             .insert(self.active_source.clone(), cancellation.clone());
-
-        let selected = if self.preview_visible { selected } else { None };
-
-        if selected.is_none() {
-            instance.host.set_loading(false, cx);
-            instance.host.set_has_content(false, cx);
-        }
 
         let open = self
             .open_by_source
@@ -619,7 +670,10 @@ impl PreviewFooterState {
             core::FooterEvent::ContextChanged(core::FooterContext {
                 project,
                 query,
-                selected,
+                selected: selected.or_else(|| {
+                    self.last_selected_by_source.get(&self.active_source).cloned()
+                }),
+                preview_buffer,
                 cancellation,
             }),
             window,
@@ -700,10 +754,11 @@ impl PreviewFooterState {
         if !self.preview_visible {
             return None;
         }
-        if selected.is_none() {
+        if *active_source != self.active_source {
             return None;
         }
-        if *active_source != self.active_source {
+        let selected = selected.or_else(|| self.last_selected_by_source.get(active_source));
+        if selected.is_none() {
             return None;
         }
 
@@ -1665,6 +1720,10 @@ impl PickerDelegate for QuickSearchDelegate {
                 cx,
             )
         });
+        let footer_preview_buffer = match &request {
+            PreviewRequest::Buffer { buffer, .. } => Some(buffer.clone()),
+            _ => None,
+        };
         let footer_selected = selected;
         let footer_query: Arc<str> = Arc::from(self.current_query.clone());
         let footer_project = self.project.clone();
@@ -1683,6 +1742,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 quick_search.preview_footer.update_active_context(
                     footer_selected.clone(),
                     footer_query.clone(),
+                    footer_preview_buffer.clone(),
                     footer_project.clone(),
                     window,
                     cx,
@@ -2072,7 +2132,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                             cx,
                                         );
                                         editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::fit()),
+                                            SelectionEffects::scroll(Autoscroll::center()),
                                             window,
                                             cx,
                                             |selections| selections.select_ranges([point_range.clone()]),

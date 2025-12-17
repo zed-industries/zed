@@ -6,6 +6,7 @@ use std::{
 };
 
 use gpui::{AnyView, App, AppContext, AsyncApp, Context, Entity, WeakEntity, Window};
+use language::Buffer;
 use log::debug;
 use project::Project;
 use project::search::SearchResult;
@@ -158,6 +159,7 @@ pub struct FooterContext {
     #[allow(dead_code)]
     pub query: Arc<str>,
     pub selected: Option<QuickMatch>,
+    pub preview_buffer: Option<Entity<Buffer>>,
     pub cancellation: SearchCancellation,
 }
 

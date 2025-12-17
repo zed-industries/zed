@@ -232,17 +232,32 @@ impl QuickSearchSource for TextGrepSource {
                     let Some(buffer_id) = selected.buffer_id() else {
                         return;
                     };
-                    let Some(point) = selected
+                    let Some(match_range) = selected
                         .ranges()
                         .and_then(|ranges| ranges.first())
-                        .map(|range| range.start)
+                        .cloned()
                     else {
                         return;
                     };
+                    let point = match_range.start;
+                    let end_point = if match_range.end.column > 0 {
+                        Point::new(
+                            match_range.end.row,
+                            match_range.end.column.saturating_sub(1),
+                        )
+                    } else {
+                        match_range.end
+                    };
+                    let mut hover_points = Vec::with_capacity(2);
+                    hover_points.push(point);
+                    if end_point != point {
+                        hover_points.push(end_point);
+                    }
                     let project_path = selected.project_path().cloned();
                     let worktree_id = project_path.as_ref().map(|path| path.worktree_id);
 
                     let project = ctx.project.clone();
+                    let preview_buffer = ctx.preview_buffer.clone();
                     let cancellation = ctx.cancellation.clone();
 
                     host_for_events.set_loading(true, cx);
@@ -308,16 +323,32 @@ impl QuickSearchSource for TextGrepSource {
                                 return;
                             }
 
-                            let buffer = cx
-                                .read_entity(&project, |project, cx| {
-                                    project.buffer_for_id(buffer_id, cx)
+                            let buffer = preview_buffer
+                                .and_then(|buffer| {
+                                    let matches = cx
+                                        .read_entity(&buffer, |buffer, _| buffer.remote_id())
+                                        .map(|id| id == buffer_id)
+                                        .unwrap_or_else(|err| {
+                                            debug!(
+                                                "quick_search: failed to read preview buffer id for hover footer: {:?}",
+                                                err
+                                            );
+                                            false
+                                        });
+                                    matches.then_some(buffer)
                                 })
-                                .unwrap_or_else(|err| {
-                                    debug!(
-                                        "quick_search: failed to read project buffer for grep footer: {:?}",
-                                        err
-                                    );
-                                    None
+                                .map(Some)
+                                .unwrap_or_else(|| {
+                                    cx.read_entity(&project, |project, cx| {
+                                        project.buffer_for_id(buffer_id, cx)
+                                    })
+                                    .unwrap_or_else(|err| {
+                                        debug!(
+                                            "quick_search: failed to read project buffer for grep footer: {:?}",
+                                            err
+                                        );
+                                        None
+                                    })
                                 });
 
                             set_loading_label(Some(Arc::from("Opening file…")), cx);
@@ -363,92 +394,24 @@ impl QuickSearchSource for TextGrepSource {
                                 return;
                             }
 
-                            let (language_name, has_relevant_adapters, has_running_relevant, busy_hint) = cx
-                                .read_entity(&project, |project, cx| {
+                            let (language_name, has_relevant_adapters) =
+                                cx.read_entity(&project, |project, cx| {
                                     let Some(language) = buffer.read(cx).language().cloned() else {
-                                        return (None, false, false, None);
+                                        return (None, false);
                                     };
                                     let language_name = Some(language.name());
-                                    let relevant = project
+                                    let has_relevant_adapters = !project
                                         .languages()
                                         .lsp_adapters(&language.name())
-                                        .into_iter()
-                                        .map(|adapter| adapter.name())
-                                        .collect::<std::collections::HashSet<_>>();
-                                    if relevant.is_empty() {
-                                        return (language_name, false, false, None);
-                                    }
-
-                                    let mut busy_hint: Option<String> = None;
-                                    let any_running_relevant = project
-                                        .language_server_statuses(cx)
-                                        .filter_map(|(_, status)| {
-                                            let matches_worktree = match worktree_id {
-                                                Some(worktree_id) => {
-                                                    status.worktree.is_none()
-                                                        || status.worktree == Some(worktree_id)
-                                                }
-                                                None => true,
-                                            };
-                                            (relevant.contains(&status.name) && matches_worktree)
-                                                .then_some(status)
-                                        })
-                                        .inspect(|status| {
-                                            if busy_hint.is_some() {
-                                                return;
-                                            }
-                                            if status.has_pending_diagnostic_updates {
-                                                busy_hint =
-                                                    Some("updating diagnostics".to_string());
-                                                return;
-                                            }
-                                            if let Some((_token, progress)) =
-                                                status.pending_work.iter().next()
-                                            {
-                                                if let Some(title) = progress
-                                                    .title
-                                                    .as_ref()
-                                                    .filter(|s| !s.trim().is_empty())
-                                                {
-                                                    if let Some(pct) = progress.percentage {
-                                                        busy_hint =
-                                                            Some(format!("{title} ({pct}%)"));
-                                                    } else {
-                                                        busy_hint = Some(title.to_string());
-                                                    }
-                                                } else if let Some(message) = progress
-                                                    .message
-                                                    .as_ref()
-                                                    .filter(|s| !s.trim().is_empty())
-                                                {
-                                                    if let Some(pct) = progress.percentage {
-                                                        busy_hint = Some(format!(
-                                                            "{message} ({pct}%)"
-                                                        ));
-                                                    } else {
-                                                        busy_hint = Some(message.to_string());
-                                                    }
-                                                } else {
-                                                    busy_hint = Some("busy".to_string());
-                                                }
-                                            }
-                                        })
-                                        .next()
-                                        .is_some();
-
-                                    (
-                                        language_name,
-                                        true,
-                                        any_running_relevant,
-                                        busy_hint.map(Arc::<str>::from),
-                                    )
+                                        .is_empty();
+                                    (language_name, has_relevant_adapters)
                                 })
                                 .unwrap_or_else(|err| {
                                     debug!(
-                                        "quick_search: failed to read language server statuses for footer: {:?}",
+                                        "quick_search: failed to read language info for footer: {:?}",
                                         err
                                     );
-                                    (None, false, false, None)
+                                    (None, false)
                                 });
 
                             if language_name.is_none() {
@@ -482,44 +445,10 @@ impl QuickSearchSource for TextGrepSource {
                                 return;
                             }
 
-                            if has_relevant_adapters && !has_running_relevant {
-                                set_loading_label(Some(Arc::from("Starting language server…")), cx);
-                            } else {
-                                let label = if let Some(hint) = busy_hint {
-                                    Arc::<str>::from(format!("Requesting hover… ({hint})"))
-                                } else {
-                                    Arc::<str>::from("Requesting hover…")
-                                };
-                                set_loading_label(Some(label), cx);
-                            }
-
-                            let hover_task = cx.update_entity(&project, |project, cx| {
-                                project.hover(&buffer, point, cx)
-                            });
-                            let hover_task = match hover_task {
-                                Ok(task) => task,
-                                Err(err) => {
-                                    debug!("quick_search: hover request failed: {:?}", err);
-                                    set_loading(false, cx);
-                                    set_has_content(true, cx);
-                                    set_loading_label(None, cx);
-                                    if let Err(err) = footer_for_task.update(cx, |footer, cx| {
-                                        footer.set_message(Arc::from("Failed to request hover."));
-                                        cx.notify();
-                                    }) {
-                                        debug!("quick_search: failed to update grep footer view: {:?}", err);
-                                    }
-                                    return;
-                                }
-                            };
-
-                            let hover_task = hover_task.fuse();
-                            futures::pin_mut!(hover_task);
-
-                            let busy_hint_for_buffer = |cx: &gpui::AsyncWindowContext| {
+                            let server_status_for_buffer = |cx: &gpui::AsyncWindowContext| {
                                 cx.read_entity(&project, |project, cx| {
                                     let Some(language) = buffer.read(cx).language().cloned() else {
-                                        return None;
+                                        return (false, false, None);
                                     };
                                     let relevant = project
                                         .languages()
@@ -528,8 +457,13 @@ impl QuickSearchSource for TextGrepSource {
                                         .map(|adapter| adapter.name())
                                         .collect::<std::collections::HashSet<_>>();
                                     if relevant.is_empty() {
-                                        return None;
+                                        return (false, false, None);
                                     }
+
+                                    let mut has_running_relevant = false;
+                                    let mut has_pending_diagnostic_updates = false;
+                                    let mut best_progress: Option<(std::time::Instant, Arc<str>)> =
+                                        None;
 
                                     for (_id, status) in project.language_server_statuses(cx) {
                                         if !relevant.contains(&status.name) {
@@ -542,183 +476,419 @@ impl QuickSearchSource for TextGrepSource {
                                                 }
                                             }
                                         }
-                                        if status.has_pending_diagnostic_updates {
-                                            return Some(Arc::<str>::from("updating diagnostics"));
-                                        }
-                                        if let Some((_token, progress)) = status.pending_work.iter().next() {
-                                            if let Some(title) =
-                                                progress.title.as_ref().filter(|s| !s.trim().is_empty())
-                                            {
-                                                if let Some(pct) = progress.percentage {
-                                                    return Some(Arc::<str>::from(format!("{title} ({pct}%)")));
-                                                }
-                                                return Some(Arc::<str>::from(title.to_string()));
+
+                                        has_running_relevant = true;
+                                        has_pending_diagnostic_updates |=
+                                            status.has_pending_diagnostic_updates;
+
+                                        let Some(progress) = status
+                                            .pending_work
+                                            .values()
+                                            .max_by_key(|progress| progress.last_update_at)
+                                        else {
+                                            continue;
+                                        };
+
+                                        let label = if let Some(title) =
+                                            progress.title.as_ref().filter(|s| !s.trim().is_empty())
+                                        {
+                                            if let Some(pct) = progress.percentage {
+                                                Arc::<str>::from(format!("{title} ({pct}%)"))
+                                            } else {
+                                                Arc::<str>::from(title.to_string())
                                             }
-                                            if let Some(message) =
-                                                progress.message.as_ref().filter(|s| !s.trim().is_empty())
-                                            {
-                                                if let Some(pct) = progress.percentage {
-                                                    return Some(Arc::<str>::from(format!("{message} ({pct}%)")));
-                                                }
-                                                return Some(Arc::<str>::from(message.to_string()));
+                                        } else if let Some(message) =
+                                            progress.message.as_ref().filter(|s| !s.trim().is_empty())
+                                        {
+                                            if let Some(pct) = progress.percentage {
+                                                Arc::<str>::from(format!("{message} ({pct}%)"))
+                                            } else {
+                                                Arc::<str>::from(message.to_string())
                                             }
-                                            return Some(Arc::<str>::from("busy"));
+                                        } else {
+                                            Arc::<str>::from("busy")
+                                        };
+
+                                        match best_progress.as_ref() {
+                                            Some((at, _)) if *at >= progress.last_update_at => {}
+                                            _ => {
+                                                best_progress = Some((progress.last_update_at, label));
+                                            }
                                         }
                                     }
 
-                                    None
+                                    let hint = if let Some((_at, label)) = best_progress {
+                                        Some(label)
+                                    } else if has_pending_diagnostic_updates {
+                                        Some(Arc::<str>::from("updating diagnostics"))
+                                    } else {
+                                        None
+                                    };
+
+                                    let busy = hint.is_some();
+                                    (has_running_relevant, busy, hint)
                                 })
                                 .unwrap_or_else(|err| {
                                     debug!(
                                         "quick_search: failed to read language server statuses for footer: {:?}",
                                         err
                                     );
-                                    None
+                                    (false, false, None)
                                 })
                             };
 
-                            let hovers = loop {
+                            let slow_after =
+                                std::time::Instant::now() + std::time::Duration::from_secs(30);
+                            let started_at = std::time::Instant::now();
+                            let min_time_before_no_hover = std::time::Duration::from_secs(1);
+                            let mut consecutive_idle_empty_responses: usize = 0;
+
+                            loop {
                                 if cancellation.is_cancelled() {
                                     set_loading(false, cx);
                                     set_loading_label(None, cx);
                                     return;
                                 }
 
-                                let poll_timer = cx
-                                    .background_executor()
-                                    .timer(std::time::Duration::from_millis(250))
-                                    .fuse();
-                                futures::pin_mut!(poll_timer);
-
-                                futures::select_biased! {
-                                    hovers = hover_task => break hovers,
-                                    _ = poll_timer => {
-                                        let hint = busy_hint_for_buffer(cx);
-                                        let label = if let Some(hint) = hint {
-                                            Arc::<str>::from(format!("Requesting hover… ({hint})"))
-                                        } else {
-                                            Arc::<str>::from("Requesting hover…")
-                                        };
-                                        set_loading_label(Some(label), cx);
-                                    }
-                                }
-                            };
-                            if cancellation.is_cancelled() {
-                                set_loading(false, cx);
-                                set_loading_label(None, cx);
-                                return;
-                            }
-
-                            let Some(hovers) = hovers else {
-                                let hint = busy_hint_for_buffer(cx);
-                                let is_terminal = has_running_relevant && hint.is_none();
-                                let message = if !has_running_relevant {
-                                    set_loading_label(Some(Arc::from("Starting language server…")), cx);
-                                    Arc::<str>::from("Language server still starting…")
-                                } else if let Some(hint) = hint {
-                                    set_loading_label(Some(Arc::<str>::from(format!(
-                                        "Language server busy… ({hint})"
-                                    ))), cx);
-                                    Arc::<str>::from(format!("Language server busy… ({hint})"))
+                                let poll_interval = if std::time::Instant::now() > slow_after {
+                                    std::time::Duration::from_millis(750)
                                 } else {
-                                    Arc::<str>::from("Hover is not available for this language server.")
+                                    std::time::Duration::from_millis(250)
                                 };
-                                if let Err(err) = footer_for_task.update(cx, |footer, cx| {
-                                    footer.set_message(message.clone());
-                                    cx.notify();
-                                }) {
-                                    debug!("quick_search: failed to update grep footer view: {:?}", err);
-                                }
-                                set_has_content(true, cx);
-                                if is_terminal {
-                                    set_loading(false, cx);
-                                    set_loading_label(None, cx);
-                                }
-                                return;
-                            };
 
-                            let mut blocks: Vec<HoverBlock> = Vec::new();
-                            let mut language_name: Option<language::LanguageName> = None;
-                            for hover in hovers {
-                                if hover.is_empty() {
+                                let (running, _busy, hint) = server_status_for_buffer(cx);
+                                if !running {
+                                    consecutive_idle_empty_responses = 0;
+                                    set_loading_label(Some(Arc::from("Starting language server…")), cx);
+                                    if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        footer.set_message(Arc::<str>::from(
+                                            "Language server still starting…",
+                                        ));
+                                        cx.notify();
+                                    }) {
+                                        debug!(
+                                            "quick_search: failed to update grep footer view: {:?}",
+                                            err
+                                        );
+                                    }
+                                    set_has_content(true, cx);
+                                    cx.background_executor()
+                                        .timer(poll_interval)
+                                        .await;
                                     continue;
                                 }
-                                if language_name.is_none() {
-                                    language_name =
-                                        hover.language.as_ref().map(|language| language.name());
-                                }
-                                blocks.extend(hover.contents);
-                            }
 
-                            let text = hover_blocks_to_markdown(&blocks);
-                            if text.trim().is_empty() {
-                                let hint = busy_hint_for_buffer(cx);
-                                let is_terminal = has_running_relevant && hint.is_none();
-                                let message = if !has_running_relevant {
-                                    set_loading_label(Some(Arc::from("Starting language server…")), cx);
-                                    Arc::<str>::from("Language server still starting…")
-                                } else if let Some(hint) = hint {
-                                    set_loading_label(Some(Arc::<str>::from(format!(
-                                        "Language server busy… ({hint})"
-                                    ))), cx);
-                                    Arc::<str>::from(format!(
-                                        "Language server busy… ({hint}). Try again shortly."
-                                    ))
+                                let label = if let Some(hint) = hint {
+                                    Arc::<str>::from(format!("Requesting hover… ({hint})"))
                                 } else {
-                                    Arc::<str>::from("No hover information at this position.")
+                                    Arc::<str>::from("Requesting hover…")
                                 };
-                                if let Err(err) = footer_for_task.update(cx, |footer, cx| {
-                                    footer.set_message(message.clone());
-                                    cx.notify();
-                                }) {
-                                    debug!("quick_search: failed to update grep footer view: {:?}", err);
+                                set_loading_label(Some(label), cx);
+
+                                let mut hovers: Option<Vec<project::Hover>> = None;
+                                let mut saw_not_ready = false;
+                                let mut saw_response = false;
+                                for probe_point in hover_points.iter().cloned() {
+                                    if cancellation.is_cancelled() {
+                                        set_loading(false, cx);
+                                        set_loading_label(None, cx);
+                                        return;
+                                    }
+
+                                    let hover_task = cx.update_entity(&project, |project, cx| {
+                                        project.hover(&buffer, probe_point, cx)
+                                    });
+                                    let hover_task = match hover_task {
+                                        Ok(task) => task,
+                                        Err(err) => {
+                                            debug!(
+                                                "quick_search: hover request failed: {:?}",
+                                                err
+                                            );
+                                            set_loading(false, cx);
+                                            set_has_content(true, cx);
+                                            set_loading_label(None, cx);
+                                            if let Err(err) =
+                                                footer_for_task.update(cx, |footer, cx| {
+                                                    footer.set_message(Arc::from(
+                                                        "Failed to request hover.",
+                                                    ));
+                                                    cx.notify();
+                                                })
+                                            {
+                                                debug!(
+                                                    "quick_search: failed to update grep footer view: {:?}",
+                                                    err
+                                                );
+                                            }
+                                            return;
+                                        }
+                                    };
+
+                                    let hover_task = hover_task.fuse();
+                                    futures::pin_mut!(hover_task);
+
+                                    let result = loop {
+                                        if cancellation.is_cancelled() {
+                                            set_loading(false, cx);
+                                            set_loading_label(None, cx);
+                                            return;
+                                        }
+
+                                        let poll_timer = cx
+                                            .background_executor()
+                                            .timer(poll_interval)
+                                            .fuse();
+                                        futures::pin_mut!(poll_timer);
+
+                                        futures::select_biased! {
+                                            hovers = hover_task => break hovers,
+                                            _ = poll_timer => {
+                                                let (running, _busy, hint) = server_status_for_buffer(cx);
+                                                let label = if !running {
+                                                    Arc::<str>::from("Starting language server…")
+                                                } else if let Some(hint) = hint {
+                                                    Arc::<str>::from(format!("Requesting hover… ({hint})"))
+                                                } else {
+                                                    Arc::<str>::from("Requesting hover…")
+                                                };
+                                                set_loading_label(Some(label), cx);
+                                            }
+                                        }
+                                    };
+
+                                    match result {
+                                        None => {
+                                            saw_not_ready = true;
+                                        }
+                                        Some(result) => {
+                                            saw_response = true;
+                                            let has_content = result
+                                                .iter()
+                                                .any(|hover| !hover.is_empty());
+                                            hovers = Some(result);
+                                            if has_content {
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
-                                set_has_content(true, cx);
-                                if is_terminal {
+
+                                let mut blocks: Vec<HoverBlock> = Vec::new();
+                                let mut hover_language_name: Option<language::LanguageName> = None;
+                                if let Some(hovers) = hovers {
+                                    for hover in hovers {
+                                        if hover.is_empty() {
+                                            continue;
+                                        }
+                                        if hover_language_name.is_none() {
+                                            hover_language_name = hover
+                                                .language
+                                                .as_ref()
+                                                .map(|language| language.name());
+                                        }
+                                        blocks.extend(hover.contents);
+                                    }
+                                }
+
+                                let text = hover_blocks_to_markdown(&blocks);
+                                if text.trim().is_empty() {
+                                    let (running, busy_now, hint) = server_status_for_buffer(cx);
+
+                                    if !running {
+                                        consecutive_idle_empty_responses = 0;
+                                    }
+
+                                    if !saw_response && saw_not_ready {
+                                        consecutive_idle_empty_responses = 0;
+                                        let message = if !running {
+                                            Arc::<str>::from("Language server still starting…")
+                                        } else if let Some(hint) = hint {
+                                            Arc::<str>::from(format!(
+                                                "Language server busy… ({hint}). Waiting for hover…"
+                                            ))
+                                        } else {
+                                            Arc::<str>::from("Waiting for language server hover…")
+                                        };
+                                        if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            footer.set_message(message);
+                                            cx.notify();
+                                        }) {
+                                            debug!(
+                                                "quick_search: failed to update grep footer view: {:?}",
+                                                err
+                                            );
+                                        }
+                                        set_has_content(true, cx);
+                                        cx.background_executor()
+                                            .timer(poll_interval)
+                                            .await;
+                                        continue;
+                                    }
+
+                                    if busy_now {
+                                        consecutive_idle_empty_responses = 0;
+                                        let message = if let Some(hint) = hint {
+                                            Arc::<str>::from(format!(
+                                                "Language server busy… ({hint}). Waiting for hover…"
+                                            ))
+                                        } else {
+                                            Arc::<str>::from("Language server busy… Waiting for hover…")
+                                        };
+                                        if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            footer.set_message(message);
+                                            cx.notify();
+                                        }) {
+                                            debug!(
+                                                "quick_search: failed to update grep footer view: {:?}",
+                                                err
+                                            );
+                                        }
+                                        set_has_content(true, cx);
+                                        cx.background_executor()
+                                            .timer(poll_interval)
+                                            .await;
+                                        continue;
+                                    }
+
+                                    consecutive_idle_empty_responses =
+                                        consecutive_idle_empty_responses.saturating_add(1);
+                                    if consecutive_idle_empty_responses < 2 {
+                                        if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            footer.set_message(Arc::<str>::from(
+                                                "Waiting for hover information…",
+                                            ));
+                                            cx.notify();
+                                        }) {
+                                            debug!(
+                                                "quick_search: failed to update grep footer view: {:?}",
+                                                err
+                                            );
+                                        }
+                                        set_has_content(true, cx);
+                                        cx.background_executor()
+                                            .timer(poll_interval)
+                                            .await;
+                                        continue;
+                                    }
+
+                                    let elapsed = std::time::Instant::now()
+                                        .saturating_duration_since(started_at);
+                                    if elapsed < min_time_before_no_hover {
+                                        if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                            footer.set_message(Arc::<str>::from(
+                                                "Waiting for hover information…",
+                                            ));
+                                            cx.notify();
+                                        }) {
+                                            debug!(
+                                                "quick_search: failed to update grep footer view: {:?}",
+                                                err
+                                            );
+                                        }
+                                        set_has_content(true, cx);
+                                        cx.background_executor()
+                                            .timer(poll_interval)
+                                            .await;
+                                        continue;
+                                    }
+
+                                    if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        footer.set_message(Arc::<str>::from(
+                                            "No hover information at this position.",
+                                        ));
+                                        cx.notify();
+                                    }) {
+                                        debug!(
+                                            "quick_search: failed to update grep footer view: {:?}",
+                                            err
+                                        );
+                                    }
+                                    set_has_content(true, cx);
                                     set_loading(false, cx);
                                     set_loading_label(None, cx);
+                                    return;
                                 }
-                                return;
-                            }
 
-                            let language_registry = cx
-                                .read_entity(&project, |project, _| project.languages().clone())
-                                .map(Some)
-                                .unwrap_or_else(|err| {
+                                if text.contains("{unknown}") {
+                                    consecutive_idle_empty_responses = 0;
+                                    let (_running, _busy_now, hint) = server_status_for_buffer(cx);
+                                    let message = if let Some(hint) = hint {
+                                        Arc::<str>::from(format!(
+                                            "Hover incomplete (server returned {{unknown}}). Waiting… ({hint})"
+                                        ))
+                                    } else {
+                                        Arc::<str>::from(
+                                            "Hover incomplete (server returned {unknown}). Waiting…",
+                                        )
+                                    };
+                                    if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                        footer.set_message(message);
+                                        cx.notify();
+                                    }) {
+                                        debug!(
+                                            "quick_search: failed to update grep footer view: {:?}",
+                                            err
+                                        );
+                                    }
+                                    set_has_content(true, cx);
+                                    cx.background_executor()
+                                        .timer(poll_interval)
+                                        .await;
+                                    continue;
+                                }
+
+                                let language_registry = cx
+                                    .read_entity(&project, |project, _| project.languages().clone())
+                                    .map(Some)
+                                    .unwrap_or_else(|err| {
+                                        debug!(
+                                            "quick_search: failed to read language registry for hover footer: {:?}",
+                                            err
+                                        );
+                                        None
+                                    });
+
+                                let markdown = match cx.new(|cx| {
+                                    Markdown::new(
+                                        text.into(),
+                                        language_registry,
+                                        hover_language_name,
+                                        cx,
+                                    )
+                                }) {
+                                    Ok(markdown) => markdown,
+                                    Err(err) => {
+                                        debug!(
+                                            "quick_search: failed to build hover markdown: {:?}",
+                                            err
+                                        );
+                                        set_loading(false, cx);
+                                        set_has_content(false, cx);
+                                        set_loading_label(None, cx);
+                                        return;
+                                    }
+                                };
+
+                                if let Err(err) = footer_for_task.update(cx, |footer, cx| {
+                                    footer.set_markdown(markdown);
+                                    cx.notify();
+                                }) {
                                     debug!(
-                                        "quick_search: failed to read language registry for hover footer: {:?}",
+                                        "quick_search: failed to update grep footer view: {:?}",
                                         err
                                     );
-                                    None
-                                });
-
-                            let markdown = match cx.new(|cx| {
-                                Markdown::new(text.into(), language_registry, language_name, cx)
-                            }) {
-                                Ok(markdown) => markdown,
-                                Err(err) => {
-                                    debug!("quick_search: failed to build hover markdown: {:?}", err);
                                     set_loading(false, cx);
                                     set_has_content(false, cx);
                                     set_loading_label(None, cx);
                                     return;
                                 }
-                            };
 
-                            if let Err(err) = footer_for_task.update(cx, |footer, cx| {
-                                footer.set_markdown(markdown);
-                                cx.notify();
-                            }) {
-                                debug!("quick_search: failed to update grep footer view: {:?}", err);
                                 set_loading(false, cx);
-                                set_has_content(false, cx);
+                                set_has_content(true, cx);
                                 set_loading_label(None, cx);
                                 return;
                             }
-
-                            set_loading(false, cx);
-                            set_has_content(true, cx);
-                            set_loading_label(None, cx);
                         })
                         .detach();
                 }
