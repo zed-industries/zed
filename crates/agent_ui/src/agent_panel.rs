@@ -1750,59 +1750,25 @@ impl AgentPanel {
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
-                    let is_generating = thread_view
-                        .read(cx)
-                        .as_native_thread(cx)
-                        .map_or(false, |t| t.read(cx).is_generating_title());
-
-                    h_flex()
+                    div()
                         .w_full()
-                        .items_center()
-                        .gap(DynamicSpacing::Base02.rems(cx))
-                        .children(if is_generating {
-                            None
-                        } else {
-                            Some(
-                                IconButton::new("regenerate-thread-title", IconName::Rerun)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Regenerate title"))
-                                    .on_click({
-                                        let thread_view = thread_view.clone();
-                                        move |_, _window, cx| {
-                                            thread_view.update(cx, |thread_view, cx| {
-                                                if let Some(thread) =
-                                                    thread_view.as_native_thread(cx)
-                                                {
-                                                    thread.update(cx, |thread, cx| {
-                                                        thread.generate_title(cx);
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    }),
-                            )
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &menu::Confirm, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
                         })
-                        .child(
-                            div()
-                                .flex_grow()
-                                .on_action({
-                                    let thread_view = thread_view.downgrade();
-                                    move |_: &menu::Confirm, window, cx| {
-                                        if let Some(thread_view) = thread_view.upgrade() {
-                                            thread_view.focus_handle(cx).focus(window);
-                                        }
-                                    }
-                                })
-                                .on_action({
-                                    let thread_view = thread_view.downgrade();
-                                    move |_: &editor::actions::Cancel, window, cx| {
-                                        if let Some(thread_view) = thread_view.upgrade() {
-                                            thread_view.focus_handle(cx).focus(window);
-                                        }
-                                    }
-                                })
-                                .child(title_editor),
-                        )
+                        .on_action({
+                            let thread_view = thread_view.downgrade();
+                            move |_: &editor::actions::Cancel, window, cx| {
+                                if let Some(thread_view) = thread_view.upgrade() {
+                                    thread_view.focus_handle(cx).focus(window);
+                                }
+                            }
+                        })
+                        .child(title_editor)
                         .into_any_element()
                 } else {
                     Label::new(thread_view.read(cx).title(cx))
@@ -1876,6 +1842,20 @@ impl AgentPanel {
             .into_any()
     }
 
+    fn handle_regenerate_thread_title(
+        thread_view: Entity<AcpThreadView>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) {
+        thread_view.update(cx, |thread_view, cx| {
+            if let Some(thread) = thread_view.as_native_thread(cx) {
+                thread.update(cx, |thread, cx| {
+                    thread.generate_title(cx);
+                });
+            }
+        });
+    }
+
     fn render_panel_options_menu(
         &self,
         window: &mut Window,
@@ -1894,6 +1874,18 @@ impl AgentPanel {
         };
 
         let selected_agent = self.selected_agent.clone();
+
+        let show_regenerate_thread_title = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.read(cx).has_user_submitted_prompt(cx)
+            }
+            _ => false,
+        };
+
+        let thread_view = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view.clone()),
+            _ => None,
+        };
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
@@ -1917,6 +1909,7 @@ impl AgentPanel {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
+
                         if let Some(usage) = usage {
                             menu = menu
                                 .header_with_link("Prompt Usage", "Manage", account_url.clone())
@@ -1952,6 +1945,24 @@ impl AgentPanel {
                                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                                 )
                                 .separator()
+                        }
+
+                        if show_regenerate_thread_title {
+                            if let Some(thread_view) = thread_view.as_ref() {
+                                menu = menu
+                                    .header("Current Thread")
+                                    .entry("Regenerate Thread Title", None, {
+                                        let thread_view = thread_view.clone();
+                                        move |window, cx| {
+                                            Self::handle_regenerate_thread_title(
+                                                thread_view.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
                         }
 
                         menu = menu
