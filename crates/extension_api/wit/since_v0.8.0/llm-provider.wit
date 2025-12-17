@@ -33,6 +33,9 @@ interface llm-provider {
     enum tool-input-format {
         /// Standard JSON Schema format.
         json-schema,
+        /// A subset of JSON Schema supported by Google AI.
+        /// See https://ai.google.dev/api/caching#Schema
+        json-schema-subset,
         /// Simplified schema format for certain providers.
         simplified,
     }

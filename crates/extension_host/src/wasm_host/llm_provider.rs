@@ -1637,6 +1637,9 @@ impl LanguageModel for ExtensionLanguageModel {
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model_info.capabilities.tool_input_format {
             LlmToolInputFormat::JsonSchema => LanguageModelToolSchemaFormat::JsonSchema,
+            LlmToolInputFormat::JsonSchemaSubset => {
+                LanguageModelToolSchemaFormat::JsonSchemaSubset
+            }
             LlmToolInputFormat::Simplified => LanguageModelToolSchemaFormat::JsonSchema,
         }
     }
