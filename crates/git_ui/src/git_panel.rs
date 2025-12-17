@@ -801,20 +801,63 @@ impl GitPanel {
     pub fn select_entry_by_path(
         &mut self,
         path: ProjectPath,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(git_repo) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
-            return;
+
+        let (repo_path, section) = {
+            let repo = git_repo.read(cx);
+            let Some(repo_path) = repo.project_path_to_repo_path(&path, cx) else {
+                return;
+            };
+
+            let section = repo
+                .status_for_path(&repo_path)
+                .map(|status| status.status)
+                .map(|status| {
+                    if repo.had_conflict_on_last_merge_head_change(&repo_path) {
+                        Section::Conflict
+                    } else if status.is_created() {
+                        Section::New
+                    } else {
+                        Section::Tracked
+                    }
+                });
+
+            (repo_path, section)
         };
+
+        let mut needs_rebuild = false;
+        if let (Some(section), Some(tree_state)) = (section, self.view_mode.tree_state_mut()) {
+            let mut current_dir = repo_path.parent();
+            while let Some(dir) = current_dir {
+                let key = TreeKey {
+                    section,
+                    path: RepoPath::from_rel_path(dir),
+                };
+
+                if tree_state.expanded_dirs.get(&key) == Some(&false) {
+                    tree_state.expanded_dirs.insert(key, true);
+                    needs_rebuild = true;
+                }
+
+                current_dir = dir.parent();
+            }
+        }
+
+        if needs_rebuild {
+            self.update_visible_entries(window, cx);
+        }
+
         let Some(ix) = self.entry_by_path(&repo_path) else {
             return;
         };
+
         self.selected_entry = Some(ix);
-        cx.notify();
+        self.scroll_to_selected_entry(cx);
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
@@ -902,9 +945,22 @@ impl GitPanel {
     }
 
     fn scroll_to_selected_entry(&mut self, cx: &mut Context<Self>) {
-        if let Some(selected_entry) = self.selected_entry {
+        let Some(selected_entry) = self.selected_entry else {
+            cx.notify();
+            return;
+        };
+
+        let visible_index = match &self.view_mode {
+            GitPanelViewMode::Flat => Some(selected_entry),
+            GitPanelViewMode::Tree(state) => state
+                .logical_indices
+                .iter()
+                .position(|&ix| ix == selected_entry),
+        };
+
+        if let Some(visible_index) = visible_index {
             self.scroll_handle
-                .scroll_to_item(selected_entry, ScrollStrategy::Center);
+                .scroll_to_item(visible_index, ScrollStrategy::Center);
         }
 
         cx.notify();
@@ -6922,6 +6978,128 @@ mod tests {
                 .expect("active_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tree_view_reveals_collapsed_parent_on_select_entry_by_path(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "a": {
+                        "foo.rs": "fn foo() {}",
+                    },
+                    "b": {
+                        "bar.rs": "fn bar() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("src/a/foo.rs", StatusCode::Modified.worktree()),
+                ("src/b/bar.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(true);
+                })
+            });
+        });
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let src_key = panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    GitListEntry::Directory(dir) if dir.key.path == repo_path("src") => {
+                        Some(dir.key.clone())
+                    }
+                    _ => None,
+                })
+                .expect("src directory should exist in tree view")
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_directory(&src_key, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(false));
+        });
+
+        let worktree_id =
+            cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+        let project_path = ProjectPath {
+            worktree_id,
+            path: RelPath::unix("src/a/foo.rs").unwrap().into_arc(),
+        };
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry_by_path(project_path, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            let state = panel
+                .view_mode
+                .tree_state()
+                .expect("tree view state should exist");
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(true));
+
+            let selected_ix = panel.selected_entry.expect("selection should be set");
+            assert!(state.logical_indices.contains(&selected_ix));
+
+            let selected_entry = panel
+                .entries
+                .get(selected_ix)
+                .and_then(|entry| entry.status_entry())
+                .expect("selected entry should be a status entry");
+            assert_eq!(selected_entry.repo_path, repo_path("src/a/foo.rs"));
         });
     }
 
