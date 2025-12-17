@@ -1,54 +1,22 @@
 use std::{
-    ops::Range,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, OnceLock},
 };
 
-use gpui::{App, AppContext, Context, WeakEntity};
+use gpui::AppContext;
 use search::SearchOptions;
-use text::Anchor as TextAnchor;
 use ui::IconName;
 
-use crate::PickerHandle;
-use crate::QuickSearchDelegate;
-use crate::preview::{PreviewKey, PreviewRequest};
-use crate::types::{QuickMatch, QuickMatchKind};
+use crate::types::QuickMatchKind;
+use crate::types::QuickMatchBuilder;
 use anyhow::{Context as AnyhowContext, Result};
 use fuzzy::StringMatchCandidate;
 use git2::Sort;
 use log::debug;
 
-use super::{
-    ConfirmOutcome, GitCommitPreviewMeta, ListPresentation, PreviewPanelUi, QuickSearchSource,
-    SortPolicy, SourceId, SourceSpec,
+use crate::core::{
+    ListPresentation, MatchBatcher, QuickSearchSource, SearchContext, SearchSink, SearchUiContext,
+    SortPolicy, SourceId, SourceSpec, SourceSpecCore, SourceSpecUi,
 };
-
-fn resolve_git_remote_for_workdir(
-    repo_workdir: &Arc<std::path::Path>,
-    project: &gpui::Entity<project::Project>,
-    cx: &mut gpui::App,
-) -> Option<::git::GitRemote> {
-    let git_store = project.read(cx).git_store().read(cx);
-    let repo = git_store
-        .repositories()
-        .values()
-        .find(|repo| repo.read(cx).work_directory_abs_path.as_ref() == repo_workdir.as_ref())?;
-
-    let snapshot = repo.read(cx).snapshot();
-    let remote_url = snapshot
-        .remote_upstream_url
-        .as_ref()
-        .or(snapshot.remote_origin_url.as_ref())?;
-
-    let provider_registry = ::git::GitHostingProviderRegistry::default_global(cx);
-    let (host, parsed) = ::git::parse_git_remote_url(provider_registry, remote_url)?;
-    Some(::git::GitRemote {
-        host,
-        owner: parsed.owner.into(),
-        repo: parsed.repo.into(),
-    })
-}
-
-pub static COMMITS_SOURCE: CommitsSource = CommitsSource;
 
 pub struct CommitsSource;
 
@@ -68,14 +36,19 @@ pub fn list_commits_local(
 ) -> Result<Vec<GitCommitEntry>> {
     let repo = git2::Repository::open(repo_workdir.as_ref()).context("opening git repository")?;
 
-    let branch: Option<Arc<str>> = repo
-        .head()
-        .ok()
-        .and_then(|head| head.shorthand().map(|s| s.to_string()))
-        .and_then(|name| {
-            let name = name.trim();
-            (!name.is_empty() && name != "HEAD").then(|| Arc::<str>::from(name.to_string()))
-        });
+    let branch: Option<Arc<str>> = match repo.head() {
+        Ok(head) => head
+            .shorthand()
+            .map(|s| s.to_string())
+            .and_then(|name| {
+                let name = name.trim();
+                (!name.is_empty() && name != "HEAD").then(|| Arc::<str>::from(name.to_string()))
+            }),
+        Err(err) => {
+            debug!("quick_search: failed to read git HEAD: {:?}", err);
+            None
+        }
+    };
 
     let mut revwalk = repo.revwalk().context("creating git revwalk")?;
     revwalk.push_head().context("pushing HEAD to revwalk")?;
@@ -125,14 +98,18 @@ impl CommitsSource {
         static SPEC: OnceLock<SourceSpec> = OnceLock::new();
         SPEC.get_or_init(|| SourceSpec {
             id: SourceId(Arc::from("commits")),
-            title: Arc::from("Commits"),
-            icon: IconName::GitBranchAlt,
-            placeholder: Arc::from("Search commits..."),
-            supported_options: SearchOptions::empty(),
-            min_query_len: 1,
-            list_presentation: ListPresentation::Flat,
-            use_diff_preview: true,
-            sort_policy: SortPolicy::StreamOrder,
+            core: SourceSpecCore {
+                supported_options: SearchOptions::empty(),
+                min_query_len: 1,
+                sort_policy: SortPolicy::StreamOrder,
+            },
+            ui: SourceSpecUi {
+                title: Arc::from("Commits"),
+                icon: IconName::GitBranchAlt,
+                placeholder: Arc::from("Search commits..."),
+                list_presentation: ListPresentation::Flat,
+                use_diff_preview: true,
+            },
         })
     }
 }
@@ -144,15 +121,12 @@ impl QuickSearchSource for CommitsSource {
 
     fn start_search(
         &self,
-        delegate: &mut QuickSearchDelegate,
-        query: String,
-        generation: usize,
-        cancel_flag: Arc<AtomicBool>,
-        picker: WeakEntity<PickerHandle>,
-        cx: &mut Context<PickerHandle>,
+        ctx: SearchContext,
+        sink: SearchSink,
+        cx: &mut SearchUiContext<'_>,
     ) {
-        let repos = delegate
-            .project
+        let repos = ctx
+            .project()
             .read(cx)
             .git_store()
             .read(cx)
@@ -161,6 +135,7 @@ impl QuickSearchSource for CommitsSource {
             .cloned()
             .collect::<Vec<_>>();
 
+        let query = ctx.query().as_ref().to_string();
         let repos = repos
             .into_iter()
             .map(|repo| {
@@ -170,17 +145,20 @@ impl QuickSearchSource for CommitsSource {
             .collect::<Vec<_>>();
 
         if repos.is_empty() {
-            delegate.is_streaming = false;
-            delegate.total_results = 0;
-            delegate.query_error = Some("No Git repositories found in this project.".to_string());
-            delegate.match_list.clear();
-            delegate.stream_finished = true;
-            cx.notify();
+            let message = "No Git repositories found in this project.".to_string();
+            cx.spawn(move |_, app: &mut gpui::AsyncApp| {
+                let mut app = app.clone();
+                async move {
+                    sink.record_error(message, &mut app);
+                }
+            })
+            .detach();
             return;
         }
 
-        let executor = cx.background_executor().clone();
+        let executor = ctx.background_executor().clone();
         let source_id = self.spec().id.0.clone();
+        let cancel_flag = ctx.cancel_flag();
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
@@ -242,8 +220,13 @@ impl QuickSearchSource for CommitsSource {
                                 .update_entity(&repo_entity, |repo, _| {
                                     repo.snapshot().head_commit
                                 })
-                                .ok()
-                                .flatten();
+                                .unwrap_or_else(|err| {
+                                    debug!(
+                                        "quick_search: failed to read head commit from git store: {:?}",
+                                        err
+                                    );
+                                    None
+                                });
                             if let Some(head) = head_commit {
                                 let sha = head.sha.to_string();
                                 let subject = head
@@ -268,28 +251,14 @@ impl QuickSearchSource for CommitsSource {
                     }
                 }
 
-                if let Some(picker_entity) = picker.upgrade() {
-                    let notice = used_fallback.then_some(
-                        "Some repositories are remote; showing branch-tip commits (full history unavailable).".to_string(),
-                    );
-                    if let Err(err) = app.update_entity(&picker_entity, |picker, cx| {
-                        if picker.delegate.search_engine.generation() != generation {
-                            return;
-                        }
-                        picker.delegate.query_notice = notice.clone();
-                        cx.notify();
-                    }) {
-                        debug!("quick_search: failed to set git fallback notice: {:?}", err);
-                    }
-                }
+                let notice = used_fallback.then_some(
+                    "Some repositories are remote; showing branch-tip commits (full history unavailable)."
+                        .to_string(),
+                );
+                sink.set_query_notice(notice, &mut app);
 
                 if commits.is_empty() {
-                    crate::record_error(
-                        picker,
-                        generation,
-                        "No commits found.".to_string(),
-                        &mut app,
-                    );
+                    sink.record_error("No commits found.".to_string(), &mut app);
                     return;
                 }
 
@@ -313,7 +282,7 @@ impl QuickSearchSource for CommitsSource {
                 )
                 .await;
 
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
                     return;
                 }
 
@@ -334,7 +303,7 @@ impl QuickSearchSource for CommitsSource {
                         })
                 });
 
-                let mut batch = Vec::with_capacity(matches.len());
+                let mut batcher = MatchBatcher::new();
                 for m in matches {
                     let Some(commit) = commits.get(m.candidate_id) else {
                         continue;
@@ -345,127 +314,32 @@ impl QuickSearchSource for CommitsSource {
                     let subject = commit.subject.clone();
                     let author = commit.author_name.clone();
 
-                    let path_label: Arc<str> = Arc::from("");
-                    let display_path: Arc<str> = Arc::from("");
-                    let path_segments: Arc<[Arc<str>]> = Arc::from([]);
-
-                    batch.push(QuickMatch {
-                        id: 0,
-                        key: crate::types::MatchKey(0),
-                        source_id: source_id.clone(),
-                        group: None,
-                        path_label,
-                        display_path,
-                        display_path_positions: None,
-                        path_segments,
-                        file_name: sha_short,
-                        file_name_positions: None,
-                        location_label: Some(author),
-                        snippet: Some(subject),
-                        first_line_snippet: None,
-                        snippet_match_positions: None,
-                        snippet_syntax_highlights: None,
-                        blame: None,
-                        kind: QuickMatchKind::GitCommit {
+                    batcher.push(
+                        QuickMatchBuilder::new(
+                            source_id.clone(),
+                            QuickMatchKind::GitCommit {
                             repo_workdir: commit.repo_workdir.clone(),
                             sha: commit.sha.clone(),
                             branch: commit.branch.clone(),
                             commit_timestamp: commit.commit_timestamp,
                         },
-                    });
+                        )
+                        .file_name(sha_short)
+                        .location_label(Some(author))
+                        .snippet(Some(subject))
+                        .first_line_snippet(None)
+                        .build(),
+                        &sink,
+                        &mut app,
+                    );
                 }
 
-                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    crate::flush_batch(picker.clone(), generation, &mut batch, &mut app);
-                    crate::finish_stream(picker, generation, &mut app);
+                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) && !sink.is_cancelled() {
+                    batcher.finish(&sink, &mut app);
                 }
             }
         })
         .detach();
     }
 
-    fn preview_request_for_match(
-        &self,
-        selected: &QuickMatch,
-        _weak_ranges: Vec<Range<TextAnchor>>,
-        _use_diff_preview: bool,
-        query: &str,
-    ) -> PreviewRequest {
-        let key = PreviewKey(selected.id);
-        match &selected.kind {
-            QuickMatchKind::GitCommit {
-                repo_workdir, sha, ..
-            } => PreviewRequest::GitCommit {
-                key,
-                repo_workdir: repo_workdir.clone(),
-                sha: sha.clone(),
-                query: Arc::<str>::from(query.to_string()),
-            },
-            _ => PreviewRequest::Empty,
-        }
-    }
-
-    fn confirm_outcome_for_match(&self, selected: &QuickMatch, _cx: &App) -> ConfirmOutcome {
-        match &selected.kind {
-            QuickMatchKind::GitCommit {
-                repo_workdir, sha, ..
-            } => ConfirmOutcome::OpenGitCommit {
-                repo_workdir: repo_workdir.clone(),
-                sha: sha.clone(),
-            },
-            _ => ConfirmOutcome::Dismiss,
-        }
-    }
-
-    fn preview_panel_ui_for_match(
-        &self,
-        selected: &QuickMatch,
-        project: &gpui::Entity<project::Project>,
-        cx: &mut gpui::App,
-    ) -> PreviewPanelUi {
-        match &selected.kind {
-            QuickMatchKind::GitCommit {
-                repo_workdir,
-                sha,
-                commit_timestamp,
-                ..
-            } => PreviewPanelUi::GitCommit {
-                meta: {
-                    let remote = resolve_git_remote_for_workdir(repo_workdir, project, cx);
-                    let github_url = remote.as_ref().map(|remote| {
-                        Arc::<str>::from(format!(
-                            "{}/{}/{}/commit/{}",
-                            remote.host.base_url(),
-                            remote.owner,
-                            remote.repo,
-                            sha,
-                        ))
-                    });
-                    GitCommitPreviewMeta {
-                        sha: sha.clone(),
-                        subject: selected
-                            .snippet
-                            .clone()
-                            .unwrap_or_else(|| Arc::<str>::from("")),
-                        author: selected
-                            .location_label
-                            .clone()
-                            .unwrap_or_else(|| Arc::<str>::from("")),
-                        commit_timestamp: *commit_timestamp,
-                        repo_label: selected.path_label.clone(),
-                        remote,
-                        github_url,
-                    }
-                },
-            },
-            _ => PreviewPanelUi::Standard {
-                path_text: selected.display_path.clone(),
-                highlights: selected
-                    .display_path_positions
-                    .as_deref()
-                    .map(|positions| positions.to_vec())
-                    .unwrap_or_default(),
-            },
-        }
-    }
 }

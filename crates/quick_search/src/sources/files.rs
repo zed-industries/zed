@@ -1,26 +1,18 @@
 use std::{
-    ops::Range,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, OnceLock},
 };
 
-use gpui::{App, Context, WeakEntity};
 use search::SearchOptions;
-use text::Anchor as TextAnchor;
 use ui::IconName;
 
-use crate::PickerHandle;
-use crate::QuickSearchDelegate;
-use crate::preview::{PreviewKey, PreviewRequest};
-use crate::types::{QuickMatch, QuickMatchKind};
+use crate::types::{QuickMatchBuilder, QuickMatchKind};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use util::rel_path::RelPath;
 
-use super::{
-    ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId,
-    SourceSpec,
+use crate::core::{
+    ListPresentation, QuickSearchSource, SearchContext, SearchSink, SearchUiContext, SortPolicy,
+    MatchBatcher, SourceId, SourceSpec, SourceSpecCore, SourceSpecUi,
 };
-
-pub static FILES_SOURCE: FilesSource = FilesSource;
 
 pub struct FilesSource;
 
@@ -29,14 +21,18 @@ impl FilesSource {
         static SPEC: OnceLock<SourceSpec> = OnceLock::new();
         SPEC.get_or_init(|| SourceSpec {
             id: SourceId(Arc::from("files")),
-            title: Arc::from("Files"),
-            icon: IconName::File,
-            placeholder: Arc::from("Find files..."),
-            supported_options: SearchOptions::INCLUDE_IGNORED,
-            min_query_len: 1,
-            list_presentation: ListPresentation::Flat,
-            use_diff_preview: false,
-            sort_policy: SortPolicy::StreamOrder,
+            core: SourceSpecCore {
+                supported_options: SearchOptions::INCLUDE_IGNORED,
+                min_query_len: 1,
+                sort_policy: SortPolicy::StreamOrder,
+            },
+            ui: SourceSpecUi {
+                title: Arc::from("Files"),
+                icon: IconName::File,
+                placeholder: Arc::from("Find files..."),
+                list_presentation: ListPresentation::Flat,
+                use_diff_preview: false,
+            },
         })
     }
 }
@@ -48,20 +44,14 @@ impl QuickSearchSource for FilesSource {
 
     fn start_search(
         &self,
-        delegate: &mut QuickSearchDelegate,
-        query: String,
-        generation: usize,
-        cancel_flag: Arc<AtomicBool>,
-        picker: WeakEntity<PickerHandle>,
-        cx: &mut Context<PickerHandle>,
+        ctx: SearchContext,
+        sink: SearchSink,
+        cx: &mut SearchUiContext<'_>,
     ) {
-        let include_ignored = delegate
-            .search_engine
-            .search_options
-            .contains(SearchOptions::INCLUDE_IGNORED);
-        let path_style = delegate.project.read(cx).path_style(cx);
-        let worktrees = delegate
-            .project
+        let include_ignored = ctx.search_options().contains(SearchOptions::INCLUDE_IGNORED);
+        let path_style = ctx.path_style();
+        let worktrees = ctx
+            .project()
             .read(cx)
             .worktree_store()
             .read(cx)
@@ -85,12 +75,14 @@ impl QuickSearchSource for FilesSource {
             })
             .collect::<Vec<_>>();
 
-        let executor = cx.background_executor().clone();
+        let executor = ctx.background_executor().clone();
         let source_id = self.spec().id.0.clone();
+        let query = ctx.query().as_ref().to_string();
+        let cancel_flag = ctx.cancel_flag();
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
                     return;
                 }
 
@@ -106,11 +98,11 @@ impl QuickSearchSource for FilesSource {
                 )
                 .await;
 
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
                     return;
                 }
 
-                let mut batch = Vec::with_capacity(path_matches.len());
+                let mut batcher = MatchBatcher::new();
                 for pm in path_matches {
                     let Some(worktree_id) = set_id_to_worktree_id.get(&pm.worktree_id).copied()
                     else {
@@ -151,79 +143,28 @@ impl QuickSearchSource for FilesSource {
                         Arc::from(file_name_str.to_string())
                     };
 
-                    let path_segments = crate::split_path_segments(&path_label);
-
-                    batch.push(QuickMatch {
-                        id: 0,
-                        key: crate::types::MatchKey(0),
-                        source_id: source_id.clone(),
-                        group: None,
-                        path_label,
-                        display_path,
-                        display_path_positions: Some(Arc::<[usize]>::from(dir_positions)),
-                        path_segments,
-                        file_name,
-                        file_name_positions: Some(Arc::<[usize]>::from(file_name_positions)),
-                        location_label: None,
-                        snippet: None,
-                        first_line_snippet: None,
-                        snippet_match_positions: None,
-                        snippet_syntax_highlights: None,
-                        blame: None,
-                        kind: QuickMatchKind::ProjectPath { project_path },
-                    });
+                    batcher.push(
+                        QuickMatchBuilder::new(
+                            source_id.clone(),
+                            QuickMatchKind::ProjectPath { project_path },
+                        )
+                        .path_label(path_label)
+                        .display_path(display_path)
+                        .display_path_positions(Some(Arc::<[usize]>::from(dir_positions)))
+                        .path_segments_from_label()
+                        .file_name(file_name)
+                        .file_name_positions(Some(Arc::<[usize]>::from(file_name_positions)))
+                        .build(),
+                        &sink,
+                        &mut app,
+                    );
                 }
 
-                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    crate::flush_batch(picker.clone(), generation, &mut batch, &mut app);
-                    crate::finish_stream(picker, generation, &mut app);
+                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) && !sink.is_cancelled() {
+                    batcher.finish(&sink, &mut app);
                 }
             }
         })
         .detach();
-    }
-
-    fn preview_request_for_match(
-        &self,
-        selected: &QuickMatch,
-        _weak_ranges: Vec<Range<TextAnchor>>,
-        use_diff_preview: bool,
-        _query: &str,
-    ) -> PreviewRequest {
-        let key = PreviewKey(selected.id);
-        match &selected.kind {
-            QuickMatchKind::ProjectPath { project_path } => PreviewRequest::ProjectPath {
-                key,
-                project_path: project_path.clone(),
-                use_diff_preview,
-            },
-            _ => PreviewRequest::Empty,
-        }
-    }
-
-    fn confirm_outcome_for_match(&self, selected: &QuickMatch, _cx: &App) -> ConfirmOutcome {
-        match &selected.kind {
-            QuickMatchKind::ProjectPath { project_path } => ConfirmOutcome::OpenProjectPath {
-                project_path: project_path.clone(),
-                point_range: None,
-            },
-            _ => ConfirmOutcome::Dismiss,
-        }
-    }
-
-    fn preview_panel_ui_for_match(
-        &self,
-        selected: &QuickMatch,
-        _project: &gpui::Entity<project::Project>,
-        _cx: &mut gpui::App,
-    ) -> PreviewPanelUi {
-        PreviewPanelUi::Standard {
-            path_text: selected.display_path.clone(),
-            highlights: selected
-                .display_path_positions
-                .as_deref()
-                .map(|positions| positions.to_vec())
-                .unwrap_or_default(),
-        }
     }
 }

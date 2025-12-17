@@ -3,32 +3,27 @@ use std::{
     ops::Range,
     path,
     path::Path,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, OnceLock},
 };
 
 use file_icons::FileIcons;
-use gpui::{App, AppContext, AsyncApp, Context, WeakEntity};
+use gpui::{AppContext, AsyncApp};
 use language::{Buffer, HighlightId, LanguageRegistry};
 use search::SearchOptions;
 use text::{Anchor as TextAnchor, BufferId, Point, ToOffset, ToPoint};
 use ui::IconName;
 
-use crate::PickerHandle;
-use crate::QuickSearchDelegate;
-use crate::preview::{PreviewKey, PreviewRequest};
-use crate::types::{GroupHeader, GroupInfo, QuickMatch, QuickMatchKind};
+use crate::types::{GroupHeader, GroupInfo, QuickMatch, QuickMatchBuilder};
 use log::debug;
 use project::ProjectPath;
 use project::search::{SearchQuery, SearchResult};
 use smol::future::yield_now;
 use util::paths::{PathMatcher, PathStyle};
 
-use super::{
-    ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId,
-    SourceSpec,
+use crate::core::{
+    ListPresentation, MatchBatcher, QuickSearchSource, SearchContext, SearchSink, SearchUiContext,
+    SortPolicy, SourceId, SourceSpec, SourceSpecCore, SourceSpecUi,
 };
-
-pub static TEXT_GREP_SOURCE: TextGrepSource = TextGrepSource;
 
 pub struct TextGrepSource;
 
@@ -44,17 +39,21 @@ impl TextGrepSource {
         static SPEC: OnceLock<SourceSpec> = OnceLock::new();
         SPEC.get_or_init(|| SourceSpec {
             id: SourceId(Arc::from("grep")),
-            title: Arc::from("Text"),
-            icon: IconName::MagnifyingGlass,
-            placeholder: Arc::from("Live grep..."),
-            supported_options: SearchOptions::REGEX
-                | SearchOptions::CASE_SENSITIVE
-                | SearchOptions::WHOLE_WORD
-                | SearchOptions::INCLUDE_IGNORED,
-            min_query_len: crate::MIN_QUERY_LEN,
-            list_presentation: ListPresentation::Grouped,
-            use_diff_preview: false,
-            sort_policy: SortPolicy::StreamOrder,
+            core: SourceSpecCore {
+                supported_options: SearchOptions::REGEX
+                    | SearchOptions::CASE_SENSITIVE
+                    | SearchOptions::WHOLE_WORD
+                    | SearchOptions::INCLUDE_IGNORED,
+                min_query_len: crate::MIN_QUERY_LEN,
+                sort_policy: SortPolicy::StreamOrder,
+            },
+            ui: SourceSpecUi {
+                title: Arc::from("Text"),
+                icon: IconName::MagnifyingGlass,
+                placeholder: Arc::from("Live grep..."),
+                list_presentation: ListPresentation::Grouped,
+                use_diff_preview: false,
+            },
         })
     }
 }
@@ -66,17 +65,17 @@ impl QuickSearchSource for TextGrepSource {
 
     fn start_search(
         &self,
-        delegate: &mut QuickSearchDelegate,
-        query: String,
-        generation: usize,
-        cancel_flag: Arc<AtomicBool>,
-        picker: WeakEntity<PickerHandle>,
-        cx: &mut Context<PickerHandle>,
+        ctx: SearchContext,
+        sink: SearchSink,
+        cx: &mut SearchUiContext<'_>,
     ) {
-        let project = delegate.project.clone();
-        let search_options = delegate.search_engine.search_options;
+        let project = ctx.project().clone();
+        let search_options = ctx.search_options();
         let source_id = self.spec().id.0.clone();
-        let language_registry = delegate.project.read(cx).languages().clone();
+        let path_style = ctx.path_style();
+        let language_registry = ctx.language_registry().clone();
+        let query = ctx.query().as_ref().to_string();
+        let cancel_flag = ctx.cancel_flag();
 
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
@@ -85,14 +84,6 @@ impl QuickSearchSource for TextGrepSource {
                     return;
                 }
 
-                let path_style =
-                    match app.update_entity(&project, |project, cx| project.path_style(cx)) {
-                        Ok(style) => style,
-                        Err(err) => {
-                            debug!("quick_search: failed to get path style: {:?}", err);
-                            PathStyle::local()
-                        }
-                    };
                 let search_query = match app.update_entity(&project, |_project, _| {
                     let include = PathMatcher::default();
                     let exclude = PathMatcher::default();
@@ -123,11 +114,11 @@ impl QuickSearchSource for TextGrepSource {
                 }) {
                     Ok(Ok(query)) => query,
                     Ok(Err(err)) => {
-                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), &mut app);
                         return;
                     }
                     Err(err) => {
-                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), &mut app);
                         return;
                     }
                 };
@@ -137,24 +128,14 @@ impl QuickSearchSource for TextGrepSource {
                 {
                     Ok(receiver) => receiver,
                     Err(err) => {
-                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), &mut app);
                         return;
                     }
                 };
 
-                let receiver_for_drop = receiver.clone();
-                if let Some(picker) = picker.upgrade() {
-                    if let Err(err) = app.update_entity(&picker, |picker, _cx| {
-                        picker
-                            .delegate
-                            .search_engine
-                            .set_inflight_results(receiver_for_drop);
-                    }) {
-                        debug!("quick_search: failed to store inflight results: {:?}", err);
-                    }
-                }
+                sink.set_inflight_results(receiver.clone(), &mut app);
 
-                let mut batch: Vec<QuickMatch> = Vec::with_capacity(crate::RESULTS_BATCH_SIZE);
+                let mut batcher = MatchBatcher::new();
                 let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
                     HashMap::new();
                 loop {
@@ -181,9 +162,7 @@ impl QuickSearchSource for TextGrepSource {
                                         &mut syntax_workers,
                                         out.buffer_id,
                                         buffer.clone(),
-                                        picker.clone(),
-                                        generation,
-                                        cancel_flag.clone(),
+                                        sink.clone(),
                                         language_registry.clone(),
                                     );
                                     if let Some(sender) = syntax_workers.get(&out.buffer_id) {
@@ -199,29 +178,16 @@ impl QuickSearchSource for TextGrepSource {
                                     }
                                 }
 
-                                batch.extend(out.matches);
-                                if batch.len() >= crate::RESULTS_BATCH_SIZE {
-                                    crate::flush_batch(
-                                        picker.clone(),
-                                        generation,
-                                        &mut batch,
-                                        &mut app,
-                                    );
-                                    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                        break;
-                                    }
+                                for match_item in out.matches {
+                                    batcher.push(match_item, &sink, &mut app);
+                                }
+                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break;
                                 }
                             }
                         }
                         SearchResult::LimitReached => {
-                            if !batch.is_empty() {
-                                crate::flush_batch(
-                                    picker.clone(),
-                                    generation,
-                                    &mut batch,
-                                    &mut app,
-                                );
-                            }
+                            batcher.flush(&sink, &mut app);
                             if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                                 break;
                             }
@@ -233,148 +199,24 @@ impl QuickSearchSource for TextGrepSource {
                 }
 
                 drop(syntax_workers);
-                if !batch.is_empty() && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    crate::flush_batch(picker.clone(), generation, &mut batch, &mut app);
-                }
                 if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    crate::finish_stream(picker, generation, &mut app);
+                    batcher.finish(&sink, &mut app);
                 }
             }
         })
         .detach();
     }
-
-    fn preview_request_for_match(
-        &self,
-        selected: &QuickMatch,
-        weak_ranges: Vec<Range<TextAnchor>>,
-        use_diff_preview: bool,
-        _query: &str,
-    ) -> PreviewRequest {
-        let key = PreviewKey(selected.id);
-        match &selected.kind {
-            QuickMatchKind::Buffer { buffer, ranges, .. } => PreviewRequest::Buffer {
-                key,
-                buffer: buffer.clone(),
-                strong_ranges: ranges.clone(),
-                weak_ranges,
-                use_diff_preview,
-            },
-            QuickMatchKind::ProjectPath { project_path } => PreviewRequest::ProjectPath {
-                key,
-                project_path: project_path.clone(),
-                use_diff_preview,
-            },
-            _ => PreviewRequest::Empty,
-        }
-    }
-
-    fn weak_preview_ranges(
-        &self,
-        delegate: &QuickSearchDelegate,
-        selected: &QuickMatch,
-        query: &str,
-    ) -> Vec<Range<TextAnchor>> {
-        if query.len() < 3 {
-            return Vec::new();
-        }
-        let Some(selected_buffer_id) = selected.buffer_id() else {
-            return Vec::new();
-        };
-
-        const WINDOW: usize = 120;
-        const MAX_RANGES: usize = 600;
-
-        let selected_ix = delegate.selected_match_index().unwrap_or(0);
-        let match_count = delegate.match_list.match_count();
-        if match_count == 0 {
-            return Vec::new();
-        }
-
-        let start = selected_ix.saturating_sub(WINDOW);
-        let end = (selected_ix + WINDOW).min(match_count.saturating_sub(1));
-
-        let mut weak = Vec::new();
-        for ix in start..=end {
-            let Some(m) = delegate.match_list.item(ix) else {
-                continue;
-            };
-            if m.id == selected.id {
-                continue;
-            }
-            if m.buffer_id() != Some(selected_buffer_id) {
-                continue;
-            }
-            let Some(ranges) = m.ranges() else {
-                continue;
-            };
-            for r in ranges {
-                weak.push(r.clone());
-                if weak.len() >= MAX_RANGES {
-                    return weak;
-                }
-            }
-        }
-
-        weak
-    }
-
-    fn confirm_outcome_for_match(&self, selected: &QuickMatch, cx: &App) -> ConfirmOutcome {
-        match &selected.kind {
-            QuickMatchKind::ProjectPath { project_path } => ConfirmOutcome::OpenProjectPath {
-                project_path: project_path.clone(),
-                point_range: None,
-            },
-            QuickMatchKind::Buffer { buffer, ranges, .. } => {
-                let project_path = buffer.read(cx).file().map(|file| project::ProjectPath {
-                    worktree_id: file.worktree_id(cx),
-                    path: file.path().clone(),
-                });
-                let point_range = ranges.first().map(|range| {
-                    let snapshot = buffer.read(cx).snapshot();
-                    let start = range.start.to_point(&snapshot.text);
-                    let end = range.end.to_point(&snapshot.text);
-                    start..end
-                });
-                match project_path {
-                    Some(project_path) => ConfirmOutcome::OpenProjectPath {
-                        project_path,
-                        point_range,
-                    },
-                    None => ConfirmOutcome::Dismiss,
-                }
-            }
-            _ => ConfirmOutcome::Dismiss,
-        }
-    }
-
-    fn preview_panel_ui_for_match(
-        &self,
-        selected: &QuickMatch,
-        _project: &gpui::Entity<project::Project>,
-        _cx: &mut gpui::App,
-    ) -> PreviewPanelUi {
-        PreviewPanelUi::Standard {
-            path_text: selected.display_path.clone(),
-            highlights: selected
-                .display_path_positions
-                .as_deref()
-                .map(|positions| positions.to_vec())
-                .unwrap_or_default(),
-        }
-    }
 }
 
 fn elide_path(segments: &[Arc<str>]) -> Arc<str> {
     const MAX_SEGMENTS: usize = 5;
-    if segments.is_empty() {
+    let Some(head) = segments.first() else {
         return Arc::<str>::from("");
-    }
+    };
     if segments.len() <= MAX_SEGMENTS {
         return Arc::<str>::from(segments.join("/"));
     }
 
-    let head = &segments[0];
     let tail_count = MAX_SEGMENTS.saturating_sub(1);
     let tail_start = segments.len().saturating_sub(tail_count);
     let mut parts = Vec::with_capacity(2 + tail_count);
@@ -431,9 +273,7 @@ fn ensure_syntax_worker(
     workers: &mut HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>>,
     buffer_id: BufferId,
     buffer: gpui::Entity<Buffer>,
-    picker: WeakEntity<PickerHandle>,
-    generation: usize,
-    cancel_flag: Arc<AtomicBool>,
+    sink: SearchSink,
     language_registry: Arc<LanguageRegistry>,
 ) {
     if workers.contains_key(&buffer_id) {
@@ -457,7 +297,7 @@ fn ensure_syntax_worker(
                 queued.push(item);
             }
 
-            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            if sink.is_cancelled() {
                 break;
             }
 
@@ -468,19 +308,31 @@ fn ensure_syntax_worker(
 
             if snapshot.language().is_none() && !language_attempted {
                 language_attempted = true;
-                let file = app
-                    .read_entity(&buffer, |b, _| b.file().cloned())
-                    .ok()
-                    .flatten();
+                let file = match app.read_entity(&buffer, |b, _| b.file().cloned()) {
+                    Ok(file) => file,
+                    Err(err) => {
+                        debug!(
+                            "quick_search: failed to read file for syntax enrich worker: {:?}",
+                            err
+                        );
+                        None
+                    }
+                };
                 if let Some(file) = file {
-                    let available = app
-                        .update({
-                            let language_registry = language_registry.clone();
-                            let file = file.clone();
-                            move |cx| language_registry.language_for_file(&file, None, cx)
-                        })
-                        .ok()
-                        .flatten();
+                    let available = match app.update({
+                        let language_registry = language_registry.clone();
+                        let file = file.clone();
+                        move |cx| language_registry.language_for_file(&file, None, cx)
+                    }) {
+                        Ok(available) => available,
+                        Err(err) => {
+                            debug!(
+                                "quick_search: failed to detect language for syntax enrich worker: {:?}",
+                                err
+                            );
+                            None
+                        }
+                    };
                     if let Some(available) = available {
                         let language_receiver = language_registry.load_language(&available);
                         if let Ok(Ok(language)) = language_receiver.await {
@@ -507,7 +359,7 @@ fn ensure_syntax_worker(
                 queued.push(item);
             }
 
-            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            if sink.is_cancelled() {
                 break;
             }
 
@@ -585,7 +437,7 @@ fn ensure_syntax_worker(
             }
 
             if !patches.is_empty() {
-                crate::apply_patches_by_key(picker.clone(), generation, patches, app);
+                sink.apply_patches_by_key(patches, app);
             }
         }
     })
@@ -630,7 +482,7 @@ fn build_matches_for_buffer(
         })
         .unwrap_or_else(|| path_label.clone());
 
-    let path_segments = crate::split_path_segments(&path_label);
+    let path_segments = crate::types::split_path_segments(&path_label);
     let display_path: Arc<str> = elide_path(&path_segments);
 
     let group: Option<Arc<GroupInfo>> = project_path.as_ref().map(|project_path| {
@@ -648,8 +500,10 @@ fn build_matches_for_buffer(
                 let file_name = file_name.clone();
                 move |cx| FileIcons::get_icon(Path::new(file_name.as_ref()), cx)
             })
-            .ok()
-            .flatten();
+            .unwrap_or_else(|err| {
+                debug!("quick_search: failed to get icon for grep group: {:?}", err);
+                None
+            });
 
         Arc::new(GroupInfo {
             key: crate::types::compute_group_key_for_project_path(source_id, project_path),
@@ -688,7 +542,9 @@ fn build_matches_for_buffer(
             ranges_for_line.push(r.clone());
         }
 
-        let (first_col, first_range) = &items[0];
+        let Some((first_col, first_range)) = items.first() else {
+            continue;
+        };
         let start_point = first_range.start.to_point(&snapshot.text);
         let location_label: Option<Arc<str>> =
             Some(format!(":{}:{}", row + 1, first_col + 1).into());
@@ -775,33 +631,44 @@ fn build_matches_for_buffer(
             coalesce_syntax_runs(&mut snippet_syntax_highlights);
         }
 
-        let mut match_item = QuickMatch {
-            id: 0,
-            key: crate::types::MatchKey(0),
-            source_id: source_id.clone(),
-            group: group.clone(),
-            path_label: path_label.clone(),
-            display_path: display_path.clone(),
-            display_path_positions: None,
-            path_segments: path_segments.clone(),
-            file_name: file_name.clone(),
-            file_name_positions: None,
-            location_label,
-            snippet: Some(snippet.clone()),
-            first_line_snippet: Some(snippet),
-            snippet_match_positions: (!snippet_match_positions.is_empty())
-                .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions)),
-            snippet_syntax_highlights: (!snippet_syntax_highlights.is_empty())
-                .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights)),
-            blame: None,
-            kind: crate::types::QuickMatchKind::Buffer {
-                buffer: buffer.clone(),
-                project_path: project_path.clone(),
-                ranges: ranges_for_line,
-                buffer_id,
-                position: Some((row, start_point.column)),
-            },
+        let ranges_for_line_points = ranges_for_line
+            .iter()
+            .map(|range| {
+                let start = range.start.to_point(&snapshot.text);
+                let end = range.end.to_point(&snapshot.text);
+                start..end
+            })
+            .collect::<Vec<_>>();
+        let kind = crate::types::QuickMatchKind::Buffer {
+            buffer_id,
+            ranges: ranges_for_line_points.clone(),
+            position: Some((row, start_point.column)),
         };
+        let snippet_for_match = snippet.clone();
+        let snippet_match_positions = (!snippet_match_positions.is_empty())
+            .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions));
+        let snippet_syntax_highlights = (!snippet_syntax_highlights.is_empty())
+            .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights));
+
+        let mut match_item = QuickMatchBuilder::new(source_id.clone(), kind)
+            .action(match project_path.clone() {
+                Some(project_path) => crate::types::MatchAction::OpenProjectPath {
+                    project_path,
+                    point_range: ranges_for_line_points.first().cloned(),
+                },
+                None => crate::types::MatchAction::Dismiss,
+            })
+            .group(group.clone())
+            .path_label(path_label.clone())
+            .display_path(display_path.clone())
+            .path_segments(path_segments.clone())
+            .file_name(file_name.clone())
+            .location_label(location_label)
+            .snippet(Some(snippet_for_match))
+            .first_line_snippet(Some(snippet))
+            .snippet_match_positions(snippet_match_positions)
+            .snippet_syntax_highlights(snippet_syntax_highlights)
+            .build();
         match_item.key = crate::types::compute_match_key(&match_item);
         if match_item.snippet_syntax_highlights.is_none() && snippet_content_len > 0 {
             pending_syntax.push(SyntaxEnrichItem {

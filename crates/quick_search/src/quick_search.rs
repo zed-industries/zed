@@ -2,11 +2,11 @@ mod grouped_list;
 pub(crate) mod history;
 pub(crate) mod match_list;
 pub(crate) mod types;
+pub(crate) mod core;
+pub(crate) mod sources;
 
 #[path = "quick_search_preview.rs"]
 mod preview;
-#[path = "quick_search_source.rs"]
-mod source;
 
 use crate::{
     grouped_list::{GroupedFileHeader, GroupedListState, GroupedRow},
@@ -19,7 +19,6 @@ use async_channel::Receiver;
 use file_icons::FileIcons;
 use gpui::AsyncApp;
 use project::search::SearchResult;
-use std::path;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Duration};
@@ -47,6 +46,7 @@ use ui::{
     LabelLike, LabelSize, ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*,
     rems_from_px,
 };
+use text::Point;
 use workspace::{ActivatePane, ModalView, Workspace, item::PreviewTabsSettings, pane};
 
 pub(crate) const MIN_QUERY_LEN: usize = 2;
@@ -126,7 +126,7 @@ pub fn init(cx: &mut App) {
 pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview: PreviewState,
-    source_registry: source::SourceRegistry,
+    source_registry: core::SourceRegistry,
     focus_handle: FocusHandle,
 }
 
@@ -258,7 +258,7 @@ impl QuickSearch {
         let editor_settings = EditorSettings::get_global(cx);
         let search_options = SearchOptions::from_settings(&editor_settings.search);
         let preview = PreviewState::new(preview_project, initial_buffer, window, cx);
-        let source_registry = source::SourceRegistry::default();
+        let source_registry = core::SourceRegistry::default();
         let initial_source_id = history::last_source_id();
         let initial_source = source_registry
             .available_sources()
@@ -266,7 +266,7 @@ impl QuickSearch {
             .map(|source| source.spec())
             .find(|spec| spec.id.0 == initial_source_id)
             .map(|spec| spec.id.clone())
-            .unwrap_or_else(source::default_source_id);
+            .unwrap_or_else(core::default_source_id);
         let mut delegate = QuickSearchDelegate::new(
             cx.entity().downgrade(),
             workspace,
@@ -339,7 +339,7 @@ impl QuickSearch {
 
     fn set_search_source(
         &mut self,
-        source_id: source::SourceId,
+        source_id: core::SourceId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -668,10 +668,10 @@ impl QuickSearch {
             .source_registry
             .preview_panel_ui_for_match(&selected, &project, cx)
         {
-            source::PreviewPanelUi::GitCommit { meta } => {
+            core::PreviewPanelUi::GitCommit { meta } => {
                 self.render_git_commit_preview(meta, &selected, window, cx)
             }
-            source::PreviewPanelUi::Standard {
+            core::PreviewPanelUi::Standard {
                 path_text,
                 highlights,
             } => self.render_standard_preview(path_text, highlights, &selected, window, cx),
@@ -719,7 +719,7 @@ impl QuickSearch {
 
     fn render_git_commit_preview(
         &self,
-        meta: source::GitCommitPreviewMeta,
+        meta: core::GitCommitPreviewMeta,
         selected: &QuickMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1005,7 +1005,7 @@ struct QuickSearchDelegate {
     query_error: Option<String>,
     query_notice: Option<String>,
     search_engine: SearchEngine,
-    source_registry: source::SourceRegistry,
+    source_registry: core::SourceRegistry,
     current_query: String,
     reset_scroll: bool,
     is_streaming: bool,
@@ -1027,7 +1027,7 @@ impl QuickSearchDelegate {
         window_handle: gpui::AnyWindowHandle,
         project: Entity<Project>,
         search_options: SearchOptions,
-        source_registry: source::SourceRegistry,
+        source_registry: core::SourceRegistry,
     ) -> Self {
         Self {
             match_list: MatchList::new(MAX_RESULTS),
@@ -1098,6 +1098,54 @@ impl QuickSearchDelegate {
         }
     }
 
+    fn weak_preview_ranges_for_selected(&self, selected: &QuickMatch) -> Vec<std::ops::Range<Point>> {
+        if self.current_query.len() < 3 {
+            return Vec::new();
+        }
+        if selected.source_id.as_ref() != "grep" {
+            return Vec::new();
+        }
+        let Some(selected_buffer_id) = selected.buffer_id() else {
+            return Vec::new();
+        };
+
+        const WINDOW: usize = 120;
+        const MAX_RANGES: usize = 600;
+
+        let selected_index = self.selected_match_index().unwrap_or(0);
+        let match_count = self.match_list.match_count();
+        if match_count == 0 {
+            return Vec::new();
+        }
+
+        let start = selected_index.saturating_sub(WINDOW);
+        let end = (selected_index + WINDOW).min(match_count.saturating_sub(1));
+
+        let mut weak = Vec::new();
+        for index in start..=end {
+            let Some(m) = self.match_list.item(index) else {
+                continue;
+            };
+            if m.id == selected.id {
+                continue;
+            }
+            if m.buffer_id() != Some(selected_buffer_id) {
+                continue;
+            }
+            let Some(ranges) = m.ranges() else {
+                continue;
+            };
+            for range in ranges {
+                weak.push(range.clone());
+                if weak.len() >= MAX_RANGES {
+                    return weak;
+                }
+            }
+        }
+
+        weak
+    }
+
     fn is_grouped_list_active(&self) -> bool {
         let Some(spec) = self
             .source_registry
@@ -1105,11 +1153,11 @@ impl QuickSearchDelegate {
         else {
             return false;
         };
-        match spec.list_presentation {
-            source::ListPresentation::Grouped => {
-                self.current_query.trim().len() >= spec.min_query_len
+        match spec.ui.list_presentation {
+            core::ListPresentation::Grouped => {
+                self.current_query.trim().len() >= spec.core.min_query_len
             }
-            source::ListPresentation::Flat => false,
+            core::ListPresentation::Flat => false,
         }
     }
 
@@ -1259,7 +1307,7 @@ fn find_case_insensitive_unicode(text: &str, query: &str) -> Vec<usize> {
     positions
 }
 
-fn stable_source_button_id(id: &source::SourceId) -> u32 {
+fn stable_source_button_id(id: &core::SourceId) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for b in id.0.as_bytes() {
         hash ^= *b as u32;
@@ -1323,27 +1371,23 @@ impl PickerDelegate for QuickSearchDelegate {
         if let Some(selected) = selected.clone() {
             self.schedule_enrichment_for(selected, cx);
         }
-        let weak_preview_anchors = selected
+        let weak_preview_ranges = selected
             .as_ref()
-            .map(|selected| {
-                self.source_registry.weak_preview_ranges_for_match(
-                    self,
-                    selected,
-                    &self.current_query,
-                )
-            })
+            .map(|selected| self.weak_preview_ranges_for_selected(selected))
             .unwrap_or_default();
         let use_diff_preview = self
             .source_registry
             .spec_for_id(&self.search_engine.active_source)
-            .map(|spec| spec.use_diff_preview)
+            .map(|spec| spec.ui.use_diff_preview)
             .unwrap_or(false);
         let request = selected.as_ref().map_or(PreviewRequest::Empty, |selected| {
             self.source_registry.preview_request_for_match(
                 selected,
-                weak_preview_anchors.clone(),
+                weak_preview_ranges.clone(),
                 use_diff_preview,
                 &self.current_query,
+                &self.project,
+                cx,
             )
         });
         let quick_search = self.quick_search.clone();
@@ -1369,7 +1413,7 @@ impl PickerDelegate for QuickSearchDelegate {
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         self.source_registry
             .spec_for_id(&self.search_engine.active_source)
-            .map(|spec| spec.placeholder.clone())
+            .map(|spec| spec.ui.placeholder.clone())
             .unwrap_or_else(|| Arc::from("Search..."))
     }
 
@@ -1413,11 +1457,11 @@ impl PickerDelegate for QuickSearchDelegate {
         };
 
         let source_button = |id: u32,
-                             spec: &'static source::SourceSpec,
+                             spec: &'static core::SourceSpec,
                              active: bool,
-                             source_id: source::SourceId|
+                             source_id: core::SourceId|
          -> IconButton {
-            IconButton::new(("quick-search-source", id), spec.icon)
+            IconButton::new(("quick-search-source", id), spec.ui.icon)
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .toggle_state(active)
@@ -1431,12 +1475,12 @@ impl PickerDelegate for QuickSearchDelegate {
                         }
                     }
                 })
-                .tooltip(Tooltip::text(spec.title.to_string()))
+                .tooltip(Tooltip::text(spec.ui.title.to_string()))
         };
 
         let mut toggles = h_flex().gap_1();
         let supported = active_spec
-            .map(|spec| spec.supported_options)
+            .map(|spec| spec.core.supported_options)
             .unwrap_or_else(SearchOptions::empty);
         if supported.contains(SearchOptions::REGEX) {
             toggles = toggles.child(toggle_button(
@@ -1612,7 +1656,7 @@ impl PickerDelegate for QuickSearchDelegate {
         let min_len = self
             .source_registry
             .spec_for_id(&self.search_engine.active_source)
-            .map(|spec| spec.min_query_len)
+            .map(|spec| spec.core.min_query_len)
             .unwrap_or(crate::MIN_QUERY_LEN);
         if query.len() < min_len {
             self.reset_scroll = false;
@@ -1660,11 +1704,11 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let window_handle = window.window_handle().downcast::<Workspace>();
         let (project_path, point_range) = match outcome {
-            source::ConfirmOutcome::OpenProjectPath {
+            core::ConfirmOutcome::OpenProjectPath {
                 project_path,
                 point_range,
             } => (Some(project_path), point_range),
-            source::ConfirmOutcome::OpenGitCommit { repo_workdir, sha } => {
+            core::ConfirmOutcome::OpenGitCommit { repo_workdir, sha } => {
                 let project = self.project.clone();
                 let workspace = workspace.downgrade();
                 window.defer(cx, move |window, cx| {
@@ -1694,7 +1738,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 });
                 (None, None)
             }
-            source::ConfirmOutcome::Dismiss => (None, None),
+            core::ConfirmOutcome::Dismiss => (None, None),
         };
 
         if let Some(project_path) = project_path {
@@ -1979,7 +2023,7 @@ impl GenerationGuard {
 
 pub struct SearchEngine {
     pub search_options: SearchOptions,
-    pub active_source: crate::source::SourceId,
+    pub active_source: crate::core::SourceId,
     generation_guard: GenerationGuard,
     inflight_results: Option<Receiver<SearchResult>>,
     debouncer: DebouncedDelay<PickerHandle>,
@@ -2037,7 +2081,7 @@ pub(crate) fn apply_source_event(
                     .source_registry
                     .spec_for_id(&picker.delegate.search_engine.active_source)
                 {
-                    if matches!(spec.sort_policy, crate::source::SortPolicy::FinalSort) {
+                    if matches!(spec.core.sort_policy, crate::core::SortPolicy::FinalSort) {
                         if let Some(source) = picker
                             .delegate
                             .source_registry
@@ -2234,7 +2278,7 @@ impl SearchEngine {
     pub fn new(search_options: SearchOptions, debounce_ms: u64) -> Self {
         Self {
             search_options,
-            active_source: crate::source::default_source_id(),
+            active_source: crate::core::default_source_id(),
             generation_guard: GenerationGuard::new(),
             inflight_results: None,
             debouncer: DebouncedDelay::new(),
@@ -2301,7 +2345,7 @@ impl SearchEngine {
     }
 
     #[allow(dead_code)]
-    pub fn set_active_source(&mut self, source: crate::source::SourceId) {
+    pub fn set_active_source(&mut self, source: crate::core::SourceId) {
         self.active_source = source;
     }
 }
@@ -2311,7 +2355,10 @@ impl QuickSearchDelegate {
         if m.blame.is_some() {
             return;
         }
-        let Some(buffer) = m.buffer().cloned() else {
+        let Some(buffer_id) = m.buffer_id() else {
+            return;
+        };
+        let Some(buffer) = self.project.read(cx).buffer_for_id(buffer_id, cx) else {
             return;
         };
         let picker = cx.entity().downgrade();
@@ -2383,7 +2430,7 @@ impl QuickSearchDelegate {
         let min_len = self
             .source_registry
             .spec_for_id(&self.search_engine.active_source)
-            .map(|s| s.min_query_len)
+            .map(|s| s.core.min_query_len)
             .unwrap_or(crate::MIN_QUERY_LEN);
         if trimmed.len() < min_len {
             self.is_streaming = false;
@@ -2426,7 +2473,19 @@ impl QuickSearchDelegate {
             cx.notify();
             return;
         };
-        source.start_search(self, trimmed, generation, cancel_flag, picker, cx);
+        let path_style = self.project.read(cx).path_style(cx);
+        let language_registry = self.project.read(cx).languages().clone();
+        let search_context = core::SearchContext::new(
+            self.project.clone(),
+            Arc::<str>::from(trimmed),
+            self.search_engine.search_options,
+            path_style,
+            language_registry,
+            cancel_flag.clone(),
+            cx.background_executor().clone(),
+        );
+        let sink = core::SearchSink::new(picker, generation, cancel_flag);
+        source.start_search(search_context, sink, cx);
     }
 }
 
@@ -2458,21 +2517,6 @@ pub(crate) fn flush_batch(
     }
     let drained = std::mem::take(batch);
     apply_source_event(picker, generation, SourceEvent::AppendMatches(drained), app);
-}
-
-pub(crate) fn split_path_segments(path_label: &str) -> Arc<[Arc<str>]> {
-    if path_label.is_empty() {
-        return Arc::from(Box::<[Arc<str>]>::default());
-    }
-    let mut segments: Vec<Arc<str>> = path_label
-        .split(|c| c == '/' || c == path::MAIN_SEPARATOR)
-        .filter(|part| !part.is_empty())
-        .map(|part| Arc::<str>::from(part))
-        .collect();
-    if segments.is_empty() {
-        segments.push(Arc::<str>::from(path_label));
-    }
-    Arc::from(segments.into_boxed_slice())
 }
 
 async fn enrich_blame(
