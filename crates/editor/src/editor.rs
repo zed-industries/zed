@@ -6695,7 +6695,6 @@ impl Editor {
         };
         if !edited_buffers_already_open {
             let workspace = workspace.downgrade();
-            let transaction = transaction.clone();
             cx.defer_in(window, move |_, window, cx| {
                 cx.spawn_in(window, async move |editor, cx| {
                     Self::open_project_transaction(&editor, workspace, transaction, title, cx)
