@@ -43,6 +43,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
+use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -347,7 +348,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>>;
+    ) -> Result<Option<(PathBuf, Version)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;

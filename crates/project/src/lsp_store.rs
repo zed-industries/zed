@@ -93,6 +93,7 @@ use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _,
     proto::{LspRequestId, LspRequestMessage as _},
 };
+use semver::Version;
 use serde::Serialize;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -2285,12 +2286,10 @@ impl LocalLspStore {
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
-                    *lsp_action = Box::new(
-                        lang_server
-                            .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
-                            .await
-                            .into_response()?,
-                    );
+                    **lsp_action = lang_server
+                        .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
+                        .await
+                        .into_response()?;
                 }
             }
             LspAction::CodeLens(lens) => {
@@ -6480,7 +6479,7 @@ impl LspStore {
                 server_id == *completion_server_id,
                 "server_id mismatch, applying completion resolve for {server_id} but completion server id is {completion_server_id}"
             );
-            *lsp_completion = Box::new(resolved_completion);
+            **lsp_completion = resolved_completion;
             *resolved = true;
         }
         Ok(())
@@ -6639,7 +6638,7 @@ impl LspStore {
                 server_id == *completion_server_id,
                 "remote server_id mismatch, applying completion resolve for {server_id} but completion server id is {completion_server_id}"
             );
-            *lsp_completion = Box::new(resolved_lsp_completion);
+            **lsp_completion = resolved_lsp_completion;
             *resolved = true;
         }
 
@@ -13983,7 +13982,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>> {
+    ) -> Result<Option<(PathBuf, Version)>> {
         let local_package_directory = self.worktree_root_path();
         let node_modules_directory = local_package_directory.join("node_modules");
 

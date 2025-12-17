@@ -2807,9 +2807,8 @@ mod test {
 
         for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(expected_state, *expected_mode);
         }
 
@@ -2830,9 +2829,8 @@ mod test {
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(initial_state, *mode);
         }
     }
@@ -3185,9 +3183,8 @@ mod test {
 
         for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(expected_state, *expected_mode);
         }
 
@@ -3208,9 +3205,8 @@ mod test {
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(initial_state, *mode);
         }
     }

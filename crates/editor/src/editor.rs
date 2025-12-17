@@ -15534,10 +15534,9 @@ impl Editor {
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
     {
-        let case_sensitive = self.select_next_is_case_sensitive.map_or_else(
-            || EditorSettings::get_global(cx).search.case_sensitive,
-            |value| value,
-        );
+        let case_sensitive = self
+            .select_next_is_case_sensitive
+            .unwrap_or_else(|| EditorSettings::get_global(cx).search.case_sensitive);
 
         let mut builder = AhoCorasickBuilder::new();
         builder.ascii_case_insensitive(!case_sensitive);

@@ -353,6 +353,8 @@ pub fn initialize_workspace(
 ) {
     let mut _on_close_subscription = bind_on_window_closed(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
+        // A 1.92 regression causes unused-assignment to trigger on this variable.
+        _ = _on_close_subscription.is_some();
         _on_close_subscription = bind_on_window_closed(cx);
     })
     .detach();
@@ -1109,7 +1111,21 @@ fn register_actions(
                         cx,
                         |workspace, window, cx| {
                             cx.activate(true);
-                            Editor::new_file(workspace, &Default::default(), window, cx)
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
                         },
                     )
                     .detach();

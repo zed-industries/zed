@@ -25973,6 +25973,48 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_python_indent_in_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    language_registry.add(markdown_lang());
+    language_registry.add(python_lang);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_lang()), cx);
+    });
+
+    // Test that `else:` correctly outdents to match `if:` inside the Python code block
+    cx.set_state(indoc! {"
+        # Heading
+
+        ```python
+        def main():
+            if condition:
+                pass
+                ˇ
+        ```
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        # Heading
+
+        ```python
+        def main():
+            if condition:
+                pass
+            else:ˇ
+        ```
+    "});
+}
+
+#[gpui::test]
 async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -29370,6 +29412,7 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    cx.update(|cx| project::trusted_worktrees::init(HashMap::default(), None, None, cx));
 
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -29528,4 +29571,39 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     let can_trust_after =
         trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
     assert!(can_trust_after, "worktree should be trusted after trust()");
+}
+
+#[gpui::test]
+fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext) {
+    // This test reproduces a bug where drawing an editor at a position above the viewport
+    // (simulating what happens when an AutoHeight editor inside a List is scrolled past)
+    // causes an infinite loop in blocks_in_range.
+    //
+    // The issue: when the editor's bounds.origin.y is very negative (above the viewport),
+    // the content mask intersection produces visible_bounds with origin at the viewport top.
+    // This makes clipped_top_in_lines very large, causing start_row to exceed max_row.
+    // When blocks_in_range is called with start_row > max_row, the cursor seeks to the end
+    // but the while loop after seek never terminates because cursor.next() is a no-op at end.
+    init_test(cx, |_| {});
+
+    let window = cx.add_window(|_, _| gpui::Empty);
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    let buffer = cx.update(|_, cx| MultiBuffer::build_simple("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", cx));
+    let editor = cx.new_window_entity(|window, cx| build_editor(buffer, window, cx));
+
+    // Simulate a small viewport (500x500 pixels at origin 0,0)
+    cx.simulate_resize(gpui::size(px(500.), px(500.)));
+
+    // Draw the editor at a very negative Y position, simulating an editor that's been
+    // scrolled way above the visible viewport (like in a List that has scrolled past it).
+    // The editor is 3000px tall but positioned at y=-10000, so it's entirely above the viewport.
+    // This should NOT hang - it should just render nothing.
+    cx.draw(
+        gpui::point(px(0.), px(-10000.)),
+        gpui::size(px(500.), px(3000.)),
+        |_, _| editor.clone(),
+    );
+
+    // If we get here without hanging, the test passes
 }
