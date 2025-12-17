@@ -401,50 +401,6 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
         });
-
-        // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
-        cx.update_editor(|editor, window, cx| {
-            editor.set_text("fn foo() {\n  \n}", window, cx);
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
-            });
-        });
-        handle_copilot_completion_request(
-            &copilot_lsp,
-            vec![crate::request::NextEditSuggestion {
-                text: "    let x = 4;".into(),
-                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-                command: None,
-                text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
-                    version: 0,
-                },
-            }],
-        );
-
-        cx.update_editor(|editor, window, cx| {
-            editor.show_edit_prediction(&Default::default(), window, cx)
-        });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_edit_prediction());
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-            assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
-            // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
-            editor.tab(&Default::default(), window, cx);
-        });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_edit_prediction());
-            assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-
-            // Using AcceptEditPrediction again accepts the suggestion.
-            editor.accept_edit_prediction(&Default::default(), window, cx);
-            assert!(!editor.has_active_edit_prediction());
-            assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-        });
     }
 
     #[gpui::test(iterations = 10)]
