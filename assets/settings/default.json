@@ -436,6 +436,8 @@
     "show_onboarding_banner": true,
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
+    // Whether to show the user menu in the titlebar.
+    "show_user_menu": true,
     // Whether to show the sign in button in the titlebar.
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
@@ -896,6 +898,8 @@
     "default_width": 380,
   },
   "agent": {
+    // Whether the inline assistant should use streaming tools, when available
+    "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
     // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -904,6 +908,8 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Where to dock the agents panel. Can be 'left' or 'right'.
+    "agents_panel_dock": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -966,6 +972,8 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "restore_file_from_disk": true,
+          "save_file": true,
           "open": true,
           "grep": true,
           "terminal": true,
@@ -1410,8 +1418,9 @@
       "proxy_no_verify": null,
     },
     "codestral": {
-      "model": null,
-      "max_tokens": null,
+      "api_url": "https://codestral.mistral.ai",
+      "model": "codestral-latest",
+      "max_tokens": 150,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1646,25 +1655,21 @@
       // surrounding symbols or quotes
       [
         "(?x)",
-        "# optionally starts with 0-2 opening prefix symbols",
-        "[({\\[<]{0,2}",
-        "# which may be followed by an opening quote",
-        "(?<quote>[\"'`])?",
-        "# `path` is the shortest sequence of any non-space character",
-        "(?<link>(?<path>[^ ]+?",
-        "    # which may end with a line and optionally a column,",
-        "    (?<line_column>:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:][0-9]+)?\\))?",
-        "))",
-        "# which must be followed by a matching quote",
-        "(?(<quote>)\\k<quote>)",
-        "# and optionally a single closing symbol",
-        "[)}\\]>]?",
-        "# if line/column matched, may be followed by a description",
-        "(?(<line_column>):[^ 0-9][^ ]*)?",
-        "# which may be followed by trailing punctuation",
-        "[.,:)}\\]>]*",
-        "# and always includes trailing whitespace or end of line",
-        "([ ]+|$)",
+        "(?<path>",
+        "    (",
+        "        # multi-char path: first char (not opening delimiter or space)",
+        "        [^({\\[<\"'`\\ ]",
+        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren",
+        "        ([^\\ :(]|[:(][^0-9()])*",
+        "        # last char: not closing delimiter or colon",
+        "        [^()}\\]>\"'`.,;:\\ ]",
+        "    |",
+        "        # single-char path: not delimiter, punctuation, or space",
+        "        [^(){}\\[\\]<>\"'`.,;:\\ ]",
+        "    )",
+        "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
+        "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",
+        ")",
       ],
     ],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
@@ -1931,6 +1936,9 @@
         "words": "disabled",
       },
     },
+    "Proto": {
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
+    },
     "Python": {
       "code_actions_on_format": {
         "source.organizeImports.ruff": true,
@@ -2054,6 +2062,12 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to skip worktree trust checks.
+    // When trusted, project settings are synchronized automatically,
+    // language and MCP servers are downloaded and started automatically.
+    //
+    // Default: false
+    "trust_all_worktrees": false,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier

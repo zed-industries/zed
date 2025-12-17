@@ -30,18 +30,20 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
+use project::{
+    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
+};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
+    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -163,11 +165,12 @@ impl Render for TitleBar {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
+                                        .children(self.render_restricted_mode(cx))
                                         .children(self.render_project_host(cx))
                                         .child(self.render_project_name(cx))
                                 })
                                 .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_branch(cx))
+                                    title_bar.children(self.render_project_repo(cx))
                                 })
                         })
                 })
@@ -202,9 +205,11 @@ impl Render for TitleBar {
                 .children(self.render_connection_status(status, cx))
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
-                    |el| el.child(self.render_sign_in_button(cx)),
+                    |this| this.child(self.render_sign_in_button(cx)),
                 )
-                .child(self.render_app_menu_button(cx))
+                .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
+                    this.child(self.render_user_menu_button(cx))
+                })
                 .into_any_element(),
         );
 
@@ -289,7 +294,12 @@ impl TitleBar {
                 _ => {}
             }),
         );
-        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
+                cx.notify();
+            }));
+        }
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
@@ -315,8 +325,29 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            screen_share_popover_handle: Default::default(),
+            screen_share_popover_handle: PopoverMenuHandle::default(),
         }
+    }
+
+    fn project_name(&self, cx: &Context<Self>) -> Option<SharedString> {
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.id(),
+                    path: RelPath::empty(),
+                };
+
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                let name = match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.root_name_str(),
+                };
+                SharedString::new(name)
+            })
+            .next()
     }
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -404,6 +435,48 @@ impl TitleBar {
         )
     }
 
+    pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| {
+                trusted_worktrees
+                    .read(cx)
+                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
+            })
+            .unwrap_or(false);
+        if !has_restricted_worktrees {
+            return None;
+        }
+
+        Some(
+            Button::new("restricted_mode_trigger", "Restricted Mode")
+                .style(ButtonStyle::Tinted(TintColor::Warning))
+                .label_size(LabelSize::Small)
+                .color(Color::Warning)
+                .icon(IconName::Warning)
+                .icon_color(Color::Warning)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::Start)
+                .tooltip(|_, cx| {
+                    Tooltip::with_meta(
+                        "You're in Restricted Mode",
+                        Some(&ToggleWorktreeSecurity),
+                        "Mark this project as trusted and unlock all features",
+                        cx,
+                    )
+                })
+                .on_click({
+                    cx.listener(move |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_worktree_trust_security_modal(true, window, cx)
+                            })
+                            .log_err();
+                    })
+                })
+                .into_any_element(),
+        )
+    }
+
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_remote_server() {
             return self.render_remote_project_connection(cx);
@@ -451,29 +524,12 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                let settings_location = SettingsLocation {
-                    worktree_id: worktree.id(),
-                    path: RelPath::empty(),
-                };
-
-                let settings = WorktreeSettings::get(Some(settings_location), cx);
-                match &settings.project_name {
-                    Some(name) => name.as_str(),
-                    None => worktree.root_name_str(),
-                }
-            })
-            .next();
+        let name = self.project_name(cx);
         let is_project_selected = name.is_some();
         let name = if let Some(name) = name {
-            util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
+            util::truncate_and_trailoff(&name, MAX_PROJECT_NAME_LENGTH)
         } else {
-            "Open recent project".to_string()
+            "Open Recent Project".to_string()
         };
 
         Button::new("project_name_trigger", name)
@@ -500,9 +556,10 @@ impl TitleBar {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_repo(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let settings = TitleBarSettings::get_global(cx);
         let repository = self.project.read(cx).active_repository(cx)?;
+        let repository_count = self.project.read(cx).repositories(cx).len();
         let workspace = self.workspace.upgrade()?;
         let repo = repository.read(cx);
         let branch_name = repo
@@ -519,6 +576,19 @@ impl TitleBar {
                         .collect::<String>()
                 })
             })?;
+        let project_name = self.project_name(cx);
+        let repo_name = repo
+            .work_directory_abs_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(SharedString::new);
+        let show_repo_name =
+            repository_count > 1 && repo.branch.is_some() && repo_name != project_name;
+        let branch_name = if let Some(repo_name) = repo_name.filter(|_| show_repo_name) {
+            format!("{repo_name}/{branch_name}")
+        } else {
+            branch_name
+        };
 
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -667,7 +737,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_app_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         let user = user_store.current_user();
 

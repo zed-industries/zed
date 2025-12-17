@@ -43,6 +43,7 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+prompt_store.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
 schemars.workspace = true
@@ -74,6 +75,7 @@ gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

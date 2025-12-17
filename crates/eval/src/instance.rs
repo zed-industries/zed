@@ -202,6 +202,7 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
+            false,
             cx,
         );
 
@@ -624,6 +625,15 @@ impl agent::TerminalHandle for EvalTerminalHandle {
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
+    }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
     }
 }
 

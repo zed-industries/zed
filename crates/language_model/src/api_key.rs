@@ -2,7 +2,6 @@ use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, future};
 use gpui::{AsyncApp, Context, SharedString, Task};
-use language_model::AuthenticateError;
 use std::{
     fmt::{Display, Formatter},
     sync::Arc,
@@ -10,13 +9,16 @@ use std::{
 use util::ResultExt as _;
 use zed_env_vars::EnvVar;
 
+use crate::AuthenticateError;
+
 /// Manages a single API key for a language model provider. API keys either come from environment
 /// variables or the system keychain.
 ///
 /// Keys from the system keychain are associated with a provider URL, and this ensures that they are
 /// only used with that URL.
 pub struct ApiKeyState {
-    url: SharedString,
+    pub url: SharedString,
+    env_var: EnvVar,
     load_status: LoadStatus,
     load_task: Option<future::Shared<Task<()>>>,
 }
@@ -35,9 +37,10 @@ pub struct ApiKey {
 }
 
 impl ApiKeyState {
-    pub fn new(url: SharedString) -> Self {
+    pub fn new(url: SharedString, env_var: EnvVar) -> Self {
         Self {
             url,
+            env_var,
             load_status: LoadStatus::NotPresent,
             load_task: None,
         }
@@ -45,6 +48,10 @@ impl ApiKeyState {
 
     pub fn has_key(&self) -> bool {
         matches!(self.load_status, LoadStatus::Loaded { .. })
+    }
+
+    pub fn env_var_name(&self) -> &SharedString {
+        &self.env_var.name
     }
 
     pub fn is_from_env_var(&self) -> bool {
@@ -136,14 +143,13 @@ impl ApiKeyState {
     pub fn handle_url_change<Ent: 'static>(
         &mut self,
         url: SharedString,
-        env_var: &EnvVar,
         get_this: impl Fn(&mut Ent) -> &mut Self + Clone + 'static,
         cx: &mut Context<Ent>,
     ) {
         if url != self.url {
             if !self.is_from_env_var() {
                 // loading will continue even though this result task is dropped
-                let _task = self.load_if_needed(url, env_var, get_this, cx);
+                let _task = self.load_if_needed(url, get_this, cx);
             }
         }
     }
@@ -156,7 +162,6 @@ impl ApiKeyState {
     pub fn load_if_needed<Ent: 'static>(
         &mut self,
         url: SharedString,
-        env_var: &EnvVar,
         get_this: impl Fn(&mut Ent) -> &mut Self + Clone + 'static,
         cx: &mut Context<Ent>,
     ) -> Task<Result<(), AuthenticateError>> {
@@ -166,10 +171,10 @@ impl ApiKeyState {
             return Task::ready(Ok(()));
         }
 
-        if let Some(key) = &env_var.value
+        if let Some(key) = &self.env_var.value
             && !key.is_empty()
         {
-            let api_key = ApiKey::from_env(env_var.name.clone(), key);
+            let api_key = ApiKey::from_env(self.env_var.name.clone(), key);
             self.url = url;
             self.load_status = LoadStatus::Loaded(api_key);
             self.load_task = None;

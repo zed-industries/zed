@@ -1,4 +1,4 @@
-mod acp;
+pub mod acp;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -7,8 +7,7 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
-#[cfg(test)]
-mod evals;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -28,7 +27,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{Action, App, Entity, SharedString, actions};
 use language::{
@@ -69,6 +68,8 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
+        /// Cycles through favorited models in the ACP model selector.
+        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Removes all thread history.
@@ -173,6 +174,16 @@ impl ExternalAgent {
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
+
+    pub fn is_mcp(&self) -> bool {
+        match self {
+            Self::Gemini => true,
+            Self::ClaudeCode => true,
+            Self::Codex => true,
+            Self::NativeAgent => false,
+            Self::Custom { .. } => false,
+        }
+    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -216,7 +227,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    assistant_text_thread::init(client.clone(), cx);
+    assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -229,13 +240,8 @@ pub fn init(
     TextThreadEditor::init(cx);
 
     register_slash_commands(cx);
-    inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
+    inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -251,23 +257,31 @@ pub fn init(
         update_command_palette_filter(app_cx);
     })
     .detach();
+
+    cx.on_flags_ready(|_, cx| {
+        update_command_palette_filter(cx);
+    })
+    .detach();
 }
 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let agent_v2_enabled = cx.has_flag::<AgentV2FeatureFlag>();
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
         .provider;
 
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
-            AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-            PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
+            NextEditPrediction, PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
         };
         let edit_prediction_actions = [
             TypeId::of::<AcceptEditPrediction>(),
-            TypeId::of::<AcceptPartialEditPrediction>(),
+            TypeId::of::<AcceptNextWordEditPrediction>(),
+            TypeId::of::<AcceptNextLineEditPrediction>(),
+            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
@@ -276,6 +290,7 @@ fn update_command_palette_filter(cx: &mut App) {
 
         if disable_ai {
             filter.hide_namespace("agent");
+            filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
             filter.hide_namespace("supermaven");
@@ -287,8 +302,10 @@ fn update_command_palette_filter(cx: &mut App) {
         } else {
             if agent_enabled {
                 filter.show_namespace("agent");
+                filter.show_namespace("agents");
             } else {
                 filter.hide_namespace("agent");
+                filter.hide_namespace("agents");
             }
 
             filter.show_namespace("assistant");
@@ -324,6 +341,9 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+            if !agent_v2_enabled {
+                filter.hide_action_types(&[TypeId::of::<zed_actions::agent::ToggleAgentPane>()]);
+            }
         }
     });
 }
@@ -422,7 +442,7 @@ mod tests {
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
-        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
+        DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting, Settings, SettingsStore,
     };
 
     #[gpui::test]
@@ -441,13 +461,16 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            agents_panel_dock: DockSide::Left,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
             inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models: vec![],
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),

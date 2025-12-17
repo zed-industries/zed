@@ -100,7 +100,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     ) -> bool {
         let store = self.store.read(cx);
         if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token()
+            store.has_sweep_api_token(cx)
         } else {
             true
         }

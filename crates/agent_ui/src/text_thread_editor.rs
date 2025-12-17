@@ -2,7 +2,7 @@ use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
-use agent_settings::CompletionMode;
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -72,6 +72,8 @@ use workspace::{
     searchable::{SearchEvent, SearchableItem},
 };
 use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
+
+use crate::CycleFavoriteModels;
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_text_thread::{
@@ -304,17 +306,31 @@ impl TextThreadEditor {
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
-                    move |model, cx| {
-                        update_settings_file(fs.clone(), cx, move |settings, _| {
-                            let provider = model.provider_id().0.to_string();
-                            let model = model.id().0.to_string();
-                            settings.agent.get_or_insert_default().set_model(
-                                LanguageModelSelection {
-                                    provider: LanguageModelProviderSetting(provider),
-                                    model,
-                                },
-                            )
-                        });
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                let provider = model.provider_id().0.to_string();
+                                let model = model.id().0.to_string();
+                                settings.agent.get_or_insert_default().set_model(
+                                    LanguageModelSelection {
+                                        provider: LanguageModelProviderSetting(provider),
+                                        model,
+                                    },
+                                )
+                            });
+                        }
+                    },
+                    {
+                        let fs = fs.clone();
+                        move |model, should_be_favorite, cx| {
+                            crate::favorite_models::toggle_in_settings(
+                                model,
+                                should_be_favorite,
+                                fs.clone(),
+                                cx,
+                            );
+                        }
                     },
                     true, // Use popover styles for picker
                     focus_handle,
@@ -2195,11 +2211,52 @@ impl TextThreadEditor {
         };
 
         let focus_handle = self.editor().focus_handle(cx);
+
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
             (Color::Muted, IconName::ChevronDown)
         };
+
+        let tooltip = Tooltip::element({
+            move |_, cx| {
+                let focus_handle = focus_handle.clone();
+                let should_show_cycle_row = !AgentSettings::get_global(cx)
+                    .favorite_model_ids()
+                    .is_empty();
+
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_between()
+                            .child(Label::new("Change Model"))
+                            .child(KeyBinding::for_action_in(
+                                &ToggleModelSelector,
+                                &focus_handle,
+                                cx,
+                            )),
+                    )
+                    .when(should_show_cycle_row, |this| {
+                        this.child(
+                            h_flex()
+                                .pt_1()
+                                .gap_2()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .justify_between()
+                                .child(Label::new("Cycle Favorited Models"))
+                                .child(KeyBinding::for_action_in(
+                                    &CycleFavoriteModels,
+                                    &focus_handle,
+                                    cx,
+                                )),
+                        )
+                    })
+                    .into_any()
+            }
+        });
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
@@ -2217,9 +2274,7 @@ impl TextThreadEditor {
                         )
                         .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
                 ),
-            move |_window, cx| {
-                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
-            },
+            tooltip,
             gpui::Corner::BottomRight,
             cx,
         )
@@ -2579,6 +2634,11 @@ impl Render for TextThreadEditor {
             .on_action(move |_: &ToggleModelSelector, window, cx| {
                 language_model_selector.toggle(window, cx);
             })
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                this.language_model_selector.update(cx, |selector, cx| {
+                    selector.delegate.cycle_favorite_models(window, cx);
+                });
+            }))
             .size_full()
             .child(
                 div()
@@ -3323,7 +3383,6 @@ mod tests {
         cx.new(|cx| {
             let mut text_thread = TextThread::local(
                 registry,
-                None,
                 None,
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),

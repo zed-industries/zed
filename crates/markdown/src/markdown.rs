@@ -70,6 +70,7 @@ pub struct MarkdownStyle {
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
+    pub table_columns_min_size: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -91,6 +92,7 @@ impl Default for MarkdownStyle {
             heading_level_styles: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
+            table_columns_min_size: false,
         }
     }
 }
@@ -149,8 +151,6 @@ actions!(
     [
         /// Copies the selected text to the clipboard.
         Copy,
-        /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
     ]
 );
 
@@ -251,7 +251,7 @@ impl Markdown {
         self.autoscroll_request = None;
         self.pending_parse = None;
         self.should_reparse = false;
-        self.parsed_markdown = ParsedMarkdown::default();
+        // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
 
@@ -292,14 +292,6 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selection.end <= self.selection.start {
-            return;
-        }
-        let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -422,28 +414,72 @@ impl Focusable for Markdown {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Debug, Default, Clone)]
+enum SelectMode {
+    #[default]
+    Character,
+    Word(Range<usize>),
+    Line(Range<usize>),
+    All,
+}
+
+#[derive(Clone, Default)]
 struct Selection {
     start: usize,
     end: usize,
     reversed: bool,
     pending: bool,
+    mode: SelectMode,
 }
 
 impl Selection {
-    fn set_head(&mut self, head: usize) {
-        if head < self.tail() {
-            if !self.reversed {
-                self.end = self.start;
-                self.reversed = true;
+    fn set_head(&mut self, head: usize, rendered_text: &RenderedText) {
+        match &self.mode {
+            SelectMode::Character => {
+                if head < self.tail() {
+                    if !self.reversed {
+                        self.end = self.start;
+                        self.reversed = true;
+                    }
+                    self.start = head;
+                } else {
+                    if self.reversed {
+                        self.start = self.end;
+                        self.reversed = false;
+                    }
+                    self.end = head;
+                }
             }
-            self.start = head;
-        } else {
-            if self.reversed {
-                self.start = self.end;
+            SelectMode::Word(original_range) | SelectMode::Line(original_range) => {
+                let head_range = if matches!(self.mode, SelectMode::Word(_)) {
+                    rendered_text.surrounding_word_range(head)
+                } else {
+                    rendered_text.surrounding_line_range(head)
+                };
+
+                if head < original_range.start {
+                    self.start = head_range.start;
+                    self.end = original_range.end;
+                    self.reversed = true;
+                } else if head >= original_range.end {
+                    self.start = original_range.start;
+                    self.end = head_range.end;
+                    self.reversed = false;
+                } else {
+                    self.start = original_range.start;
+                    self.end = original_range.end;
+                    self.reversed = false;
+                }
+            }
+            SelectMode::All => {
+                self.start = 0;
+                self.end = rendered_text
+                    .lines
+                    .last()
+                    .map(|line| line.source_end)
+                    .unwrap_or(0);
                 self.reversed = false;
             }
-            self.end = head;
         }
     }
 
@@ -532,7 +568,7 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let selection = self.markdown.read(cx).selection;
+        let selection = self.markdown.read(cx).selection.clone();
         let selection_start = rendered_text.position_for_source_index(selection.start);
         let selection_end = rendered_text.position_for_source_index(selection.end);
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
@@ -632,18 +668,34 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
-                            let range = if event.click_count == 2 {
-                                rendered_text.surrounding_word_range(source_index)
-                            } else if event.click_count == 3 {
-                                rendered_text.surrounding_line_range(source_index)
-                            } else {
-                                source_index..source_index
+                            let (range, mode) = match event.click_count {
+                                1 => {
+                                    let range = source_index..source_index;
+                                    (range, SelectMode::Character)
+                                }
+                                2 => {
+                                    let range = rendered_text.surrounding_word_range(source_index);
+                                    (range.clone(), SelectMode::Word(range))
+                                }
+                                3 => {
+                                    let range = rendered_text.surrounding_line_range(source_index);
+                                    (range.clone(), SelectMode::Line(range))
+                                }
+                                _ => {
+                                    let range = 0..rendered_text
+                                        .lines
+                                        .last()
+                                        .map(|line| line.source_end)
+                                        .unwrap_or(0);
+                                    (range, SelectMode::All)
+                                }
                             };
                             markdown.selection = Selection {
                                 start: range.start,
                                 end: range.end,
                                 reversed: false,
                                 pending: true,
+                                mode,
                             };
                             window.focus(&markdown.focus_handle);
                         }
@@ -672,7 +724,7 @@ impl MarkdownElement {
                     {
                         Ok(ix) | Err(ix) => ix,
                     };
-                    markdown.selection.set_head(source_index);
+                    markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
@@ -838,8 +890,7 @@ impl Element for MarkdownElement {
 
                             heading.style().refine(&self.style.heading);
 
-                            let text_style =
-                                self.style.heading.text_style().clone().unwrap_or_default();
+                            let text_style = self.style.heading.text_style().clone();
 
                             builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
@@ -933,10 +984,7 @@ impl Element for MarkdownElement {
                                             }
                                         });
 
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
+                                    builder.push_text_style(self.style.code_block.text.to_owned());
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
@@ -1015,15 +1063,23 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
-                            builder.table_alignments = alignments.clone();
+                            builder.table.start(alignments.clone());
 
+                            let column_count = alignments.len();
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .min_w_0()
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .when(self.style.table_columns_min_size, |this| {
+                                        this.grid_cols_min_content(column_count as u16)
+                                    })
+                                    .when(!self.style.table_columns_min_size, |this| {
+                                        this.grid_cols(column_count as u16)
+                                    })
                                     .size_full()
                                     .mb_2()
-                                    .border_1()
+                                    .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
                                     .overflow_hidden(),
@@ -1032,38 +1088,33 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::TableHead => {
-                            let column_count = builder.table_alignments.len();
-
-                            builder.push_div(
-                                div()
-                                    .grid()
-                                    .grid_cols(column_count as u16)
-                                    .bg(cx.theme().colors().title_bar_background),
-                                range,
-                                markdown_end,
-                            );
+                            builder.table.start_head();
                             builder.push_text_style(TextStyleRefinement {
                                 font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
-                            let column_count = builder.table_alignments.len();
-
-                            builder.push_div(
-                                div().grid().grid_cols(column_count as u16),
-                                range,
-                                markdown_end,
-                            );
+                            builder.table.start_row();
                         }
                         MarkdownTag::TableCell => {
+                            let is_header = builder.table.in_head;
+                            let row_index = builder.table.row_index;
+                            let col_index = builder.table.col_index;
+
                             builder.push_div(
                                 div()
-                                    .min_w_0()
-                                    .border(px(0.5))
+                                    .when(col_index > 0, |this| this.border_l_1())
+                                    .when(row_index > 0, |this| this.border_t_1())
                                     .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .py_0p5(),
+                                    .py_0p5()
+                                    .when(is_header, |this| {
+                                        this.bg(cx.theme().colors().title_bar_background)
+                                    })
+                                    .when(!is_header && row_index % 2 == 1, |this| {
+                                        this.bg(cx.theme().colors().panel_background)
+                                    }),
                                 range,
                                 markdown_end,
                             );
@@ -1091,9 +1142,7 @@ impl Element for MarkdownElement {
 
                         builder.pop_div();
                         builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
+                        builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
                             copy_button: true, ..
@@ -1179,17 +1228,18 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
-                        builder.table_alignments.clear();
+                        builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
-                        builder.pop_div();
                         builder.pop_text_style();
+                        builder.table.end_head();
                     }
                     MarkdownTagEnd::TableRow => {
-                        builder.pop_div();
+                        builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
+                        builder.table.end_cell();
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
@@ -1306,14 +1356,6 @@ impl Element for MarkdownElement {
                 }
             }
         });
-        window.on_action(std::any::TypeId::of::<crate::CopyAsMarkdown>(), {
-            let entity = self.markdown.clone();
-            move |_, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
-                }
-            }
-        });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
@@ -1346,7 +1388,7 @@ fn apply_heading_style(
         };
 
         if let Some(style) = style_opt {
-            heading.style().text = Some(style.clone());
+            heading.style().text = style.clone();
         }
     }
 
@@ -1452,6 +1494,50 @@ impl ParentElement for AnyDiv {
     }
 }
 
+#[derive(Default)]
+struct TableState {
+    alignments: Vec<Alignment>,
+    in_head: bool,
+    row_index: usize,
+    col_index: usize,
+}
+
+impl TableState {
+    fn start(&mut self, alignments: Vec<Alignment>) {
+        self.alignments = alignments;
+        self.in_head = false;
+        self.row_index = 0;
+        self.col_index = 0;
+    }
+
+    fn end(&mut self) {
+        self.alignments.clear();
+        self.in_head = false;
+        self.row_index = 0;
+        self.col_index = 0;
+    }
+
+    fn start_head(&mut self) {
+        self.in_head = true;
+    }
+
+    fn end_head(&mut self) {
+        self.in_head = false;
+    }
+
+    fn start_row(&mut self) {
+        self.col_index = 0;
+    }
+
+    fn end_row(&mut self) {
+        self.row_index += 1;
+    }
+
+    fn end_cell(&mut self) {
+        self.col_index += 1;
+    }
+}
+
 struct MarkdownElementBuilder {
     div_stack: Vec<AnyDiv>,
     rendered_lines: Vec<RenderedLine>,
@@ -1463,7 +1549,7 @@ struct MarkdownElementBuilder {
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
-    table_alignments: Vec<Alignment>,
+    table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
 }
 
@@ -1499,7 +1585,7 @@ impl MarkdownElementBuilder {
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
-            table_alignments: Vec::new(),
+            table: TableState::default(),
             syntax_theme,
         }
     }
@@ -1945,6 +2031,178 @@ mod tests {
             |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
         );
         rendered.text
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word_range(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world tesεζ", cx);
+
+        // Test word selection for "Hello"
+        let word_range = rendered.surrounding_word_range(2); // Simulate click on 'l' in "Hello"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "Hello");
+
+        // Test word selection for "world"
+        let word_range = rendered.surrounding_word_range(7); // Simulate click on 'o' in "world"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "world");
+
+        // Test word selection for "tesεζ"
+        let word_range = rendered.surrounding_word_range(14); // Simulate click on 's' in "tesεζ"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "tesεζ");
+
+        // Test word selection at word boundary (space)
+        let word_range = rendered.surrounding_word_range(5); // Simulate click on space between "Hello" and "world", expect highlighting word to the left
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "Hello");
+    }
+
+    #[gpui::test]
+    fn test_surrounding_line_range(cx: &mut TestAppContext) {
+        let rendered = render_markdown("First line\n\nSecond line\n\nThird lineεζ", cx);
+
+        // Test getting line range for first line
+        let line_range = rendered.surrounding_line_range(5); // Simulate click somewhere in first line
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "First line");
+
+        // Test getting line range for second line
+        let line_range = rendered.surrounding_line_range(13); // Simulate click at beginning in second line
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "Second line");
+
+        // Test getting line range for third line
+        let line_range = rendered.surrounding_line_range(37); // Simulate click at end of third line with multi-byte chars
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "Third lineεζ");
+    }
+
+    #[gpui::test]
+    fn test_selection_head_movement(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world test", cx);
+
+        let mut selection = Selection {
+            start: 5,
+            end: 5,
+            reversed: false,
+            pending: false,
+            mode: SelectMode::Character,
+        };
+
+        // Test forward selection
+        selection.set_head(10, &rendered);
+        assert_eq!(selection.start, 5);
+        assert_eq!(selection.end, 10);
+        assert!(!selection.reversed);
+        assert_eq!(selection.tail(), 5);
+
+        // Test backward selection
+        selection.set_head(2, &rendered);
+        assert_eq!(selection.start, 2);
+        assert_eq!(selection.end, 5);
+        assert!(selection.reversed);
+        assert_eq!(selection.tail(), 5);
+
+        // Test forward selection again from reversed state
+        selection.set_head(15, &rendered);
+        assert_eq!(selection.start, 5);
+        assert_eq!(selection.end, 15);
+        assert!(!selection.reversed);
+        assert_eq!(selection.tail(), 5);
+    }
+
+    #[gpui::test]
+    fn test_word_selection_drag(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world test", cx);
+
+        // Start with a simulated double-click on "world" (index 6-10)
+        let word_range = rendered.surrounding_word_range(7); // Click on 'o' in "world"
+        let mut selection = Selection {
+            start: word_range.start,
+            end: word_range.end,
+            reversed: false,
+            pending: true,
+            mode: SelectMode::Word(word_range),
+        };
+
+        // Drag forward to "test" - should expand selection to include "test"
+        selection.set_head(13, &rendered); // Index in "test"
+        assert_eq!(selection.start, 6); // Start of "world"
+        assert_eq!(selection.end, 16); // End of "test"
+        assert!(!selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "world test");
+
+        // Drag backward to "Hello" - should expand selection to include "Hello"
+        selection.set_head(2, &rendered); // Index in "Hello"
+        assert_eq!(selection.start, 0); // Start of "Hello"
+        assert_eq!(selection.end, 11); // End of "world" (original selection)
+        assert!(selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "Hello world");
+
+        // Drag back within original word - should revert to original selection
+        selection.set_head(8, &rendered); // Back within "world"
+        assert_eq!(selection.start, 6); // Start of "world"
+        assert_eq!(selection.end, 11); // End of "world"
+        assert!(!selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "world");
+    }
+
+    #[gpui::test]
+    fn test_selection_with_markdown_formatting(cx: &mut TestAppContext) {
+        let rendered = render_markdown(
+            "This is **bold** text, this is *italic* text, use `code` here",
+            cx,
+        );
+        let word_range = rendered.surrounding_word_range(10); // Inside "bold"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "bold");
+
+        let word_range = rendered.surrounding_word_range(32); // Inside "italic"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "italic");
+
+        let word_range = rendered.surrounding_word_range(51); // Inside "code"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_all_selection(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world\n\nThis is a test\n\nwith multiple lines", cx);
+
+        let total_length = rendered
+            .lines
+            .last()
+            .map(|line| line.source_end)
+            .unwrap_or(0);
+
+        let mut selection = Selection {
+            start: 0,
+            end: total_length,
+            reversed: false,
+            pending: true,
+            mode: SelectMode::All,
+        };
+
+        selection.set_head(5, &rendered); // Try to set head in middle
+        assert_eq!(selection.start, 0);
+        assert_eq!(selection.end, total_length);
+        assert!(!selection.reversed);
+
+        selection.set_head(25, &rendered); // Try to set head near end
+        assert_eq!(selection.start, 0);
+        assert_eq!(selection.end, total_length);
+        assert!(!selection.reversed);
+
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(
+            selected_text,
+            "Hello world\nThis is a test\nwith multiple lines"
+        );
     }
 
     #[test]

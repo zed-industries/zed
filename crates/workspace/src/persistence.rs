@@ -9,20 +9,26 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use collections::{HashMap, IndexSet};
+use collections::{HashMap, HashSet, IndexSet};
 use db::{
+    kvp::KEY_VALUE_STORE,
     query,
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
-use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
+use gpui::{Axis, Bounds, Entity, Task, WindowBounds, WindowId, point, size};
+use project::{
+    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    trusted_worktrees::{PathTrust, RemoteHostLocation, find_worktree_in_store},
+    worktree_store::WorktreeStore,
+};
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
 use remote::{
     DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
+use serde::{Deserialize, Serialize};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -45,6 +51,11 @@ use model::{
 };
 
 use self::model::{DockStructure, SerializedWorkspaceLocation};
+
+// https://www.sqlite.org/limits.html
+// > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
+// > which defaults to <..> 32766 for SQLite versions after 3.32.0.
+const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -151,6 +162,124 @@ impl Column for SerializedWindowBounds {
         };
 
         Ok((status, next_index + 4))
+    }
+}
+
+const DEFAULT_WINDOW_BOUNDS_KEY: &str = "default_window_bounds";
+
+pub fn read_default_window_bounds() -> Option<(Uuid, WindowBounds)> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(DEFAULT_WINDOW_BOUNDS_KEY)
+        .log_err()
+        .flatten()?;
+
+    let (display_uuid, persisted) =
+        serde_json::from_str::<(Uuid, WindowBoundsJson)>(&json_str).ok()?;
+    Some((display_uuid, persisted.into()))
+}
+
+pub async fn write_default_window_bounds(
+    bounds: WindowBounds,
+    display_uuid: Uuid,
+) -> anyhow::Result<()> {
+    let persisted = WindowBoundsJson::from(bounds);
+    let json_str = serde_json::to_string(&(display_uuid, persisted))?;
+    KEY_VALUE_STORE
+        .write_kvp(DEFAULT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+        .await?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WindowBoundsJson {
+    Windowed {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Maximized {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Fullscreen {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+}
+
+impl From<WindowBounds> for WindowBoundsJson {
+    fn from(b: WindowBounds) -> Self {
+        match b {
+            WindowBounds::Windowed(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Windowed {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Maximized(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Maximized {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Fullscreen(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Fullscreen {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+        }
+    }
+}
+
+impl From<WindowBoundsJson> for WindowBounds {
+    fn from(n: WindowBoundsJson) -> Self {
+        match n {
+            WindowBoundsJson::Windowed {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Windowed(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            WindowBoundsJson::Maximized {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Maximized(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            WindowBoundsJson::Fullscreen {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Fullscreen(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+        }
     }
 }
 
@@ -707,6 +836,14 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN name TEXT;
             ALTER TABLE remote_connections ADD COLUMN container_id TEXT;
+        ),
+        sql!(
+            CREATE TABLE IF NOT EXISTS trusted_worktrees (
+                trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_path TEXT,
+                user_name TEXT,
+                host_name TEXT
+            ) STRICT;
         ),
     ];
 
@@ -1364,24 +1501,6 @@ impl WorkspaceDb {
         }
     }
 
-    pub(crate) fn last_window(
-        &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
-        let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
-                SELECT
-                display,
-                window_state, window_x, window_y, window_width, window_height
-                FROM workspaces
-                WHERE paths
-                IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ))?;
-        let result = prepared_query()?;
-        Ok(result.into_iter().next().unwrap_or((None, None)))
-    }
-
     query! {
         pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
             DELETE FROM workspaces
@@ -1795,6 +1914,141 @@ impl WorkspaceDb {
 
             Ok(())
         }).await
+    }
+
+    pub(crate) async fn save_trusted_worktrees(
+        &self,
+        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+        trusted_workspaces: HashSet<Option<RemoteHostLocation>>,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        use db::sqlez::statement::Statement;
+        use itertools::Itertools as _;
+
+        DB.clear_trusted_worktrees()
+            .await
+            .context("clearing previous trust state")?;
+
+        let trusted_worktrees = trusted_worktrees
+            .into_iter()
+            .flat_map(|(host, abs_paths)| {
+                abs_paths
+                    .into_iter()
+                    .map(move |abs_path| (Some(abs_path), host.clone()))
+            })
+            .chain(trusted_workspaces.into_iter().map(|host| (None, host)))
+            .collect::<Vec<_>>();
+        let mut first_worktree;
+        let mut last_worktree = 0_usize;
+        for (count, placeholders) in std::iter::once("(?, ?, ?)")
+            .cycle()
+            .take(trusted_worktrees.len())
+            .chunks(MAX_QUERY_PLACEHOLDERS / 3)
+            .into_iter()
+            .map(|chunk| {
+                let mut count = 0;
+                let placeholders = chunk
+                    .inspect(|_| {
+                        count += 1;
+                    })
+                    .join(", ");
+                (count, placeholders)
+            })
+            .collect::<Vec<_>>()
+        {
+            first_worktree = last_worktree;
+            last_worktree = last_worktree + count;
+            let query = format!(
+                r#"INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)
+VALUES {placeholders};"#
+            );
+
+            let trusted_worktrees = trusted_worktrees[first_worktree..last_worktree].to_vec();
+            self.write(move |conn| {
+                let mut statement = Statement::prepare(conn, query)?;
+                let mut next_index = 1;
+                for (abs_path, host) in trusted_worktrees {
+                    let abs_path = abs_path.as_ref().map(|abs_path| abs_path.to_string_lossy());
+                    next_index = statement.bind(
+                        &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
+                        next_index,
+                    )?;
+                    next_index = statement.bind(
+                        &host
+                            .as_ref()
+                            .and_then(|host| Some(host.user_name.as_ref()?.as_str())),
+                        next_index,
+                    )?;
+                    next_index = statement.bind(
+                        &host.as_ref().map(|host| host.host_identifier.as_str()),
+                        next_index,
+                    )?;
+                }
+                statement.exec()
+            })
+            .await
+            .context("inserting new trusted state")?;
+        }
+        Ok(())
+    }
+
+    pub fn fetch_trusted_worktrees(
+        &self,
+        worktree_store: Option<Entity<WorktreeStore>>,
+        host: Option<RemoteHostLocation>,
+        cx: &App,
+    ) -> Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
+        let trusted_worktrees = DB.trusted_worktrees()?;
+        Ok(trusted_worktrees
+            .into_iter()
+            .map(|(abs_path, user_name, host_name)| {
+                let db_host = match (user_name, host_name) {
+                    (_, None) => None,
+                    (None, Some(host_name)) => Some(RemoteHostLocation {
+                        user_name: None,
+                        host_identifier: SharedString::new(host_name),
+                    }),
+                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
+                        user_name: Some(SharedString::new(user_name)),
+                        host_identifier: SharedString::new(host_name),
+                    }),
+                };
+
+                match abs_path {
+                    Some(abs_path) => {
+                        if db_host != host {
+                            (db_host, PathTrust::AbsPath(abs_path))
+                        } else if let Some(worktree_store) = &worktree_store {
+                            find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
+                                .map(PathTrust::Worktree)
+                                .map(|trusted_worktree| (host.clone(), trusted_worktree))
+                                .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
+                        } else {
+                            (db_host, PathTrust::AbsPath(abs_path))
+                        }
+                    }
+                    None => (db_host, PathTrust::Workspace),
+                }
+            })
+            .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
+                acc.entry(remote_host)
+                    .or_insert_with(HashSet::default)
+                    .insert(path_trust);
+                acc
+            }))
+    }
+
+    query! {
+        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
+            SELECT absolute_path, user_name, host_name
+            FROM trusted_worktrees
+        }
+    }
+
+    query! {
+        pub async fn clear_trusted_worktrees() -> Result<()> {
+            DELETE FROM trusted_worktrees
+        }
     }
 }
 
