@@ -9,6 +9,10 @@ mod pasteboard;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;
+#[cfg(all(feature = "screen-capture", any(test, feature = "test-support")))]
+pub use screen_capture::{
+    capture_window_screenshot, cv_pixel_buffer_to_rgba_image, screen_capture_frame_to_rgba_image,
+};
 
 #[cfg(not(feature = "macos-blade"))]
 mod metal_atlas;

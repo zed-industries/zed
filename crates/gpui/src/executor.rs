@@ -497,6 +497,7 @@ impl BackgroundExecutor {
         timeout: Option<Duration>,
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
+        use std::time::Instant;
 
         use parking::Parker;
 
@@ -504,8 +505,36 @@ impl BackgroundExecutor {
         if timeout == Some(Duration::ZERO) {
             return Err(future);
         }
+
+        // If there's no test dispatcher, fall back to production blocking behavior
         let Some(dispatcher) = self.dispatcher.as_test() else {
-            return Err(future);
+            let deadline = timeout.map(|timeout| Instant::now() + timeout);
+
+            let parker = Parker::new();
+            let unparker = parker.unparker();
+            let waker = waker_fn(move || {
+                unparker.unpark();
+            });
+            let mut cx = std::task::Context::from_waker(&waker);
+
+            loop {
+                match future.as_mut().poll(&mut cx) {
+                    Poll::Ready(result) => return Ok(result),
+                    Poll::Pending => {
+                        let timeout = deadline
+                            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+                        if let Some(timeout) = timeout {
+                            if !parker.park_timeout(timeout)
+                                && deadline.is_some_and(|deadline| deadline < Instant::now())
+                            {
+                                return Err(future);
+                            }
+                        } else {
+                            parker.park();
+                        }
+                    }
+                }
+            }
         };
 
         let mut max_ticks = if timeout.is_some() {

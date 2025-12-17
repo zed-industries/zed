@@ -1822,6 +1822,14 @@ impl Window {
         self.platform_window.bounds()
     }
 
+    /// Returns the native window ID (CGWindowID on macOS) for window capture.
+    /// This is used by visual testing infrastructure to capture window screenshots.
+    /// Returns None on platforms that don't support this or in non-test builds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn native_window_id(&self) -> Option<u32> {
+        self.platform_window.native_window_id()
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);

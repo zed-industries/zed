@@ -88,6 +88,15 @@ pub use linux::layer_shell;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
+#[cfg(all(
+    target_os = "macos",
+    feature = "screen-capture",
+    any(test, feature = "test-support")
+))]
+pub use mac::{
+    capture_window_screenshot, cv_pixel_buffer_to_rgba_image, screen_capture_frame_to_rgba_image,
+};
+
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
     current_platform(true).background_executor()
@@ -568,6 +577,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
+        None
+    }
+
+    /// Returns the native window ID (CGWindowID on macOS) for window capture.
+    /// This is used by visual testing infrastructure to capture window screenshots.
+    #[cfg(any(test, feature = "test-support"))]
+    fn native_window_id(&self) -> Option<u32> {
         None
     }
 }
