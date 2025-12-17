@@ -1518,7 +1518,7 @@ impl RemoteServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: SharedString::from(connection_options.host),
+                    host: SharedString::from(connection_options.host.to_string()),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: BTreeSet::new(),
@@ -1983,7 +1983,7 @@ impl RemoteServerProjects {
                 .size_full()
                 .child(match &options {
                     ViewServerOptionsState::Ssh { connection, .. } => SshConnectionHeader {
-                        connection_string: connection.host.clone().into(),
+                        connection_string: connection.host.to_string().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,
@@ -2148,7 +2148,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection_string = SharedString::new(connection.host.clone());
+        let connection_string = SharedString::new(connection.host.to_string());
 
         v_flex()
             .child({
@@ -2659,7 +2659,7 @@ impl RemoteServerProjects {
 
         self.add_ssh_server(
             SshConnectionOptions {
-                host: ssh_config_host.to_string(),
+                host: ssh_config_host.to_string().into(),
                 ..SshConnectionOptions::default()
             },
             cx,

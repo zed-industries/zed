@@ -23,6 +23,7 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -47,9 +48,58 @@ pub(crate) struct SshRemoteConnection {
     _temp_dir: TempDir,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SshConnectionHost {
+    IpAddr(IpAddr),
+    Hostname(String),
+}
+
+impl SshConnectionHost {
+    pub fn to_bracketed_string(&self) -> String {
+        match self {
+            Self::IpAddr(IpAddr::V4(ip)) => ip.to_string(),
+            Self::IpAddr(IpAddr::V6(ip)) => format!("[{}]", ip),
+            Self::Hostname(hostname) => hostname.clone(),
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::IpAddr(ip) => ip.to_string(),
+            Self::Hostname(hostname) => hostname.clone(),
+        }
+    }
+}
+
+impl From<&str> for SshConnectionHost {
+    fn from(value: &str) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Hostname(value.to_string())
+        }
+    }
+}
+
+impl From<String> for SshConnectionHost {
+    fn from(value: String) -> Self {
+        if let Ok(address) = value.parse() {
+            Self::IpAddr(address)
+        } else {
+            Self::Hostname(value)
+        }
+    }
+}
+
+impl Default for SshConnectionHost {
+    fn default() -> Self {
+        Self::Hostname(Default::default())
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
-    pub host: String,
+    pub host: SshConnectionHost,
     pub username: Option<String>,
     pub port: Option<u16>,
     pub password: Option<String>,
@@ -64,7 +114,7 @@ pub struct SshConnectionOptions {
 impl From<settings::SshConnection> for SshConnectionOptions {
     fn from(val: settings::SshConnection) -> Self {
         SshConnectionOptions {
-            host: val.host.into(),
+            host: val.host.to_string().into(),
             username: val.username,
             port: val.port,
             password: None,
@@ -96,7 +146,7 @@ impl MasterProcess {
         askpass_script_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
         socket_path: &std::path::Path,
-        url: &str,
+        destination: &str,
     ) -> Result<Self> {
         let args = [
             "-N",
@@ -120,7 +170,7 @@ impl MasterProcess {
 
         master_process.arg(format!("ControlPath={}", socket_path.display()));
 
-        let process = master_process.arg(&url).spawn()?;
+        let process = master_process.arg(&destination).spawn()?;
 
         Ok(MasterProcess { process })
     }
@@ -143,7 +193,7 @@ impl MasterProcess {
     pub fn new(
         askpass_script_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
-        url: &str,
+        destination: &str,
     ) -> Result<Self> {
         // On Windows, `ControlMaster` and `ControlPath` are not supported:
         // https://github.com/PowerShell/Win32-OpenSSH/issues/405
@@ -165,7 +215,7 @@ impl MasterProcess {
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", askpass_script_path)
             .args(additional_args)
-            .arg(url)
+            .arg(destination)
             .args(args);
 
         let process = master_process.spawn()?;
@@ -412,7 +462,7 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use askpass::AskPassResult;
 
-        let url = connection_options.ssh_url();
+        let destination = connection_options.ssh_destination();
 
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
@@ -437,14 +487,14 @@ impl SshRemoteConnection {
         let mut master_process = MasterProcess::new(
             askpass.script_path().as_ref(),
             connection_options.additional_args(),
-            &url,
+            &destination,
         )?;
         #[cfg(not(target_os = "windows"))]
         let mut master_process = MasterProcess::new(
             askpass.script_path().as_ref(),
             connection_options.additional_args(),
             &socket_path,
-            &url,
+            &destination,
         )?;
 
         let result = select_biased! {
@@ -840,7 +890,7 @@ impl SshRemoteConnection {
         }
         command.arg(src_path).arg(format!(
             "{}:{}",
-            self.socket.connection_options.scp_url(),
+            self.socket.connection_options.scp_destination(),
             dest_path_str
         ));
         command
@@ -856,7 +906,7 @@ impl SshRemoteConnection {
                 .unwrap_or_default(),
         );
         command.arg("-b").arg("-");
-        command.arg(self.socket.connection_options.scp_url());
+        command.arg(self.socket.connection_options.scp_destination());
         command.stdin(Stdio::piped());
         command
     }
@@ -986,7 +1036,7 @@ impl SshSocket {
         let separator = shell_kind.sequential_commands_separator();
         let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
-            .arg(self.connection_options.ssh_url());
+            .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
             command.arg("-T");
         }
@@ -1063,7 +1113,7 @@ impl SshSocket {
             "ControlMaster=no".to_string(),
             "-o".to_string(),
             format!("ControlPath={}", self.socket_path.display()),
-            self.connection_options.ssh_url(),
+            self.connection_options.ssh_destination(),
         ]);
         arguments
     }
@@ -1071,7 +1121,7 @@ impl SshSocket {
     #[cfg(target_os = "windows")]
     fn ssh_args(&self) -> Vec<String> {
         let mut arguments = self.connection_options.additional_args();
-        arguments.push(self.connection_options.ssh_url());
+        arguments.push(self.connection_options.ssh_destination());
         arguments
     }
 
@@ -1208,10 +1258,24 @@ impl SshConnectionOptions {
                 input = rest;
                 username = Some(u.to_string());
             }
-            if let Some((rest, p)) = input.split_once(':') {
+
+            // Handle port parsing, accounting for IPv6 addresses
+            // IPv6 addresses can be: 2001:db8::1 or [2001:db8::1]:22
+            if input.starts_with('[') {
+                if let Some((rest, p)) = input.rsplit_once("]:") {
+                    input = rest.strip_prefix('[').unwrap_or(rest);
+                    port = p.parse().ok();
+                } else if input.ends_with(']') {
+                    input = input.strip_prefix('[').unwrap_or(input);
+                    input = input.strip_suffix(']').unwrap_or(input);
+                }
+            } else if let Some((rest, p)) = input.rsplit_once(':')
+                && !rest.contains(":")
+            {
                 input = rest;
-                port = p.parse().ok()
+                port = p.parse().ok();
             }
+
             hostname = Some(input.to_string())
         }
 
@@ -1225,7 +1289,7 @@ impl SshConnectionOptions {
         };
 
         Ok(Self {
-            host: hostname,
+            host: hostname.into(),
             username,
             port,
             port_forwards,
@@ -1237,19 +1301,16 @@ impl SshConnectionOptions {
         })
     }
 
-    pub fn ssh_url(&self) -> String {
-        let mut result = String::from("ssh://");
+    pub fn ssh_destination(&self) -> String {
+        let mut result = String::default();
         if let Some(username) = &self.username {
             // Username might be: username1@username2@ip2
             let username = urlencoding::encode(username);
             result.push_str(&username);
             result.push('@');
         }
-        result.push_str(&self.host);
-        if let Some(port) = self.port {
-            result.push(':');
-            result.push_str(&port.to_string());
-        }
+
+        result.push_str(&self.host.to_string());
         result
     }
 
@@ -1262,6 +1323,11 @@ impl SshConnectionOptions {
 
         if let Some(timeout) = self.connection_timeout {
             args.extend(["-o".to_string(), format!("ConnectTimeout={}", timeout)]);
+        }
+
+        if let Some(port) = self.port {
+            args.push("-p".to_string());
+            args.push(port.to_string());
         }
 
         if let Some(forwards) = &self.port_forwards {
@@ -1285,22 +1351,23 @@ impl SshConnectionOptions {
         args
     }
 
-    fn scp_url(&self) -> String {
+    fn scp_destination(&self) -> String {
         if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host)
+            format!("{}@{}", username, self.host.to_bracketed_string())
         } else {
-            self.host.clone()
+            self.host.to_string()
         }
     }
 
     pub fn connection_string(&self) -> String {
-        let host = if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host)
+        let host = if let Some(port) = &self.port {
+            format!("{}:{}", self.host.to_bracketed_string(), port)
         } else {
-            self.host.clone()
+            self.host.to_string()
         };
-        if let Some(port) = &self.port {
-            format!("{}:{}", host, port)
+
+        if let Some(username) = &self.username {
+            format!("{}@{}", username, host)
         } else {
             host
         }
@@ -1509,5 +1576,45 @@ mod tests {
                 "StrictHostKeyChecking=no".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_host_parsing() -> Result<()> {
+        let opts = SshConnectionOptions::parse_command_line("user@2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@[2001:db8::1]")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("2001:db8::1")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, None);
+
+        let opts = SshConnectionOptions::parse_command_line("[2001:db8::1]:2222")?;
+        assert_eq!(opts.host, "2001:db8::1".into());
+        assert_eq!(opts.username, None);
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@example.com:2222")?;
+        assert_eq!(opts.host, "example.com".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        let opts = SshConnectionOptions::parse_command_line("user@192.168.1.1:2222")?;
+        assert_eq!(opts.host, "192.168.1.1".into());
+        assert_eq!(opts.username, Some("user".to_string()));
+        assert_eq!(opts.port, Some(2222));
+
+        Ok(())
     }
 }
