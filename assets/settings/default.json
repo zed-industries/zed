@@ -1705,7 +1705,12 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "JSONC": [
+      "**/.zed/*.json",
+      "**/.vscode/**/*.json",
+      "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
+      "tsconfig*.json",
+    ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
   },
