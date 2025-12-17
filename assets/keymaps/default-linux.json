@@ -905,8 +905,8 @@
     "bindings": {
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
-      "up": "menu::SelectPrevious",
-      "down": "menu::SelectNext",
+      "up": "git_panel::PreviousEntry",
+      "down": "git_panel::NextEntry",
       "enter": "menu::Confirm",
       "alt-y": "git::StageFile",
       "alt-shift-y": "git::UnstageFile",

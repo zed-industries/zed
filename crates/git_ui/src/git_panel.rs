@@ -46,7 +46,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, ZED_CLOUD_PROVIDER_ID,
 };
-use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu;
 use multi_buffer::ExcerptInfo;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{
@@ -93,6 +93,14 @@ actions!(
         FocusEditor,
         /// Focuses on the changes list.
         FocusChanges,
+        /// Select next git panel menu item, and show it in the diff view
+        NextEntry,
+        /// Select previous git panel menu item, and show it in the diff view
+        PreviousEntry,
+        /// Select first git panel menu item, and show it in the diff view
+        FirstEntry,
+        /// Select last git panel menu item, and show it in the diff view
+        LastEntry,
         /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
         /// Toggles sorting entries by path vs status.
@@ -914,12 +922,12 @@ impl GitPanel {
 
         if let GitListEntry::Directory(dir_entry) = entry {
             if dir_entry.expanded {
-                self.select_next(&SelectNext, window, cx);
+                self.select_next(&menu::SelectNext, window, cx);
             } else {
                 self.toggle_directory(&dir_entry.key, window, cx);
             }
         } else {
-            self.select_next(&SelectNext, window, cx);
+            self.select_next(&menu::SelectNext, window, cx);
         }
     }
 
@@ -937,14 +945,19 @@ impl GitPanel {
             if dir_entry.expanded {
                 self.toggle_directory(&dir_entry.key, window, cx);
             } else {
-                self.select_previous(&SelectPrevious, window, cx);
+                self.select_previous(&menu::SelectPrevious, window, cx);
             }
         } else {
-            self.select_previous(&SelectPrevious, window, cx);
+            self.select_previous(&menu::SelectPrevious, window, cx);
         }
     }
 
-    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let first_entry = match &self.view_mode {
             GitPanelViewMode::Flat => self
                 .entries
@@ -967,7 +980,7 @@ impl GitPanel {
 
     fn select_previous(
         &mut self,
-        _: &SelectPrevious,
+        _: &menu::SelectPrevious,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1016,7 +1029,7 @@ impl GitPanel {
         self.scroll_to_selected_entry(cx);
     }
 
-    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         let item_count = self.entries.len();
         if item_count == 0 {
             return;
@@ -1054,11 +1067,48 @@ impl GitPanel {
         self.scroll_to_selected_entry(cx);
     }
 
-    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         if self.entries.last().is_some() {
             self.selected_entry = Some(self.entries.len() - 1);
             self.scroll_to_selected_entry(cx);
         }
+    }
+
+    /// Show diff view at selected entry, only if the diff view is open
+    fn move_diff_to_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let workspace = self.workspace.upgrade()?;
+
+            if let Some(project_diff) = workspace.read(cx).item_of_type::<ProjectDiff>(cx) {
+                let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+
+                project_diff.update(cx, |project_diff, cx| {
+                    project_diff.move_to_entry(entry.clone(), window, cx);
+                });
+            }
+
+            Some(())
+        });
+    }
+
+    fn first_entry(&mut self, _: &FirstEntry, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_first(&menu::SelectFirst, window, cx);
+        self.move_diff_to_entry(window, cx);
+    }
+
+    fn last_entry(&mut self, _: &LastEntry, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_last(&menu::SelectLast, window, cx);
+        self.move_diff_to_entry(window, cx);
+    }
+
+    fn next_entry(&mut self, _: &NextEntry, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&menu::SelectNext, window, cx);
+        self.move_diff_to_entry(window, cx);
+    }
+
+    fn previous_entry(&mut self, _: &PreviousEntry, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&menu::SelectPrevious, window, cx);
+        self.move_diff_to_entry(window, cx);
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
@@ -1074,7 +1124,7 @@ impl GitPanel {
             .as_ref()
             .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
         if have_entries && self.selected_entry.is_none() {
-            self.select_first(&SelectFirst, window, cx);
+            self.select_first(&menu::SelectFirst, window, cx);
         }
     }
 
@@ -4726,8 +4776,8 @@ impl GitPanel {
                     git::AddToGitignore.boxed_clone(),
                 )
                 .separator()
-                .action("Open Diff", Confirm.boxed_clone())
-                .action("Open File", SecondaryConfirm.boxed_clone())
+                .action("Open Diff", menu::Confirm.boxed_clone())
+                .action("Open File", menu::SecondaryConfirm.boxed_clone())
                 .separator()
                 .action_disabled_when(is_created, "View File History", Box::new(git::FileHistory))
         });
@@ -5390,6 +5440,10 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::first_entry))
+            .on_action(cx.listener(Self::next_entry))
+            .on_action(cx.listener(Self::previous_entry))
+            .on_action(cx.listener(Self::last_entry))
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
@@ -6855,7 +6909,7 @@ mod tests {
         // the Project Diff's active path.
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_entry = Some(1);
-            panel.open_diff(&Confirm, window, cx);
+            panel.open_diff(&menu::Confirm, window, cx);
         });
         cx.run_until_parked();
 
