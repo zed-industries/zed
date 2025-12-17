@@ -17,6 +17,9 @@ use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 /// Reads the content of the given file in the project.
 ///
 /// - Never attempt to read a path that hasn't been previously mentioned.
+/// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
+///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
+///   Do NOT retry reading the same file without line numbers if you receive an outline.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -149,15 +152,12 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
+        let mut location = acp::ToolCallLocation::new(&abs_path);
+        if let Some(line) = input.start_line {
+            location = location.line(line.saturating_sub(1));
+        }
 
-        event_stream.update_fields(ToolCallUpdateFields {
-            locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path.clone(),
-                line: input.start_line.map(|line| line.saturating_sub(1)),
-                meta: None,
-            }]),
-            ..Default::default()
-        });
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -254,16 +254,15 @@ impl AgentTool for ReadFileTool {
 
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
-                        This file was too big to read all at once.
+                        SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
+
+                        IMPORTANT: Do NOT retry this call without line numbers - you will get the same outline.
+                        Instead, use the line numbers below to read specific sections by calling this tool again with start_line and end_line parameters.
 
                         {}
 
-                        Using the line numbers in this outline, you can call this tool again
-                        while specifying the start_line and end_line fields to see the
-                        implementations of symbols in the outline.
-
-                        Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content.", buffer_content.text
+                        NEXT STEPS: To read a specific symbol's implementation, call read_file with the same path plus start_line and end_line from the outline above.
+                        For example, to read a function shown as [L100-150], use start_line: 100 and end_line: 150.", buffer_content.text
                     }
                     .into())
                 } else {
@@ -287,12 +286,9 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields {
-                        content: Some(vec![acp::ToolCallContent::Content {
-                            content: markdown.into(),
-                        }]),
-                        ..Default::default()
-                    })
+                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+                    ]));
                 }
             })?;
 
@@ -440,7 +436,7 @@ mod test {
         let content = result.to_str().unwrap();
 
         assert_eq!(
-            content.lines().skip(4).take(6).collect::<Vec<_>>(),
+            content.lines().skip(7).take(6).collect::<Vec<_>>(),
             vec![
                 "struct Test0 [L1-4]",
                 " a [L2]",
@@ -475,7 +471,7 @@ mod test {
         pretty_assertions::assert_eq!(
             content
                 .lines()
-                .skip(4)
+                .skip(7)
                 .take(expected_content.len())
                 .collect::<Vec<_>>(),
             expected_content

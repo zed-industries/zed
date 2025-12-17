@@ -1,11 +1,12 @@
 name: Report a crash
 description: Zed is crashing or freezing or hanging.
 type: Crash
+labels: "state:needs triage"
 body:
   - type: textarea
     attributes:
       label: Reproduction steps
-      description: A step-by-step description of how to reproduce the crash from a **clean Zed install**. **Be verbose**. **Issues with insufficient detail may be summarily closed**.
+      description: A step-by-step description of how to reproduce the crash from a **clean Zed install**. The more context you provide, the easier it is to find and fix the problem fast.
       placeholder: |
         1. Start Zed
         2. Perform an action
@@ -14,19 +15,9 @@ body:
       required: true
   - type: textarea
     attributes:
-      label: Current vs. Expected behavior
-      description: |
-        Go into depth about what actions you’re performing in Zed to trigger the crash. If Zed crashes before it loads any windows, make sure to mention that. Again, **be verbose**.
-
-        **Skipping this/failure to provide complete information will result in the issue being closed.**
-      placeholder: "Based on my reproduction steps above, when I perform said action, I expect this to happen, but instead Zed crashes."
-    validations:
-      required: true
-  - type: textarea
-    attributes:
       label: Zed version and system specs
       description: |
-        Open the command palette in Zed, then type “zed: copy system specs into clipboard”. **Skipping this/failure to provide complete information will result in the issue being closed**.
+        Open the command palette in Zed, then type “zed: copy system specs into clipboard”.
       placeholder: |
         Zed: v0.215.0 (Zed Nightly bfe141ea79aa4984028934067ba75c48d99136ae)
         OS: macOS 15.1
@@ -36,7 +27,7 @@ body:
       required: true
   - type: textarea
     attributes:
-      label: If applicable, attach your Zed log file to this issue
+      label: Attach Zed log file
       description: |
         Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
       value: |

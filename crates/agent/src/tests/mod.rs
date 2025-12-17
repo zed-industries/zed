@@ -493,14 +493,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     // Approve the first
     tool_call_auth_1
         .response
-        .send(tool_call_auth_1.options[1].id.clone())
+        .send(tool_call_auth_1.options[1].option_id.clone())
         .unwrap();
     cx.run_until_parked();
 
     // Reject the second
     tool_call_auth_2
         .response
-        .send(tool_call_auth_1.options[2].id.clone())
+        .send(tool_call_auth_1.options[2].option_id.clone())
         .unwrap();
     cx.run_until_parked();
 
@@ -510,14 +510,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         message.content,
         vec![
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
-                tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
+                tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::name().into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
-                tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
+                tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::name().into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
@@ -543,7 +543,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
     tool_call_auth_3
         .response
-        .send(tool_call_auth_3.options[0].id.clone())
+        .send(tool_call_auth_3.options[0].option_id.clone())
         .unwrap();
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -552,7 +552,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         message.content,
         vec![language_model::MessageContent::ToolResult(
             LanguageModelToolResult {
-                tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
+                tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::name().into(),
                 is_error: false,
                 content: "Allowed".into(),
@@ -1353,20 +1353,20 @@ async fn test_cancellation(cx: &mut TestAppContext) {
             ThreadEvent::ToolCall(tool_call) => {
                 assert_eq!(tool_call.title, expected_tools.remove(0));
                 if tool_call.title == "Echo" {
-                    echo_id = Some(tool_call.id);
+                    echo_id = Some(tool_call.tool_call_id);
                 }
             }
             ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
                 acp::ToolCallUpdate {
-                    id,
+                    tool_call_id,
                     fields:
                         acp::ToolCallUpdateFields {
                             status: Some(acp::ToolCallStatus::Completed),
                             ..
                         },
-                    meta: None,
+                    ..
                 },
-            )) if Some(&id) == echo_id.as_ref() => {
+            )) if Some(&tool_call_id) == echo_id.as_ref() => {
                 echo_completed = true;
             }
             _ => {}
@@ -1995,11 +1995,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         .update(|cx| {
             connection.prompt(
                 Some(acp_thread::UserMessageId::new()),
-                acp::PromptRequest {
-                    session_id: session_id.clone(),
-                    prompt: vec!["ghi".into()],
-                    meta: None,
-                },
+                acp::PromptRequest::new(session_id.clone(), vec!["ghi".into()]),
                 cx,
             )
         })
@@ -2056,68 +2052,50 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(
         tool_call,
-        acp::ToolCall {
-            id: acp::ToolCallId("1".into()),
-            title: "Thinking".into(),
-            kind: acp::ToolKind::Think,
-            status: acp::ToolCallStatus::Pending,
-            content: vec![],
-            locations: vec![],
-            raw_input: Some(json!({})),
-            raw_output: None,
-            meta: Some(json!({ "tool_name": "thinking" })),
-        }
+        acp::ToolCall::new("1", "Thinking")
+            .kind(acp::ToolKind::Think)
+            .raw_input(json!({}))
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "thinking".into()
+            )]))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate {
-            id: acp::ToolCallId("1".into()),
-            fields: acp::ToolCallUpdateFields {
-                title: Some("Thinking".into()),
-                kind: Some(acp::ToolKind::Think),
-                raw_input: Some(json!({ "content": "Thinking hard!" })),
-                ..Default::default()
-            },
-            meta: None,
-        }
+        acp::ToolCallUpdate::new(
+            "1",
+            acp::ToolCallUpdateFields::new()
+                .title("Thinking")
+                .kind(acp::ToolKind::Think)
+                .raw_input(json!({ "content": "Thinking hard!"}))
+        )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate {
-            id: acp::ToolCallId("1".into()),
-            fields: acp::ToolCallUpdateFields {
-                status: Some(acp::ToolCallStatus::InProgress),
-                ..Default::default()
-            },
-            meta: None,
-        }
+        acp::ToolCallUpdate::new(
+            "1",
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
+        )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate {
-            id: acp::ToolCallId("1".into()),
-            fields: acp::ToolCallUpdateFields {
-                content: Some(vec!["Thinking hard!".into()]),
-                ..Default::default()
-            },
-            meta: None,
-        }
+        acp::ToolCallUpdate::new(
+            "1",
+            acp::ToolCallUpdateFields::new().content(vec!["Thinking hard!".into()])
+        )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
-        acp::ToolCallUpdate {
-            id: acp::ToolCallId("1".into()),
-            fields: acp::ToolCallUpdateFields {
-                status: Some(acp::ToolCallStatus::Completed),
-                raw_output: Some("Finished thinking.".into()),
-                ..Default::default()
-            },
-            meta: None,
-        }
+        acp::ToolCallUpdate::new(
+            "1",
+            acp::ToolCallUpdateFields::new()
+                .status(acp::ToolCallStatus::Completed)
+                .raw_output("Finished thinking.".into())
+        )
     );
 }
 

@@ -649,9 +649,10 @@ impl TerminalView {
         // When focused, check blinking settings and blink manager state
         match TerminalSettings::get_global(cx).blinking {
             TerminalBlink::Off => true,
-            TerminalBlink::On | TerminalBlink::TerminalControlled => {
-                self.blink_manager.read(cx).visible()
+            TerminalBlink::TerminalControlled => {
+                !self.blinking_terminal_enabled || self.blink_manager.read(cx).visible()
             }
+            TerminalBlink::On => self.blink_manager.read(cx).visible(),
         }
     }
 
@@ -1117,7 +1118,7 @@ impl Render for TerminalView {
                                     ScrollAxes::Vertical,
                                     cx.theme().colors().editor_background,
                                 )
-                                .tracked_scroll_handle(self.scroll_handle.clone()),
+                                .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,
                         )
@@ -1268,7 +1269,11 @@ impl Item for TerminalView {
         false
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 

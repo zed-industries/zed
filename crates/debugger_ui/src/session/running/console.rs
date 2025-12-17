@@ -18,14 +18,14 @@ use gpui::{
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionResponse,
+    CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
 use std::fmt::Write;
-use std::{cell::RefCell, ops::Range, rc::Rc, usize};
+use std::{ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
@@ -553,24 +553,12 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         }
     }
 
-    fn apply_additional_edits_for_completion(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _completion_index: usize,
-        _push_to_history: bool,
-        _cx: &mut Context<Editor>,
-    ) -> gpui::Task<anyhow::Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
-    }
-
     fn is_completion_trigger(
         &self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -581,9 +569,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         };
 
         let snapshot = buffer.read(cx).snapshot();
-        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
-            return false;
-        }
 
         let classifier = snapshot
             .char_classifier_at(position)

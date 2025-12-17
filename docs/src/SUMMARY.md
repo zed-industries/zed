@@ -1,6 +1,6 @@
 # Summary
 
-# Getting Started
+# Welcome
 
 - [Getting Started](./getting-started.md)
 - [Installation](./installation.md)
@@ -36,7 +36,7 @@
 - [Code Completions](./completions.md)
 - [Collaboration](./collaboration/overview.md)
   - [Channels](./collaboration/channels.md)
-  - [Private Calls](./collaboration/private-calls.md)
+  - [Contacts and Private Calls](./collaboration/contacts-and-private-calls.md)
 - [Git](./git.md)
 - [Debugger](./debugger.md)
 - [Diagnostics](./diagnostics.md)
@@ -84,6 +84,10 @@
 - [Slash Command Extensions](./extensions/slash-commands.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
+
+# Migrate
+
+- [VS Code](./migrate/vs-code.md)
 
 # Language Support
 

@@ -3065,6 +3065,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar Buttons",
+                    description: "Show the tab bar buttons (New, Split Pane, Zoom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.show_tab_bar_buttons"),
+                        pick: |settings_content| {
+                            settings_content
+                                .tab_bar
+                                .as_ref()?
+                                .show_tab_bar_buttons
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_tab_bar_buttons = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
@@ -4442,7 +4464,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations.",
                     field: Box::new(SettingField {
-                        json_path: Some("agent.default_height"),
+                        json_path: Some("debugger.stepping_granularity"),
                         pick: |settings_content| {
                             settings_content
                                 .debugger
@@ -6504,7 +6526,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Jsx Tag Auto Close",
+            title: "JSX Tag Auto Close",
             description: "Whether to automatically close JSX tags.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).jsx_tag_auto_close"),
@@ -6960,6 +6982,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Word Diff Enabled",
+            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).word_diff_enabled"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.word_diff_enabled.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.word_diff_enabled = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
             description: "Preferred debuggers for this language.",
             field: Box::new(
@@ -7012,7 +7053,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Colorize brackets",
+            title: "Colorize Brackets",
             description: "Whether to colorize brackets in the editor.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).colorize_brackets"),
