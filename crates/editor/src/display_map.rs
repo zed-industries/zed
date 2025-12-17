@@ -14,8 +14,57 @@
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
 //!   Each one of those builds on top of preceding map.
 //!
+//! ## Structure of the display map layers
+//!
+//! Each layer in the map (and the multibuffer itself to some extent) has a few
+//! structures that are used to implement the public API available to the layer
+//! above:
+//! - a `Transform` type - this represents a region of text that the layer in
+//!   question is "managing", that it transforms into a more "processed" text
+//!   for the layer above. For example, the inlay map has an `enum Transform`
+//!   that has two variants:
+//!     - `Isomorphic`, representing a region of text that has no inlay hints (i.e.
+//!       is passed through the map transparently)
+//!     - `Inlay`, representing a location where an inlay hint is to be inserted.
+//! - a `TransformSummary` type, which is usually a struct with two fields:
+//!   [`input: TextSummary`][`TextSummary`] and [`output: TextSummary`][`TextSummary`]. Here,
+//!   `input` corresponds to "text in the layer below", and `output` corresponds to the text
+//!   exposed to the layer above. So in the inlay map case, a `Transform::Isomorphic`'s summary is
+//!   just `input = output = summary`, where `summary` is the [`TextSummary`] stored in that
+//!   variant. Conversely, a `Transform::Inlay` always has an empty `input` summary, because it's
+//!   not "replacing" any text that exists on disk. The `output` is the summary of the inlay text
+//!   to be injected. - Various newtype wrappers for co-ordinate spaces (e.g. [`WrapRow`]
+//!   represents a row index, after soft-wrapping (and all lower layers)).
+//! - A `Snapshot` type (e.g. [`InlaySnapshot`]) that captures the state of a layer at a specific
+//!   point in time.
+//! - various APIs which drill through the layers below to work with the underlying text. Notably:
+//!   - `fn text_summary_for_offset()` returns a [`TextSummary`] for the range in the co-ordinate
+//!     space that the map in question is responsible for.
+//!   - `fn <A>_point_to_<B>_point()` converts a point in co-ordinate space `A` into co-ordinate
+//!     space `B`.
+//!   - A [`RowInfo`] iterator (e.g. [`InlayBufferRows`]) and a [`Chunk`] iterator
+//!     (e.g. [`InlayChunks`])
+//!   - A `sync` function (e.g. [`InlayMap::sync`]) that takes a snapshot and list of [`Edit<T>`]s,
+//!     and returns a new snapshot and a list of transformed [`Edit<S>`]s. Note that the generic
+//!     parameter on `Edit` changes, since these methods take in edits in the co-ordinate space of
+//!     the lower layer, and return edits in their own co-ordinate space. The term "edit" is
+//!     slightly misleading, since an [`Edit<T>`] doesn't tell you what changed - rather it can be
+//!     thought of as a "region to invalidate". In theory, it would be correct to always use a
+//!     single edit that covers the entire range. However, this would lead to lots of unnecessary
+//!     recalculation.
+//!
+//! See the docs for the [`inlay_map`] module for a more in-depth explanation of how a single layer
+//! works.
+//!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
+//! [`TextSummary`]: multi_buffer::MBTextSummary
+//! [`WrapRow`]: wrap_map::WrapRow
+//! [`InlayBufferRows`]: inlay_map::InlayBufferRows
+//! [`InlayChunks`]: inlay_map::InlayChunks
+//! [`Edit<T>`]: text::Edit
+//! [`Edit<S>`]: text::Edit
+//! [`Chunk`]: language::Chunk
 
 #[macro_use]
 mod dimensions;
