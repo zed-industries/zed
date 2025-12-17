@@ -886,8 +886,12 @@ impl<T: Item> ItemHandle for Entity<T> {
                         // Only trigger autosave if focus has truly left the item.
                         // If focus is still within the item's hierarchy (e.g., moved to a context menu),
                         // don't trigger autosave to avoid unwanted formatting and cursor jumps.
+                        // Also skip autosave if focus moved to a modal (e.g., command palette),
+                        // since the user is still interacting with the workspace.
                         let focus_handle = item.item_focus_handle(cx);
-                        if !focus_handle.contains_focused(window, cx) {
+                        if !focus_handle.contains_focused(window, cx)
+                            && !workspace.has_active_modal(window, cx)
+                        {
                             Pane::autosave_item(&item, workspace.project.clone(), window, cx)
                                 .detach_and_log_err(cx);
                         }
