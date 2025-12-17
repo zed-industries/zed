@@ -243,8 +243,7 @@ impl WindowsWindowInner {
 
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-            let mut runnables = self.main_receiver.clone().try_iter();
-            while let Some(Ok(runnable)) = runnables.next() {
+            for runnable in self.main_receiver.drain() {
                 WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
