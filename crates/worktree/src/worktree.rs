@@ -1517,9 +1517,9 @@ impl LocalWorktree {
                 let bytes = if !bom_bytes.is_empty() {
                     let mut bytes = bom_bytes;
                     bytes.extend_from_slice(&cow);
-                    bytes
+                    bytes.into()
                 } else {
-                    cow.into_owned()
+                    cow
                 };
 
                 fs.write(&abs_path, &bytes).await
