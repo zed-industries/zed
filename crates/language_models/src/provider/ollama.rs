@@ -724,7 +724,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_instructions() -> Div {
+    fn render_instructions(cx: &mut Context<Self>) -> Div {
         v_flex()
             .gap_2()
             .child(Label::new(
@@ -833,7 +833,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
-            .child(Self::render_instructions())
+            .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(
