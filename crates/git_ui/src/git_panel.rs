@@ -15,6 +15,7 @@ use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
+use editor::RewrapOptions;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::ExpandAllDiffHunks,
@@ -2180,7 +2181,13 @@ impl GitPanel {
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
         let wrapped_message = editor.update(cx, |editor, cx| {
             editor.select_all(&Default::default(), window, cx);
-            editor.rewrap(&Default::default(), window, cx);
+            editor.rewrap_impl(
+                RewrapOptions {
+                    override_language_settings: false,
+                    preserve_existing_whitespace: true,
+                },
+                cx,
+            );
             editor.text(cx)
         });
         if wrapped_message.trim().is_empty() {
