@@ -2667,9 +2667,9 @@ dependencies = [
 
 [[package]]
 name = "cap-fs-ext"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5528f85b1e134ae811704e41ef80930f56e795923f866813255bc342cc20654"
+checksum = "e41cc18551193fe8fa6f15c1e3c799bc5ec9e2cfbfaa8ed46f37013e3e6c173c"
 dependencies = [
  "cap-primitives",
  "cap-std",
@@ -2679,9 +2679,9 @@ dependencies = [
 
 [[package]]
 name = "cap-net-ext"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20a158160765c6a7d0d8c072a53d772e4cb243f38b04bfcf6b4939cfbe7482e7"
+checksum = "9f83833816c66c986e913b22ac887cec216ea09301802054316fc5301809702c"
 dependencies = [
  "cap-primitives",
  "cap-std",
@@ -2691,9 +2691,9 @@ dependencies = [
 
 [[package]]
 name = "cap-primitives"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6cf3aea8a5081171859ef57bc1606b1df6999df4f1110f8eef68b30098d1d3a"
+checksum = "0a1e394ed14f39f8bc26f59d4c0c010dbe7f0a1b9bafff451b1f98b67c8af62a"
 dependencies = [
  "ambient-authority",
  "fs-set-times",
@@ -2709,9 +2709,9 @@ dependencies = [
 
 [[package]]
 name = "cap-rand"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8144c22e24bbcf26ade86cb6501a0916c46b7e4787abdb0045a467eb1645a1d"
+checksum = "0acb89ccf798a28683f00089d0630dfaceec087234eae0d308c05ddeaa941b40"
 dependencies = [
  "ambient-authority",
  "rand 0.8.5",
@@ -2719,9 +2719,9 @@ dependencies = [
 
 [[package]]
 name = "cap-std"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6dc3090992a735d23219de5c204927163d922f42f575a0189b005c62d37549a"
+checksum = "07c0355ca583dd58f176c3c12489d684163861ede3c9efa6fd8bba314c984189"
 dependencies = [
  "cap-primitives",
  "io-extras",
@@ -2731,9 +2731,9 @@ dependencies = [
 
 [[package]]
 name = "cap-time-ext"
-version = "3.4.5"
+version = "3.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def102506ce40c11710a9b16e614af0cde8e76ae51b1f48c04b8d79f4b671a80"
+checksum = "491af520b8770085daa0466978c75db90368c71896523f2464214e38359b1a5b"
 dependencies = [
  "ambient-authority",
  "cap-primitives",
@@ -2894,6 +2894,17 @@ dependencies = [
  "text",
  "time",
  "util",
+]
+
+[[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
 ]
 
 [[package]]
@@ -8797,6 +8808,7 @@ dependencies = [
  "ctor",
  "diffy",
  "ec4rs",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12465,6 +12477,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
@@ -20231,8 +20244,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-lock 2.8.0",
+ "chardetng",
  "clock",
  "collections",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",

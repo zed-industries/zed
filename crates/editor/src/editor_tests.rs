@@ -69,7 +69,6 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
-    invalid_item_view::InvalidItemView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -27667,11 +27666,10 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
-
-    assert_eq!(
-        handle.to_any_view().entity_type(),
-        TypeId::of::<InvalidItemView>()
-    );
+    // The test file content `vec![0xff, 0xfe, ...]` starts with a UTF-16 LE BOM.
+    // Previously, this fell back to `InvalidItemView` because it wasn't valid UTF-8.
+    // With auto-detection enabled, this is now recognized as UTF-16 and opens in the Editor.
+    assert_eq!(handle.to_any_view().entity_type(), TypeId::of::<Editor>());
 }
 
 #[gpui::test]

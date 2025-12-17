@@ -25,6 +25,7 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -131,6 +132,8 @@ pub struct Buffer {
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
+    encoding: &'static Encoding,
+    has_bom: bool,
 }
 
 #[derive(Debug)]
@@ -1100,6 +1103,8 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
+            encoding: encoding_rs::UTF_8,
+            has_bom: false,
         }
     }
 
@@ -1381,6 +1386,26 @@ impl Buffer {
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
     pub fn saved_mtime(&self) -> Option<MTime> {
         self.saved_mtime
+    }
+
+    /// Returns the character encoding of the buffer's file.
+    pub fn encoding(&self) -> &'static Encoding {
+        self.encoding
+    }
+
+    /// Sets the character encoding of the buffer.
+    pub fn set_encoding(&mut self, encoding: &'static Encoding) {
+        self.encoding = encoding;
+    }
+
+    /// Returns whether the buffer has a Byte Order Mark.
+    pub fn has_bom(&self) -> bool {
+        self.has_bom
+    }
+
+    /// Sets whether the buffer has a Byte Order Mark.
+    pub fn set_has_bom(&mut self, has_bom: bool) {
+        self.has_bom = has_bom;
     }
 
     /// Assign a language to the buffer.
