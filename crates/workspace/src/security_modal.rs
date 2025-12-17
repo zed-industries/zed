@@ -102,46 +102,31 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Label::new(header_label)),
                     )
-                    .children(self.restricted_paths.values().map(|restricted_path| {
+                    .children(self.restricted_paths.values().filter_map(|restricted_path| {
                         let abs_path = if restricted_path.is_file {
                             restricted_path.abs_path.parent()
                         } else {
                             Some(restricted_path.abs_path.as_ref())
-                        };
-
-                        let label = match abs_path {
-                            Some(abs_path) => match &restricted_path.host {
-                                Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => format!(
-                                        "{} ({}@{})",
-                                        self.shorten_path(abs_path).display(),
-                                        user_name,
-                                        remote_host.host_identifier
-                                    ),
-                                    None => format!(
-                                        "{} ({})",
-                                        self.shorten_path(abs_path).display(),
-                                        remote_host.host_identifier
-                                    ),
-                                },
-                                None => self.shorten_path(abs_path).display().to_string(),
+                        }?;
+                        let label = match &restricted_path.host {
+                            Some(remote_host) => match &remote_host.user_name {
+                                Some(user_name) => format!(
+                                    "{} ({}@{})",
+                                    self.shorten_path(abs_path).display(),
+                                    user_name,
+                                    remote_host.host_identifier
+                                ),
+                                None => format!(
+                                    "{} ({})",
+                                    self.shorten_path(abs_path).display(),
+                                    remote_host.host_identifier
+                                ),
                             },
-                            None => match &restricted_path.host {
-                                Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => format!(
-                                        "Workspace trust ({}@{})",
-                                        user_name, remote_host.host_identifier
-                                    ),
-                                    None => {
-                                        format!("Workspace trust ({})", remote_host.host_identifier)
-                                    }
-                                },
-                                None => "Workspace trust".to_string(),
-                            },
+                            None => self.shorten_path(abs_path).display().to_string(),
                         };
-                        h_flex()
+                        Some(h_flex()
                             .pl(IconSize::default().rems() + rems(0.5))
-                            .child(Label::new(label).color(Color::Muted))
+                            .child(Label::new(label).color(Color::Muted)))
                     })),
             )
             .child(
