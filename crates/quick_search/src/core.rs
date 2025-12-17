@@ -14,6 +14,7 @@ use search::SearchOptions;
 use text::Point;
 use ui::IconName;
 use util::paths::PathStyle;
+use futures::future::LocalBoxFuture;
 
 use crate::PickerHandle;
 use crate::preview::{PreviewKey, PreviewRequest};
@@ -82,6 +83,22 @@ impl SearchCancellation {
 
     pub fn flag(&self) -> Arc<AtomicBool> {
         self.flag.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct FooterCancellation {
+    session: SearchCancellation,
+    local: SearchCancellation,
+}
+
+impl FooterCancellation {
+    pub fn new(session: SearchCancellation, local: SearchCancellation) -> Self {
+        Self { session, local }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.session.is_cancelled() || self.local.is_cancelled()
     }
 }
 
@@ -160,7 +177,7 @@ pub struct FooterContext {
     pub query: Arc<str>,
     pub selected: Option<QuickMatch>,
     pub preview_buffer: Option<Entity<Buffer>>,
-    pub cancellation: SearchCancellation,
+    pub cancellation: FooterCancellation,
 }
 
 #[derive(Clone)]
@@ -242,6 +259,7 @@ pub struct SearchSink {
     picker: WeakEntity<PickerHandle>,
     generation: usize,
     cancellation: SearchCancellation,
+    finished: Arc<AtomicBool>,
 }
 
 impl SearchSink {
@@ -254,6 +272,7 @@ impl SearchSink {
             picker,
             generation,
             cancellation,
+            finished: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -261,10 +280,19 @@ impl SearchSink {
         self.cancellation.is_cancelled()
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn mark_finished(&self) {
+        self.finished.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn record_error(&self, message: String, app: &mut AsyncApp) {
         if self.is_cancelled() {
             return;
         }
+        self.mark_finished();
         crate::record_error(self.picker.clone(), self.generation, message, app);
     }
 
@@ -272,6 +300,7 @@ impl SearchSink {
         if self.is_cancelled() {
             return;
         }
+        self.mark_finished();
         crate::finish_stream(self.picker.clone(), self.generation, app);
     }
 
@@ -325,6 +354,31 @@ impl SearchSink {
             debug!("quick_search: failed to store inflight results: {:?}", err);
         }
     }
+}
+
+pub fn spawn_source_task<F>(cx: &mut SearchUiContext<'_>, sink: SearchSink, f: F)
+where
+    F: 'static + for<'a> FnOnce(&'a mut AsyncApp, SearchSink) -> LocalBoxFuture<'a, ()>,
+{
+    cx.spawn(move |_, app: &mut AsyncApp| {
+        let mut app = app.clone();
+        let sink = sink.clone();
+        async move {
+            if sink.is_cancelled() {
+                return;
+            }
+
+            f(&mut app, sink.clone()).await;
+
+            if sink.is_cancelled() {
+                return;
+            }
+            if !sink.is_finished() {
+                sink.finish_stream(&mut app);
+            }
+        }
+    })
+    .detach();
 }
 
 pub trait QuickSearchSource {

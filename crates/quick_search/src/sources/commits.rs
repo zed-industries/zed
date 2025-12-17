@@ -10,6 +10,7 @@ use crate::types::QuickMatchKind;
 use crate::types::QuickMatchBuilder;
 use anyhow::{Context as AnyhowContext, Result};
 use fuzzy::StringMatchCandidate;
+use futures::FutureExt as _;
 use git2::Sort;
 use log::debug;
 
@@ -145,13 +146,12 @@ impl QuickSearchSource for CommitsSource {
 
         if repos.is_empty() {
             let message = "No Git repositories found in this project.".to_string();
-            cx.spawn(move |_, app: &mut gpui::AsyncApp| {
-                let mut app = app.clone();
+            crate::core::spawn_source_task(cx, sink, move |app, sink| {
                 async move {
-                    sink.record_error(message, &mut app);
+                    sink.record_error(message, app);
                 }
-            })
-            .detach();
+                .boxed_local()
+            });
             return;
         }
 
@@ -160,8 +160,7 @@ impl QuickSearchSource for CommitsSource {
         let source_id = self.spec().id.0.clone();
         let cancellation = ctx.cancellation().clone();
         let cancel_flag = cancellation.flag();
-        cx.spawn(move |_, app: &mut gpui::AsyncApp| {
-            let mut app = app.clone();
+        crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
                 if cancellation.is_cancelled() {
                     return;
@@ -186,15 +185,34 @@ impl QuickSearchSource for CommitsSource {
                             );
                             used_fallback = true;
 
-                            let branches_rx = app.update_entity(&repo_entity, |repo, _| repo.branches());
-                            let branches_rx = match branches_rx {
-                                Ok(rx) => rx,
-                                Err(_) => continue,
-                            };
+                            let branches_rx =
+                                match app.update_entity(&repo_entity, |repo, _| repo.branches()) {
+                                    Ok(rx) => rx,
+                                    Err(err) => {
+                                        debug!(
+                                        "quick_search: failed to get branches from git store (skipping repo): {:?}",
+                                        err
+                                    );
+                                        continue;
+                                    }
+                                };
 
                             let branches = match branches_rx.await {
                                 Ok(Ok(branches)) => branches,
-                                Ok(Err(_)) | Err(_) => Vec::new(),
+                                Ok(Err(err)) => {
+                                    debug!(
+                                        "quick_search: failed to list branches from git store: {:?}",
+                                        err
+                                    );
+                                    Vec::new()
+                                }
+                                Err(err) => {
+                                    debug!(
+                                        "quick_search: branch listing task failed (falling back to empty): {:?}",
+                                        err
+                                    );
+                                    Vec::new()
+                                }
                             };
 
                             let mut seen = std::collections::HashSet::<String>::new();
@@ -217,17 +235,18 @@ impl QuickSearchSource for CommitsSource {
                                 });
                             }
 
-                            let head_commit = app
-                                .update_entity(&repo_entity, |repo, _| {
-                                    repo.snapshot().head_commit
-                                })
-                                .unwrap_or_else(|err| {
+                            let head_commit = match app
+                                .update_entity(&repo_entity, |repo, _| repo.snapshot().head_commit)
+                            {
+                                Ok(head_commit) => head_commit,
+                                Err(err) => {
                                     debug!(
                                         "quick_search: failed to read head commit from git store: {:?}",
                                         err
                                     );
                                     None
-                                });
+                                }
+                            };
                             if let Some(head) = head_commit {
                                 let sha = head.sha.to_string();
                                 let subject = head
@@ -256,10 +275,10 @@ impl QuickSearchSource for CommitsSource {
                     "Some repositories are remote; showing branch-tip commits (full history unavailable)."
                         .to_string(),
                 );
-                sink.set_query_notice(notice, &mut app);
+                sink.set_query_notice(notice, app);
 
                 if commits.is_empty() {
-                    sink.record_error("No commits found.".to_string(), &mut app);
+                    sink.record_error("No commits found.".to_string(), app);
                     return;
                 }
 
@@ -321,20 +340,22 @@ impl QuickSearchSource for CommitsSource {
                         .and_then(|s| s.to_str())
                         .filter(|s| !s.is_empty())
                         .map(|s| Arc::<str>::from(s.to_string()))
-                        .unwrap_or_else(|| Arc::<str>::from(commit.repo_workdir.to_string_lossy().to_string()));
+                        .unwrap_or_else(|| {
+                            Arc::<str>::from(commit.repo_workdir.to_string_lossy().to_string())
+                        });
 
                     batcher.push(
                         QuickMatchBuilder::new(
                             source_id.clone(),
                             QuickMatchKind::GitCommit {
-                            repo_workdir: commit.repo_workdir.clone(),
-                            sha: commit.sha.clone(),
-                            subject,
-                            author,
-                            repo_label: repo_label.clone(),
-                            branch: commit.branch.clone(),
-                            commit_timestamp: commit.commit_timestamp,
-                        },
+                                repo_workdir: commit.repo_workdir.clone(),
+                                sha: commit.sha.clone(),
+                                subject,
+                                author,
+                                repo_label: repo_label.clone(),
+                                branch: commit.branch.clone(),
+                                commit_timestamp: commit.commit_timestamp,
+                            },
                         )
                         .file_name(sha_short)
                         .path_label(repo_label.clone())
@@ -342,16 +363,16 @@ impl QuickSearchSource for CommitsSource {
                         .path_segments_from_label()
                         .build(),
                         &sink,
-                        &mut app,
+                        app,
                     );
                 }
 
                 if !cancellation.is_cancelled() {
-                    batcher.finish(&sink, &mut app);
+                    batcher.finish(&sink, app);
                 }
             }
-        })
-        .detach();
+            .boxed_local()
+        });
     }
 
 }

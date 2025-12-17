@@ -908,15 +908,9 @@ impl QuickSearchSource for TextGrepSource {
         let path_style = ctx.path_style();
         let language_registry = ctx.language_registry().clone();
         let query = ctx.query().clone();
-        let cancellation = ctx.cancellation().clone();
 
-        cx.spawn(move |_, app: &mut gpui::AsyncApp| {
-            let mut app = app.clone();
+        crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
-                if cancellation.is_cancelled() {
-                    return;
-                }
-
                 let search_query = match app.update_entity(&project, |_project, _| {
                     let include = PathMatcher::default();
                     let exclude = PathMatcher::default();
@@ -947,97 +941,96 @@ impl QuickSearchSource for TextGrepSource {
                 }) {
                     Ok(Ok(query)) => query,
                     Ok(Err(err)) => {
-                        sink.record_error(err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), app);
                         return;
                     }
                     Err(err) => {
-                        sink.record_error(err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), app);
                         return;
                     }
                 };
 
-                let receiver = match app
-                    .update_entity(&project, |project, cx| project.search(search_query, cx))
-                {
+            let receiver =
+                match app.update_entity(&project, |project, cx| project.search(search_query, cx)) {
                     Ok(receiver) => receiver,
                     Err(err) => {
-                        sink.record_error(err.to_string(), &mut app);
+                        sink.record_error(err.to_string(), app);
                         return;
                     }
                 };
 
-                sink.set_inflight_results(receiver.clone(), &mut app);
+            sink.set_inflight_results(receiver.clone(), app);
 
-                let mut batcher = MatchBatcher::new();
-                let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
-                    HashMap::new();
-                loop {
-                    let result = match receiver.recv().await {
-                        Ok(r) => r,
-                        Err(_) => break,
-                    };
-                    if cancellation.is_cancelled() {
-                        break;
-                    }
+            let mut batcher = MatchBatcher::new();
+            let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
+                HashMap::new();
+            loop {
+                let result = match receiver.recv().await {
+                    Ok(r) => r,
+                    Err(_) => break,
+                };
+                if sink.is_cancelled() {
+                    break;
+                }
 
-                    match result {
-                        SearchResult::Buffer { buffer, ranges } => {
-                            if let Some(out) = build_matches_for_buffer(
-                                &mut app,
-                                &buffer,
-                                ranges,
-                                &path_style,
-                                &source_id,
-                            ) {
-                                if !out.pending_syntax.is_empty() {
-                                    ensure_syntax_worker(
-                                        &mut app,
-                                        &mut syntax_workers,
-                                        out.buffer_id,
-                                        buffer.clone(),
-                                        sink.clone(),
-                                        language_registry.clone(),
-                                    );
-                                    if let Some(sender) = syntax_workers.get(&out.buffer_id) {
-                                        for item in out.pending_syntax {
-                                            if let Err(err) = sender.try_send(item) {
-                                                debug!(
-                                                    "quick_search: failed to queue syntax enrich item: {:?}",
-                                                    err
-                                                );
-                                                break;
-                                            }
+                match result {
+                    SearchResult::Buffer { buffer, ranges } => {
+                        if let Some(out) = build_matches_for_buffer(
+                            app,
+                            &buffer,
+                            ranges,
+                            &path_style,
+                            &source_id,
+                        ) {
+                            if !out.pending_syntax.is_empty() {
+                                ensure_syntax_worker(
+                                    app,
+                                    &mut syntax_workers,
+                                    out.buffer_id,
+                                    buffer.clone(),
+                                    sink.clone(),
+                                    language_registry.clone(),
+                                );
+                                if let Some(sender) = syntax_workers.get(&out.buffer_id) {
+                                    for item in out.pending_syntax {
+                                        if let Err(err) = sender.try_send(item) {
+                                            debug!(
+                                                "quick_search: failed to queue syntax enrich item: {:?}",
+                                                err
+                                            );
+                                            break;
                                         }
                                     }
                                 }
+                            }
 
-                                for match_item in out.matches {
-                                    batcher.push(match_item, &sink, &mut app);
-                                }
-                                if cancellation.is_cancelled() {
-                                    break;
-                                }
+                            for match_item in out.matches {
+                                batcher.push(match_item, &sink, app);
                             }
                         }
-                        SearchResult::LimitReached => {
-                            batcher.flush(&sink, &mut app);
-                            if cancellation.is_cancelled() {
-                                break;
-                            }
+                        if sink.is_cancelled() {
                             break;
                         }
                     }
-
-                    yield_now().await;
+                    SearchResult::LimitReached => {
+                        batcher.flush(&sink, app);
+                        if sink.is_cancelled() {
+                            break;
+                        }
+                        break;
+                    }
                 }
+
+                yield_now().await;
+            }
 
                 drop(syntax_workers);
-                if !cancellation.is_cancelled() {
-                    batcher.finish(&sink, &mut app);
+                if !sink.is_cancelled() {
+                    batcher.finish(&sink, app);
                 }
             }
-        })
-        .detach();
+            .boxed_local()
+        });
     }
 }
 

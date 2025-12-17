@@ -362,8 +362,9 @@ impl QuickSearch {
     ) {
         history::set_last_source_id(source_id.0.clone());
         let owner = cx.entity().downgrade();
+        let session_cancellation = self.picker.read(cx).delegate.search_engine.cancellation();
         self.preview
-            .request_preview(PreviewRequest::Empty, &owner, window, cx);
+            .request_preview(PreviewRequest::Empty, session_cancellation, &owner, window, cx);
         self.preview_footer
             .set_active_source(source_id.clone(), window, cx);
         self.picker.update(cx, |picker, cx| {
@@ -602,6 +603,7 @@ impl PreviewFooterState {
         selected: Option<QuickMatch>,
         query: Arc<str>,
         preview_buffer: Option<Entity<Buffer>>,
+        session_cancellation: core::SearchCancellation,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
@@ -656,9 +658,9 @@ impl PreviewFooterState {
             prev.cancel();
         }
 
-        let cancellation = core::SearchCancellation::new(Arc::new(AtomicBool::new(false)));
+        let local_cancellation = core::SearchCancellation::new(Arc::new(AtomicBool::new(false)));
         self.cancellation_by_source
-            .insert(self.active_source.clone(), cancellation.clone());
+            .insert(self.active_source.clone(), local_cancellation.clone());
 
         let open = self
             .open_by_source
@@ -674,7 +676,7 @@ impl PreviewFooterState {
                     self.last_selected_by_source.get(&self.active_source).cloned()
                 }),
                 preview_buffer,
-                cancellation,
+                cancellation: core::FooterCancellation::new(session_cancellation, local_cancellation),
             }),
             window,
             cx,
@@ -1388,6 +1390,59 @@ impl QuickSearchDelegate {
         self.search_engine.active_source.0.clone()
     }
 
+    fn reset_notify_throttle(&mut self) {
+        self.notify_pending = false;
+        self.notify_scheduled = false;
+        self.notify_debouncer = DebouncedDelay::new();
+    }
+
+    fn schedule_notify_if_needed(&mut self, generation: usize, cx: &mut Context<PickerHandle>) {
+        if !self.notify_pending || self.notify_scheduled {
+            return;
+        }
+
+        self.notify_scheduled = true;
+        let interval_ms = self.notify_interval_ms;
+        self.notify_debouncer.fire_new(
+            Duration::from_millis(interval_ms),
+            cx,
+            move |picker, cx| {
+                if picker.delegate.search_engine.generation() != generation {
+                    picker.delegate.reset_notify_throttle();
+                    return Task::ready(());
+                }
+
+                if picker.delegate.notify_pending {
+                    cx.notify();
+                }
+                picker.delegate.notify_pending = false;
+                picker.delegate.notify_scheduled = false;
+                Task::ready(())
+            },
+        );
+    }
+
+    fn request_notify(
+        &mut self,
+        generation: usize,
+        immediate: bool,
+        cx: &mut Context<PickerHandle>,
+    ) {
+        if self.search_engine.generation() != generation {
+            self.reset_notify_throttle();
+            return;
+        }
+
+        if immediate {
+            cx.notify();
+            self.notify_pending = false;
+            self.notify_scheduled = false;
+            return;
+        }
+
+        self.schedule_notify_if_needed(generation, cx);
+    }
+
     fn selected_match(&self) -> Option<&QuickMatch> {
         let key = self.selection?;
         let id = self.match_list.id_by_key(key)?;
@@ -1727,22 +1782,30 @@ impl PickerDelegate for QuickSearchDelegate {
         let footer_selected = selected;
         let footer_query: Arc<str> = Arc::from(self.current_query.clone());
         let footer_project = self.project.clone();
+        let session_cancellation = self.search_engine.cancellation();
         let quick_search = self.quick_search.clone();
 
         Some(Box::new(move |window, cx| {
+            let session_cancellation = session_cancellation.clone();
+            let request = request.clone();
+            let footer_selected = footer_selected.clone();
+            let footer_query = footer_query.clone();
+            let footer_preview_buffer = footer_preview_buffer.clone();
+            let footer_project = footer_project.clone();
             let Some(quick_search) = quick_search.upgrade() else {
                 return;
             };
 
-            quick_search.update(cx, |quick_search, cx| {
+            quick_search.update(cx, move |quick_search, cx| {
                 let owner = cx.entity().downgrade();
                 quick_search
                     .preview
-                    .request_preview(request.clone(), &owner, window, cx);
+                    .request_preview(request.clone(), session_cancellation.clone(), &owner, window, cx);
                 quick_search.preview_footer.update_active_context(
                     footer_selected.clone(),
                     footer_query.clone(),
                     footer_preview_buffer.clone(),
+                    session_cancellation,
                     footer_project.clone(),
                     window,
                     cx,
@@ -1983,6 +2046,7 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query.trim().to_string();
+        let session_cancellation = self.search_engine.cancellation();
         if let Some(qs) = self.quick_search.upgrade() {
             let qs = qs.downgrade();
             window.defer(cx, move |window, cx| {
@@ -1992,7 +2056,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 qs.update(cx, |qs, cx| {
                     let owner = cx.entity().downgrade();
                     qs.preview
-                        .request_preview(PreviewRequest::Empty, &owner, window, cx);
+                        .request_preview(PreviewRequest::Empty, session_cancellation, &owner, window, cx);
                 });
             });
         }
@@ -2332,11 +2396,9 @@ impl PickerDelegate for QuickSearchDelegate {
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.search_engine.cancel();
         self.is_streaming = false;
-        self.notify_pending = false;
         self.next_match_id = 0;
         self.clear_grouped_list_state();
-        self.notify_scheduled = false;
-        self.notify_debouncer = DebouncedDelay::new();
+        self.reset_notify_throttle();
         if let Some(quick_search) = self.quick_search.upgrade() {
             quick_search.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -2428,9 +2490,7 @@ pub(crate) fn apply_source_event(
                 picker.delegate.total_results = 0;
                 picker.delegate.search_engine.inflight_results = None;
                 picker.delegate.stream_finished = true;
-                picker.delegate.notify_pending = false;
-                picker.delegate.notify_scheduled = false;
-                picker.delegate.notify_debouncer = DebouncedDelay::new();
+                picker.delegate.reset_notify_throttle();
                 cx.notify();
             }
             SourceEvent::FinishStream => {
@@ -2461,9 +2521,7 @@ pub(crate) fn apply_source_event(
                 picker.delegate.stream_finished = true;
                 picker.delegate.is_streaming = false;
                 picker.delegate.search_engine.inflight_results = None;
-                picker.delegate.notify_pending = false;
-                picker.delegate.notify_scheduled = false;
-                picker.delegate.notify_debouncer = DebouncedDelay::new();
+                picker.delegate.reset_notify_throttle();
                 cx.notify();
             }
             SourceEvent::AppendMatches(mut matches) => {
@@ -2496,27 +2554,9 @@ pub(crate) fn apply_source_event(
                     }
                 }
 
-                if picker.delegate.notify_pending && !picker.delegate.notify_scheduled {
-                    picker.delegate.notify_scheduled = true;
-                    let interval_ms = picker.delegate.notify_interval_ms;
-                    picker.delegate.notify_debouncer.fire_new(
-                        Duration::from_millis(interval_ms),
-                        cx,
-                        move |picker, cx| {
-                            if picker.delegate.search_engine.generation() != generation {
-                                picker.delegate.notify_pending = false;
-                                picker.delegate.notify_scheduled = false;
-                                return Task::ready(());
-                            }
-
-                            if picker.delegate.notify_pending {
-                                cx.notify();
-                            }
-                            picker.delegate.notify_pending = false;
-                            picker.delegate.notify_scheduled = false;
-                            Task::ready(())
-                        },
-                    );
+                if picker.delegate.notify_pending {
+                    let immediate = previous_render_rows == 0 && new_render_rows > 0;
+                    picker.delegate.request_notify(generation, immediate, cx);
                 }
             }
             SourceEvent::ApplyPatches(patches) => {
@@ -2533,28 +2573,7 @@ pub(crate) fn apply_source_event(
 
                 if changed {
                     picker.delegate.notify_pending = true;
-                    if !picker.delegate.notify_scheduled {
-                        picker.delegate.notify_scheduled = true;
-                        let interval_ms = picker.delegate.notify_interval_ms;
-                        picker.delegate.notify_debouncer.fire_new(
-                            Duration::from_millis(interval_ms),
-                            cx,
-                            move |picker, cx| {
-                                if picker.delegate.search_engine.generation() != generation {
-                                    picker.delegate.notify_pending = false;
-                                    picker.delegate.notify_scheduled = false;
-                                    return Task::ready(());
-                                }
-
-                                if picker.delegate.notify_pending {
-                                    cx.notify();
-                                }
-                                picker.delegate.notify_pending = false;
-                                picker.delegate.notify_scheduled = false;
-                                Task::ready(())
-                            },
-                        );
-                    }
+                    picker.delegate.request_notify(generation, false, cx);
                 }
             }
             SourceEvent::ApplyPatchesByKey(patches) => {
@@ -2575,28 +2594,7 @@ pub(crate) fn apply_source_event(
 
                 if changed {
                     picker.delegate.notify_pending = true;
-                    if !picker.delegate.notify_scheduled {
-                        picker.delegate.notify_scheduled = true;
-                        let interval_ms = picker.delegate.notify_interval_ms;
-                        picker.delegate.notify_debouncer.fire_new(
-                            Duration::from_millis(interval_ms),
-                            cx,
-                            move |picker, cx| {
-                                if picker.delegate.search_engine.generation() != generation {
-                                    picker.delegate.notify_pending = false;
-                                    picker.delegate.notify_scheduled = false;
-                                    return Task::ready(());
-                                }
-
-                                if picker.delegate.notify_pending {
-                                    cx.notify();
-                                }
-                                picker.delegate.notify_pending = false;
-                                picker.delegate.notify_scheduled = false;
-                                Task::ready(())
-                            },
-                        );
-                    }
+                    picker.delegate.request_notify(generation, false, cx);
                 }
             }
         }
@@ -2783,9 +2781,7 @@ impl QuickSearchDelegate {
         self.match_list.clear();
         self.selection = None;
         self.clear_grouped_list_state();
-        self.notify_pending = false;
-        self.notify_scheduled = false;
-        self.notify_debouncer = DebouncedDelay::new();
+        self.reset_notify_throttle();
         self.reset_scroll = true;
         self.is_streaming = false;
         self.total_results = 0;
@@ -2842,9 +2838,7 @@ impl QuickSearchDelegate {
             self.total_results = 0;
             self.search_engine.inflight_results = None;
             self.stream_finished = true;
-            self.notify_pending = false;
-            self.notify_scheduled = false;
-            self.notify_debouncer = DebouncedDelay::new();
+            self.reset_notify_throttle();
             cx.notify();
             return;
         };

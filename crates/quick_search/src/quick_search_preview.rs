@@ -30,6 +30,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
 use crate::GenerationGuard;
+use crate::core::SearchCancellation;
 use project::ProjectPath;
 use project::debounced_delay::DebouncedDelay;
 
@@ -220,20 +221,26 @@ impl PreviewState {
     pub fn request_preview(
         &mut self,
         request: PreviewRequest,
+        session_cancellation: SearchCancellation,
         owner: &WeakEntity<QuickSearch>,
         window: &mut Window,
         cx: &mut Context<QuickSearch>,
     ) {
-        self.maybe_update_preview(request, owner, window, cx);
+        self.maybe_update_preview(request, session_cancellation, owner, window, cx);
     }
 
     pub fn maybe_update_preview(
         &mut self,
         request: PreviewRequest,
+        session_cancellation: SearchCancellation,
         owner: &WeakEntity<QuickSearch>,
         window: &mut Window,
         cx: &mut Context<QuickSearch>,
     ) {
+        if session_cancellation.is_cancelled() {
+            return;
+        }
+
         let (preview_key, strong_anchors, weak_anchors, use_diff_preview) = match &request {
             PreviewRequest::Empty => (None, None, None, false),
             PreviewRequest::Buffer {
@@ -319,6 +326,8 @@ impl PreviewState {
             return;
         }
 
+        let session_cancellation_for_task = session_cancellation;
+
         let window_handle = window.window_handle();
         self.manager
             .debounce_mut()
@@ -326,7 +335,7 @@ impl PreviewState {
                 cx.spawn(move |_, app: &mut gpui::AsyncApp| {
                     let mut app = app.clone();
                     async move {
-                    if cancel_flag.load(Ordering::SeqCst) {
+                    if cancel_flag.load(Ordering::SeqCst) || session_cancellation_for_task.is_cancelled() {
                         return;
                     }
 
@@ -340,6 +349,9 @@ impl PreviewState {
                         let placeholder = format!("Loading commit {sha}…\n");
                         if let Some(qs) = quick_search.upgrade() {
                             if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                if session_cancellation_for_task.is_cancelled() {
+                                    return;
+                                }
                                 if qs.preview.current_preview.as_ref() != Some(&preview_key_for_task)
                                     || qs.preview.manager.generation() != preview_generation
                                 {
@@ -383,6 +395,9 @@ impl PreviewState {
                             );
                             if let Some(qs) = quick_search.upgrade() {
                                 if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                    if session_cancellation_for_task.is_cancelled() {
+                                        return;
+                                    }
                                     if qs.preview.current_preview.as_ref() != Some(&preview_key_for_task)
                                         || qs.preview.manager.generation() != preview_generation
                                     {
@@ -431,6 +446,9 @@ impl PreviewState {
                                 let text = format!("Failed to start commit diff load:\n{err:?}\n");
                                 if let Some(qs) = quick_search.upgrade() {
                                     if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                        if session_cancellation_for_task.is_cancelled() {
+                                            return;
+                                        }
                                         if qs.preview.current_preview.as_ref()
                                             != Some(&preview_key_for_task)
                                             || qs.preview.manager.generation() != preview_generation
@@ -460,6 +478,9 @@ impl PreviewState {
                                 let text = format!("Failed to load commit diff:\n{err:?}\n");
                                 if let Some(qs) = quick_search.upgrade() {
                                     if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                        if session_cancellation_for_task.is_cancelled() {
+                                            return;
+                                        }
                                         if qs.preview.current_preview.as_ref() != Some(&preview_key_for_task)
                                             || qs.preview.manager.generation() != preview_generation
                                         {
@@ -481,6 +502,9 @@ impl PreviewState {
                                 let text = format!("Failed to load commit diff:\n{err:?}\n");
                                 if let Some(qs) = quick_search.upgrade() {
                                     if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                        if session_cancellation_for_task.is_cancelled() {
+                                            return;
+                                        }
                                         if qs.preview.current_preview.as_ref() != Some(&preview_key_for_task)
                                             || qs.preview.manager.generation() != preview_generation
                                         {
@@ -500,13 +524,13 @@ impl PreviewState {
                             }
                         };
 
-                        if cancel_flag.load(Ordering::SeqCst) {
+                        if cancel_flag.load(Ordering::SeqCst) || session_cancellation_for_task.is_cancelled() {
                             return;
                         }
 
                         let mut built: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
                         for file in commit_diff.files {
-                            if cancel_flag.load(Ordering::SeqCst) {
+                            if cancel_flag.load(Ordering::SeqCst) || session_cancellation_for_task.is_cancelled() {
                                 return;
                             }
 
@@ -570,7 +594,7 @@ impl PreviewState {
                             built.push((buffer, buffer_diff));
                         }
 
-                        if cancel_flag.load(Ordering::SeqCst) {
+                        if cancel_flag.load(Ordering::SeqCst) || session_cancellation_for_task.is_cancelled() {
                             return;
                         }
 
@@ -578,6 +602,9 @@ impl PreviewState {
                             let preview_id = preview_key_for_task.clone();
                             let mut should_apply_selection = false;
                             let update_result = app.update_entity(&qs, |qs, cx| {
+                                if session_cancellation_for_task.is_cancelled() {
+                                    return;
+                                }
                                 if qs.preview.current_preview.as_ref() != Some(&preview_key_for_task)
                                     || qs.preview.manager.generation() != preview_generation
                                 {
@@ -756,6 +783,9 @@ impl PreviewState {
                         };
                         let mut should_apply_selection = false;
                         let update_result = app.update_entity(&qs, |qs, cx| {
+                            if session_cancellation_for_task.is_cancelled() {
+                                return;
+                            }
                             if qs.preview.current_preview.as_ref() != Some(&preview_id)
                                 || qs.preview.manager.generation() != preview_generation
                             {

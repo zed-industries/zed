@@ -2,6 +2,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use futures::FutureExt as _;
 use search::SearchOptions;
 use ui::IconName;
 
@@ -80,8 +81,7 @@ impl QuickSearchSource for FilesSource {
         let query = ctx.query().clone();
         let cancellation = ctx.cancellation().clone();
         let cancel_flag = cancellation.flag();
-        cx.spawn(move |_, app: &mut gpui::AsyncApp| {
-            let mut app = app.clone();
+        crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
                 if cancellation.is_cancelled() {
                     return;
@@ -145,27 +145,24 @@ impl QuickSearchSource for FilesSource {
                     };
 
                     batcher.push(
-                        QuickMatchBuilder::new(
-                            source_id.clone(),
-                            QuickMatchKind::ProjectPath { project_path },
-                        )
-                        .path_label(path_label)
-                        .display_path(display_path)
-                        .display_path_positions(Some(Arc::<[usize]>::from(dir_positions)))
-                        .path_segments_from_label()
-                        .file_name(file_name)
-                        .file_name_positions(Some(Arc::<[usize]>::from(file_name_positions)))
-                        .build(),
+                        QuickMatchBuilder::new(source_id.clone(), QuickMatchKind::ProjectPath { project_path })
+                            .path_label(path_label)
+                            .display_path(display_path)
+                            .display_path_positions(Some(Arc::<[usize]>::from(dir_positions)))
+                            .path_segments_from_label()
+                            .file_name(file_name)
+                            .file_name_positions(Some(Arc::<[usize]>::from(file_name_positions)))
+                            .build(),
                         &sink,
-                        &mut app,
+                        app,
                     );
                 }
 
                 if !cancellation.is_cancelled() {
-                    batcher.finish(&sink, &mut app);
+                    batcher.finish(&sink, app);
                 }
             }
-        })
-        .detach();
+            .boxed_local()
+        });
     }
 }
