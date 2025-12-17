@@ -25421,6 +25421,146 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_python_indent_in_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    language_registry.add(markdown_lang());
+    language_registry.add(python_lang);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local(
+            indoc! {"
+                # Heading
+
+                ```python
+                def main():
+                    if condition:
+                        pass
+
+                ```
+            "},
+            cx,
+        );
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(Some(markdown_lang()), cx);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    cx.executor().run_until_parked();
+
+    // Test that `else:` correctly outdents to match `if:` inside the Python code block
+    _ = editor.update(cx, |editor, window, cx| {
+        select_ranges(
+            editor,
+            indoc! {"
+                # Heading
+
+                ```python
+                def main():
+                    if condition:
+                        pass
+                        ˇ
+                ```
+            "},
+            window,
+            cx,
+        );
+        editor.handle_input("else:", window, cx);
+    });
+    cx.executor().run_until_parked();
+    _ = editor.update(cx, |editor, _, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {"
+                # Heading
+
+                ```python
+                def main():
+                    if condition:
+                        pass
+                    else:ˇ
+                ```
+            "},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_consecutive_python_code_blocks_indent_in_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    language_registry.add(markdown_lang());
+    language_registry.add(python_lang);
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local(
+            indoc! {"
+                # Hello
+
+                ```python
+                if condition:
+                ```
+
+                ```python
+                    x = 1
+
+                ```
+            "},
+            cx,
+        );
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(Some(markdown_lang()), cx);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    cx.executor().run_until_parked();
+
+    // Test that `else:` in the second code block stays at its current indent level, not outdent
+    _ = editor.update(cx, |editor, window, cx| {
+        select_ranges(
+            editor,
+            indoc! {"
+                ```python
+                if condition:
+                ```
+
+                ```python
+                    x = 1
+                    ˇ
+                ```
+            "},
+            window,
+            cx,
+        );
+        editor.handle_input("else:", window, cx);
+    });
+    cx.executor().run_until_parked();
+    _ = editor.update(cx, |editor, _, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {"
+                ```python
+                if condition:
+                ```
+
+                ```python
+                    x = 1
+                    else:ˇ
+                ```
+            "},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
