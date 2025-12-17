@@ -3311,8 +3311,10 @@ impl LocalLspStore {
         )
         .await
         .log_err();
-        this.update(cx, |this, _| {
+        this.update(cx, |this, cx| {
             if let Some(transaction) = transaction {
+                cx.emit(LspStoreEvent::WorkspaceEditApplied(transaction.clone()));
+
                 this.as_local_mut()
                     .unwrap()
                     .last_workspace_edits_by_language_server
@@ -3852,6 +3854,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    WorkspaceEditApplied(ProjectTransaction),
 }
 
 #[derive(Clone, Debug, Serialize)]

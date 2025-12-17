@@ -2063,46 +2063,34 @@ impl Editor {
                                         })
                                     });
                             });
-                            let edited_buffers_already_open = {
-                                let other_editors: Vec<Entity<Editor>> = workspace
-                                    .read(cx)
-                                    .panes()
-                                    .iter()
-                                    .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
-                                    .filter(|editor| editor.entity_id() != cx.entity_id())
-                                    .collect();
 
-                                transaction.0.keys().all(|buffer| {
-                                    other_editors.iter().any(|editor| {
-                                        let multi_buffer = editor.read(cx).buffer();
-                                        multi_buffer.read(cx).is_singleton()
-                                            && multi_buffer.read(cx).as_singleton().map_or(
-                                                false,
-                                                |singleton| {
-                                                    singleton.entity_id() == buffer.entity_id()
-                                                },
-                                            )
-                                    })
-                                })
-                            };
-                            if !edited_buffers_already_open {
-                                let workspace = workspace.downgrade();
-                                let transaction = transaction.clone();
-                                cx.defer_in(window, move |_, window, cx| {
-                                    cx.spawn_in(window, async move |editor, cx| {
-                                        Self::open_project_transaction(
-                                            &editor,
-                                            workspace,
-                                            transaction,
-                                            "Rename".to_string(),
-                                            cx,
-                                        )
-                                        .await
-                                        .ok()
-                                    })
-                                    .detach();
-                                });
-                            }
+                            Self::open_transaction_for_hidden_buffers(
+                                workspace,
+                                transaction.clone(),
+                                "Rename".to_string(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+
+                    project::Event::WorkspaceEditApplied(transaction) => {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
+                        else {
+                            return;
+                        };
+
+                        if active_editor.entity_id() == cx.entity_id() {
+                            Self::open_transaction_for_hidden_buffers(
+                                workspace,
+                                transaction.clone(),
+                                "LSP Edit".to_string(),
+                                window,
+                                cx,
+                            );
                         }
                     }
 
@@ -6669,6 +6657,52 @@ impl Editor {
                 });
                 Some(Task::ready(Ok(())))
             }
+        }
+    }
+
+    fn open_transaction_for_hidden_buffers(
+        workspace: Entity<Workspace>,
+        transaction: ProjectTransaction,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if transaction.0.is_empty() {
+            return;
+        }
+
+        let edited_buffers_already_open = {
+            let other_editors: Vec<Entity<Editor>> = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+                .filter(|editor| editor.entity_id() != cx.entity_id())
+                .collect();
+
+            transaction.0.keys().all(|buffer| {
+                other_editors.iter().any(|editor| {
+                    let multi_buffer = editor.read(cx).buffer();
+                    multi_buffer.read(cx).is_singleton()
+                        && multi_buffer
+                            .read(cx)
+                            .as_singleton()
+                            .map_or(false, |singleton| {
+                                singleton.entity_id() == buffer.entity_id()
+                            })
+                })
+            })
+        };
+        if !edited_buffers_already_open {
+            let workspace = workspace.downgrade();
+            cx.defer_in(window, move |_, window, cx| {
+                cx.spawn_in(window, async move |editor, cx| {
+                    Self::open_project_transaction(&editor, workspace, transaction, title, cx)
+                        .await
+                        .ok()
+                })
+                .detach();
+            });
         }
     }
 
