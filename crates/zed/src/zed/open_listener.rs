@@ -145,7 +145,7 @@ impl OpenRequest {
             .context("invalid git commit url: missing repo query parameter")?
             .to_string();
 
-        self.open_paths.push(repo.clone());
+        self.open_paths.push(repo);
 
         self.kind = Some(OpenRequestKind::GitCommit {
             sha: sha.to_string(),
