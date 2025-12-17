@@ -20717,6 +20717,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "image",
  "image_viewer",
  "inspector_ui",
  "install_cli",
