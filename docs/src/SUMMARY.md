@@ -172,6 +172,15 @@
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
+# Reference
+
+- [All Settings](./reference/all-settings.md)
+- [All Actions](./reference/all-actions.md)
+- [Default Key Bindings](./reference/default-key-bindings.md)
+- [CLI Reference](./reference/cli.md)
+- [Environment Variables](./reference/environment-variables.md)
+- [Glob Patterns](./reference/glob-patterns.md)
+
 # Account & Privacy
 
 - [Sign In](./authentication.md)
