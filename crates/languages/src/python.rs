@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
 use smol::lock::OnceCell;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
@@ -903,7 +903,7 @@ impl ContextProvider for PythonContextProvider {
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new("Python")), location, cx)
+    language_settings(Some(LanguageName::new_static("Python")), location, cx)
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1101,13 +1101,45 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
-fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+// How far is this venv from the root of our current project?
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SubprojectDistance {
+    WithinSubproject(Reverse<usize>),
+    WithinWorktree(Reverse<usize>),
+    NotInWorktree,
+}
+
+fn wr_distance(
+    wr: &PathBuf,
+    subroot_relative_path: &RelPath,
+    venv: Option<&PathBuf>,
+) -> SubprojectDistance {
     if let Some(venv) = venv
         && let Ok(p) = venv.strip_prefix(wr)
     {
-        p.components().count()
+        if subroot_relative_path.components().next().is_some()
+            && let Ok(distance) = p
+                .strip_prefix(subroot_relative_path.as_std_path())
+                .map(|p| p.components().count())
+        {
+            SubprojectDistance::WithinSubproject(Reverse(distance))
+        } else {
+            SubprojectDistance::WithinWorktree(Reverse(p.components().count()))
+        }
     } else {
-        usize::MAX
+        SubprojectDistance::NotInWorktree
+    }
+}
+
+fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+    match kind {
+        ShellKind::Csh => "csh",
+        ShellKind::Fish => "fish",
+        ShellKind::Nushell => "nu",
+        ShellKind::PowerShell => "powershell",
+        ShellKind::Cmd => "cmd.exe",
+        // default / catch-all:
+        _ => "posix",
     }
 }
 
@@ -1170,11 +1202,14 @@ impl ToolchainLister for PythonToolchainProvider {
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = || {
-                let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
-                let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
-            };
+            let proj_ordering =
+                || {
+                    let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
+                    let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
+                    wr_distance(&wr, &subroot_relative_path, lhs_project.as_ref()).cmp(
+                        &wr_distance(&wr, &subroot_relative_path, rhs_project.as_ref()),
+                    )
+                };
 
             // Compare environment priorities
             let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
@@ -1274,23 +1309,27 @@ impl ToolchainLister for PythonToolchainProvider {
                     .as_option()
                     .map(|venv| venv.conda_manager)
                     .unwrap_or(settings::CondaManager::Auto);
-
                 let manager = match conda_manager {
                     settings::CondaManager::Conda => "conda",
                     settings::CondaManager::Mamba => "mamba",
                     settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => {
-                        // When auto, prefer the detected manager or fall back to conda
-                        toolchain
-                            .environment
-                            .manager
-                            .as_ref()
-                            .and_then(|m| m.executable.file_name())
-                            .and_then(|name| name.to_str())
-                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                            .unwrap_or("conda")
-                    }
+                    settings::CondaManager::Auto => toolchain
+                        .environment
+                        .manager
+                        .as_ref()
+                        .and_then(|m| m.executable.file_name())
+                        .and_then(|name| name.to_str())
+                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                        .unwrap_or("conda"),
                 };
+
+                // Activate micromamba shell in the child shell
+                // [required for micromamba]
+                if manager == "micromamba" {
+                    let shell = micromamba_shell_name(shell);
+                    activation_script
+                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                }
 
                 if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("{manager} activate {name}"));
@@ -1321,7 +1360,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
                     ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::PowerShell => None,
+                    ShellKind::PowerShell | ShellKind::Pwsh => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
@@ -1374,7 +1413,7 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             .to_str()?
             .to_owned()
             .into(),
-        language_name: LanguageName::new("Python"),
+        language_name: LanguageName::new_static("Python"),
         as_json: serde_json::to_value(data).ok()?,
     })
 }

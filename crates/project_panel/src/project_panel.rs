@@ -1142,7 +1142,7 @@ impl ProjectPanel {
                             )
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .action("File History", Box::new(git::FileHistory))
+                                    .action("View File History", Box::new(git::FileHistory))
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -1529,7 +1529,8 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+        let preview_tabs_enabled =
+            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
         self.open_internal(true, !preview_tabs_enabled, None, window, cx);
     }
 
@@ -1662,12 +1663,20 @@ impl ProjectPanel {
         let edit_state = self.state.edit_state.as_mut()?;
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
-        let filename = self.filename_editor.read(cx).text(cx);
+        let mut filename = self.filename_editor.read(cx).text(cx);
+        let path_style = self.project.read(cx).path_style(cx);
+        if path_style.is_windows() {
+            // on windows, trailing dots are ignored in paths
+            // this can cause project panel to create a new entry with a trailing dot
+            // while the actual one without the dot gets populated by the file watcher
+            while let Some(trimmed) = filename.strip_suffix('.') {
+                filename = trimmed.to_string();
+            }
+        }
         if filename.trim().is_empty() {
             return None;
         }
 
-        let path_style = self.project.read(cx).path_style(cx);
         let filename_indicates_dir = if path_style.is_windows() {
             filename.ends_with('/') || filename.ends_with('\\')
         } else {
@@ -4819,7 +4828,7 @@ impl ProjectPanel {
                             project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
-                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
                         let click_count = event.click_count();
                         let focus_opened_item = click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;

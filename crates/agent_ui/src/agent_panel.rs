@@ -2,10 +2,12 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_workspace_trust},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -259,7 +261,18 @@ impl AgentType {
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Codex => Some(IconName::AiOpenAi),
-            Self::Custom { .. } => Some(IconName::Terminal),
+            Self::Custom { .. } => Some(IconName::Sparkle),
+        }
+    }
+
+    fn is_mcp(&self) -> bool {
+        match self {
+            Self::NativeAgent => false,
+            Self::TextThread => false,
+            Self::Custom { .. } => false,
+            Self::Gemini => true,
+            Self::ClaudeCode => true,
+            Self::Codex => true,
         }
     }
 }
@@ -287,7 +300,7 @@ impl ActiveView {
         }
     }
 
-    pub fn native_agent(
+    fn native_agent(
         fs: Arc<dyn Fs>,
         prompt_store: Option<Entity<PromptStore>>,
         history_store: Entity<agent::HistoryStore>,
@@ -305,6 +318,7 @@ impl ActiveView {
                 project,
                 history_store,
                 prompt_store,
+                false,
                 window,
                 cx,
             )
@@ -441,6 +455,9 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
+    new_agent_thread_task: Task<()>,
+    show_trust_workspace_message: bool,
+    _worktree_trust_subscription: Option<Subscription>,
 }
 
 impl AgentPanel {
@@ -664,6 +681,48 @@ impl AgentPanel {
             None
         };
 
+        let mut show_trust_workspace_message = false;
+        let worktree_trust_subscription =
+            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
+                let has_global_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust_workspace(
+                        project
+                            .read(cx)
+                            .remote_connection_options(cx)
+                            .map(RemoteHostLocation::from),
+                        cx,
+                    )
+                });
+                if has_global_trust {
+                    None
+                } else {
+                    show_trust_workspace_message = true;
+                    let project = project.clone();
+                    Some(cx.subscribe(
+                        &trusted_worktrees,
+                        move |agent_panel, trusted_worktrees, _, cx| {
+                            let new_show_trust_workspace_message =
+                                !trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                    trusted_worktrees.can_trust_workspace(
+                                        project
+                                            .read(cx)
+                                            .remote_connection_options(cx)
+                                            .map(RemoteHostLocation::from),
+                                        cx,
+                                    )
+                                });
+                            if new_show_trust_workspace_message
+                                != agent_panel.show_trust_workspace_message
+                            {
+                                agent_panel.show_trust_workspace_message =
+                                    new_show_trust_workspace_message;
+                                cx.notify();
+                            };
+                        },
+                    ))
+                }
+            });
+
         let mut panel = Self {
             active_view,
             workspace,
@@ -686,11 +745,14 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
+            new_agent_thread_task: Task::ready(()),
             onboarding,
             acp_history,
             history_store,
             selected_agent: AgentType::default(),
             loading: false,
+            show_trust_workspace_message,
+            _worktree_trust_subscription: worktree_trust_subscription,
         };
 
         // Initial sync of agent servers from extensions
@@ -883,40 +945,63 @@ impl AgentPanel {
                 }
             };
 
-            let server = ext_agent.server(fs, history);
-
-            if !loading {
-                telemetry::event!("Agent Thread Started", agent = server.telemetry_id());
+            if ext_agent.is_mcp() {
+                let wait_task = this.update(cx, |agent_panel, cx| {
+                    agent_panel.project.update(cx, |project, cx| {
+                        wait_for_workspace_trust(
+                            project.remote_connection_options(cx),
+                            "context servers",
+                            cx,
+                        )
+                    })
+                })?;
+                if let Some(wait_task) = wait_task {
+                    this.update_in(cx, |agent_panel, window, cx| {
+                        agent_panel.show_trust_workspace_message = true;
+                        cx.notify();
+                        agent_panel.new_agent_thread_task =
+                            cx.spawn_in(window, async move |agent_panel, cx| {
+                                wait_task.await;
+                                let server = ext_agent.server(fs, history);
+                                agent_panel
+                                    .update_in(cx, |agent_panel, window, cx| {
+                                        agent_panel.show_trust_workspace_message = false;
+                                        cx.notify();
+                                        agent_panel._external_thread(
+                                            server,
+                                            resume_thread,
+                                            summarize_thread,
+                                            workspace,
+                                            project,
+                                            loading,
+                                            ext_agent,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            });
+                    })?;
+                    return Ok(());
+                }
             }
 
-            this.update_in(cx, |this, window, cx| {
-                let selected_agent = ext_agent.into();
-                if this.selected_agent != selected_agent {
-                    this.selected_agent = selected_agent;
-                    this.serialize(cx);
-                }
-
-                let thread_view = cx.new(|cx| {
-                    crate::acp::AcpThreadView::new(
-                        server,
-                        resume_thread,
-                        summarize_thread,
-                        workspace.clone(),
-                        project,
-                        this.history_store.clone(),
-                        this.prompt_store.clone(),
-                        window,
-                        cx,
-                    )
-                });
-
-                this.set_active_view(
-                    ActiveView::ExternalAgentThread { thread_view },
-                    !loading,
+            let server = ext_agent.server(fs, history);
+            this.update_in(cx, |agent_panel, window, cx| {
+                agent_panel._external_thread(
+                    server,
+                    resume_thread,
+                    summarize_thread,
+                    workspace,
+                    project,
+                    loading,
+                    ext_agent,
                     window,
                     cx,
                 );
-            })
+            })?;
+
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -1425,6 +1510,36 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let wait_task = if agent.is_mcp() {
+            self.project.update(cx, |project, cx| {
+                wait_for_workspace_trust(
+                    project.remote_connection_options(cx),
+                    "context servers",
+                    cx,
+                )
+            })
+        } else {
+            None
+        };
+        if let Some(wait_task) = wait_task {
+            self.show_trust_workspace_message = true;
+            cx.notify();
+            self.new_agent_thread_task = cx.spawn_in(window, async move |agent_panel, cx| {
+                wait_task.await;
+                agent_panel
+                    .update_in(cx, |agent_panel, window, cx| {
+                        agent_panel.show_trust_workspace_message = false;
+                        cx.notify();
+                        agent_panel._new_agent_thread(agent, window, cx);
+                    })
+                    .ok();
+            });
+        } else {
+            self._new_agent_thread(agent, window, cx);
+        }
+    }
+
+    fn _new_agent_thread(&mut self, agent: AgentType, window: &mut Window, cx: &mut Context<Self>) {
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -1475,6 +1590,47 @@ impl AgentPanel {
             Some(ExternalAgent::NativeAgent),
             Some(thread),
             None,
+            window,
+            cx,
+        );
+    }
+
+    fn _external_thread(
+        &mut self,
+        server: Rc<dyn AgentServer>,
+        resume_thread: Option<DbThreadMetadata>,
+        summarize_thread: Option<DbThreadMetadata>,
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        loading: bool,
+        ext_agent: ExternalAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_agent = AgentType::from(ext_agent);
+        if self.selected_agent != selected_agent {
+            self.selected_agent = selected_agent;
+            self.serialize(cx);
+        }
+
+        let thread_view = cx.new(|cx| {
+            crate::acp::AcpThreadView::new(
+                server,
+                resume_thread,
+                summarize_thread,
+                workspace.clone(),
+                project,
+                self.history_store.clone(),
+                self.prompt_store.clone(),
+                !loading,
+                window,
+                cx,
+            )
+        });
+
+        self.set_active_view(
+            ActiveView::ExternalAgentThread { thread_view },
+            !loading,
             window,
             cx,
         );
@@ -1853,14 +2009,17 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
 
-        // Get custom icon path for selected agent before building menu (to avoid borrow issues)
-        let selected_agent_custom_icon =
+        let (selected_agent_custom_icon, selected_agent_label) =
             if let AgentType::Custom { name, .. } = &self.selected_agent {
-                agent_server_store
-                    .read(cx)
-                    .agent_icon(&ExternalAgentServerName(name.clone()))
+                let store = agent_server_store.read(cx);
+                let icon = store.agent_icon(&ExternalAgentServerName(name.clone()));
+
+                let label = store
+                    .agent_display_name(&ExternalAgentServerName(name.clone()))
+                    .unwrap_or_else(|| self.selected_agent.label());
+                (icon, label)
             } else {
-                None
+                (None, self.selected_agent.label())
             };
 
         let active_thread = match &self.active_view {
@@ -2083,13 +2242,16 @@ impl AgentPanel {
 
                                 for agent_name in agent_names {
                                     let icon_path = agent_server_store.agent_icon(&agent_name);
+                                    let display_name = agent_server_store
+                                        .agent_display_name(&agent_name)
+                                        .unwrap_or_else(|| agent_name.0.clone());
 
-                                    let mut entry = ContextMenuEntry::new(agent_name.clone());
+                                    let mut entry = ContextMenuEntry::new(display_name);
 
                                     if let Some(icon_path) = icon_path {
                                         entry = entry.custom_icon_svg(icon_path);
                                     } else {
-                                        entry = entry.icon(IconName::Terminal);
+                                        entry = entry.icon(IconName::Sparkle);
                                     }
                                     entry = entry
                                         .when(
@@ -2152,8 +2314,6 @@ impl AgentPanel {
                     }))
                 }
             });
-
-        let selected_agent_label = self.selected_agent.label();
 
         let is_thread_loading = self
             .active_thread_view()
@@ -2555,6 +2715,38 @@ impl AgentPanel {
         }
     }
 
+    fn render_workspace_trust_message(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        if !self.show_trust_workspace_message {
+            return None;
+        }
+
+        let description = "To protect your system, third-party code—like MCP servers—won't run until you mark this workspace as safe.";
+
+        Some(
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .border_position(ui::BorderPosition::Bottom)
+                .title("You're in Restricted Mode")
+                .description(description)
+                .actions_slot(
+                    Button::new("open-trust-modal", "Configure Project Trust")
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .on_click({
+                            cx.listener(move |this, _, window, cx| {
+                                this.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .show_worktree_trust_security_modal(true, window, cx)
+                                    })
+                                    .log_err();
+                            })
+                        }),
+                ),
+        )
+    }
+
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
@@ -2607,6 +2799,7 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
@@ -2685,16 +2878,17 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 return;
             };
             let project = workspace.read(cx).project().downgrade();
+            let thread_store = panel.read(cx).thread_store().clone();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
                 project,
-                panel.read(cx).thread_store().clone(),
+                thread_store,
                 None,
                 initial_prompt,
                 window,
                 cx,
-            )
+            );
         })
     }
 

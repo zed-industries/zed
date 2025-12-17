@@ -464,7 +464,7 @@ impl PickerDelegate for StashListDelegate {
             );
 
         Some(
-            ListItem::new(SharedString::from(format!("stash-{ix}")))
+            ListItem::new(format!("stash-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

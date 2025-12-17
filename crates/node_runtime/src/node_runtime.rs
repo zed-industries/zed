@@ -9,6 +9,8 @@ use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::fmt::Display;
+use std::future::Future;
+use std::pin::Pin;
 use std::{
     env::{self, consts},
     ffi::OsString,
@@ -46,6 +48,7 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
+    trust_task: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 impl NodeRuntime {
@@ -53,9 +56,11 @@ impl NodeRuntime {
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
+        trust_task: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
+            trust_task,
             instance: None,
             last_options: None,
             options,
@@ -70,11 +75,15 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
+            trust_task: None,
         })))
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
         let mut state = self.0.lock().await;
+        if let Some(trust_task) = state.trust_task.take() {
+            trust_task.await;
+        }
 
         let options = loop {
             if let Some(options) = state.options.borrow().as_ref() {
@@ -206,14 +215,14 @@ impl NodeRuntime {
 
     pub async fn run_npm_subcommand(
         &self,
-        directory: &Path,
+        directory: Option<&Path>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
+            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
             .await
     }
 
@@ -283,7 +292,7 @@ impl NodeRuntime {
         ]);
 
         // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(directory, "install", &arguments)
+        self.run_npm_subcommand(Some(directory), "install", &arguments)
             .await?;
         Ok(())
     }
@@ -559,7 +568,10 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), self.installation_path.join("cache")]);
+            command.arg(format!(
+                "--cache={}",
+                self.installation_path.join("cache").display()
+            ));
             command.args([
                 "--userconfig".into(),
                 self.installation_path.join("blank_user_npmrc"),
@@ -703,7 +715,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
-            .args(["--cache".into(), self.scratch_dir.join("cache")])
+            .arg(format!(
+                "--cache={}",
+                self.scratch_dir.join("cache").display()
+            ))
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;

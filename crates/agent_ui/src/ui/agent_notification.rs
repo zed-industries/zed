@@ -106,9 +106,6 @@ impl Render for AgentNotification {
             .font(ui_font)
             .border_color(cx.theme().colors().border)
             .rounded_xl()
-            .on_click(cx.listener(|_, _, _, cx| {
-                cx.emit(AgentNotificationEvent::Accepted);
-            }))
             .child(
                 h_flex()
                     .items_start()

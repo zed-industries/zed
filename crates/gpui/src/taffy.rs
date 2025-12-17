@@ -296,7 +296,7 @@ trait ToTaffy<Output> {
 
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
-        use taffy::style_helpers::{length, minmax, repeat};
+        use taffy::style_helpers::{fr, length, minmax, repeat};
 
         fn to_grid_line(
             placement: &Range<crate::GridPlacement>,
@@ -310,8 +310,16 @@ impl ToTaffy<taffy::style::Style> for Style {
         fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
             unit: &Option<u16>,
         ) -> Vec<taffy::GridTemplateComponent<T>> {
-            // grid-template-columns: repeat(<number>, minmax(0, min-content));
-            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), min_content())])])
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
+                .unwrap_or_default()
+        }
+
+        fn to_grid_repeat_min_content<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(min-content, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(min_content(), fr(1.0))])])
                 .unwrap_or_default()
         }
 
@@ -339,7 +347,11 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            grid_template_columns: if self.grid_cols_min_content.is_some() {
+                to_grid_repeat_min_content(&self.grid_cols_min_content)
+            } else {
+                to_grid_repeat(&self.grid_cols)
+            },
             grid_row: self
                 .grid_location
                 .as_ref()

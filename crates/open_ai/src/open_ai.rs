@@ -87,6 +87,8 @@ pub enum Model {
     FiveNano,
     #[serde(rename = "gpt-5.1")]
     FivePointOne,
+    #[serde(rename = "gpt-5.2")]
+    FivePointTwo,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -123,6 +125,7 @@ impl Model {
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
+            "gpt-5.2" => Ok(Self::FivePointTwo),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -145,6 +148,7 @@ impl Model {
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
             Self::Custom { name, .. } => name,
         }
     }
@@ -167,6 +171,7 @@ impl Model {
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -191,6 +196,7 @@ impl Model {
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
             Self::FivePointOne => 400_000,
+            Self::FivePointTwo => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -216,6 +222,7 @@ impl Model {
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
+            Self::FivePointTwo => Some(128_000),
         }
     }
 
@@ -244,6 +251,7 @@ impl Model {
             | Self::Five
             | Self::FiveMini
             | Self::FivePointOne
+            | Self::FivePointTwo
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
@@ -266,7 +274,8 @@ pub struct Request {
     pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
-    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Whether to enable parallel function calling during tool use.

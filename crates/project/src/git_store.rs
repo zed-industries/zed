@@ -472,6 +472,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
+        client.add_entity_request_handler(Self::handle_create_remote);
+        client.add_entity_request_handler(Self::handle_remove_remote);
         client.add_entity_request_handler(Self::handle_delete_branch);
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
@@ -1029,6 +1031,7 @@ impl GitStore {
             Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
+        let line_ending = buffer.line_ending();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
@@ -1040,7 +1043,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content)
+                    .blame(repo_path.clone(), content, line_ending)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -1130,6 +1133,7 @@ impl GitStore {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         let origin_url = backend
                             .remote_url(&remote)
+                            .await
                             .with_context(|| format!("remote \"{remote}\" not found"))?;
 
                         let sha = backend.head_sha().await.context("reading HEAD SHA")?;
@@ -1448,7 +1452,7 @@ impl GitStore {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 cx.subscribe(buffer, |this, buffer, event, cx| {
-                    if let BufferEvent::LanguageChanged = event {
+                    if let BufferEvent::LanguageChanged(_) = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
                             diff_state.update(cx, |diff_state, cx| {
@@ -2273,6 +2277,25 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_create_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+        let remote_url = envelope.payload.remote_url;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_remote(remote_name, remote_url)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_delete_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitDeleteBranch>,
@@ -2285,6 +2308,24 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.delete_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_remove_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRemoveRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.remove_remote(remote_name)
             })?
             .await??;
 
@@ -3256,6 +3297,8 @@ impl RepositorySnapshot {
                 .iter()
                 .map(stash_to_proto)
                 .collect(),
+            remote_upstream_url: self.remote_upstream_url.clone(),
+            remote_origin_url: self.remote_origin_url.clone(),
         }
     }
 
@@ -3325,6 +3368,8 @@ impl RepositorySnapshot {
                 .iter()
                 .map(stash_to_proto)
                 .collect(),
+            remote_upstream_url: self.remote_upstream_url.clone(),
+            remote_origin_url: self.remote_origin_url.clone(),
         }
     }
 
@@ -4648,11 +4693,9 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let rx = self.run_hook(RunHook::PrePush, cx);
         self.send_job(
             Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
-                rx.await??;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -4864,6 +4907,61 @@ impl Repository {
         )
     }
 
+    pub fn create_remote(
+        &mut self,
+        remote_name: String,
+        remote_url: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remote add {remote_name} {remote_url}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_remote(remote_name, remote_url).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCreateRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                                remote_url,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn remove_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remove remote {remote_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_remote(remote_name).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRemoveRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
@@ -4901,7 +4999,7 @@ impl Repository {
                     let remotes = response
                         .remotes
                         .into_iter()
-                        .map(|remotes| git::repository::Remote {
+                        .map(|remotes| Remote {
                             name: remotes.name.into(),
                         })
                         .collect();
@@ -5300,6 +5398,8 @@ impl Repository {
             cx.emit(RepositoryEvent::StashEntriesChanged)
         }
         self.snapshot.stash_entries = new_stash_entries;
+        self.snapshot.remote_upstream_url = update.remote_upstream_url;
+        self.snapshot.remote_origin_url = update.remote_origin_url;
 
         let edits = update
             .removed_statuses
@@ -5447,7 +5547,8 @@ impl Repository {
                 git_hosting_providers::register_additional_providers(
                     git_hosting_provider_registry,
                     state.backend.clone(),
-                );
+                )
+                .await;
             }
             let state = RepositoryState::Local(state);
             let mut jobs = VecDeque::new();
@@ -5858,11 +5959,7 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
         .collect::<Vec<_>>();
 
     proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse {
-            entries,
-            messages,
-            remote_url: blame.remote_url,
-        }),
+        blame_response: Some(proto::blame_buffer_response::BlameResponse { entries, messages }),
     }
 }
 
@@ -5899,11 +5996,7 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    Some(Blame {
-        entries,
-        messages,
-        remote_url: response.remote_url,
-    })
+    Some(Blame { entries, messages })
 }
 
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
@@ -6051,9 +6144,8 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::BranchChanged);
     }
 
-    // Used by edit prediction data collection
-    let remote_origin_url = backend.remote_url("origin");
-    let remote_upstream_url = backend.remote_url("upstream");
+    let remote_origin_url = backend.remote_url("origin").await;
+    let remote_upstream_url = backend.remote_url("upstream").await;
 
     let snapshot = RepositorySnapshot {
         id,

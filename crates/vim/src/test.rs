@@ -2399,7 +2399,7 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
             .end;
         editor.last_bounds().unwrap().origin
             + editor
-                .display_to_pixel_point(current_head, &snapshot, window)
+                .display_to_pixel_point(current_head, &snapshot, window, cx)
                 .unwrap()
     });
     pixel_position.x += px(100.);

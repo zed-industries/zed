@@ -20,7 +20,7 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
-    fn telemetry_id(&self) -> &'static str;
+    fn telemetry_id(&self) -> SharedString;
 
     fn new_thread(
         self: Rc<Self>,
@@ -202,6 +202,12 @@ pub trait AgentModelSelector: 'static {
     fn should_render_footer(&self) -> bool {
         false
     }
+
+    /// Whether this selector supports the favorites feature.
+    /// Only the native agent uses the model ID format that maps to settings.
+    fn supports_favorites(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,6 +244,10 @@ impl AgentModelList {
             AgentModelList::Flat(models) => models.is_empty(),
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
+    }
+
+    pub fn is_flat(&self) -> bool {
+        matches!(self, AgentModelList::Flat(_))
     }
 }
 
@@ -322,8 +332,8 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "stub"
+        fn telemetry_id(&self) -> SharedString {
+            "stub".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {

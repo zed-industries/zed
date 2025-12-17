@@ -37,14 +37,14 @@
           rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
         };
     in
-    rec {
+    {
       packages = forAllSystems (pkgs: rec {
         default = mkZed pkgs;
         debug = default.override { profile = "dev"; };
       });
       devShells = forAllSystems (pkgs: {
         default = pkgs.callPackage ./nix/shell.nix {
-          zed-editor = packages.${pkgs.hostPlatform.system}.default;
+          zed-editor = mkZed pkgs;
         };
       });
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);

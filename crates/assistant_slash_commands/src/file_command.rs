@@ -226,10 +226,10 @@ fn collect_files(
     let Ok(matchers) = glob_inputs
         .iter()
         .map(|glob_input| {
-            custom_path_matcher::PathMatcher::new(&[glob_input.to_owned()])
+            util::paths::PathMatcher::new(&[glob_input.to_owned()], project.read(cx).path_style(cx))
                 .with_context(|| format!("invalid path {glob_input}"))
         })
-        .collect::<anyhow::Result<Vec<custom_path_matcher::PathMatcher>>>()
+        .collect::<anyhow::Result<Vec<util::paths::PathMatcher>>>()
     else {
         return futures::stream::once(async {
             anyhow::bail!("invalid path");
@@ -250,6 +250,7 @@ fn collect_files(
             let worktree_id = snapshot.id();
             let path_style = snapshot.path_style();
             let mut directory_stack: Vec<Arc<RelPath>> = Vec::new();
+            let mut folded_directory_path: Option<Arc<RelPath>> = None;
             let mut folded_directory_names: Arc<RelPath> = RelPath::empty().into();
             let mut is_top_level_directory = true;
 
@@ -277,6 +278,16 @@ fn collect_files(
                     )))?;
                 }
 
+                if let Some(folded_path) = &folded_directory_path {
+                    if !entry.path.starts_with(folded_path) {
+                        folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
+                        if directory_stack.is_empty() {
+                            is_top_level_directory = true;
+                        }
+                    }
+                }
+
                 let filename = entry.path.file_name().unwrap_or_default().to_string();
 
                 if entry.is_dir() {
@@ -292,13 +303,17 @@ fn collect_files(
                                 folded_directory_names =
                                     folded_directory_names.join(RelPath::unix(&filename).unwrap());
                             }
+                            folded_directory_path = Some(entry.path.clone());
                             continue;
                         }
                     } else {
                         // Skip empty directories
                         folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
                         continue;
                     }
+
+                    // Render the directory (either folded or normal)
                     if folded_directory_names.is_empty() {
                         let label = if is_top_level_directory {
                             is_top_level_directory = false;
@@ -334,6 +349,8 @@ fn collect_files(
                             },
                         )))?;
                         directory_stack.push(entry.path.clone());
+                        folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
                     }
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
@@ -444,87 +461,6 @@ pub fn build_entry_output_section(
                 .ok()
             })
         },
-    }
-}
-
-/// This contains a small fork of the util::paths::PathMatcher, that is stricter about the prefix
-/// check. Only subpaths pass the prefix check, rather than any prefix.
-mod custom_path_matcher {
-    use globset::{Glob, GlobSet, GlobSetBuilder};
-    use std::fmt::Debug as _;
-    use util::{paths::SanitizedPath, rel_path::RelPath};
-
-    #[derive(Clone, Debug, Default)]
-    pub struct PathMatcher {
-        sources: Vec<String>,
-        sources_with_trailing_slash: Vec<String>,
-        glob: GlobSet,
-    }
-
-    impl std::fmt::Display for PathMatcher {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.sources.fmt(f)
-        }
-    }
-
-    impl PartialEq for PathMatcher {
-        fn eq(&self, other: &Self) -> bool {
-            self.sources.eq(&other.sources)
-        }
-    }
-
-    impl Eq for PathMatcher {}
-
-    impl PathMatcher {
-        pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
-            let globs = globs
-                .iter()
-                .map(|glob| Glob::new(&SanitizedPath::new(glob).to_string()))
-                .collect::<Result<Vec<_>, _>>()?;
-            let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
-            let sources_with_trailing_slash = globs
-                .iter()
-                .map(|glob| glob.glob().to_string() + "/")
-                .collect();
-            let mut glob_builder = GlobSetBuilder::new();
-            for single_glob in globs {
-                glob_builder.add(single_glob);
-            }
-            let glob = glob_builder.build()?;
-            Ok(PathMatcher {
-                glob,
-                sources,
-                sources_with_trailing_slash,
-            })
-        }
-
-        pub fn is_match(&self, other: &RelPath) -> bool {
-            self.sources
-                .iter()
-                .zip(self.sources_with_trailing_slash.iter())
-                .any(|(source, with_slash)| {
-                    let as_bytes = other.as_unix_str().as_bytes();
-                    let with_slash = if source.ends_with('/') {
-                        source.as_bytes()
-                    } else {
-                        with_slash.as_bytes()
-                    };
-
-                    as_bytes.starts_with(with_slash) || as_bytes.ends_with(source.as_bytes())
-                })
-                || self.glob.is_match(other.as_std_path())
-                || self.check_with_end_separator(other)
-        }
-
-        fn check_with_end_separator(&self, path: &RelPath) -> bool {
-            let path_str = path.as_unix_str();
-            let separator = "/";
-            if path_str.ends_with(separator) {
-                false
-            } else {
-                self.glob.is_match(path_str.to_string() + separator)
-            }
-        }
     }
 }
 

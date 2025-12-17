@@ -61,6 +61,7 @@ pub struct AmazonBedrockSettingsContent {
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
+    pub allow_global: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -93,6 +94,7 @@ pub enum BedrockAuthMethodContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
+    pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
 }
 

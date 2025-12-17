@@ -421,6 +421,7 @@ async fn open_remote_worktree(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            true,
             cx,
         )
     })?;
@@ -665,7 +666,7 @@ impl PickerDelegate for WorktreeListDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("worktree-menu-{ix}")))
+            ListItem::new(format!("worktree-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

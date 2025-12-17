@@ -1,19 +1,21 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
+use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
-use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
+use git::{
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
+    parse_git_remote_url,
+};
 use gpui::{
-    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
-    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
-    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
-    TextBuffer, ToPoint,
+    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
+    Point, ReplicaId, Rope, TextBuffer,
 };
-use multi_buffer::ExcerptInfo;
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
@@ -22,11 +24,9 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{
-    Avatar, Button, ButtonCommon, Clickable, Color, Icon, IconName, IconSize, Label,
-    LabelCommon as _, LabelSize, SharedString, div, h_flex, v_flex,
-};
+use ui::{DiffStat, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
+use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -36,6 +36,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
@@ -71,6 +72,7 @@ struct GitBlob {
     display_name: Arc<str>,
 }
 
+const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
@@ -148,16 +150,71 @@ impl CommitView {
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
+
+        let message_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(commit.message.clone(), cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            let snapshot = message_buffer.read(cx).snapshot();
+            let full_range = Point::zero()..snapshot.max_point();
+            let range = ExcerptRange {
+                context: full_range.clone(),
+                primary: full_range,
+            };
+            multibuffer.set_excerpt_ranges_for_path(
+                PathKey::with_sort_prefix(
+                    COMMIT_MESSAGE_SORT_PREFIX,
+                    RelPath::unix("commit message").unwrap().into(),
+                ),
+                message_buffer.clone(),
+                &snapshot,
+                vec![range],
+                cx,
+            )
+        });
+
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+
             editor.disable_inline_diagnostics();
+            editor.set_show_breakpoints(false, cx);
             editor.set_expand_all_diff_hunks(cx);
-            editor.register_addon(CommitViewAddon {
-                multibuffer: multibuffer.downgrade(),
-            });
+            editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+            editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
+
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(editor::Anchor::min()),
+                    height: Some(1),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(|_| gpui::Empty.into_any_element()),
+                    priority: 0,
+                }]
+                .into_iter()
+                .chain(
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                        .map(|anchor| BlockProperties {
+                            placement: BlockPlacement::Below(anchor),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(|_| gpui::Empty.into_any_element()),
+                            priority: 0,
+                        }),
+                ),
+                None,
+                cx,
+            );
+
             editor
         });
+
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let first_worktree_id = project
@@ -167,7 +224,6 @@ impl CommitView {
             .map(|worktree| worktree.read(cx).id());
 
         let repository_clone = repository.clone();
-        let commit_message = commit.message.clone();
 
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
@@ -206,90 +262,28 @@ impl CommitView {
                     this.multibuffer.update(cx, |multibuffer, cx| {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
-
-                        let hunks: Vec<_> = buffer_diff.read(cx).hunks(&snapshot, cx).collect();
-
-                        let excerpt_ranges = if hunks.is_empty() {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        } else {
-                            hunks
-                                .into_iter()
-                                .map(|hunk| {
-                                    let start = hunk.range.start.max(language::Point::new(
-                                        hunk.range.start.row.saturating_sub(3),
-                                        0,
-                                    ));
-                                    let end_row =
-                                        (hunk.range.end.row + 3).min(snapshot.max_point().row);
-                                    let end =
-                                        language::Point::new(end_row, snapshot.line_len(end_row));
-                                    start..end
-                                })
-                                .collect()
+                        let excerpt_ranges = {
+                            let mut hunks = buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                            if hunks.peek().is_none() {
+                                vec![language::Point::zero()..snapshot.max_point()]
+                            } else {
+                                hunks
+                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                    .collect::<Vec<_>>()
+                            }
                         };
 
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
                             PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             excerpt_ranges,
-                            0,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
                     });
                 })?;
             }
-
-            let message_buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(commit_message, cx);
-                buffer.set_capability(Capability::ReadOnly, cx);
-                buffer
-            })?;
-
-            this.update(cx, |this, cx| {
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    let range = ExcerptRange {
-                        context: Anchor::MIN..Anchor::MAX,
-                        primary: Anchor::MIN..Anchor::MAX,
-                    };
-                    multibuffer.insert_excerpts_after(
-                        ExcerptId::min(),
-                        message_buffer.clone(),
-                        [range],
-                        cx,
-                    )
-                });
-
-                this.editor.update(cx, |editor, cx| {
-                    editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
-
-                    editor.insert_blocks(
-                        [BlockProperties {
-                            placement: BlockPlacement::Above(editor::Anchor::min()),
-                            height: Some(1),
-                            style: BlockStyle::Sticky,
-                            render: Arc::new(|_| gpui::Empty.into_any_element()),
-                            priority: 0,
-                        }]
-                        .into_iter()
-                        .chain(
-                            editor
-                                .buffer()
-                                .read(cx)
-                                .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
-                                .map(|anchor| BlockProperties {
-                                    placement: BlockPlacement::Below(anchor),
-                                    height: Some(1),
-                                    style: BlockStyle::Sticky,
-                                    render: Arc::new(|_| gpui::Empty.into_any_element()),
-                                    priority: 0,
-                                }),
-                        ),
-                        None,
-                        cx,
-                    )
-                });
-            })?;
 
             anyhow::Ok(())
         })
@@ -328,17 +322,7 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                return Avatar::new(url.to_string())
-                    .size(size)
-                    .into_element()
-                    .into_any();
-            }
-        }
+        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
 
         v_flex()
             .w(size)
@@ -349,12 +333,52 @@ impl CommitView {
             .justify_center()
             .items_center()
             .child(
-                Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Medium)
-                    .into_element(),
+                avatar
+                    .avatar(window, cx)
+                    .map(|a| a.size(size).into_any_element())
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::Person)
+                            .color(Color::Muted)
+                            .size(IconSize::Medium)
+                            .into_any_element()
+                    }),
             )
             .into_any()
+    }
+
+    fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let mut total_additions = 0u32;
+        let mut total_deletions = 0u32;
+
+        let mut seen_buffers = std::collections::HashSet::new();
+        for (_, buffer, _) in snapshot.excerpts() {
+            let buffer_id = buffer.remote_id();
+            if !seen_buffers.insert(buffer_id) {
+                continue;
+            }
+
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                continue;
+            };
+
+            let base_text = diff.base_text();
+
+            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
+                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+                total_additions += added_rows;
+
+                let base_start = base_text
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
+                let deleted_rows = base_end.saturating_sub(base_start);
+
+                total_deletions += deleted_rows;
+            }
+        }
+
+        (total_additions, total_deletions)
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -370,56 +394,102 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let github_url = self.remote.as_ref().map(|remote| {
-            format!(
-                "{}/{}/{}/commit/{}",
-                remote.host.base_url(),
-                remote.owner,
-                remote.repo,
-                commit.sha
-            )
+        let remote_info = self.remote.as_ref().map(|remote| {
+            let provider = remote.host.name();
+            let parsed_remote = ParsedGitRemote {
+                owner: remote.owner.as_ref().into(),
+                repo: remote.repo.as_ref().into(),
+            };
+            let params = BuildCommitPermalinkParams { sha: &commit.sha };
+            let url = remote
+                .host
+                .build_commit_permalink(&parsed_remote, params)
+                .to_string();
+            (provider, url)
         });
 
-        v_flex()
-            .p_4()
-            .pl_0()
-            .gap_4()
+        let (additions, deletions) = self.calculate_changed_lines(cx);
+
+        let commit_diff_stat = if additions > 0 || deletions > 0 {
+            Some(DiffStat::new(
+                "commit-diff-stat",
+                additions as usize,
+                deletions as usize,
+            ))
+        } else {
+            None
+        };
+
+        let gutter_width = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let style = editor.style(cx);
+            let font_id = window.text_system().resolve_font(&style.text.font());
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            snapshot
+                .gutter_dimensions(font_id, font_size, style, window, cx)
+                .full_width()
+        });
+
+        h_flex()
             .border_b_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border_variant)
+            .w_full()
             .child(
                 h_flex()
+                    .w(gutter_width)
+                    .justify_center()
+                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx)),
+            )
+            .child(
+                h_flex()
+                    .py_4()
+                    .pl_1()
+                    .pr_4()
+                    .w_full()
                     .items_start()
-                    .child(
-                        h_flex()
-                            .w(self.editor.read(cx).last_gutter_dimensions().full_width())
-                            .justify_center()
-                            .child(self.render_commit_avatar(
-                                &commit.sha,
-                                gpui::rems(3.0),
-                                window,
-                                cx,
-                            )),
-                    )
+                    .justify_between()
+                    .flex_wrap()
                     .child(
                         v_flex()
-                            .gap_1()
                             .child(
                                 h_flex()
-                                    .gap_3()
-                                    .items_baseline()
+                                    .gap_1()
                                     .child(Label::new(author_name).color(Color::Default))
                                     .child(
-                                        Label::new(format!("commit {}", commit.sha))
-                                            .color(Color::Muted),
+                                        Label::new(format!("Commit:{}", commit.sha))
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                            .truncate()
+                                            .buffer_font(cx),
                                     ),
                             )
-                            .child(Label::new(date_string).color(Color::Muted)),
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Label::new(date_string)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        Label::new("•")
+                                            .color(Color::Ignored)
+                                            .size(LabelSize::Small),
+                                    )
+                                    .children(commit_diff_stat),
+                            ),
                     )
-                    .child(div().flex_grow())
-                    .children(github_url.map(|url| {
-                        Button::new("view_on_github", "View on GitHub")
-                            .icon(IconName::Github)
-                            .style(ui::ButtonStyle::Subtle)
+                    .children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
+
+                        Button::new("view_on_provider", format!("View on {}", provider_name))
+                            .icon(icon)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
                             .on_click(move |_, _, cx| cx.open_url(&url))
                     })),
             )
@@ -585,54 +655,6 @@ impl CommitView {
     }
 }
 
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
-    }
-}
-
 impl language::File for GitBlob {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
         None
@@ -713,55 +735,6 @@ impl language::File for GitBlob {
 //         false
 //     }
 // }
-
-struct CommitViewAddon {
-    multibuffer: WeakEntity<MultiBuffer>,
-}
-
-impl Addon for CommitViewAddon {
-    fn render_buffer_header_controls(
-        &self,
-        excerpt: &ExcerptInfo,
-        _window: &Window,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let multibuffer = self.multibuffer.upgrade()?;
-        let snapshot = multibuffer.read(cx).snapshot(cx);
-        let excerpts = snapshot.excerpts().collect::<Vec<_>>();
-        let current_idx = excerpts.iter().position(|(id, _, _)| *id == excerpt.id)?;
-        let (_, _, current_range) = &excerpts[current_idx];
-
-        let start_row = current_range.context.start.to_point(&excerpt.buffer).row;
-
-        let prev_end_row = if current_idx > 0 {
-            let (_, prev_buffer, prev_range) = &excerpts[current_idx - 1];
-            if prev_buffer.remote_id() == excerpt.buffer_id {
-                prev_range.context.end.to_point(&excerpt.buffer).row
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let skipped_lines = start_row.saturating_sub(prev_end_row);
-
-        if skipped_lines > 0 {
-            Some(
-                Label::new(format!("{} unchanged lines", skipped_lines))
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
-    }
-
-    fn to_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 async fn build_buffer(
     mut text: String,
@@ -865,13 +838,28 @@ impl Item for CommitView {
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
         let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
-        format!("{short_sha} - {subject}").into()
+        format!("{short_sha} — {subject}").into()
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
+    fn tab_tooltip_content(&self, _: &App) -> Option<TabTooltipContent> {
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
         let subject = self.commit.message.split('\n').next().unwrap();
-        Some(format!("{short_sha} - {subject}").into())
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            let subject = subject.to_string();
+            let short_sha = short_sha.to_string();
+
+            move |_, _| {
+                v_flex()
+                    .child(Label::new(subject.clone()))
+                    .child(
+                        Label::new(short_sha.clone())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            }
+        }))))
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
@@ -988,14 +976,15 @@ impl Item for CommitView {
 impl Render for CommitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_stash = self.stash.is_some();
-        div()
+
+        v_flex()
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
-            .bg(cx.theme().colors().editor_background)
-            .flex()
-            .flex_col()
             .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
-            .child(div().flex_grow().child(self.editor.clone()))
+            .when(!self.editor.read(cx).is_empty(cx), |this| {
+                this.child(div().flex_grow().child(self.editor.clone()))
+            })
     }
 }
 
@@ -1013,7 +1002,7 @@ impl EventEmitter<ToolbarItemEvent> for CommitViewToolbar {}
 
 impl Render for CommitViewToolbar {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        div().hidden()
     }
 }
 

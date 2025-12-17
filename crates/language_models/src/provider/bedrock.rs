@@ -2,7 +2,6 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
 use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
@@ -31,12 +30,12 @@ use gpui::{
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    AuthenticateError, EnvVar, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage,
+    TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,10 +44,9 @@ use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore}
 use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
 
@@ -113,6 +111,7 @@ pub struct AmazonBedrockSettings {
     pub profile_name: Option<String>,
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
+    pub allow_global: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -371,6 +370,13 @@ impl State {
             .as_ref()
             .and_then(|s| s.region.clone())
             .unwrap_or_else(|| "us-east-1".to_string())
+    }
+
+    fn get_allow_global(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_global)
+            .unwrap_or(false)
     }
 }
 
@@ -664,11 +670,13 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let Ok(region) = cx.read_entity(&self.state, |state, _cx| state.get_region()) else {
+        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| {
+            (state.get_region(), state.get_allow_global())
+        }) else {
             return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
         };
 
-        let model_id = match self.model.cross_region_inference_id(&region) {
+        let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
             Err(e) => {
                 return async move { Err(e.into()) }.boxed();
@@ -1389,18 +1397,14 @@ impl Render for ConfigurationView {
             .child(
                 List::new()
                     .child(
-                        InstructionListItem::new(
-                            "Grant permissions to the strategy you'll use according to the:",
-                            Some("Prerequisites"),
-                            Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
-                        )
+                        ListBulletItem::new("")
+                            .child(Label::new("Grant permissions to the strategy you'll use according to the:"))
+                            .child(ButtonLink::new("Prerequisites", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
                     )
                     .child(
-                        InstructionListItem::new(
-                            "Select the models you would like access to:",
-                            Some("Bedrock Model Catalog"),
-                            Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
-                        )
+                        ListBulletItem::new("")
+                            .child(Label::new("Select the models you would like access to:"))
+                            .child(ButtonLink::new("Bedrock Model Catalog", "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"))
                     )
             )
             .child(self.render_static_credentials_ui())
@@ -1441,24 +1445,24 @@ impl ConfigurationView {
             )
             .child(
                 List::new()
-                    .child(InstructionListItem::new(
-                        "For access keys: Create an IAM user in the AWS console with programmatic access",
-                        Some("IAM Console"),
-                        Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"),
-                    ))
-                    .child(InstructionListItem::new(
-                        "For Bedrock API Keys: Generate an API key from the ",
-                        Some("Bedrock Console"),
-                        Some("https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html"),
-                    ))
-                    .child(InstructionListItem::new(
-                        "Attach the necessary Bedrock permissions to this ",
-                        Some("user"),
-                        Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Enter either access keys OR a Bedrock API Key below (not both)",
-                    )),
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("For access keys: Create an IAM user in the AWS console with programmatic access"))
+                            .child(ButtonLink::new("IAM Console", "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"))
+                    )
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
+                            .child(ButtonLink::new("Bedrock Console", "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html"))
+                    )
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Attach the necessary Bedrock permissions to this"))
+                            .child(ButtonLink::new("user", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
+                    )
+                    .child(
+                        ListBulletItem::new("Enter either access keys OR a Bedrock API Key below (not both)")
+                    ),
             )
             .child(self.access_key_id_editor.clone())
             .child(self.secret_access_key_editor.clone())
