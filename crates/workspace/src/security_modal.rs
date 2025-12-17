@@ -265,8 +265,8 @@ impl SecurityModal {
                 }
             }
             1 => Some(Cow::Owned(format!(
-                "Trust all projects in the {:?} folder",
-                self.shorten_path(available_parents[0])
+                "Trust all projects in the {:} folder",
+                self.shorten_path(available_parents[0]).display()
             ))),
             _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
