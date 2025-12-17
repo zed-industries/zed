@@ -5,6 +5,7 @@ mod display;
 mod display_link;
 mod events;
 mod keyboard;
+mod pasteboard;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;

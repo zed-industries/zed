@@ -1,29 +1,24 @@
 use super::{
-    BoolExt, MacKeyboardLayout, MacKeyboardMapper,
-    attributed_string::{NSAttributedString, NSMutableAttributedString},
-    events::key_to_native,
-    ns_string, renderer,
+    BoolExt, MacKeyboardLayout, MacKeyboardMapper, events::key_to_native, ns_string, renderer,
 };
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    KeyContext, Keymap, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, WindowAppearance,
+    WindowParams, platform::mac::pasteboard::Pasteboard,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
+        NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
-        NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -49,7 +44,6 @@ use ptr::null_mut;
 use semver::Version;
 use std::{
     cell::Cell,
-    convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
@@ -58,7 +52,6 @@ use std::{
     slice, str,
     sync::{Arc, OnceLock},
 };
-use strum::IntoEnumIterator;
 use util::{
     ResultExt,
     command::{new_smol_command, new_std_command},
@@ -164,9 +157,8 @@ pub(crate) struct MacPlatformState {
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     headless: bool,
-    general_pasteboard: id,
-    find_pasteboard: id,
-    pasteboard_types: PasteboardTypes,
+    general_pasteboard: Pasteboard,
+    find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
@@ -179,12 +171,6 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
-}
-
-#[derive(Clone, Copy)]
-struct PasteboardTypes {
-    text_hash: id,
-    metadata: id,
 }
 
 impl Default for MacPlatform {
@@ -212,12 +198,8 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
-            general_pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
-            find_pasteboard: unsafe { NSPasteboard::pasteboardWithName(nil, NSPasteboardNameFind) },
-            pasteboard_types: PasteboardTypes {
-                text_hash: unsafe { ns_string("zed-text-hash") },
-                metadata: unsafe { ns_string("zed-metadata") },
-            },
+            general_pasteboard: Pasteboard::general(),
+            find_pasteboard: Pasteboard::find(),
             reopen: None,
             quit: None,
             menu_command: None,
@@ -231,165 +213,6 @@ impl MacPlatform {
             menus: None,
             keyboard_mapper,
         }))
-    }
-
-    fn read_from_pasteboard(
-        &self,
-        pasteboard: *mut Object,
-        types: PasteboardTypes,
-    ) -> Option<ClipboardItem> {
-        // First, see if it's a string.
-        unsafe {
-            let pasteboard_types: id = pasteboard.types();
-            let string_type: id = ns_string("public.utf8-plain-text");
-
-            if msg_send![pasteboard_types, containsObject: string_type] {
-                let data = pasteboard.dataForType(string_type);
-                if data == nil {
-                    return None;
-                } else if data.bytes().is_null() {
-                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                    // "If the length of the NSData object is 0, this property returns nil."
-                    return Some(self.read_string_from_pasteboard(pasteboard, types, &[]));
-                } else {
-                    let bytes =
-                        slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
-
-                    return Some(self.read_string_from_pasteboard(pasteboard, types, bytes));
-                }
-            }
-
-            // If it wasn't a string, try the various supported image types.
-            for format in ImageFormat::iter() {
-                if let Some(item) = self.read_image_from_pasteboard(pasteboard, format) {
-                    return Some(item);
-                }
-            }
-        }
-
-        // If it wasn't a string or a supported image type, give up.
-        None
-    }
-
-    unsafe fn read_image_from_pasteboard(
-        &self,
-        pasteboard: id,
-        format: ImageFormat,
-    ) -> Option<ClipboardItem> {
-        let mut ut_type: UTType = format.into();
-
-        unsafe {
-            let types: id = pasteboard.types();
-            if msg_send![types, containsObject: ut_type.inner()] {
-                self.read_data_from_pasteboard(pasteboard, ut_type.inner_mut())
-                    .map(|bytes| {
-                        let bytes = bytes.to_vec();
-                        let id = hash(&bytes);
-
-                        ClipboardItem {
-                            entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
-                        }
-                    })
-            } else {
-                None
-            }
-        }
-    }
-
-    unsafe fn read_string_from_pasteboard(
-        &self,
-        pasteboard: *mut Object,
-        types: PasteboardTypes,
-        text_bytes: &[u8],
-    ) -> ClipboardItem {
-        unsafe {
-            let text = String::from_utf8_lossy(text_bytes).to_string();
-            let metadata = self
-                .read_data_from_pasteboard(pasteboard, types.text_hash)
-                .and_then(|hash_bytes| {
-                    let hash_bytes = hash_bytes.try_into().ok()?;
-                    let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self.read_data_from_pasteboard(pasteboard, types.metadata)?;
-
-                    if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
-                    } else {
-                        None
-                    }
-                });
-
-            ClipboardItem {
-                entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
-            }
-        }
-    }
-
-    unsafe fn read_data_from_pasteboard(&self, pasteboard: *mut Object, kind: id) -> Option<&[u8]> {
-        unsafe {
-            let data = pasteboard.dataForType(kind);
-            if data == nil {
-                None
-            } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
-            }
-        }
-    }
-
-    unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
-        unsafe {
-            let state = self.0.lock();
-            state.general_pasteboard.clearContents();
-
-            let text_bytes = NSData::dataWithBytes_length_(
-                nil,
-                string.text.as_ptr() as *const c_void,
-                string.text.len() as u64,
-            );
-            state
-                .general_pasteboard
-                .setData_forType(text_bytes, NSPasteboardTypeString);
-
-            if let Some(metadata) = string.metadata.as_ref() {
-                let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
-                let hash_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    hash_bytes.as_ptr() as *const c_void,
-                    hash_bytes.len() as u64,
-                );
-                state
-                    .general_pasteboard
-                    .setData_forType(hash_bytes, state.pasteboard_types.text_hash);
-
-                let metadata_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    metadata.as_ptr() as *const c_void,
-                    metadata.len() as u64,
-                );
-                state
-                    .general_pasteboard
-                    .setData_forType(metadata_bytes, state.pasteboard_types.metadata);
-            }
-        }
-    }
-
-    unsafe fn write_image_to_clipboard(&self, image: &Image) {
-        unsafe {
-            let state = self.0.lock();
-            state.general_pasteboard.clearContents();
-
-            let bytes = NSData::dataWithBytes_length_(
-                nil,
-                image.bytes.as_ptr() as *const c_void,
-                image.bytes.len() as u64,
-            );
-
-            state
-                .general_pasteboard
-                .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
-        }
     }
 
     unsafe fn create_menu_bar(
@@ -1188,92 +1011,24 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn write_to_clipboard(&self, item: ClipboardItem) {
-        use crate::ClipboardEntry;
-
-        unsafe {
-            // We only want to use NSAttributedString if there are multiple entries to write.
-            if item.entries.len() <= 1 {
-                match item.entries.first() {
-                    Some(entry) => match entry {
-                        ClipboardEntry::String(string) => {
-                            self.write_plaintext_to_clipboard(string);
-                        }
-                        ClipboardEntry::Image(image) => {
-                            self.write_image_to_clipboard(image);
-                        }
-                        ClipboardEntry::ExternalPaths(_) => {}
-                    },
-                    None => {
-                        // Writing an empty list of entries just clears the clipboard.
-                        let state = self.0.lock();
-                        state.general_pasteboard.clearContents();
-                    }
-                }
-            } else {
-                let mut any_images = false;
-                let attributed_string = {
-                    let mut buf = NSMutableAttributedString::alloc(nil)
-                        // TODO can we skip this? Or at least part of it?
-                        .init_attributed_string(ns_string(""))
-                        .autorelease();
-
-                    for entry in item.entries {
-                        if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry
-                        {
-                            let to_append = NSAttributedString::alloc(nil)
-                                .init_attributed_string(ns_string(&text))
-                                .autorelease();
-
-                            buf.appendAttributedString_(to_append);
-                        }
-                    }
-
-                    buf
-                };
-
-                let state = self.0.lock();
-                state.general_pasteboard.clearContents();
-
-                // Only set rich text clipboard types if we actually have 1+ images to include.
-                if any_images {
-                    let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
-                        NSRange::new(0, msg_send![attributed_string, length]),
-                        nil,
-                    );
-                    if rtfd_data != nil {
-                        state
-                            .general_pasteboard
-                            .setData_forType(rtfd_data, NSPasteboardTypeRTFD);
-                    }
-
-                    let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
-                        NSRange::new(0, attributed_string.length()),
-                        nil,
-                    );
-                    if rtf_data != nil {
-                        state
-                            .general_pasteboard
-                            .setData_forType(rtf_data, NSPasteboardTypeRTF);
-                    }
-                }
-
-                let plain_text = attributed_string.string();
-                state
-                    .general_pasteboard
-                    .setString_forType(plain_text, NSPasteboardTypeString);
-            }
-        }
-    }
-
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        self.read_from_pasteboard(state.general_pasteboard, state.pasteboard_types)
+        state.general_pasteboard.read()
+    }
+
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let state = self.0.lock();
+        state.general_pasteboard.write(item);
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        self.read_from_pasteboard(state.find_pasteboard, state.pasteboard_types)
+        state.find_pasteboard.read()
+    }
+
+    fn write_to_find_pasteboard(&self, item: ClipboardItem) {
+        let state = self.0.lock();
+        state.find_pasteboard.write(item);
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -1621,128 +1376,4 @@ mod security {
     pub const errSecSuccess: OSStatus = 0;
     pub const errSecUserCanceled: OSStatus = -128;
     pub const errSecItemNotFound: OSStatus = -25300;
-}
-
-impl From<ImageFormat> for UTType {
-    fn from(value: ImageFormat) -> Self {
-        match value {
-            ImageFormat::Png => Self::png(),
-            ImageFormat::Jpeg => Self::jpeg(),
-            ImageFormat::Tiff => Self::tiff(),
-            ImageFormat::Webp => Self::webp(),
-            ImageFormat::Gif => Self::gif(),
-            ImageFormat::Bmp => Self::bmp(),
-            ImageFormat::Svg => Self::svg(),
-            ImageFormat::Ico => Self::ico(),
-        }
-    }
-}
-
-// See https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/
-struct UTType(id);
-
-impl UTType {
-    pub fn png() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/png
-        Self(unsafe { NSPasteboardTypePNG }) // This is a rare case where there's a built-in NSPasteboardType
-    }
-
-    pub fn jpeg() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/jpeg
-        Self(unsafe { ns_string("public.jpeg") })
-    }
-
-    pub fn gif() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/gif
-        Self(unsafe { ns_string("com.compuserve.gif") })
-    }
-
-    pub fn webp() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/webp
-        Self(unsafe { ns_string("org.webmproject.webp") })
-    }
-
-    pub fn bmp() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/bmp
-        Self(unsafe { ns_string("com.microsoft.bmp") })
-    }
-
-    pub fn svg() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
-        Self(unsafe { ns_string("public.svg-image") })
-    }
-
-    pub fn ico() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/ico
-        Self(unsafe { ns_string("com.microsoft.ico") })
-    }
-
-    pub fn tiff() -> Self {
-        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
-        Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
-    }
-
-    fn inner(&self) -> *const Object {
-        self.0
-    }
-
-    fn inner_mut(&self) -> *mut Object {
-        self.0 as *mut _
-    }
-}
-
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    /// [Apple's documentation](https://developer.apple.com/documentation/appkit/nspasteboardnamefind?language=objc)
-    pub static NSPasteboardNameFind: id;
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ClipboardItem;
-
-    use super::*;
-
-    #[test]
-    fn test_clipboard() {
-        let platform = build_platform();
-        assert_eq!(platform.read_from_clipboard(), None);
-
-        let item = ClipboardItem::new_string("1".to_string());
-        platform.write_to_clipboard(item.clone());
-        assert_eq!(platform.read_from_clipboard(), Some(item));
-
-        let item = ClipboardItem {
-            entries: vec![ClipboardEntry::String(
-                ClipboardString::new("2".to_string()).with_json_metadata(vec![3, 4]),
-            )],
-        };
-        platform.write_to_clipboard(item.clone());
-        assert_eq!(platform.read_from_clipboard(), Some(item));
-
-        let text_from_other_app = "text from other app";
-        unsafe {
-            let bytes = NSData::dataWithBytes_length_(
-                nil,
-                text_from_other_app.as_ptr() as *const c_void,
-                text_from_other_app.len() as u64,
-            );
-            platform
-                .0
-                .lock()
-                .general_pasteboard
-                .setData_forType(bytes, NSPasteboardTypeString);
-        }
-        assert_eq!(
-            platform.read_from_clipboard(),
-            Some(ClipboardItem::new_string(text_from_other_app.to_string()))
-        );
-    }
-
-    fn build_platform() -> MacPlatform {
-        let platform = MacPlatform::new(false);
-        platform.0.lock().general_pasteboard =
-            unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
-        platform
-    }
 }
