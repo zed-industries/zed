@@ -3,23 +3,23 @@ mod profile_modal_header;
 use std::sync::Arc;
 
 use agent::ContextServerRegistry;
-use agent_settings::{builtin_profiles, AgentProfile, AgentProfileId, AgentSettings};
+use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use editor::Editor;
 use fs::Fs;
-use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use settings::SettingsStore;
 use settings::{
-    update_settings_file, LanguageModelProviderSetting, LanguageModelSelection, Settings as _,
+    LanguageModelProviderSetting, LanguageModelSelection, Settings as _, update_settings_file,
 };
 use ui::{
-    prelude::*, KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry,
+    KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
 use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::language_model_selector::{language_model_selector, LanguageModelSelector};
+use crate::language_model_selector::{LanguageModelSelector, language_model_selector};
 use crate::{AgentPanel, ManageProfiles};
 
 enum Mode {
