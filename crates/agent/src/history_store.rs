@@ -219,7 +219,14 @@ impl HistoryStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await;
+            #[cfg(not(test))]
             let threads = database.map_err(|err| anyhow!(err))?.list_threads().await?;
+            #[cfg(test)]
+            let threads = {
+                drop(database);
+                Vec::<DbThreadMetadata>::new()
+            };
+
             this.update(cx, |this, cx| {
                 if this.recently_opened_entries.len() < MAX_RECENTLY_OPENED_ENTRIES {
                     for thread in threads

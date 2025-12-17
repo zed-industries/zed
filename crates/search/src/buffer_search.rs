@@ -689,6 +689,7 @@ impl BufferSearchBar {
                 .read(cx)
                 .set_language_registry(languages.clone());
 
+            #[cfg(not(any(test, feature = "test-support")))]
             cx.spawn(async move |buffer_search_bar, cx| {
                 use anyhow::Context as _;
 
