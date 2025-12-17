@@ -8,7 +8,7 @@ use crate::wasm_host::wit::since_v0_8_0::{
 };
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
-use ::settings::{Settings, WorktreeId};
+use ::settings::{ModelMode, Settings, SettingsStore, WorktreeId};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -1434,5 +1434,80 @@ impl llm_provider::Host for WasmState {
         })
         .await
         .to_wasmtime_result()
+    }
+
+    async fn get_provider_settings(
+        &mut self,
+        provider_id: String,
+    ) -> wasmtime::Result<Option<llm_provider::ProviderSettings>> {
+        let extension_id = self.manifest.id.clone();
+
+        let result = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        let settings_store = cx.global::<SettingsStore>();
+                        let user_settings = settings_store.raw_user_settings();
+                        let language_models = user_settings
+                            .and_then(|s| s.content.language_models.as_ref());
+
+                        // Map provider IDs to their settings
+                        // The provider_id from the extension is just the provider part (e.g., "google-ai")
+                        // We need to match this to the appropriate settings
+                        match provider_id.as_str() {
+                            "google-ai" => {
+                                let google = language_models.and_then(|lm| lm.google.as_ref());
+                                let google = google?;
+
+                                let api_url = google.api_url.clone().filter(|s| !s.is_empty());
+
+                                let available_models = google
+                                    .available_models
+                                    .as_ref()
+                                    .map(|models| {
+                                        models
+                                            .iter()
+                                            .map(|m| {
+                                                let thinking_budget = match &m.mode {
+                                                    Some(ModelMode::Thinking { budget_tokens }) => {
+                                                        *budget_tokens
+                                                    }
+                                                    _ => None,
+                                                };
+                                                llm_provider::CustomModelConfig {
+                                                    name: m.name.clone(),
+                                                    display_name: m.display_name.clone(),
+                                                    max_tokens: m.max_tokens,
+                                                    max_output_tokens: None,
+                                                    thinking_budget,
+                                                }
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+
+                                Some(llm_provider::ProviderSettings {
+                                    api_url,
+                                    available_models,
+                                })
+                            }
+                            _ => {
+                                log::debug!(
+                                    "Extension {} requested settings for unknown provider: {}",
+                                    extension_id,
+                                    provider_id
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .ok()
+                    .flatten()
+                }
+                .boxed_local()
+            })
+            .await;
+
+        Ok(result)
     }
 }

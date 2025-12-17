@@ -28,7 +28,8 @@ use language_model::{
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, StopReason, TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, RateLimiter,
+    StopReason, TokenUsage,
 };
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
@@ -171,6 +172,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
                     provider_id: self.id(),
                     provider_name: self.name(),
                     provider_info: self.provider_info.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
     }
@@ -188,6 +190,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
                     provider_id: self.id(),
                     provider_name: self.name(),
                     provider_info: self.provider_info.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
     }
@@ -204,6 +207,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
                     provider_id: self.id(),
                     provider_name: self.name(),
                     provider_info: self.provider_info.clone(),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -1590,6 +1594,7 @@ pub struct ExtensionLanguageModel {
     provider_id: LanguageModelProviderId,
     provider_name: LanguageModelProviderName,
     provider_info: LlmProviderInfo,
+    request_limiter: RateLimiter,
 }
 
 impl LanguageModel for ExtensionLanguageModel {
@@ -1694,7 +1699,7 @@ impl LanguageModel for ExtensionLanguageModel {
 
         let wit_request = convert_request_to_wit(request);
 
-        async move {
+        let future = self.request_limiter.stream(async move {
             // Start the stream
             let stream_id_result = extension
                 .call({
@@ -1781,8 +1786,9 @@ impl LanguageModel for ExtensionLanguageModel {
             );
 
             Ok(stream.boxed())
-        }
-        .boxed()
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {

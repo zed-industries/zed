@@ -312,6 +312,33 @@ interface llm-provider {
     /// callback differently (e.g., polling-based flows).
     oauth-open-browser: func(url: string) -> result<_, string>;
 
+    /// Provider settings from user configuration.
+    /// Extensions can use this to allow custom API URLs, custom models, etc.
+    record provider-settings {
+        /// Custom API URL override (if configured by the user).
+        api-url: option<string>,
+        /// Custom models configured by the user.
+        available-models: list<custom-model-config>,
+    }
+
+    /// Configuration for a custom model defined by the user.
+    record custom-model-config {
+        /// The model's API identifier.
+        name: string,
+        /// Display name for the UI.
+        display-name: option<string>,
+        /// Maximum input token count.
+        max-tokens: u64,
+        /// Maximum output tokens (optional).
+        max-output-tokens: option<u64>,
+        /// Thinking budget for models that support extended thinking (None = auto).
+        thinking-budget: option<u32>,
+    }
+
+    /// Get provider-specific settings configured by the user.
+    /// Returns settings like custom API URLs and custom model configurations.
+    get-provider-settings: func(provider-id: string) -> option<provider-settings>;
+
     /// Information needed to display the device flow prompt modal to the user.
     record device-flow-prompt-info {
         /// The user code to display (e.g., "ABC-123").
