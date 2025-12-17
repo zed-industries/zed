@@ -354,7 +354,7 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, truncation_suffix) =
+                let (truncate_width, truncation_suffix, truncate_start) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
                             crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
@@ -365,10 +365,11 @@ impl TextLayout {
                         });
 
                         match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s),
+                            TextOverflow::Truncate(s) => (width, s, false),
+                            TextOverflow::TruncateStart(s) => (width, s, true),
                         }
                     } else {
-                        (None, "".into())
+                        (None, "".into(), false)
                     };
 
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
@@ -380,12 +381,21 @@ impl TextLayout {
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_suffix,
-                        &runs,
-                    )
+                    if truncate_start {
+                        line_wrapper.truncate_line_start(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &runs,
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width,
+                            &truncation_suffix,
+                            &runs,
+                        )
+                    }
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };
