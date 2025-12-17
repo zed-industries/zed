@@ -135,7 +135,9 @@ pub use workspace_settings::{
 use zed_actions::{Spawn, feedback::FileBugReport};
 
 use crate::{
-    item::ItemBufferKind, notifications::NotificationId, utility_pane::UTILITY_PANE_MIN_WIDTH,
+    item::ItemBufferKind,
+    notifications::NotificationId,
+    utility_pane::{UTILITY_PANE_MIN_WIDTH, utility_slot_for_dock_position},
 };
 use crate::{
     persistence::{
@@ -986,6 +988,7 @@ impl AppState {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Arc<Self> {
+        use fs::Fs;
         use node_runtime::NodeRuntime;
         use session::Session;
         use settings::SettingsStore;
@@ -996,6 +999,7 @@ impl AppState {
         }
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
+        <dyn Fs>::set_global(fs.clone(), cx);
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -1890,10 +1894,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut found_in_dock = None;
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-            dock.update(cx, |dock, cx| {
-                dock.remove_panel(panel, window, cx);
-            })
+            let found = dock.update(cx, |dock, cx| dock.remove_panel(panel, window, cx));
+
+            if found {
+                found_in_dock = Some(dock.clone());
+            }
+        }
+        if let Some(found_in_dock) = found_in_dock {
+            let position = found_in_dock.read(cx).position();
+            let slot = utility_slot_for_dock_position(position);
+            self.clear_utility_pane_if_provider(slot, Entity::entity_id(panel), cx);
         }
     }
 
