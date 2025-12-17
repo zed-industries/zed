@@ -411,7 +411,6 @@ impl Drop for WaylandWindow {
             parent.state.borrow_mut().children.remove(&surface_id);
         }
 
-        let surface_id = state.surface.id();
         let client = state.client.clone();
 
         state.renderer.destroy();
@@ -935,13 +934,13 @@ impl WaylandWindowStatePtr {
         let childrens = state.children.clone();
         drop(state);
 
-        for children in childrens {
+        for child in childrens {
             let mut client_state = client.borrow_mut();
-            let window = get_window(&mut client_state, &children);
+            let window = get_window(&mut client_state, &child);
             drop(client_state);
 
-            if let Some(children) = window {
-                children.close();
+            if let Some(child) = window {
+                child.close();
             }
         }
         let mut callbacks = self.callbacks.borrow_mut();
