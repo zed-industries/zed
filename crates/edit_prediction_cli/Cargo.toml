@@ -40,7 +40,6 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-pulldown-cmark.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true

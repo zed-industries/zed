@@ -47,14 +47,17 @@ impl LiveKitStream {
         );
         let (queue_input, queue_output) = rodio::queue::queue(true);
         // spawn rtc stream
-        let receiver_task = executor.spawn({
-            async move {
-                while let Some(frame) = stream.next().await {
-                    let samples = frame_to_samplesbuffer(frame);
-                    queue_input.append(samples);
+        let receiver_task = executor.spawn_with_priority(
+            gpui::Priority::Realtime(gpui::RealtimePriority::Audio),
+            {
+                async move {
+                    while let Some(frame) = stream.next().await {
+                        let samples = frame_to_samplesbuffer(frame);
+                        queue_input.append(samples);
+                    }
                 }
-            }
-        });
+            },
+        );
 
         LiveKitStream {
             _receiver_task: receiver_task,

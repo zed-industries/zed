@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
-use crate::DockPosition;
+use crate::{DockPosition, DockSide};
 
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
@@ -22,6 +22,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to dock the utility pane (the thread view pane).
+    ///
+    /// Default: left
+    pub agents_panel_dock: Option<DockSide>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -34,6 +38,9 @@ pub struct AgentSettingsContent {
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// Favorite models to show at the top of the model selector.
+    #[serde(default)]
+    pub favorite_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant when streaming tools are enabled.
@@ -171,6 +178,16 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
+        if !self.favorite_models.contains(&model) {
+            self.favorite_models.push(model);
+        }
+    }
+
+    pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
+        self.favorite_models.retain(|m| m != model);
     }
 }
 

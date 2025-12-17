@@ -436,6 +436,8 @@
     "show_onboarding_banner": true,
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
+    // Whether to show the user menu in the titlebar.
+    "show_user_menu": true,
     // Whether to show the sign in button in the titlebar.
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
@@ -908,6 +910,8 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Where to dock the agents panel. Can be 'left' or 'right'.
+    "agents_panel_dock": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -970,6 +974,8 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "restore_file_from_disk": true,
+          "save_file": true,
           "open": true,
           "grep": true,
           "terminal": true,
@@ -1932,6 +1938,9 @@
         "words": "disabled",
       },
     },
+    "Proto": {
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
+    },
     "Python": {
       "code_actions_on_format": {
         "source.organizeImports.ruff": true,
@@ -2055,6 +2064,12 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to skip worktree trust checks.
+    // When trusted, project settings are synchronized automatically,
+    // language and MCP servers are downloaded and started automatically.
+    //
+    // Default: false
+    "trust_all_worktrees": false,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
