@@ -354,3 +354,16 @@ pub fn trigger_autofix(run_clippy: bool) -> Step<Run> {
     ))
     .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
 }
+
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
+}
