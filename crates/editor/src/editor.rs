@@ -25,6 +25,7 @@ mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
+mod inline_references;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
@@ -205,8 +206,8 @@ use ui::{
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
-    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
+    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
+    TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
@@ -235,7 +236,6 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
-
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -1206,6 +1206,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
+    inline_references_host: Option<WeakEntity<Editor>>,
 
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
@@ -1821,6 +1822,7 @@ impl Editor {
         clone.scroll_manager.clone_state(&self.scroll_manager);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
+        clone.inline_references_host = self.inline_references_host.clone();
         clone
     }
 
@@ -2305,6 +2307,7 @@ impl Editor {
             diagnostics_enabled: full_mode,
             word_completions_enabled: full_mode,
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
+            inline_references_host: None,
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2910,6 +2913,10 @@ impl Editor {
 
     pub fn workspace(&self) -> Option<Entity<Workspace>> {
         self.workspace.as_ref()?.0.upgrade()
+    }
+
+    pub fn set_embedded_workspace(&mut self, workspace: Entity<Workspace>) {
+        self.workspace = Some((workspace.downgrade(), None));
     }
 
     /// Returns the workspace serialization ID if this editor should be serialized.
@@ -4199,6 +4206,10 @@ impl Editor {
         }
         if self.show_git_blame_gutter {
             self.show_git_blame_gutter = false;
+            cx.notify();
+            return;
+        }
+        if self.close_inline_references(cx) {
             cx.notify();
             return;
         }
@@ -17618,7 +17629,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
         let always_open_multibuffer = action.always_open_multibuffer;
+        let inline = action.inline;
         let selection = self.selections.newest_anchor();
+        let selection_for_inline = selection.clone();
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let selection_offset = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
@@ -17746,8 +17759,8 @@ impl Editor {
                 });
             }
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                let target = locations
+            let target: String = cx.update(|_, cx| {
+                locations
                     .iter()
                     .flat_map(|(k, v)| iter::repeat(k.clone()).zip(v))
                     .map(|(buffer, location)| {
@@ -17759,17 +17772,38 @@ impl Editor {
                     .filter(|text| !text.contains('\n'))
                     .unique()
                     .take(3)
-                    .join(", ");
-                let title = if target.is_empty() {
-                    "References".to_owned()
-                } else {
-                    format!("References to {target}")
-                };
+                    .join(", ")
+            })?;
+            let title = if target.is_empty() {
+                "References".to_owned()
+            } else {
+                format!("References to {target}")
+            };
+
+            if inline {
+                let selection_for_inline = selection_for_inline.clone();
+                let workspace_for_inline = workspace.clone();
+                return editor.update_in(cx, |editor, window, cx| {
+                    editor.show_inline_references(
+                        selection_for_inline.range(),
+                        locations,
+                        title,
+                        workspace_for_inline,
+                        num_locations,
+                        window,
+                        cx,
+                    );
+                    Navigated::Yes
+                });
+            }
+
+            let std_locations: std::collections::HashMap<_, _> = locations.into_iter().collect();
+            workspace.update_in(cx, move |workspace, window, cx| {
                 let allow_preview = PreviewTabsSettings::get_global(cx)
                     .enable_preview_multibuffer_from_code_navigation;
                 Self::open_locations_in_multibuffer(
                     workspace,
-                    locations,
+                    std_locations,
                     title,
                     false,
                     allow_preview,
@@ -22264,6 +22298,8 @@ impl Editor {
             cx.propagate();
             return;
         };
+
+        self.close_inline_references(cx);
 
         if self.buffer.read(cx).is_singleton() {
             cx.propagate();

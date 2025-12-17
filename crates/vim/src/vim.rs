@@ -1140,6 +1140,8 @@ impl Vim {
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;
+        let close_inline_references = matches!(last_mode, Mode::Normal | Mode::HelixNormal)
+            && matches!(mode, Mode::Normal | Mode::HelixNormal);
         self.status_label.take();
         self.last_mode = last_mode;
         self.mode = mode;
@@ -1176,6 +1178,14 @@ impl Vim {
             } else if self.mode == Mode::Visual {
                 self.mode = Mode::HelixSelect
             }
+        }
+
+        if close_inline_references {
+            self.update_editor(cx, |_, editor, cx| {
+                if editor.close_inline_references(cx) {
+                    cx.notify();
+                }
+            });
         }
 
         if leave_selections {
