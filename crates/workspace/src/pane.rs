@@ -638,7 +638,7 @@ impl Pane {
             }
         } else if let Some(welcome_page) = self.welcome_page.as_ref() {
             if self.focus_handle.is_focused(window) {
-                welcome_page.read(cx).focus_handle(cx).focus(window);
+                welcome_page.read(cx).focus_handle(cx).focus(window, cx);
             }
         }
     }

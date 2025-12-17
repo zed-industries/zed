@@ -250,12 +250,12 @@ impl WelcomePage {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus_next();
+        window.focus_next(cx);
         cx.notify();
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus_prev();
+        window.focus_prev(cx);
         cx.notify();
     }
 
