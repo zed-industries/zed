@@ -48,7 +48,6 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
 ///
 /// Returns a tuple of (old_ranges, new_ranges) where each vector contains
 /// the byte ranges of changed words in the respective text.
-/// Whitespace-only changes are excluded from the results.
 pub fn word_diff_ranges(
     old_text: &str,
     new_text: &str,
@@ -62,72 +61,28 @@ pub fn word_diff_ranges(
     let mut new_ranges: Vec<Range<usize>> = Vec::new();
 
     diff_internal(&input, |old_byte_range, new_byte_range, _, _| {
-        for range in split_on_whitespace(old_text, &old_byte_range) {
+        if !old_byte_range.is_empty() {
             if let Some(last) = old_ranges.last_mut()
-                && last.end >= range.start
+                && last.end >= old_byte_range.start
             {
-                last.end = range.end;
+                last.end = old_byte_range.end;
             } else {
-                old_ranges.push(range);
+                old_ranges.push(old_byte_range);
             }
         }
 
-        for range in split_on_whitespace(new_text, &new_byte_range) {
+        if !new_byte_range.is_empty() {
             if let Some(last) = new_ranges.last_mut()
-                && last.end >= range.start
+                && last.end >= new_byte_range.start
             {
-                last.end = range.end;
+                last.end = new_byte_range.end;
             } else {
-                new_ranges.push(range);
+                new_ranges.push(new_byte_range);
             }
         }
     });
 
     (old_ranges, new_ranges)
-}
-
-fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
-    if range.is_empty() {
-        return Vec::new();
-    }
-
-    let slice = &text[range.clone()];
-    let mut ranges = Vec::new();
-    let mut offset = 0;
-
-    for line in slice.lines() {
-        let line_start = offset;
-        let line_end = line_start + line.len();
-        offset = line_end + 1;
-        let trimmed = line.trim();
-
-        if !trimmed.is_empty() {
-            let leading = line.len() - line.trim_start().len();
-            let trailing = line.len() - line.trim_end().len();
-            let trimmed_start = range.start + line_start + leading;
-            let trimmed_end = range.start + line_end - trailing;
-
-            let original_line_start = text[..range.start + line_start]
-                .rfind('\n')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let original_line_end = text[range.start + line_start..]
-                .find('\n')
-                .map(|i| range.start + line_start + i)
-                .unwrap_or(text.len());
-            let original_line = &text[original_line_start..original_line_end];
-            let original_trimmed_start =
-                original_line_start + (original_line.len() - original_line.trim_start().len());
-            let original_trimmed_end =
-                original_line_end - (original_line.len() - original_line.trim_end().len());
-
-            if trimmed_start > original_trimmed_start || trimmed_end < original_trimmed_end {
-                ranges.push(trimmed_start..trimmed_end);
-            }
-        }
-    }
-
-    ranges
 }
 
 pub struct DiffOptions {

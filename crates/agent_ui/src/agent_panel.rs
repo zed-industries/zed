@@ -1749,8 +1749,13 @@ impl AgentPanel {
 
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
+                let is_generating_title = thread_view
+                    .read(cx)
+                    .as_native_thread(cx)
+                    .map_or(false, |t| t.read(cx).is_generating_title());
+
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
-                    div()
+                    let container = div()
                         .w_full()
                         .on_action({
                             let thread_view = thread_view.downgrade();
@@ -1768,8 +1773,21 @@ impl AgentPanel {
                                 }
                             }
                         })
-                        .child(title_editor)
-                        .into_any_element()
+                        .child(title_editor);
+
+                    if is_generating_title {
+                        container
+                            .with_animation(
+                                "generating_title",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |div, delta| div.opacity(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        container.into_any_element()
+                    }
                 } else {
                     Label::new(thread_view.read(cx).title(cx))
                         .color(Color::Muted)
@@ -1799,6 +1817,13 @@ impl AgentPanel {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
                                 .truncate()
                                 .color(Color::Muted)
+                                .with_animation(
+                                    "generating_title",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                    |label, delta| label.alpha(delta),
+                                )
                                 .into_any_element()
                         }
                     }
@@ -1842,6 +1867,25 @@ impl AgentPanel {
             .into_any()
     }
 
+    fn handle_regenerate_thread_title(thread_view: Entity<AcpThreadView>, cx: &mut App) {
+        thread_view.update(cx, |thread_view, cx| {
+            if let Some(thread) = thread_view.as_native_thread(cx) {
+                thread.update(cx, |thread, cx| {
+                    thread.generate_title(cx);
+                });
+            }
+        });
+    }
+
+    fn handle_regenerate_text_thread_title(
+        text_thread_editor: Entity<TextThreadEditor>,
+        cx: &mut App,
+    ) {
+        text_thread_editor.update(cx, |text_thread_editor, cx| {
+            text_thread_editor.regenerate_summary(cx);
+        });
+    }
+
     fn render_panel_options_menu(
         &self,
         window: &mut Window,
@@ -1860,6 +1904,35 @@ impl AgentPanel {
         };
 
         let selected_agent = self.selected_agent.clone();
+
+        let text_thread_view = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => Some(text_thread_editor.clone()),
+            _ => None,
+        };
+        let text_thread_with_messages = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => text_thread_editor
+                .read(cx)
+                .text_thread()
+                .read(cx)
+                .messages(cx)
+                .any(|message| message.role == language_model::Role::Assistant),
+            _ => false,
+        };
+
+        let thread_view = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view.clone()),
+            _ => None,
+        };
+        let thread_with_messages = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.read(cx).has_user_submitted_prompt(cx)
+            }
+            _ => false,
+        };
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
@@ -1883,6 +1956,7 @@ impl AgentPanel {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
+
                         if let Some(usage) = usage {
                             menu = menu
                                 .header_with_link("Prompt Usage", "Manage", account_url.clone())
@@ -1918,6 +1992,38 @@ impl AgentPanel {
                                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                                 )
                                 .separator()
+                        }
+
+                        if thread_with_messages | text_thread_with_messages {
+                            menu = menu.header("Current Thread");
+
+                            if let Some(text_thread_view) = text_thread_view.as_ref() {
+                                menu = menu
+                                    .entry("Regenerate Thread Title", None, {
+                                        let text_thread_view = text_thread_view.clone();
+                                        move |_, cx| {
+                                            Self::handle_regenerate_text_thread_title(
+                                                text_thread_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
+
+                            if let Some(thread_view) = thread_view.as_ref() {
+                                menu = menu
+                                    .entry("Regenerate Thread Title", None, {
+                                        let thread_view = thread_view.clone();
+                                        move |_, cx| {
+                                            Self::handle_regenerate_thread_title(
+                                                thread_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
                         }
 
                         menu = menu

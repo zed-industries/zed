@@ -1725,6 +1725,10 @@ impl Thread {
         self.pending_summary_generation.is_some()
     }
 
+    pub fn is_generating_title(&self) -> bool {
+        self.pending_title_generation.is_some()
+    }
+
     pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
         if let Some(summary) = self.summary.as_ref() {
             return Task::ready(Some(summary.clone())).shared();
@@ -1792,7 +1796,7 @@ impl Thread {
         task
     }
 
-    fn generate_title(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_title(&mut self, cx: &mut Context<Self>) {
         let Some(model) = self.summarization_model.clone() else {
             return;
         };

@@ -279,6 +279,13 @@ impl GitListEntry {
             _ => None,
         }
     }
+
+    fn directory_entry(&self) -> Option<&GitTreeDirEntry> {
+        match self {
+            GitListEntry::Directory(entry) => Some(entry),
+            _ => None,
+        }
+    }
 }
 
 enum GitPanelViewMode {
@@ -594,7 +601,7 @@ pub struct GitPanel {
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
     width: Option<Pixels>,
-    workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     show_placeholders: bool,
@@ -895,12 +902,6 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn first_status_entry_index(&self) -> Option<usize> {
-        self.entries
-            .iter()
-            .position(|entry| entry.status_entry().is_some())
-    }
-
     fn expand_selected_entry(
         &mut self,
         _: &ExpandSelectedEntry,
@@ -944,7 +945,21 @@ impl GitPanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(first_entry) = self.first_status_entry_index() {
+        let first_entry = match &self.view_mode {
+            GitPanelViewMode::Flat => self
+                .entries
+                .iter()
+                .position(|entry| entry.status_entry().is_some()),
+            GitPanelViewMode::Tree(state) => {
+                let index = self.entries.iter().position(|entry| {
+                    entry.status_entry().is_some() || entry.directory_entry().is_some()
+                });
+
+                index.map(|index| state.logical_indices[index])
+            }
+        };
+
+        if let Some(first_entry) = first_entry {
             self.selected_entry = Some(first_entry);
             self.scroll_to_selected_entry(cx);
         }
@@ -1053,15 +1068,13 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn select_first_entry_if_none(&mut self, cx: &mut Context<Self>) {
+    fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let have_entries = self
             .active_repository
             .as_ref()
             .is_some_and(|active_repository| active_repository.read(cx).status_summary().count > 0);
         if have_entries && self.selected_entry.is_none() {
-            self.selected_entry = self.first_status_entry_index();
-            self.scroll_to_selected_entry(cx);
-            cx.notify();
+            self.select_first(&SelectFirst, window, cx);
         }
     }
 
@@ -1071,10 +1084,8 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_first_entry_if_none(cx);
-
         self.focus_handle.focus(window, cx);
-        cx.notify();
+        self.select_first_entry_if_none(window, cx);
     }
 
     fn get_selected_entry(&self) -> Option<&GitListEntry> {
@@ -3552,7 +3563,7 @@ impl GitPanel {
             self.bulk_staging = bulk_staging;
         }
 
-        self.select_first_entry_if_none(cx);
+        self.select_first_entry_if_none(window, cx);
 
         let suggested_commit_message = self.suggest_commit_message(cx);
         let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
@@ -5620,10 +5631,14 @@ impl RenderOnce for PanelRepoFooter {
             .as_ref()
             .map(|panel| panel.read(cx).project.clone());
 
-        let repo = self
+        let (workspace, repo) = self
             .git_panel
             .as_ref()
-            .and_then(|panel| panel.read(cx).active_repository.clone());
+            .map(|panel| {
+                let panel = panel.read(cx);
+                (panel.workspace.clone(), panel.active_repository.clone())
+            })
+            .unzip();
 
         let single_repo = project
             .as_ref()
@@ -5711,7 +5726,11 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         let branch_selector = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(branch_picker::popover(repo.clone(), window, cx)))
+            .menu(move |window, cx| {
+                let workspace = workspace.clone()?;
+                let repo = repo.clone().flatten();
+                Some(branch_picker::popover(workspace, repo, window, cx))
+            })
             .trigger_with_tooltip(
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Switch),

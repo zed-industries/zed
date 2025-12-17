@@ -1898,6 +1898,17 @@ impl AcpThreadView {
         })
     }
 
+    pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
+        self.thread().is_some_and(|thread| {
+            thread.read(cx).entries().iter().any(|entry| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
+                )
+            })
+        })
+    }
+
     fn authorize_tool_call(
         &mut self,
         tool_call_id: acp::ToolCallId,
@@ -4110,6 +4121,8 @@ impl AcpThreadView {
                                 .ml_1p5()
                         });
 
+                        let full_path = path.display(path_style).to_string();
+
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                             .map(Icon::from_path)
                             .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
@@ -4143,7 +4156,6 @@ impl AcpThreadView {
                                     .relative()
                                     .pr_8()
                                     .w_full()
-                                    .overflow_x_scroll()
                                     .child(
                                         h_flex()
                                             .id(("file-name-path", index))
@@ -4155,7 +4167,14 @@ impl AcpThreadView {
                                             .child(file_icon)
                                             .children(file_name)
                                             .children(file_path)
-                                            .tooltip(Tooltip::text("Go to File"))
+                                            .tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "Go to File",
+                                                    None,
+                                                    full_path.clone(),
+                                                    cx,
+                                                )
+                                            })
                                             .on_click({
                                                 let buffer = buffer.clone();
                                                 cx.listener(move |this, _, window, cx| {

@@ -337,6 +337,7 @@ impl CommitModal {
             active_repo,
             is_amend_pending,
             is_signoff_enabled,
+            workspace,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
             let title = git_panel.commit_button_title();
@@ -354,6 +355,7 @@ impl CommitModal {
                 active_repo,
                 is_amend_pending,
                 is_signoff_enabled,
+                git_panel.workspace.clone(),
             )
         });
 
@@ -375,7 +377,14 @@ impl CommitModal {
             .style(ButtonStyle::Transparent);
 
         let branch_picker = PopoverMenu::new("popover-button")
-            .menu(move |window, cx| Some(branch_picker::popover(active_repo.clone(), window, cx)))
+            .menu(move |window, cx| {
+                Some(branch_picker::popover(
+                    workspace.clone(),
+                    active_repo.clone(),
+                    window,
+                    cx,
+                ))
+            })
             .with_handle(self.branch_list_handle.clone())
             .trigger_with_tooltip(
                 branch_picker_button,
