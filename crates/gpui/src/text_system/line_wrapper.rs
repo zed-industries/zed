@@ -182,11 +182,11 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
-        
+
         // Vietnamese (https://vietunicode.sourceforge.net/charset/)
         matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
         matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
-        
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
