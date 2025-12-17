@@ -883,8 +883,14 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        // Only trigger autosave if focus has truly left the item.
+                        // If focus is still within the item's hierarchy (e.g., moved to a context menu),
+                        // don't trigger autosave to avoid unwanted formatting and cursor jumps.
+                        let focus_handle = item.item_focus_handle(cx);
+                        if !focus_handle.contains_focused(window, cx) {
+                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                                .detach_and_log_err(cx);
+                        }
                     }
                 },
             )

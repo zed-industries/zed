@@ -265,6 +265,10 @@ pub struct Style {
     /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
 
+    /// The grid columns with min-content minimum sizing.
+    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
+    pub grid_cols_min_content: Option<u16>,
+
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
     pub grid_rows: Option<u16>,
@@ -772,6 +776,7 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
+            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]

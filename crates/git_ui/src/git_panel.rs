@@ -43,7 +43,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role, ZED_CLOUD_PROVIDER_ID,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -57,6 +58,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
+use prompt_store::{PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -71,7 +73,7 @@ use ui::{
     prelude::*,
 };
 use util::paths::PathStyle;
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
@@ -97,6 +99,10 @@ actions!(
         ToggleSortByPath,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
+        /// Expands the selected entry to show its children.
+        ExpandSelectedEntry,
+        /// Collapses the selected entry to hide its children.
+        CollapseSelectedEntry,
     ]
 );
 
@@ -895,6 +901,48 @@ impl GitPanel {
             .position(|entry| entry.status_entry().is_some())
     }
 
+    fn expand_selected_entry(
+        &mut self,
+        _: &ExpandSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.get_selected_entry().cloned() else {
+            return;
+        };
+
+        if let GitListEntry::Directory(dir_entry) = entry {
+            if dir_entry.expanded {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                self.toggle_directory(&dir_entry.key, window, cx);
+            }
+        } else {
+            self.select_next(&SelectNext, window, cx);
+        }
+    }
+
+    fn collapse_selected_entry(
+        &mut self,
+        _: &CollapseSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.get_selected_entry().cloned() else {
+            return;
+        };
+
+        if let GitListEntry::Directory(dir_entry) = entry {
+            if dir_entry.expanded {
+                self.toggle_directory(&dir_entry.key, window, cx);
+            } else {
+                self.select_previous(&SelectPrevious, window, cx);
+            }
+        } else {
+            self.select_previous(&SelectPrevious, window, cx);
+        }
+    }
+
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(first_entry) = self.first_status_entry_index() {
             self.selected_entry = Some(first_entry);
@@ -913,28 +961,44 @@ impl GitPanel {
             return;
         }
 
-        if let Some(selected_entry) = self.selected_entry {
-            let new_selected_entry = if selected_entry > 0 {
-                selected_entry - 1
-            } else {
-                selected_entry
-            };
+        let Some(selected_entry) = self.selected_entry else {
+            return;
+        };
 
-            if matches!(
-                self.entries.get(new_selected_entry),
-                Some(GitListEntry::Header(..))
-            ) {
-                if new_selected_entry > 0 {
-                    self.selected_entry = Some(new_selected_entry - 1)
-                }
-            } else {
-                self.selected_entry = Some(new_selected_entry);
+        let new_index = match &self.view_mode {
+            GitPanelViewMode::Flat => selected_entry.saturating_sub(1),
+            GitPanelViewMode::Tree(state) => {
+                let Some(current_logical_index) = state
+                    .logical_indices
+                    .iter()
+                    .position(|&i| i == selected_entry)
+                else {
+                    return;
+                };
+
+                state.logical_indices[current_logical_index.saturating_sub(1)]
             }
+        };
 
-            self.scroll_to_selected_entry(cx);
+        if selected_entry == 0 && new_index == 0 {
+            return;
         }
 
-        cx.notify();
+        if matches!(
+            self.entries.get(new_index.saturating_sub(1)),
+            Some(GitListEntry::Header(..))
+        ) && new_index == 0
+        {
+            return;
+        }
+
+        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
+            self.selected_entry = Some(new_index.saturating_sub(1));
+        } else {
+            self.selected_entry = Some(new_index);
+        }
+
+        self.scroll_to_selected_entry(cx);
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -943,25 +1007,36 @@ impl GitPanel {
             return;
         }
 
-        if let Some(selected_entry) = self.selected_entry {
-            let new_selected_entry = if selected_entry < item_count - 1 {
-                selected_entry + 1
-            } else {
-                selected_entry
-            };
-            if matches!(
-                self.entries.get(new_selected_entry),
-                Some(GitListEntry::Header(..))
-            ) {
-                self.selected_entry = Some(new_selected_entry + 1);
-            } else {
-                self.selected_entry = Some(new_selected_entry);
-            }
+        let Some(selected_entry) = self.selected_entry else {
+            return;
+        };
 
-            self.scroll_to_selected_entry(cx);
+        if selected_entry == item_count - 1 {
+            return;
         }
 
-        cx.notify();
+        let new_index = match &self.view_mode {
+            GitPanelViewMode::Flat => selected_entry.saturating_add(1),
+            GitPanelViewMode::Tree(state) => {
+                let Some(current_logical_index) = state
+                    .logical_indices
+                    .iter()
+                    .position(|&i| i == selected_entry)
+                else {
+                    return;
+                };
+
+                state.logical_indices[current_logical_index.saturating_add(1)]
+            }
+        };
+
+        if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
+            self.selected_entry = Some(new_index.saturating_add(1));
+        } else {
+            self.selected_entry = Some(new_index);
+        }
+
+        self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2328,6 +2403,81 @@ impl GitPanel {
         compressed
     }
 
+    async fn load_project_rules(
+        project: &Entity<Project>,
+        repo_work_dir: &Arc<Path>,
+        cx: &mut AsyncApp,
+    ) -> Option<String> {
+        let rules_path = cx
+            .update(|cx| {
+                for worktree in project.read(cx).worktrees(cx) {
+                    let worktree_abs_path = worktree.read(cx).abs_path();
+                    if !worktree_abs_path.starts_with(&repo_work_dir) {
+                        continue;
+                    }
+
+                    let worktree_snapshot = worktree.read(cx).snapshot();
+                    for rules_name in RULES_FILE_NAMES {
+                        if let Ok(rel_path) = RelPath::unix(rules_name) {
+                            if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
+                                if entry.is_file() {
+                                    return Some(ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .ok()??;
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(rules_path, cx))
+            .ok()?
+            .await
+            .ok()?;
+
+        let content = buffer
+            .read_with(cx, |buffer, _| buffer.text())
+            .ok()?
+            .trim()
+            .to_string();
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        }
+    }
+
+    async fn load_commit_message_prompt(
+        is_using_legacy_zed_pro: bool,
+        cx: &mut AsyncApp,
+    ) -> String {
+        const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+        // Remove this once we stop supporting legacy Zed Pro
+        // In legacy Zed Pro, Git commit summary generation did not count as a
+        // prompt. If the user changes the prompt, our classification will fail,
+        // meaning that users will be charged for generating commit messages.
+        if is_using_legacy_zed_pro {
+            return DEFAULT_PROMPT.to_string();
+        }
+
+        let load = async {
+            let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
+            store
+                .update(cx, |s, cx| s.load(PromptId::CommitMessage, cx))
+                .ok()?
+                .await
+                .ok()
+        };
+        load.await.unwrap_or_else(|| DEFAULT_PROMPT.to_string())
+    }
+
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
@@ -2355,8 +2505,17 @@ impl GitPanel {
         });
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let project = self.project.clone();
+        let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
-        self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
+        // Remove this once we stop supporting legacy Zed Pro
+        let is_using_legacy_zed_pro = provider.id() == ZED_CLOUD_PROVIDER_ID
+            && self.workspace.upgrade().map_or(false, |workspace| {
+                workspace.read(cx).user_store().read(cx).plan()
+                    == Some(cloud_llm_client::Plan::V1(cloud_llm_client::PlanV1::ZedPro))
+            });
+
+        self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
@@ -2389,19 +2548,33 @@ impl GitPanel {
                 const MAX_DIFF_BYTES: usize = 20_000;
                 diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
 
+                let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
+
+                let prompt = Self::load_commit_message_prompt(is_using_legacy_zed_pro, &mut cx).await;
+
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
                 })?;
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                let rules_section = match &rules_content {
+                    Some(rules) => format!(
+                        "\n\nThe user has provided the following project rules that you should follow when writing the commit message:\n\
+                        <project_rules>\n{rules}\n</project_rules>\n"
+                    ),
+                    None => String::new(),
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let subject_section = if text_empty {
+                    String::new()
+                } else {
+                    format!("\nHere is the user's subject line:\n{subject}")
+                };
+
+                let content = format!(
+                    "{prompt}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+                );
 
                 let request = LanguageModelRequest {
                     thread_id: None,
@@ -4779,7 +4952,7 @@ impl GitPanel {
                     cx.stop_propagation();
                 },
             )
-            .child(name_row)
+            .child(name_row.overflow_x_hidden())
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -4933,7 +5106,7 @@ impl GitPanel {
                     this.toggle_directory(&key, window, cx);
                 })
             })
-            .child(name_row)
+            .child(name_row.overflow_x_hidden())
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5200,6 +5373,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
             })
+            .on_action(cx.listener(Self::collapse_selected_entry))
+            .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))

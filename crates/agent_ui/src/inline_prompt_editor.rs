@@ -844,26 +844,59 @@ impl<T: 'static> PromptEditor<T> {
 
                     if show_rating_buttons {
                         buttons.push(
-                            IconButton::new("thumbs-down", IconName::ThumbsDown)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Bad result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_down(&ThumbsDownResult, window, cx);
-                                }))
-                                .into_any_element(),
-                        );
-
-                        buttons.push(
-                            IconButton::new("thumbs-up", IconName::ThumbsUp)
-                                .icon_color(if rated { Color::Muted } else { Color::Default })
-                                .shape(IconButtonShape::Square)
-                                .disabled(rated)
-                                .tooltip(Tooltip::text("Good result"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.thumbs_up(&ThumbsUpResult, window, cx);
-                                }))
+                            h_flex()
+                                .pl_1()
+                                .gap_1()
+                                .border_l_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                        .shape(IconButtonShape::Square)
+                                        .map(|this| {
+                                            if rated {
+                                                this.disabled(true)
+                                                    .icon_color(Color::Ignored)
+                                                    .tooltip(move |_, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Good Result",
+                                                            None,
+                                                            "You already rated this result",
+                                                            cx,
+                                                        )
+                                                    })
+                                            } else {
+                                                this.icon_color(Color::Muted)
+                                                    .tooltip(Tooltip::text("Good Result"))
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.thumbs_up(&ThumbsUpResult, window, cx);
+                                        })),
+                                )
+                                .child(
+                                    IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                        .shape(IconButtonShape::Square)
+                                        .map(|this| {
+                                            if rated {
+                                                this.disabled(true)
+                                                    .icon_color(Color::Ignored)
+                                                    .tooltip(move |_, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Bad Result",
+                                                            None,
+                                                            "You already rated this result",
+                                                            cx,
+                                                        )
+                                                    })
+                                            } else {
+                                                this.icon_color(Color::Muted)
+                                                    .tooltip(Tooltip::text("Bad Result"))
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.thumbs_down(&ThumbsDownResult, window, cx);
+                                        })),
+                                )
                                 .into_any_element(),
                         );
                     }
@@ -927,10 +960,21 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let focus_handle = self.editor.focus_handle(cx);
+
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
-            .tooltip(Tooltip::text("Close Assistant"))
+            .tooltip({
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Close Assistant",
+                        &editor::actions::Cancel,
+                        &focus_handle,
+                        cx,
+                    )
+                }
+            })
             .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
             .into_any_element()
     }

@@ -305,6 +305,12 @@ impl EditorTestContext {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
+    pub async fn wait_for_autoindent_applied(&mut self) {
+        if let Some(fut) = self.update_buffer(|buffer, _| buffer.wait_for_autoindent_applied()) {
+            fut.await.ok();
+        }
+    }
+
     pub fn set_head_text(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
         let fs =

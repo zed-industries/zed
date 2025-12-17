@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
+    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -701,8 +701,12 @@ impl Item for BufferDiagnosticsEditor {
         });
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
+        }
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {

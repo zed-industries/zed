@@ -1,4 +1,4 @@
-use crate::{ManageProfiles, ToggleProfileSelector};
+use crate::{CycleModeSelector, ManageProfiles, ToggleProfileSelector};
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
@@ -68,6 +68,29 @@ impl ProfileSelector {
 
     pub fn menu_handle(&self) -> PopoverMenuHandle<Picker<ProfilePickerDelegate>> {
         self.picker_handle.clone()
+    }
+
+    pub fn cycle_profile(&mut self, cx: &mut Context<Self>) {
+        if !self.provider.profiles_supported(cx) {
+            return;
+        }
+
+        let profiles = AgentProfile::available_profiles(cx);
+        if profiles.is_empty() {
+            return;
+        }
+
+        let current_profile_id = self.provider.profile_id(cx);
+        let current_index = profiles
+            .keys()
+            .position(|id| id == &current_profile_id)
+            .unwrap_or(0);
+
+        let next_index = (current_index + 1) % profiles.len();
+
+        if let Some((next_profile_id, _)) = profiles.get_index(next_index) {
+            self.provider.set_profile(next_profile_id.clone(), cx);
+        }
     }
 
     fn ensure_picker(
@@ -163,14 +186,29 @@ impl Render for ProfileSelector {
         PickerPopoverMenu::new(
             picker,
             trigger_button,
-            move |_window, cx| {
-                Tooltip::for_action_in(
-                    "Toggle Profile Menu",
-                    &ToggleProfileSelector,
-                    &focus_handle,
-                    cx,
-                )
-            },
+            Tooltip::element({
+                move |_window, cx| {
+                    let container = || h_flex().gap_1().justify_between();
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            container()
+                                .pb_1()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(Label::new("Cycle Through Profiles"))
+                                .child(KeyBinding::for_action_in(
+                                    &CycleModeSelector,
+                                    &focus_handle,
+                                    cx,
+                                )),
+                        )
+                        .child(container().child(Label::new("Toggle Profile Menu")).child(
+                            KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
+                        ))
+                        .into_any()
+                }
+            }),
             gpui::Corner::BottomRight,
             cx,
         )

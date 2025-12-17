@@ -12,6 +12,7 @@ workspace = true
 path = "src/agent_settings.rs"
 
 [dependencies]
+agent-client-protocol.workspace = true
 anyhow.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true

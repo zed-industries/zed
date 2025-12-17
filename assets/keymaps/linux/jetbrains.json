@@ -70,7 +70,9 @@
     "bindings": {
       "ctrl-f12": "outline::Toggle",
       "ctrl-r": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-n": "file_finder::Toggle",
+      "ctrl-alt-n": "file_finder::Toggle",
       "ctrl-g": "go_to_line::Toggle",
       "alt-enter": "editor::ToggleCodeActions",
       "ctrl-space": "editor::ShowCompletions",
@@ -105,8 +107,8 @@
       "ctrl-e": "file_finder::Toggle",
       "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "ctrl-shift-n": "file_finder::Toggle",
-      "ctrl-n": "project_symbols::Toggle",
       "ctrl-alt-n": "file_finder::Toggle",
+      "ctrl-n": "project_symbols::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",

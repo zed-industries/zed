@@ -29,24 +29,37 @@ impl AgentModelSelector {
 
         Self {
             selector: cx.new(move |cx| {
-                let fs = fs.clone();
                 language_model_selector(
                     {
                         let model_context = model_usage_context.clone();
                         move |cx| model_context.configured_model(cx)
                     },
-                    move |model, cx| {
-                        let provider = model.provider_id().0.to_string();
-                        let model_id = model.id().0.to_string();
-                        match &model_usage_context {
-                            ModelUsageContext::InlineAssistant => {
-                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_inline_assistant_model(provider.clone(), model_id);
-                                });
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            let provider = model.provider_id().0.to_string();
+                            let model_id = model.id().0.to_string();
+                            match &model_usage_context {
+                                ModelUsageContext::InlineAssistant => {
+                                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                        settings
+                                            .agent
+                                            .get_or_insert_default()
+                                            .set_inline_assistant_model(provider.clone(), model_id);
+                                    });
+                                }
                             }
+                        }
+                    },
+                    {
+                        let fs = fs.clone();
+                        move |model, should_be_favorite, cx| {
+                            crate::favorite_models::toggle_in_settings(
+                                model,
+                                should_be_favorite,
+                                fs.clone(),
+                                cx,
+                            );
                         }
                     },
                     true, // Use popover styles for picker

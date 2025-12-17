@@ -232,6 +232,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_11_20,
         ),
         MigrationType::Json(migrations::m_2025_11_25::remove_context_server_source),
+        MigrationType::TreeSitter(
+            migrations::m_2025_12_15::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_12_15,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -365,6 +369,10 @@ define_query!(
 define_query!(
     KEYMAP_QUERY_2025_12_08,
     migrations::m_2025_12_08::KEYMAP_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_12_15,
+    migrations::m_2025_12_15::SETTINGS_PATTERNS
 );
 
 // custom query

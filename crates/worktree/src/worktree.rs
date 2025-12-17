@@ -19,7 +19,8 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
+    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, REPO_EXCLUDE,
+    status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -70,6 +71,8 @@ use util::{
     rel_path::RelPath,
 };
 pub use worktree_settings::WorktreeSettings;
+
+use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
@@ -233,6 +236,9 @@ impl Default for WorkDirectory {
 pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
+    /// Exclude files for all git repositories in the worktree, indexed by their absolute path.
+    /// The boolean indicates whether the gitignore needs to be updated.
+    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
@@ -393,6 +399,7 @@ impl Worktree {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
+                repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
@@ -2565,13 +2572,21 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
+
+        if let Some((repo_exclude, _)) = repo_root
+            .as_ref()
+            .and_then(|abs_path| self.repo_exclude_by_work_dir_abs_path.get(abs_path))
+        {
+            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
+        }
         ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
-                ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
+                ignore_stack =
+                    ignore_stack.append(IgnoreKind::Gitignore(parent_abs_path.into()), ignore);
             }
         }
 
@@ -3646,13 +3661,23 @@ impl BackgroundScanner {
         let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
 
         let repo = if self.scanning_enabled {
-            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            let (ignores, exclude, repo) =
+                discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
             self.state
                 .lock()
                 .await
                 .snapshot
                 .ignores_by_parent_abs_path
                 .extend(ignores);
+            if let Some(exclude) = exclude {
+                self.state
+                    .lock()
+                    .await
+                    .snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .insert(root_abs_path.as_path().into(), (exclude, false));
+            }
+
             repo
         } else {
             None
@@ -3914,6 +3939,7 @@ impl BackgroundScanner {
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_abs_paths = Vec::new();
+        let mut work_dirs_needing_exclude_update = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         {
@@ -3987,6 +4013,18 @@ impl BackgroundScanner {
                     continue;
                 };
 
+                let absolute_path = abs_path.to_path_buf();
+                if absolute_path.ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE)) {
+                    if let Some(repository) = snapshot
+                        .git_repositories
+                        .values()
+                        .find(|repo| repo.common_dir_abs_path.join(REPO_EXCLUDE) == absolute_path)
+                    {
+                        work_dirs_needing_exclude_update
+                            .push(repository.work_directory_abs_path.clone());
+                    }
+                }
+
                 if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
                     for (_, repo) in snapshot
                         .git_repositories
@@ -4030,6 +4068,19 @@ impl BackgroundScanner {
 
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
+        }
+
+        if !work_dirs_needing_exclude_update.is_empty() {
+            let mut state = self.state.lock().await;
+            for work_dir_abs_path in work_dirs_needing_exclude_update {
+                if let Some((_, needs_update)) = state
+                    .snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .get_mut(&work_dir_abs_path)
+                {
+                    *needs_update = true;
+                }
+            }
         }
 
         self.state.lock().await.snapshot.scan_id += 1;
@@ -4299,7 +4350,8 @@ impl BackgroundScanner {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
-                        ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                        ignore_stack = ignore_stack
+                            .append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
@@ -4561,11 +4613,24 @@ impl BackgroundScanner {
                         .await;
 
                     if path.is_empty()
-                        && let Some((ignores, repo)) = new_ancestor_repo.take()
+                        && let Some((ignores, exclude, repo)) = new_ancestor_repo.take()
                     {
                         log::trace!("updating ancestor git repository");
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
+                            if let Some(exclude) = exclude {
+                                let work_directory_abs_path = self
+                                    .state
+                                    .lock()
+                                    .await
+                                    .snapshot
+                                    .work_directory_abs_path(&work_directory);
+
+                                state
+                                    .snapshot
+                                    .repo_exclude_by_work_dir_abs_path
+                                    .insert(work_directory_abs_path.into(), (exclude, false));
+                            }
                             state
                                 .insert_git_repository_for_path(
                                     work_directory,
@@ -4663,6 +4728,36 @@ impl BackgroundScanner {
         {
             let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
+
+            snapshot.repo_exclude_by_work_dir_abs_path.retain(
+                |work_dir_abs_path, (exclude, needs_update)| {
+                    if *needs_update {
+                        *needs_update = false;
+                        ignores_to_update.push(work_dir_abs_path.clone());
+
+                        if let Some((_, repository)) = snapshot
+                            .git_repositories
+                            .iter()
+                            .find(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path)
+                        {
+                            let exclude_abs_path =
+                                repository.common_dir_abs_path.join(REPO_EXCLUDE);
+                            if let Ok(current_exclude) = self
+                                .executor
+                                .block(build_gitignore(&exclude_abs_path, self.fs.as_ref()))
+                            {
+                                *exclude = Arc::new(current_exclude);
+                            }
+                        }
+                    }
+
+                    snapshot
+                        .git_repositories
+                        .iter()
+                        .any(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path)
+                },
+            );
+
             snapshot
                 .ignores_by_parent_abs_path
                 .retain(|parent_abs_path, (_, needs_update)| {
@@ -4717,7 +4812,8 @@ impl BackgroundScanner {
 
         let mut ignore_stack = job.ignore_stack;
         if let Some((ignore, _)) = snapshot.ignores_by_parent_abs_path.get(&job.abs_path) {
-            ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+            ignore_stack =
+                ignore_stack.append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
         }
 
         let mut entries_by_id_edits = Vec::new();
@@ -4892,6 +4988,9 @@ impl BackgroundScanner {
                 let preserve = ids_to_preserve.contains(work_directory_id);
                 if !preserve {
                     affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
+                    snapshot
+                        .repo_exclude_by_work_dir_abs_path
+                        .remove(&entry.work_directory_abs_path);
                 }
                 preserve
             });
@@ -4931,8 +5030,10 @@ async fn discover_ancestor_git_repo(
     root_abs_path: &SanitizedPath,
 ) -> (
     HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    Option<Arc<Gitignore>>,
     Option<(PathBuf, WorkDirectory)>,
 ) {
+    let mut exclude = None;
     let mut ignores = HashMap::default();
     for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
         if index != 0 {
@@ -4968,6 +5069,7 @@ async fn discover_ancestor_git_repo(
                     // also mark where in the git repo the root folder is located.
                     return (
                         ignores,
+                        exclude,
                         Some((
                             ancestor_dot_git,
                             WorkDirectory::AboveProject {
@@ -4979,12 +5081,17 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
+            let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
+            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+                exclude = Some(Arc::new(repo_exclude));
+            }
+
             // Reached root of git repository.
             break;
         }
     }
 
-    (ignores, None)
+    (ignores, exclude, None)
 }
 
 fn build_diff(

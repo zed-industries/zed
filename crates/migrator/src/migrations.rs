@@ -165,3 +165,9 @@ pub(crate) mod m_2025_12_08 {
 
     pub(crate) use keymap::KEYMAP_PATTERNS;
 }
+
+pub(crate) mod m_2025_12_15 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}

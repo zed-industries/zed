@@ -81,50 +81,61 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    fn common(filter: Option<String>, cx: &mut App) {
-        workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            workspace
-                .with_local_workspace(window, cx, move |workspace, window, cx| {
-                    let existing = workspace
-                        .active_pane()
-                        .read(cx)
-                        .items()
-                        .find_map(|item| item.downcast::<KeymapEditor>());
+    fn open_keymap_editor(
+        filter: Option<String>,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        workspace
+            .with_local_workspace(window, cx, |workspace, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<KeymapEditor>());
 
-                    let keymap_editor = if let Some(existing) = existing {
-                        workspace.activate_item(&existing, true, true, window, cx);
-                        existing
-                    } else {
-                        let keymap_editor =
-                            cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
-                        workspace.add_item_to_active_pane(
-                            Box::new(keymap_editor.clone()),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-                        keymap_editor
-                    };
+                let keymap_editor = if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                    existing
+                } else {
+                    let keymap_editor =
+                        cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
+                    workspace.add_item_to_active_pane(
+                        Box::new(keymap_editor.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    keymap_editor
+                };
 
-                    if let Some(filter) = filter {
-                        keymap_editor.update(cx, |editor, cx| {
-                            editor.filter_editor.update(cx, |editor, cx| {
-                                editor.clear(window, cx);
-                                editor.insert(&filter, window, cx);
-                            });
-                            if !editor.has_binding_for(&filter) {
-                                open_binding_modal_after_loading(cx)
-                            }
-                        })
-                    }
-                })
-                .detach();
-        })
+                if let Some(filter) = filter {
+                    keymap_editor.update(cx, |editor, cx| {
+                        editor.filter_editor.update(cx, |editor, cx| {
+                            editor.clear(window, cx);
+                            editor.insert(&filter, window, cx);
+                        });
+                        if !editor.has_binding_for(&filter) {
+                            open_binding_modal_after_loading(cx)
+                        }
+                    })
+                }
+            })
+            .detach_and_log_err(cx);
     }
 
-    cx.on_action(|_: &OpenKeymap, cx| common(None, cx))
-        .on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace
+            .register_action(|workspace, _: &OpenKeymap, window, cx| {
+                open_keymap_editor(None, workspace, window, cx);
+            })
+            .register_action(|workspace, action: &ChangeKeybinding, window, cx| {
+                open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
+            });
+    })
+    .detach();
 
     register_serializable_item::<KeymapEditor>(cx);
 }

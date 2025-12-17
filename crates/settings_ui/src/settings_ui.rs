@@ -731,6 +731,7 @@ enum SettingsPageItem {
     SettingItem(SettingItem),
     SubPageLink(SubPageLink),
     DynamicItem(DynamicItem),
+    ActionLink(ActionLink),
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -745,6 +746,9 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::DynamicItem(dynamic_item) => {
                 write!(f, "DynamicItem({})", dynamic_item.discriminant.title)
+            }
+            SettingsPageItem::ActionLink(action_link) => {
+                write!(f, "ActionLink({})", action_link.title)
             }
         }
     }
@@ -973,6 +977,55 @@ impl SettingsPageItem {
 
                 return content.into_any_element();
             }
+            SettingsPageItem::ActionLink(action_link) => v_flex()
+                .group("setting-item")
+                .px_8()
+                .child(
+                    h_flex()
+                        .id(action_link.title.clone())
+                        .w_full()
+                        .min_w_0()
+                        .justify_between()
+                        .map(apply_padding)
+                        .child(
+                            v_flex()
+                                .relative()
+                                .w_full()
+                                .max_w_1_2()
+                                .child(Label::new(action_link.title.clone()))
+                                .when_some(
+                                    action_link.description.as_ref(),
+                                    |this, description| {
+                                        this.child(
+                                            Label::new(description.clone())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    },
+                                ),
+                        )
+                        .child(
+                            Button::new(
+                                ("action-link".into(), action_link.title.clone()),
+                                action_link.button_text.clone(),
+                            )
+                            .icon(IconName::ArrowUpRight)
+                            .tab_index(0_isize)
+                            .icon_position(IconPosition::End)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .size(ButtonSize::Medium)
+                            .on_click({
+                                let on_click = action_link.on_click.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    on_click(this, window, cx);
+                                })
+                            }),
+                        ),
+                )
+                .when(!is_last, |this| this.child(Divider::horizontal()))
+                .into_any_element(),
         }
     }
 }
@@ -1202,6 +1255,20 @@ struct SubPageLink {
 }
 
 impl PartialEq for SubPageLink {
+    fn eq(&self, other: &Self) -> bool {
+        self.title == other.title
+    }
+}
+
+#[derive(Clone)]
+struct ActionLink {
+    title: SharedString,
+    description: Option<SharedString>,
+    button_text: SharedString,
+    on_click: Arc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) + Send + Sync>,
+}
+
+impl PartialEq for ActionLink {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title
     }
@@ -1626,6 +1693,9 @@ impl SettingsWindow {
                             any_found_since_last_header = true;
                         }
                     }
+                    SettingsPageItem::ActionLink(_) => {
+                        any_found_since_last_header = true;
+                    }
                 }
             }
             if let Some(last_header) = page_filter.get_mut(header_index)
@@ -1862,6 +1932,18 @@ impl SettingsWindow {
                             &mut fuzzy_match_candidates,
                             key_index,
                             sub_page_link.title.as_ref(),
+                        );
+                    }
+                    SettingsPageItem::ActionLink(action_link) => {
+                        documents.push(bm25::Document {
+                            id: key_index,
+                            contents: [page.title, header_str, action_link.title.as_ref()]
+                                .join("\n"),
+                        });
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            action_link.title.as_ref(),
                         );
                     }
                 }
