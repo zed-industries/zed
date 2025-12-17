@@ -12635,6 +12635,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "tempfile",
  "text",
  "util",
  "uuid",

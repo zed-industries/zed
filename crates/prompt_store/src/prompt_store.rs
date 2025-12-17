@@ -544,3 +544,100 @@ impl PromptStore {
 pub struct GlobalPromptStore(Shared<Task<Result<Entity<PromptStore>, Arc<anyhow::Error>>>>);
 
 impl Global for GlobalPromptStore {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_built_in_prompt_load_save(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("prompts-db");
+
+        let store = cx
+            .update(|cx| PromptStore::new(db_path, cx))
+            .await
+            .unwrap();
+        let store = cx.new(|_cx| store);
+
+        let commit_message_id = PromptId::BuiltIn {
+            builtin: BuiltInPromptId::CommitMessage,
+        };
+
+        let loaded_content = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            loaded_content.trim(),
+            BuiltInPromptId::CommitMessage.default_content().trim(),
+            "Loading a built-in prompt not in DB should return default content"
+        );
+
+        assert!(
+            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_none(),
+            "Built-in prompt should not have metadata until customized"
+        );
+
+        let custom_content = "Custom commit message prompt";
+        store
+            .update(cx, |store, cx| {
+                store.save(
+                    commit_message_id,
+                    Some("Commit message".into()),
+                    false,
+                    Rope::from(custom_content),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let loaded_custom = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded_custom.trim(),
+            custom_content.trim(),
+            "Custom content should be loaded after saving"
+        );
+
+        assert!(
+            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_some(),
+            "Built-in prompt should have metadata after customization"
+        );
+
+        store
+            .update(cx, |store, cx| {
+                store.save(
+                    commit_message_id,
+                    Some("Commit message".into()),
+                    false,
+                    Rope::from(BuiltInPromptId::CommitMessage.default_content()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            store.read_with(cx, |store, _| store.metadata(commit_message_id)).is_none(),
+            "Saving default content should remove metadata from cache"
+        );
+
+        let loaded_after_reset = store
+            .update(cx, |store, cx| store.load(commit_message_id, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded_after_reset.trim(),
+            BuiltInPromptId::CommitMessage.default_content().trim(),
+            "After saving default content, load should return default"
+        );
+    }
+}
