@@ -135,7 +135,6 @@ impl QuickSearchSource for CommitsSource {
             .cloned()
             .collect::<Vec<_>>();
 
-        let query = ctx.query().as_ref().to_string();
         let repos = repos
             .into_iter()
             .map(|repo| {
@@ -156,20 +155,22 @@ impl QuickSearchSource for CommitsSource {
             return;
         }
 
+        let query = ctx.query().clone();
         let executor = ctx.background_executor().clone();
         let source_id = self.spec().id.0.clone();
-        let cancel_flag = ctx.cancel_flag();
+        let cancellation = ctx.cancellation().clone();
+        let cancel_flag = cancellation.flag();
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancellation.is_cancelled() {
                     return;
                 }
 
                 let mut commits = Vec::new();
                 let mut used_fallback = false;
                 for (repo_workdir, repo_entity) in repos {
-                    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if cancellation.is_cancelled() {
                         return;
                     }
 
@@ -273,7 +274,7 @@ impl QuickSearchSource for CommitsSource {
 
                 let mut matches = fuzzy::match_strings(
                     candidates.as_slice(),
-                    &query,
+                    query.as_ref(),
                     true,
                     true,
                     1_000,
@@ -282,7 +283,7 @@ impl QuickSearchSource for CommitsSource {
                 )
                 .await;
 
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
+                if cancellation.is_cancelled() {
                     return;
                 }
 
@@ -314,27 +315,38 @@ impl QuickSearchSource for CommitsSource {
                     let subject = commit.subject.clone();
                     let author = commit.author_name.clone();
 
+                    let repo_label: Arc<str> = commit
+                        .repo_workdir
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| Arc::<str>::from(s.to_string()))
+                        .unwrap_or_else(|| Arc::<str>::from(commit.repo_workdir.to_string_lossy().to_string()));
+
                     batcher.push(
                         QuickMatchBuilder::new(
                             source_id.clone(),
                             QuickMatchKind::GitCommit {
                             repo_workdir: commit.repo_workdir.clone(),
                             sha: commit.sha.clone(),
+                            subject,
+                            author,
+                            repo_label: repo_label.clone(),
                             branch: commit.branch.clone(),
                             commit_timestamp: commit.commit_timestamp,
                         },
                         )
                         .file_name(sha_short)
-                        .location_label(Some(author))
-                        .snippet(Some(subject))
-                        .first_line_snippet(None)
+                        .path_label(repo_label.clone())
+                        .display_path(repo_label)
+                        .path_segments_from_label()
                         .build(),
                         &sink,
                         &mut app,
                     );
                 }
 
-                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) && !sink.is_cancelled() {
+                if !cancellation.is_cancelled() {
                     batcher.finish(&sink, &mut app);
                 }
             }

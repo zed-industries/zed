@@ -77,19 +77,20 @@ impl QuickSearchSource for FilesSource {
 
         let executor = ctx.background_executor().clone();
         let source_id = self.spec().id.0.clone();
-        let query = ctx.query().as_ref().to_string();
-        let cancel_flag = ctx.cancel_flag();
+        let query = ctx.query().clone();
+        let cancellation = ctx.cancellation().clone();
+        let cancel_flag = cancellation.flag();
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
+                if cancellation.is_cancelled() {
                     return;
                 }
 
                 let relative_to: Option<Arc<RelPath>> = None;
                 let path_matches = fuzzy::match_path_sets(
                     candidate_sets.as_slice(),
-                    &query,
+                    query.as_ref(),
                     &relative_to,
                     false,
                     2_000,
@@ -98,7 +99,7 @@ impl QuickSearchSource for FilesSource {
                 )
                 .await;
 
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) || sink.is_cancelled() {
+                if cancellation.is_cancelled() {
                     return;
                 }
 
@@ -160,7 +161,7 @@ impl QuickSearchSource for FilesSource {
                     );
                 }
 
-                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) && !sink.is_cancelled() {
+                if !cancellation.is_cancelled() {
                     batcher.finish(&sink, &mut app);
                 }
             }

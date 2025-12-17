@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     ops::Range,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -61,6 +62,25 @@ pub struct SourceSpec {
 }
 
 #[derive(Clone)]
+pub struct SearchCancellation {
+    flag: Arc<AtomicBool>,
+}
+
+impl SearchCancellation {
+    pub fn new(flag: Arc<AtomicBool>) -> Self {
+        Self { flag }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        self.flag.clone()
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchContext {
     project: Entity<Project>,
     query: Arc<str>,
@@ -68,7 +88,7 @@ pub struct SearchContext {
     path_style: PathStyle,
     language_registry: Arc<language::LanguageRegistry>,
     background_executor: gpui::BackgroundExecutor,
-    cancel_flag: Arc<AtomicBool>,
+    cancellation: SearchCancellation,
 }
 
 impl SearchContext {
@@ -78,7 +98,7 @@ impl SearchContext {
         search_options: SearchOptions,
         path_style: PathStyle,
         language_registry: Arc<language::LanguageRegistry>,
-        cancel_flag: Arc<AtomicBool>,
+        cancellation: SearchCancellation,
         background_executor: gpui::BackgroundExecutor,
     ) -> Self {
         Self {
@@ -88,12 +108,12 @@ impl SearchContext {
             path_style,
             language_registry,
             background_executor,
-            cancel_flag,
+            cancellation,
         }
     }
 
-    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
-        self.cancel_flag.clone()
+    pub fn cancellation(&self) -> &SearchCancellation {
+        &self.cancellation
     }
 
     pub fn project(&self) -> &Entity<Project> {
@@ -125,24 +145,24 @@ impl SearchContext {
 pub struct SearchSink {
     picker: WeakEntity<PickerHandle>,
     generation: usize,
-    cancel_flag: Arc<AtomicBool>,
+    cancellation: SearchCancellation,
 }
 
 impl SearchSink {
     pub fn new(
         picker: WeakEntity<PickerHandle>,
         generation: usize,
-        cancel_flag: Arc<AtomicBool>,
+        cancellation: SearchCancellation,
     ) -> Self {
         Self {
             picker,
             generation,
-            cancel_flag,
+            cancellation,
         }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
+        self.cancellation.is_cancelled()
     }
 
     pub fn record_error(&self, message: String, app: &mut AsyncApp) {
@@ -229,6 +249,7 @@ pub trait QuickSearchSource {
 #[derive(Clone)]
 pub struct SourceRegistry {
     sources: Arc<[Arc<dyn QuickSearchSource>]>,
+    indices_by_id: Arc<HashMap<SourceId, usize>>,
 }
 
 pub struct SourceRegistryBuilder {
@@ -246,8 +267,13 @@ impl SourceRegistryBuilder {
     }
 
     pub fn build(self) -> SourceRegistry {
+        let mut indices_by_id = HashMap::<SourceId, usize>::new();
+        for (index, source) in self.sources.iter().enumerate() {
+            indices_by_id.insert(source.spec().id.clone(), index);
+        }
         SourceRegistry {
             sources: Arc::from(self.sources),
+            indices_by_id: Arc::new(indices_by_id),
         }
     }
 }
@@ -333,17 +359,13 @@ impl SourceRegistry {
     }
 
     pub fn spec_for_id(&self, id: &SourceId) -> Option<&'static SourceSpec> {
-        self.sources
-            .iter()
-            .find(|source| source.spec().id == *id)
-            .map(|source| source.spec())
+        let index = self.indices_by_id.get(id).copied()?;
+        self.sources.get(index).map(|source| source.spec())
     }
 
     pub fn source_for_id(&self, id: &SourceId) -> Option<&dyn QuickSearchSource> {
-        self.sources
-            .iter()
-            .find(|source| source.spec().id == *id)
-            .map(|source| source.as_ref())
+        let index = self.indices_by_id.get(id).copied()?;
+        self.sources.get(index).map(|source| source.as_ref())
     }
 
     pub fn preview_request_for_match(
@@ -377,20 +399,27 @@ impl SourceRegistry {
                 };
 
                 let snapshot = buffer.read(cx).snapshot();
-                let strong_ranges = ranges
-                    .iter()
-                    .map(|range| crate::types::point_range_to_anchor_range(range.clone(), &snapshot.text))
-                    .collect::<Vec<_>>();
-                let weak_ranges = weak_ranges
-                    .into_iter()
-                    .map(|range| crate::types::point_range_to_anchor_range(range, &snapshot.text))
-                    .collect::<Vec<_>>();
+                let mut strong_ranges = Vec::with_capacity(ranges.len());
+                for range in ranges {
+                    strong_ranges.push(crate::types::point_range_to_anchor_range(
+                        range.clone(),
+                        &snapshot.text,
+                    ));
+                }
+
+                let mut weak_anchor_ranges = Vec::with_capacity(weak_ranges.len());
+                for range in weak_ranges {
+                    weak_anchor_ranges.push(crate::types::point_range_to_anchor_range(
+                        range,
+                        &snapshot.text,
+                    ));
+                }
 
                 PreviewRequest::Buffer {
                     key,
                     buffer,
                     strong_ranges,
-                    weak_ranges,
+                    weak_ranges: weak_anchor_ranges,
                     use_diff_preview,
                 }
             }
@@ -445,6 +474,9 @@ impl SourceRegistry {
             QuickMatchKind::GitCommit {
                 repo_workdir,
                 sha,
+                subject,
+                author,
+                repo_label,
                 commit_timestamp,
                 ..
             } => PreviewPanelUi::GitCommit {
@@ -461,16 +493,10 @@ impl SourceRegistry {
                     });
                     GitCommitPreviewMeta {
                         sha: sha.clone(),
-                        subject: selected
-                            .snippet
-                            .clone()
-                            .unwrap_or_else(|| Arc::<str>::from("")),
-                        author: selected
-                            .location_label
-                            .clone()
-                            .unwrap_or_else(|| Arc::<str>::from("")),
+                        subject: subject.clone(),
+                        author: author.clone(),
                         commit_timestamp: *commit_timestamp,
-                        repo_label: selected.path_label.clone(),
+                        repo_label: repo_label.clone(),
                         remote,
                         github_url,
                     }

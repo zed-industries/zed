@@ -74,13 +74,13 @@ impl QuickSearchSource for TextGrepSource {
         let source_id = self.spec().id.0.clone();
         let path_style = ctx.path_style();
         let language_registry = ctx.language_registry().clone();
-        let query = ctx.query().as_ref().to_string();
-        let cancel_flag = ctx.cancel_flag();
+        let query = ctx.query().clone();
+        let cancellation = ctx.cancellation().clone();
 
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
-                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancellation.is_cancelled() {
                     return;
                 }
 
@@ -89,7 +89,7 @@ impl QuickSearchSource for TextGrepSource {
                     let exclude = PathMatcher::default();
                     if search_options.contains(SearchOptions::REGEX) {
                         SearchQuery::regex(
-                            &query,
+                            query.as_ref(),
                             search_options.contains(SearchOptions::WHOLE_WORD),
                             search_options.contains(SearchOptions::CASE_SENSITIVE),
                             search_options.contains(SearchOptions::INCLUDE_IGNORED),
@@ -101,7 +101,7 @@ impl QuickSearchSource for TextGrepSource {
                         )
                     } else {
                         SearchQuery::text(
-                            &query,
+                            query.as_ref(),
                             search_options.contains(SearchOptions::WHOLE_WORD),
                             search_options.contains(SearchOptions::CASE_SENSITIVE),
                             search_options.contains(SearchOptions::INCLUDE_IGNORED),
@@ -143,7 +143,7 @@ impl QuickSearchSource for TextGrepSource {
                         Ok(r) => r,
                         Err(_) => break,
                     };
-                    if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if cancellation.is_cancelled() {
                         break;
                     }
 
@@ -181,14 +181,14 @@ impl QuickSearchSource for TextGrepSource {
                                 for match_item in out.matches {
                                     batcher.push(match_item, &sink, &mut app);
                                 }
-                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                if cancellation.is_cancelled() {
                                     break;
                                 }
                             }
                         }
                         SearchResult::LimitReached => {
                             batcher.flush(&sink, &mut app);
-                            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            if cancellation.is_cancelled() {
                                 break;
                             }
                             break;
@@ -199,7 +199,7 @@ impl QuickSearchSource for TextGrepSource {
                 }
 
                 drop(syntax_workers);
-                if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if !cancellation.is_cancelled() {
                     batcher.finish(&sink, &mut app);
                 }
             }

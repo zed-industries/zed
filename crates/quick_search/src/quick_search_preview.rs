@@ -366,8 +366,13 @@ impl PreviewState {
                                     })
                                     .cloned()
                             })
-                            .ok()
-                            .flatten();
+                            .unwrap_or_else(|err| {
+                                debug!(
+                                    "quick_search: failed to resolve repository for commit preview: {:?}",
+                                    err
+                                );
+                                None
+                            });
 
                         let Some(repository) = repository else {
                             let text = format!(
@@ -407,14 +412,44 @@ impl PreviewState {
                                     .next()
                                     .map(|worktree| worktree.read(cx).id())
                             })
-                            .ok()
-                            .flatten();
+                            .unwrap_or_else(|err| {
+                                debug!(
+                                    "quick_search: failed to resolve worktree id for commit preview: {:?}",
+                                    err
+                                );
+                                None
+                            });
 
-                        let commit_diff_rx = app
-                            .update_entity(&repository, |repo, _| repo.load_commit_diff(sha.to_string()))
-                            .ok();
-                        let Some(commit_diff_rx) = commit_diff_rx else {
-                            return;
+                        let commit_diff_rx = app.update_entity(&repository, |repo, _| {
+                            repo.load_commit_diff(sha.to_string())
+                        });
+                        let commit_diff_rx = match commit_diff_rx {
+                            Ok(rx) => rx,
+                            Err(err) => {
+                                let text = format!("Failed to start commit diff load:\n{err:?}\n");
+                                if let Some(qs) = quick_search.upgrade() {
+                                    if let Err(err) = app.update_entity(&qs, |qs, cx| {
+                                        if qs.preview.current_preview.as_ref()
+                                            != Some(&preview_key_for_task)
+                                            || qs.preview.manager.generation() != preview_generation
+                                        {
+                                            return;
+                                        }
+                                        let buffer =
+                                            cx.new(|cx| language::Buffer::local(text.clone(), cx));
+                                        qs.preview.replace_preview(buffer, cx);
+                                        qs.preview.needs_preview_scroll = false;
+                                        qs.preview.apply_preview_highlights(cx);
+                                        cx.notify();
+                                    }) {
+                                        debug!(
+                                            "quick_search: failed to show commit diff start error: {:?}",
+                                            err
+                                        );
+                                    }
+                                }
+                                return;
+                            }
                         };
 
                         let commit_diff = match commit_diff_rx.await {

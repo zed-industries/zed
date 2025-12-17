@@ -71,6 +71,9 @@ pub enum QuickMatchKind {
     GitCommit {
         repo_workdir: Arc<Path>,
         sha: Arc<str>,
+        subject: Arc<str>,
+        author: Arc<str>,
+        repo_label: Arc<str>,
         branch: Option<Arc<str>>,
         commit_timestamp: i64,
     },

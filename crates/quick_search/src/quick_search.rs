@@ -1673,9 +1673,8 @@ impl PickerDelegate for QuickSearchDelegate {
             return Task::ready(());
         }
 
-        self.reset_scroll = true;
         self.is_streaming = true;
-        self.total_results = 0;
+        self.stream_finished = false;
         self.search_engine.schedule_search(query, cx)
     }
 
@@ -2297,8 +2296,8 @@ impl SearchEngine {
         self.generation_guard.generation()
     }
 
-    pub(crate) fn cancel_flag(&self) -> Arc<AtomicBool> {
-        self.generation_guard.cancel_flag()
+    pub(crate) fn cancellation(&self) -> core::SearchCancellation {
+        core::SearchCancellation::new(self.generation_guard.cancel_flag())
     }
 
     pub(crate) fn begin_request(&mut self) -> (usize, Arc<AtomicBool>) {
@@ -2325,10 +2324,13 @@ impl SearchEngine {
         cx: &mut Context<PickerHandle>,
     ) -> Task<()> {
         let query = query.trim().to_string();
-        self.cancel();
+        let (generation, cancel_flag) = self.begin_request();
+        let cancellation = core::SearchCancellation::new(cancel_flag);
         let query_to_run = query;
         self.debouncer.fire_new(delay, cx, move |picker, cx| {
-            picker.delegate.start_search(query_to_run, cx);
+            picker
+                .delegate
+                .start_search_with_request(query_to_run, generation, cancellation, cx);
             Task::ready(())
         });
         Task::ready(())
@@ -2365,12 +2367,12 @@ impl QuickSearchDelegate {
         let generation = self.search_engine.generation();
         let project = self.project.clone();
         let position_for_cache = m.position();
-        let cancel_flag = self.search_engine.cancel_flag();
+        let cancellation = self.search_engine.cancellation();
         let match_id = m.id;
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
             async move {
-                if cancel_flag.load(Ordering::Relaxed) {
+                if cancellation.is_cancelled() {
                     return;
                 }
                 if let Some((row, _col)) = position_for_cache {
@@ -2378,7 +2380,7 @@ impl QuickSearchDelegate {
                         .await
                         .map(Arc::from);
 
-                    if cancel_flag.load(Ordering::Relaxed) {
+                    if cancellation.is_cancelled() {
                         return;
                     }
 
@@ -2397,9 +2399,19 @@ impl QuickSearchDelegate {
         .detach();
     }
 
-    pub fn start_search(&mut self, query: String, cx: &mut Context<PickerHandle>) {
-        let trimmed = query.trim().to_string();
-        let (generation, cancel_flag) = self.search_engine.begin_request();
+    pub fn start_search_with_request(
+        &mut self,
+        trimmed: String,
+        generation: usize,
+        cancellation: core::SearchCancellation,
+        cx: &mut Context<PickerHandle>,
+    ) {
+        if self.search_engine.generation() != generation {
+            return;
+        }
+        if cancellation.is_cancelled() {
+            return;
+        }
 
         self.next_match_id = 0;
         self.current_query = trimmed.clone();
@@ -2481,10 +2493,10 @@ impl QuickSearchDelegate {
             self.search_engine.search_options,
             path_style,
             language_registry,
-            cancel_flag.clone(),
+            cancellation.clone(),
             cx.background_executor().clone(),
         );
-        let sink = core::SearchSink::new(picker, generation, cancel_flag);
+        let sink = core::SearchSink::new(picker, generation, cancellation);
         source.start_search(search_context, sink, cx);
     }
 }
@@ -2946,24 +2958,24 @@ fn render_flat_match_row(
                 .child(snippet_element);
             (icon, content.into_any_element())
         }
-        types::QuickMatchKind::GitCommit { branch, .. } => {
+        types::QuickMatchKind::GitCommit {
+            branch,
+            subject,
+            author,
+            repo_label,
+            ..
+        } => {
             let icon = Some(Icon::new(IconName::GitBranchAlt).color(Color::Muted));
-            let subject = entry
-                .snippet
-                .clone()
-                .unwrap_or_else(|| Arc::<str>::from(""));
+            let subject = subject.clone();
             let subject_highlights = if do_highlights {
                 highlight_indices(&subject, &delegate.current_query, case_sensitive)
             } else {
                 Vec::new()
             };
 
-            let author = entry
-                .location_label
-                .clone()
-                .unwrap_or_else(|| Arc::<str>::from(""));
+            let author = author.clone();
             let sha = entry.file_name.clone();
-            let repo = entry.display_path.clone();
+            let repo = repo_label.clone();
 
             let mut meta_parts = Vec::<String>::new();
             if let Some(branch) = branch.as_ref().filter(|b| !b.is_empty()) {
