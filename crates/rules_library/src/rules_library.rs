@@ -680,13 +680,13 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(default_content) = prompt_id.default_content() else {
+        let Some(built_in) = prompt_id.as_built_in() else {
             return;
         };
 
         if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
             rule_editor.body_editor.update(cx, |editor, cx| {
-                editor.set_text(default_content, window, cx);
+                editor.set_text(built_in.default_content(), window, cx);
             });
         }
     }

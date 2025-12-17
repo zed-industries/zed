@@ -1,6 +1,6 @@
 mod prompts;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::FutureExt as _;
@@ -51,11 +51,34 @@ pub struct PromptMetadata {
     pub saved_at: DateTime<Utc>,
 }
 
+/// Built-in prompts that have default content and can be customized by users.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BuiltInPromptId {
+    CommitMessage,
+}
+
+impl BuiltInPromptId {
+    /// Returns the default content for this built-in prompt.
+    pub fn default_content(&self) -> &'static str {
+        match self {
+            Self::CommitMessage => include_str!("../../git_ui/src/commit_message_prompt.txt"),
+        }
+    }
+}
+
+impl std::fmt::Display for BuiltInPromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CommitMessage => write!(f, "Commit message"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PromptId {
     User { uuid: UserPromptId },
-    CommitMessage,
+    BuiltIn { builtin: BuiltInPromptId },
 }
 
 impl PromptId {
@@ -63,31 +86,37 @@ impl PromptId {
         UserPromptId::new().into()
     }
 
-    pub fn user_id(&self) -> Option<UserPromptId> {
+    pub fn as_user(&self) -> Option<UserPromptId> {
         match self {
             Self::User { uuid } => Some(*uuid),
-            _ => None,
+            Self::BuiltIn { .. } => None,
+        }
+    }
+
+    pub fn as_built_in(&self) -> Option<BuiltInPromptId> {
+        match self {
+            Self::User { .. } => None,
+            Self::BuiltIn { builtin } => Some(*builtin),
         }
     }
 
     pub fn is_built_in(&self) -> bool {
-        match self {
-            Self::User { .. } => false,
-            Self::CommitMessage => true,
-        }
+        matches!(self, Self::BuiltIn { .. })
     }
 
     pub fn can_edit(&self) -> bool {
         match self {
-            Self::User { .. } | Self::CommitMessage => true,
+            Self::User { .. } => true,
+            Self::BuiltIn { builtin } => match builtin {
+                BuiltInPromptId::CommitMessage => true,
+            },
         }
     }
+}
 
-    pub fn default_content(&self) -> Option<&'static str> {
-        match self {
-            Self::User { .. } => None,
-            Self::CommitMessage => Some(include_str!("../../git_ui/src/commit_message_prompt.txt")),
-        }
+impl From<BuiltInPromptId> for PromptId {
+    fn from(builtin: BuiltInPromptId) -> Self {
+        PromptId::BuiltIn { builtin }
     }
 }
 
@@ -117,7 +146,7 @@ impl std::fmt::Display for PromptId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PromptId::User { uuid } => write!(f, "{}", uuid.0),
-            PromptId::CommitMessage => write!(f, "Commit message"),
+            PromptId::BuiltIn { builtin } => write!(f, "{}", builtin),
         }
     }
 }
@@ -198,10 +227,6 @@ impl PromptStore {
             let mut txn = db_env.write_txn()?;
             let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
             let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
-
-            metadata.delete(&mut txn, &PromptId::CommitMessage)?;
-            bodies.delete(&mut txn, &PromptId::CommitMessage)?;
-
             txn.commit()?;
 
             Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
@@ -294,7 +319,16 @@ impl PromptStore {
         let bodies = self.bodies;
         cx.background_spawn(async move {
             let txn = env.read_txn()?;
-            let mut prompt = bodies.get(&txn, &id)?.context("prompt not found")?.into();
+            let mut prompt: String = match bodies.get(&txn, &id)? {
+                Some(body) => body.into(),
+                None => {
+                    if let Some(built_in) = id.as_built_in() {
+                        built_in.default_content().into()
+                    } else {
+                        anyhow::bail!("prompt not found")
+                    }
+                }
+            };
             LineEnding::normalize(&mut prompt);
             Ok(prompt)
         })
@@ -412,23 +446,43 @@ impl PromptStore {
             return Task::ready(Err(anyhow!("this prompt cannot be edited")));
         }
 
-        let prompt_metadata = PromptMetadata {
-            id,
-            title,
-            default,
-            saved_at: Utc::now(),
-        };
-        self.metadata_cache.write().insert(prompt_metadata.clone());
+        let body_string = body.to_string();
+        let is_default_content = id
+            .as_built_in()
+            .is_some_and(|builtin| body_string.trim() == builtin.default_content().trim());
+
+        if is_default_content {
+            self.metadata_cache.write().remove(id);
+        } else {
+            let prompt_metadata = PromptMetadata {
+                id,
+                title: title.clone(),
+                default,
+                saved_at: Utc::now(),
+            };
+            self.metadata_cache.write().insert(prompt_metadata);
+        }
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
-        let metadata = self.metadata;
+        let metadata_db = self.metadata;
 
         let task = cx.background_spawn(async move {
             let mut txn = db_connection.write_txn()?;
 
-            metadata.put(&mut txn, &id, &prompt_metadata)?;
-            bodies.put(&mut txn, &id, &body.to_string())?;
+            if is_default_content {
+                metadata_db.delete(&mut txn, &id)?;
+                bodies.delete(&mut txn, &id)?;
+            } else {
+                let prompt_metadata = PromptMetadata {
+                    id,
+                    title,
+                    default,
+                    saved_at: Utc::now(),
+                };
+                metadata_db.put(&mut txn, &id, &prompt_metadata)?;
+                bodies.put(&mut txn, &id, &body_string)?;
+            }
 
             txn.commit()?;
 
