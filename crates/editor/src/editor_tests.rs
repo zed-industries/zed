@@ -25471,66 +25471,41 @@ async fn test_consecutive_python_code_blocks_indent_in_markdown(cx: &mut TestApp
     language_registry.add(markdown_lang());
     language_registry.add(python_lang);
 
-    let buffer = cx.new(|cx| {
-        let mut buffer = language::Buffer::local(
-            indoc! {"
-                # Hello
-
-                ```python
-                if condition:
-                ```
-
-                ```python
-                    x = 1
-
-                ```
-            "},
-            cx,
-        );
-        buffer.set_language_registry(language_registry.clone());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(language_registry);
         buffer.set_language(Some(markdown_lang()), cx);
-        buffer
     });
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
-    cx.executor().run_until_parked();
 
     // Test that `else:` in the second code block stays at its current indent level, not outdent
-    _ = editor.update(cx, |editor, window, cx| {
-        select_ranges(
-            editor,
-            indoc! {"
-                ```python
-                if condition:
-                ```
+    cx.set_state(indoc! {"
+        # Hello
 
-                ```python
-                    x = 1
-                    ˇ
-                ```
-            "},
-            window,
-            cx,
-        );
+        ```python
+        if condition:
+        ```
+
+        ```python
+            x = 1
+            ˇ
+        ```
+    "});
+    cx.update_editor(|editor, window, cx| {
         editor.handle_input("else:", window, cx);
     });
-    cx.executor().run_until_parked();
-    _ = editor.update(cx, |editor, _, cx| {
-        assert_text_with_selections(
-            editor,
-            indoc! {"
-                ```python
-                if condition:
-                ```
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        # Hello
 
-                ```python
-                    x = 1
-                    else:ˇ
-                ```
-            "},
-            cx,
-        );
-    });
+        ```python
+        if condition:
+        ```
+
+        ```python
+            x = 1
+            else:ˇ
+        ```
+    "});
 }
 
 #[gpui::test]
