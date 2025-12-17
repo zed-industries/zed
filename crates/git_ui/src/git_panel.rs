@@ -1220,14 +1220,14 @@ impl GitPanel {
                 let prompt = window.prompt(
                     PromptLevel::Warning,
                     &format!(
-                        "Are you sure you want to restore {}?",
+                        "Are you sure you want to discard changes to {}?",
                         entry
                             .repo_path
                             .file_name()
                             .unwrap_or(entry.repo_path.display(path_style).as_ref()),
                     ),
                     None,
-                    &["Restore", "Cancel"],
+                    &["Discard Changes", "Cancel"],
                     cx,
                 );
                 cx.background_spawn(prompt)
@@ -4710,7 +4710,7 @@ impl GitPanel {
         let restore_title = if entry.status.is_created() {
             "Trash File"
         } else {
-            "Restore File"
+            "Discard Changes"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             let is_created = entry.status.is_created();
