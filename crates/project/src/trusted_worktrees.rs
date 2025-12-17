@@ -27,36 +27,20 @@
 //! Spawning a language server is potentially dangerous, and Zed needs to restrict that by default.
 //! Each single file worktree requires a separate trust permission, unless a more global level is trusted.
 //!
-//! * "workspace"
-//!
-//! Even an empty Zed instance with no files or directories open is potentially dangerous: opening an Assistant Panel and creating new external agent thread might require installing and running MCP servers.
-//!
-//! Disabling the entire panel is possible with ai-related settings.
-//! Yet when it's enabled, it's still reasonably safe to use remote AI agents and control their permissions in the Assistant Panel.
-//!
-//! Unlike that, MCP servers are similar to language servers and may require fetching, installing and running packages or binaries.
-//! Given that those servers are not tied to any particular worktree, this level of trust is required to operate any MCP server.
-//!
-//! Workspace level of trust assumes all single file worktrees are trusted too, for the same host: if we allow global MCP server-related functionality, we can already allow spawning language servers for single file worktrees as well.
-//!
 //! * "directory worktree"
 //!
 //! If a directory is open in Zed, it's a full worktree which may spawn multiple language servers associated with it.
 //! Each such worktree requires a separate trust permission, so each separate directory worktree has to be trusted separately, unless a more global level is trusted.
 //!
-//! When a directory worktree is trusted and language servers are allowed to be downloaded and started, hence we also allow workspace level of trust (hence, "single file worktree" level of trust also).
+//! When a directory worktree is trusted and language servers are allowed to be downloaded and started, hence, "single file worktree" level of trust also.
 //!
 //! * "path override"
 //!
 //! To ease trusting multiple directory worktrees at once, it's possible to trust a parent directory of a certain directory worktree opened in Zed.
 //! Trusting a directory means trusting all its subdirectories as well, including all current and potential directory worktrees.
-//!
-//! If we trust multiple projects to install and spawn various language server processes, we can also allow workspace trust requests for MCP servers installation and spawning.
 
 use collections::{HashMap, HashSet};
-use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, WeakEntity};
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
@@ -132,57 +116,6 @@ pub fn track_worktree_trust(
     }
 }
 
-/// Waits until at least [`PathTrust::Workspace`] level of trust is granted for the host the [`TrustedWorktrees`] was initialized with.
-pub fn wait_for_default_workspace_trust(
-    what_waits: &'static str,
-    cx: &mut App,
-) -> Option<Task<()>> {
-    let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
-    wait_for_workspace_trust(
-        trusted_worktrees.read(cx).remote_host.clone(),
-        what_waits,
-        cx,
-    )
-}
-
-/// Waits until at least [`PathTrust::Workspace`] level of trust is granted for a particular host.
-pub fn wait_for_workspace_trust(
-    remote_host: Option<impl Into<RemoteHostLocation>>,
-    what_waits: &'static str,
-    cx: &mut App,
-) -> Option<Task<()>> {
-    let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
-    let remote_host = remote_host.map(|host| host.into());
-
-    let remote_host = if trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-        trusted_worktrees.can_trust_workspace(remote_host.clone(), cx)
-    }) {
-        None
-    } else {
-        Some(remote_host)
-    }?;
-
-    Some(cx.spawn(async move |cx| {
-        log::info!("Waiting for workspace to be trusted before starting {what_waits}");
-        let (tx, restricted_worktrees_task) = smol::channel::bounded::<()>(1);
-        let Ok(_subscription) = cx.update(|cx| {
-            cx.subscribe(&trusted_worktrees, move |_, e, _| {
-                if let TrustedWorktreesEvent::Trusted(trusted_host, trusted_paths) = e {
-                    if trusted_host == &remote_host && trusted_paths.contains(&PathTrust::Workspace)
-                    {
-                        log::info!("Workspace is trusted for {what_waits}");
-                        tx.send_blocking(()).ok();
-                    }
-                }
-            })
-        }) else {
-            return;
-        };
-
-        restricted_worktrees_task.recv().await.ok();
-    }))
-}
-
 /// A collection of worktree trust metadata, can be accessed globally (if initialized) and subscribed to.
 pub struct TrustedWorktrees(Entity<TrustedWorktreesStore>);
 
@@ -205,8 +138,6 @@ pub struct TrustedWorktreesStore {
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
     trusted_paths: TrustedPaths,
     restricted: HashSet<WorktreeId>,
-    remote_host: Option<RemoteHostLocation>,
-    restricted_workspaces: HashSet<Option<RemoteHostLocation>>,
 }
 
 /// An identifier of a host to split the trust questions by.
@@ -246,9 +177,6 @@ impl From<RemoteConnectionOptions> for RemoteHostLocation {
 /// See module-level documentation on the trust model.
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum PathTrust {
-    /// General, no worktrees or files open case.
-    /// E.g. MCP servers can be spawned from a blank Zed instance, but will do `npm i` and other potentially malicious actions.
-    Workspace,
     /// A worktree that is familiar to this workspace.
     /// Either a single file or a directory worktree.
     Worktree(WorktreeId),
@@ -260,9 +188,6 @@ pub enum PathTrust {
 impl PathTrust {
     fn to_proto(&self) -> proto::PathTrust {
         match self {
-            Self::Workspace => proto::PathTrust {
-                content: Some(proto::path_trust::Content::Workspace(0)),
-            },
             Self::Worktree(worktree_id) => proto::PathTrust {
                 content: Some(proto::path_trust::Content::WorktreeId(
                     worktree_id.to_proto(),
@@ -282,7 +207,6 @@ impl PathTrust {
                 Self::Worktree(WorktreeId::from_proto(id))
             }
             proto::path_trust::Content::AbsPath(path) => Self::AbsPath(PathBuf::from(path)),
-            proto::path_trust::Content::Workspace(_) => Self::Workspace,
         })
     }
 }
@@ -322,9 +246,7 @@ impl TrustedWorktreesStore {
         }
 
         let worktree_stores = match worktree_store {
-            Some(worktree_store) => {
-                HashMap::from_iter([(worktree_store.downgrade(), remote_host.clone())])
-            }
+            Some(worktree_store) => HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
             None => HashMap::default(),
         };
 
@@ -332,8 +254,6 @@ impl TrustedWorktreesStore {
             trusted_paths,
             downstream_client,
             upstream_client,
-            remote_host,
-            restricted_workspaces: HashSet::default(),
             restricted: HashSet::default(),
             worktree_stores,
         }
@@ -345,11 +265,9 @@ impl TrustedWorktreesStore {
         worktree_store: &Entity<WorktreeStore>,
         cx: &App,
     ) -> bool {
-        let Some(remote_host) = self.worktree_stores.get(&worktree_store.downgrade()) else {
-            return false;
-        };
-        self.restricted_workspaces.contains(remote_host)
-            || self.restricted.iter().any(|restricted_worktree| {
+        self.worktree_stores
+            .contains_key(&worktree_store.downgrade())
+            && self.restricted.iter().any(|restricted_worktree| {
                 worktree_store
                     .read(cx)
                     .worktree_for_id(*restricted_worktree, cx)
@@ -366,7 +284,6 @@ impl TrustedWorktreesStore {
         remote_host: Option<RemoteHostLocation>,
         cx: &mut Context<Self>,
     ) {
-        let mut new_workspace_trusted = false;
         let mut new_trusted_single_file_worktrees = HashSet::default();
         let mut new_trusted_other_worktrees = HashSet::default();
         let mut new_trusted_abs_paths = HashSet::default();
@@ -377,7 +294,6 @@ impl TrustedWorktreesStore {
                 .flat_map(|current_trusted| current_trusted.iter()),
         ) {
             match trusted_path {
-                PathTrust::Workspace => new_workspace_trusted = true,
                 PathTrust::Worktree(worktree_id) => {
                     self.restricted.remove(worktree_id);
                     if let Some((abs_path, is_file, host)) =
@@ -388,13 +304,11 @@ impl TrustedWorktreesStore {
                                 new_trusted_single_file_worktrees.insert(*worktree_id);
                             } else {
                                 new_trusted_other_worktrees.insert((abs_path, *worktree_id));
-                                new_workspace_trusted = true;
                             }
                         }
                     }
                 }
                 PathTrust::AbsPath(path) => {
-                    new_workspace_trusted = true;
                     debug_assert!(
                         path.is_absolute(),
                         "Cannot trust non-absolute path {path:?}"
@@ -404,11 +318,6 @@ impl TrustedWorktreesStore {
             }
         }
 
-        if new_workspace_trusted {
-            new_trusted_single_file_worktrees.clear();
-            self.restricted_workspaces.remove(&remote_host);
-            trusted_paths.insert(PathTrust::Workspace);
-        }
         new_trusted_other_worktrees.retain(|(worktree_abs_path, _)| {
             new_trusted_abs_paths
                 .iter()
@@ -428,8 +337,7 @@ impl TrustedWorktreesStore {
                 if restricted_host != remote_host {
                     return true;
                 }
-                let retain = (!is_file
-                    || (!new_workspace_trusted && new_trusted_other_worktrees.is_empty()))
+                let retain = (!is_file || new_trusted_other_worktrees.is_empty())
                     && new_trusted_abs_paths.iter().all(|new_trusted_path| {
                         !restricted_worktree_path.starts_with(new_trusted_path)
                     });
@@ -453,9 +361,6 @@ impl TrustedWorktreesStore {
                     .into_iter()
                     .map(PathTrust::Worktree),
             );
-            if trusted_paths.is_empty() && new_workspace_trusted {
-                trusted_paths.insert(PathTrust::Workspace);
-            }
         }
 
         cx.emit(TrustedWorktreesEvent::Trusted(
@@ -489,13 +394,6 @@ impl TrustedWorktreesStore {
     ) {
         for restricted_path in restricted_paths {
             match restricted_path {
-                PathTrust::Workspace => {
-                    self.restricted_workspaces.insert(remote_host.clone());
-                    cx.emit(TrustedWorktreesEvent::Restricted(
-                        remote_host.clone(),
-                        HashSet::from_iter([PathTrust::Workspace]),
-                    ));
-                }
                 PathTrust::Worktree(worktree_id) => {
                     self.restricted.insert(worktree_id);
                     cx.emit(TrustedWorktreesEvent::Restricted(
@@ -568,7 +466,6 @@ impl TrustedWorktreesStore {
             downstream_client
                 .send(proto::RestrictWorktrees {
                     project_id: *downstream_project_id,
-                    restrict_workspace: false,
                     worktree_ids: vec![worktree_id.to_proto()],
                 })
                 .ok();
@@ -577,7 +474,6 @@ impl TrustedWorktreesStore {
             upstream_client
                 .send(proto::RestrictWorktrees {
                     project_id: *upstream_project_id,
-                    restrict_workspace: false,
                     worktree_ids: vec![worktree_id.to_proto()],
                 })
                 .ok();
@@ -585,61 +481,12 @@ impl TrustedWorktreesStore {
         false
     }
 
-    /// Checks whether a certain worktree is trusted globally (or on a larger trust level).
-    /// If not, emits [`TrustedWorktreesEvent::Restricted`] event if checked for the first time and not trusted.
-    ///
-    /// No events or data adjustment happens when `trust_all_worktrees` auto trust is enabled.
-    pub fn can_trust_workspace(
-        &mut self,
-        remote_host: Option<RemoteHostLocation>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-            return true;
-        }
-        if self.restricted_workspaces.contains(&remote_host) {
-            return false;
-        }
-        if self.trusted_paths.contains_key(&remote_host) {
-            return true;
-        }
-
-        self.restricted_workspaces.insert(remote_host.clone());
-        cx.emit(TrustedWorktreesEvent::Restricted(
-            remote_host.clone(),
-            HashSet::from_iter([PathTrust::Workspace]),
-        ));
-
-        if remote_host == self.remote_host {
-            if let Some((downstream_client, downstream_project_id)) = &self.downstream_client {
-                downstream_client
-                    .send(proto::RestrictWorktrees {
-                        project_id: *downstream_project_id,
-                        restrict_workspace: true,
-                        worktree_ids: Vec::new(),
-                    })
-                    .ok();
-            }
-            if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
-                upstream_client
-                    .send(proto::RestrictWorktrees {
-                        project_id: *upstream_project_id,
-                        restrict_workspace: true,
-                        worktree_ids: Vec::new(),
-                    })
-                    .ok();
-            }
-        }
-        false
-    }
-
-    /// Lists all explicitly restricted worktrees (via [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_workspace`] method calls) for a particular worktree store on a particular host.
+    /// Lists all explicitly restricted worktrees (via [`TrustedWorktreesStore::can_trust`] method calls) for a particular worktree store on a particular host.
     pub fn restricted_worktrees(
         &self,
         worktree_store: &WorktreeStore,
-        remote_host: Option<RemoteHostLocation>,
         cx: &App,
-    ) -> HashSet<Option<(WorktreeId, Arc<Path>)>> {
+    ) -> HashSet<(WorktreeId, Arc<Path>)> {
         let mut single_file_paths = HashSet::default();
         let other_paths = self
             .restricted
@@ -649,19 +496,16 @@ impl TrustedWorktreesStore {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
                 if worktree.is_single_file() {
-                    single_file_paths.insert(Some((restricted_worktree_id, abs_path)));
+                    single_file_paths.insert((restricted_worktree_id, abs_path));
                     None
                 } else {
                     Some((restricted_worktree_id, abs_path))
                 }
             })
-            .map(Some)
             .collect::<HashSet<_>>();
 
         if !other_paths.is_empty() {
             return other_paths;
-        } else if self.restricted_workspaces.contains(&remote_host) {
-            return HashSet::from_iter([None]);
         } else {
             single_file_paths
         }
@@ -670,7 +514,7 @@ impl TrustedWorktreesStore {
     /// Switches the "trust nothing" mode to "automatically trust everything".
     /// This does not influence already persisted data, but stops adding new worktrees there.
     pub fn auto_trust_all(&mut self, cx: &mut Context<Self>) {
-        for (remote_host, mut worktrees) in std::mem::take(&mut self.restricted)
+        for (remote_host, worktrees) in std::mem::take(&mut self.restricted)
             .into_iter()
             .flat_map(|restricted_worktree| {
                 let (_, _, host) = self.find_worktree_data(restricted_worktree, cx)?;
@@ -683,14 +527,7 @@ impl TrustedWorktreesStore {
                 acc
             })
         {
-            if self.restricted_workspaces.remove(&remote_host) {
-                worktrees.insert(PathTrust::Workspace);
-            }
             self.trust(worktrees, remote_host, cx);
-        }
-
-        for remote_host in std::mem::take(&mut self.restricted_workspaces) {
-            self.trust(HashSet::from_iter([PathTrust::Workspace]), remote_host, cx);
         }
     }
 
@@ -698,11 +535,7 @@ impl TrustedWorktreesStore {
     pub fn trusted_paths_for_serialization(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> (
-        HashSet<Option<RemoteHostLocation>>,
-        HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
-    ) {
-        let mut new_trusted_workspaces = HashSet::default();
+    ) -> HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> {
         let new_trusted_worktrees = self
             .trusted_paths
             .clone()
@@ -715,16 +548,12 @@ impl TrustedWorktreesStore {
                             .find_worktree_data(worktree_id, cx)
                             .map(|(abs_path, ..)| abs_path.to_path_buf()),
                         PathTrust::AbsPath(abs_path) => Some(abs_path),
-                        PathTrust::Workspace => {
-                            new_trusted_workspaces.insert(host.clone());
-                            None
-                        }
                     })
                     .collect();
                 (host, abs_paths)
             })
             .collect();
-        (new_trusted_workspaces, new_trusted_worktrees)
+        new_trusted_worktrees
     }
 
     fn find_worktree_data(
@@ -888,15 +717,9 @@ mod tests {
         assert!(has_restricted, "should have restricted worktrees");
 
         let restricted = worktree_store.read_with(cx, |ws, cx| {
-            trusted_worktrees
-                .read(cx)
-                .restricted_worktrees(ws, None, cx)
+            trusted_worktrees.read(cx).restricted_worktrees(ws, cx)
         });
-        assert!(
-            restricted
-                .iter()
-                .any(|r| r.as_ref().map(|(id, _)| *id) == Some(worktree_id))
-        );
+        assert!(restricted.iter().any(|(id, _)| *id == worktree_id));
 
         events.borrow_mut().clear();
 
@@ -941,99 +764,11 @@ mod tests {
         );
 
         let restricted_after = worktree_store.read_with(cx, |ws, cx| {
-            trusted_worktrees
-                .read(cx)
-                .restricted_worktrees(ws, None, cx)
+            trusted_worktrees.read(cx).restricted_worktrees(ws, cx)
         });
         assert!(
             restricted_after.is_empty(),
             "restricted set should be empty"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_workspace_trust_no_worktrees(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({})).await;
-
-        let project = Project::test(fs, Vec::<&Path>::new(), cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
-        cx.update({
-            let events = events.clone();
-            |cx| {
-                cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                    events.borrow_mut().push(match event {
-                        TrustedWorktreesEvent::Trusted(host, paths) => {
-                            TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                        }
-                        TrustedWorktreesEvent::Restricted(host, paths) => {
-                            TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                        }
-                    });
-                })
-            }
-        })
-        .detach();
-
-        let can_trust_workspace =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            !can_trust_workspace,
-            "workspace should be restricted by default"
-        );
-
-        {
-            let events = events.borrow();
-            assert_eq!(events.len(), 1);
-            match &events[0] {
-                TrustedWorktreesEvent::Restricted(host, paths) => {
-                    assert!(host.is_none());
-                    assert!(paths.contains(&PathTrust::Workspace));
-                }
-                _ => panic!("expected Restricted event"),
-            }
-        }
-
-        events.borrow_mut().clear();
-
-        let can_trust_workspace_again =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            !can_trust_workspace_again,
-            "workspace should still be restricted"
-        );
-        assert!(
-            events.borrow().is_empty(),
-            "no duplicate Restricted event on repeated can_trust_workspace"
-        );
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(HashSet::from_iter([PathTrust::Workspace]), None, cx);
-        });
-
-        {
-            let events = events.borrow();
-            assert_eq!(events.len(), 1);
-            match &events[0] {
-                TrustedWorktreesEvent::Trusted(host, paths) => {
-                    assert!(host.is_none());
-                    assert!(paths.contains(&PathTrust::Workspace));
-                }
-                _ => panic!("expected Trusted event"),
-            }
-        }
-
-        let can_trust_workspace_after =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            can_trust_workspace_after,
-            "workspace should be trusted after trust()"
         );
     }
 
@@ -1119,58 +854,6 @@ mod tests {
         assert!(
             can_trust_after,
             "single-file worktree should be trusted after trust()"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_workspace_trust_unlocks_single_file_worktree(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "foo.rs": "fn foo() {}" }))
-            .await;
-
-        let project = Project::test(fs, [path!("/root/foo.rs").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-        let worktree_id = worktree_store.read_with(cx, |store, cx| {
-            let worktree = store.worktrees().next().unwrap();
-            let worktree = worktree.read(cx);
-            assert!(worktree.is_single_file(), "expected single-file worktree");
-            worktree.id()
-        });
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        let can_trust_workspace =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            !can_trust_workspace,
-            "workspace should be restricted by default"
-        );
-
-        let can_trust_file =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
-        assert!(
-            !can_trust_file,
-            "single-file worktree should be restricted by default"
-        );
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(HashSet::from_iter([PathTrust::Workspace]), None, cx);
-        });
-
-        let can_trust_workspace_after =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            can_trust_workspace_after,
-            "workspace should be trusted after trust(Workspace)"
-        );
-
-        let can_trust_file_after =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
-        assert!(
-            can_trust_file_after,
-            "single-file worktree should be trusted after workspace trust"
         );
     }
 
@@ -1320,47 +1003,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_directory_worktree_trust_enables_workspace(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
-            .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-        let worktree_id = worktree_store.read_with(cx, |store, cx| {
-            let worktree = store.worktrees().next().unwrap();
-            assert!(!worktree.read(cx).is_single_file());
-            worktree.read(cx).id()
-        });
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        let can_trust_workspace =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            !can_trust_workspace,
-            "workspace should be restricted initially"
-        );
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(
-                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-                None,
-                cx,
-            );
-        });
-
-        let can_trust_workspace_after =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            can_trust_workspace_after,
-            "workspace should be trusted after trusting directory worktree"
-        );
-    }
-
-    #[gpui::test]
     async fn test_directory_worktree_trust_enables_single_file(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1428,7 +1070,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            path!("/workspace"),
+            path!("/root"),
             json!({
                 "project_a": { "main.rs": "fn main() {}" },
                 "project_b": { "lib.rs": "pub fn lib() {}" }
@@ -1439,8 +1081,8 @@ mod tests {
         let project = Project::test(
             fs,
             [
-                path!("/workspace/project_a").as_ref(),
-                path!("/workspace/project_b").as_ref(),
+                path!("/root/project_a").as_ref(),
+                path!("/root/project_b").as_ref(),
             ],
             cx,
         )
@@ -1464,7 +1106,7 @@ mod tests {
 
         trusted_worktrees.update(cx, |store, cx| {
             store.trust(
-                HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/workspace")))]),
+                HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/root")))]),
                 None,
                 cx,
             );
@@ -1539,12 +1181,6 @@ mod tests {
                 trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
             assert!(!can_trust, "worktree should be restricted initially");
         }
-        let can_trust_workspace =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            !can_trust_workspace,
-            "workspace should be restricted initially"
-        );
 
         let has_restricted = trusted_worktrees.read_with(cx, |store, cx| {
             store.has_restricted_worktrees(&worktree_store, cx)
@@ -1566,13 +1202,6 @@ mod tests {
             );
         }
 
-        let can_trust_workspace =
-            trusted_worktrees.update(cx, |store, cx| store.can_trust_workspace(None, cx));
-        assert!(
-            can_trust_workspace,
-            "workspace should be trusted after auto_trust_all"
-        );
-
         let has_restricted_after = trusted_worktrees.read_with(cx, |store, cx| {
             store.has_restricted_worktrees(&worktree_store, cx)
         });
@@ -1590,100 +1219,6 @@ mod tests {
             trusted_event_count > 0,
             "should have emitted Trusted events"
         );
-    }
-
-    #[gpui::test]
-    async fn test_wait_for_global_trust_already_trusted(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
-            .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(HashSet::from_iter([PathTrust::Workspace]), None, cx);
-        });
-
-        let task = cx.update(|cx| wait_for_workspace_trust(None::<RemoteHostLocation>, "test", cx));
-        assert!(task.is_none(), "should return None when already trusted");
-    }
-
-    #[gpui::test]
-    async fn test_wait_for_workspace_trust_resolves_on_trust(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
-            .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        let task = cx.update(|cx| wait_for_workspace_trust(None::<RemoteHostLocation>, "test", cx));
-        assert!(
-            task.is_some(),
-            "should return Some(Task) when not yet trusted"
-        );
-
-        let task = task.unwrap();
-
-        cx.executor().run_until_parked();
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(HashSet::from_iter([PathTrust::Workspace]), None, cx);
-        });
-
-        cx.executor().run_until_parked();
-        task.await;
-    }
-
-    #[gpui::test]
-    async fn test_wait_for_default_workspace_trust_resolves_on_directory_worktree_trust(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
-            .await;
-
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
-        let worktree_id = worktree_store.read_with(cx, |store, cx| {
-            let worktree = store.worktrees().next().unwrap();
-            assert!(!worktree.read(cx).is_single_file());
-            worktree.read(cx).id()
-        });
-
-        let trusted_worktrees = init_trust_global(worktree_store, cx);
-
-        let task = cx.update(|cx| wait_for_default_workspace_trust("test", cx));
-        assert!(
-            task.is_some(),
-            "should return Some(Task) when not yet trusted"
-        );
-
-        let task = task.unwrap();
-
-        cx.executor().run_until_parked();
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(
-                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-                None,
-                cx,
-            );
-        });
-
-        cx.executor().run_until_parked();
-        task.await;
     }
 
     #[gpui::test]
@@ -1820,35 +1355,10 @@ mod tests {
         let trusted_worktrees = init_trust_global(worktree_store, cx);
 
         let host_a: Option<RemoteHostLocation> = None;
-        let host_b = Some(RemoteHostLocation {
-            user_name: Some("user".into()),
-            host_identifier: "remote-host".into(),
-        });
 
         let can_trust_local =
             trusted_worktrees.update(cx, |store, cx| store.can_trust(local_worktree, cx));
         assert!(!can_trust_local, "local worktree restricted on host_a");
-
-        trusted_worktrees.update(cx, |store, cx| {
-            store.trust(
-                HashSet::from_iter([PathTrust::Workspace]),
-                host_b.clone(),
-                cx,
-            );
-        });
-
-        let can_trust_workspace_a = trusted_worktrees.update(cx, |store, cx| {
-            store.can_trust_workspace(host_a.clone(), cx)
-        });
-        assert!(
-            !can_trust_workspace_a,
-            "host_a workspace should still be restricted"
-        );
-
-        let can_trust_workspace_b = trusted_worktrees.update(cx, |store, cx| {
-            store.can_trust_workspace(host_b.clone(), cx)
-        });
-        assert!(can_trust_workspace_b, "host_b workspace should be trusted");
 
         trusted_worktrees.update(cx, |store, cx| {
             store.trust(
@@ -1863,14 +1373,6 @@ mod tests {
         assert!(
             can_trust_local_after,
             "local worktree should be trusted on host_a"
-        );
-
-        let can_trust_workspace_a_after = trusted_worktrees.update(cx, |store, cx| {
-            store.can_trust_workspace(host_a.clone(), cx)
-        });
-        assert!(
-            can_trust_workspace_a_after,
-            "host_a workspace should be trusted after directory trust"
         );
     }
 }

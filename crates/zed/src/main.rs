@@ -36,7 +36,6 @@ use std::{
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
-    pin::Pin,
     process,
     sync::{Arc, OnceLock},
     time::Instant,
@@ -484,14 +483,7 @@ pub fn main() {
         })
         .detach();
 
-        let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
-            .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
-        let node_runtime = NodeRuntime::new(
-            client.http_client(),
-            Some(shell_env_loaded_rx),
-            rx,
-            trust_task,
-        );
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
