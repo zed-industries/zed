@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use futures::{FutureExt, Stream, StreamExt as _, future::BoxFuture, lock::Mutex};
 use gpui::BackgroundExecutor;
-use std::{pin::Pin, sync::Arc};
+use std::{any::Any, pin::Pin, sync::Arc};
 
 use crate::{
     transport::Transport,
@@ -126,5 +126,9 @@ impl Transport for FakeTransport {
 
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         Box::pin(futures::stream::empty())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

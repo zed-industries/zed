@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
+use context_server::errors::ContextServerError;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
@@ -30,12 +31,12 @@ actions!(
     ]
 );
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ContextServerStatus {
     Starting,
     Running,
     Stopped,
-    Error(Arc<str>),
+    Error(ContextServerError),
 }
 
 impl ContextServerStatus {
@@ -66,7 +67,7 @@ enum ContextServerState {
     Error {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-        error: Arc<str>,
+        error: ContextServerError,
     },
 }
 
@@ -102,6 +103,7 @@ pub enum ContextServerConfiguration {
     Http {
         url: url::Url,
         headers: HashMap<String, String>,
+        allow_auto_reauthentication: bool,
     },
 }
 
@@ -151,9 +153,14 @@ impl ContextServerConfiguration {
                 enabled: _,
                 url,
                 headers: auth,
+                allow_auto_reauthentication,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Http { url, headers: auth })
+                Some(ContextServerConfiguration::Http {
+                    url,
+                    headers: auth,
+                    allow_auto_reauthentication,
+                })
             }
         }
     }
@@ -206,6 +213,16 @@ impl ContextServerStore {
             .filter(|(_, settings)| settings.enabled())
             .map(|(id, _)| ContextServerId(id.clone()))
             .collect()
+    }
+
+    /// Returns the settings for a specific context server
+    pub fn settings_for_server(&self, id: &ContextServerId) -> Option<&ContextServerSettings> {
+        self.context_server_settings.get(&id.0)
+    }
+
+    /// Returns the server instance for authentication
+    pub fn server(&self, id: &ContextServerId) -> Option<Arc<ContextServer>> {
+        self.servers.get(id).map(|state| state.server())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -441,7 +458,7 @@ impl ContextServerStore {
                                 ContextServerState::Error {
                                     configuration,
                                     server,
-                                    error: err.to_string().into(),
+                                    error: ContextServerError::from(&err),
                                 },
                                 cx,
                             )
@@ -487,10 +504,15 @@ impl ContextServerStore {
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
+            ContextServerConfiguration::Http {
+                url,
+                headers,
+                allow_auto_reauthentication,
+            } => Ok(Arc::new(ContextServer::http(
                 id,
                 url,
                 headers.clone(),
+                *allow_auto_reauthentication,
                 cx.http_client(),
                 cx.background_executor().clone(),
             )?)),
@@ -1257,6 +1279,7 @@ mod tests {
                     enabled: true,
                     url: server_url.to_string(),
                     headers: Default::default(),
+                    allow_auto_reauthentication: false,
                 },
             )],
         )

@@ -8,7 +8,9 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use collections::HashMap;
+use credentials_provider::CredentialsProvider;
 use futures::FutureExt;
+use gpui::AsyncApp;
 use http_client::{AsyncBody, HttpClient, Request, Response, http};
 use parking_lot::Mutex;
 use rand::{RngCore, rng};
@@ -115,6 +117,84 @@ impl OAuthManager {
         }
     }
 
+    /// Load tokens from keychain asynchronously. Call this when you have access to AsyncApp.
+    pub async fn load_from_keychain(
+        &self,
+        credentials_provider: &dyn CredentialsProvider,
+        cx: &AsyncApp,
+    ) -> Result<bool> {
+        if let Some(tokens) = load_oauth_tokens_from_keychain(
+            &self.server_name,
+            self.server_url.as_str(),
+            credentials_provider,
+            cx,
+        )
+        .await?
+        {
+            *self.tokens.lock() = Some(tokens);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Save current tokens to keychain asynchronously.
+    pub async fn save_to_keychain(
+        &self,
+        credentials_provider: &dyn CredentialsProvider,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let tokens = self.tokens.lock().clone();
+        if let Some(tokens) = tokens {
+            save_oauth_tokens_to_keychain(&self.server_name, &tokens, credentials_provider, cx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Manually trigger OAuth authentication. This opens the browser for user to authenticate.
+    /// Call this when user explicitly clicks an "Authenticate" button.
+    pub async fn authenticate(&self) -> Result<()> {
+        self.login(&[]).await
+    }
+
+    /// Check if authentication is needed (no valid tokens available)
+    pub fn needs_authentication(&self) -> bool {
+        let tokens = self.tokens.lock();
+        match tokens.as_ref() {
+            None => true,
+            Some(tokens) => {
+                if let Some(expires_at) = tokens.expires_at {
+                    let now_ms = current_time_millis();
+                    expires_at <= now_ms
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Check if the user is currently authenticated (has valid tokens)
+    pub fn is_authenticated(&self) -> bool {
+        !self.needs_authentication()
+    }
+
+    /// Clear tokens (logout). Returns the URL that was used for the tokens.
+    pub fn logout(&self) -> Option<String> {
+        let tokens = self.tokens.lock().take();
+        if let Some(tokens) = &tokens {
+            if let Err(e) = delete_oauth_tokens(&self.server_name, &tokens.url) {
+                log::warn!(
+                    "Failed to delete OAuth tokens from file for '{}': {}",
+                    self.server_name,
+                    e
+                );
+            }
+            log::info!("Logged out from '{}'", self.server_name);
+        }
+        tokens.map(|t| t.url)
+    }
+
     /// Returns a bearer token if available, refreshing it when needed.
     pub async fn access_token(&self) -> Result<Option<String>> {
         let needs_refresh = {
@@ -162,6 +242,23 @@ impl OAuthManager {
         }
 
         Ok(token)
+    }
+
+    /// Returns true if a refresh token is available.
+    pub fn can_refresh(&self) -> bool {
+        self.tokens
+            .lock()
+            .as_ref()
+            .and_then(|tokens| tokens.refresh_token.as_ref())
+            .is_some()
+    }
+
+    /// Attempt to refresh the access token without performing an interactive login flow.
+    ///
+    /// Returns `Ok(true)` if a refresh was performed and succeeded, `Ok(false)` if no refresh token
+    /// is available, and `Err` if the refresh attempt failed.
+    pub async fn refresh_access_token(&self) -> Result<bool> {
+        Ok(self.refresh_tokens().await?.is_some())
     }
 
     /// Performs the OAuth login flow and persists tokens.
@@ -373,8 +470,19 @@ impl OAuthManager {
         stored.refresh_token = token.refresh_token.clone().or(stored.refresh_token.clone());
         stored.expires_at = expires_at;
 
-        save_oauth_tokens(&self.server_name, stored)?;
+        if let Err(err) = save_oauth_tokens(&self.server_name, stored) {
+            log::warn!(
+                "Failed to persist refreshed OAuth tokens for '{}': {}",
+                self.server_name,
+                err
+            );
+        }
         Ok(Some(token.access_token))
+    }
+
+    #[cfg(test)]
+    pub fn set_tokens_for_test(&self, tokens: StoredOAuthTokens) {
+        *self.tokens.lock() = Some(tokens);
     }
 
     async fn discover_metadata(&self) -> Result<Option<AuthorizationMetadata>> {
@@ -767,6 +875,118 @@ pub fn delete_oauth_tokens(server_name: &str, url: &str) -> Result<bool> {
         write_fallback_file(&store)?;
     }
     Ok(removed)
+}
+
+fn keychain_url_for_mcp_oauth(server_name: &str, server_url: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(server_url.as_bytes());
+    let digest = hasher.finalize();
+    let hex = format!("{digest:x}");
+    let truncated = &hex[..16];
+    format!("mcp-oauth://{server_name}/{truncated}")
+}
+
+pub async fn load_oauth_tokens_from_keychain(
+    server_name: &str,
+    url: &str,
+    credentials_provider: &dyn CredentialsProvider,
+    cx: &AsyncApp,
+) -> Result<Option<StoredOAuthTokens>> {
+    let keychain_url = keychain_url_for_mcp_oauth(server_name, url);
+
+    match credentials_provider
+        .read_credentials(&keychain_url, cx)
+        .await
+    {
+        Ok(Some((_username, password_bytes))) => {
+            match serde_json::from_slice::<StoredOAuthTokens>(&password_bytes) {
+                Ok(tokens) => {
+                    log::debug!("Loaded OAuth tokens from keychain for '{}'", server_name);
+                    Ok(Some(tokens))
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to deserialize OAuth tokens from keychain for '{}': {}",
+                        server_name,
+                        e
+                    );
+                    Ok(load_oauth_tokens(server_name, url)?.inspect(|_| {
+                        log::debug!("Falling back to file-based tokens for '{}'", server_name);
+                    }))
+                }
+            }
+        }
+        Ok(None) => {
+            log::debug!(
+                "No OAuth tokens in keychain for '{}', checking file fallback",
+                server_name
+            );
+            Ok(load_oauth_tokens(server_name, url)?)
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to read OAuth tokens from keychain for '{}': {}",
+                server_name,
+                e
+            );
+            Ok(load_oauth_tokens(server_name, url)?)
+        }
+    }
+}
+
+pub async fn save_oauth_tokens_to_keychain(
+    server_name: &str,
+    tokens: &StoredOAuthTokens,
+    credentials_provider: &dyn CredentialsProvider,
+    cx: &AsyncApp,
+) -> Result<()> {
+    let keychain_url = keychain_url_for_mcp_oauth(server_name, &tokens.url);
+    let serialized = serde_json::to_vec(tokens)?;
+
+    credentials_provider
+        .write_credentials(&keychain_url, server_name, &serialized, cx)
+        .await
+        .context("Failed to save OAuth tokens to keychain")?;
+
+    log::debug!("Saved OAuth tokens to keychain for '{}'", server_name);
+
+    if let Err(e) = delete_oauth_tokens(server_name, &tokens.url) {
+        log::debug!(
+            "Could not remove legacy file-based tokens for '{}': {}",
+            server_name,
+            e
+        );
+    }
+
+    Ok(())
+}
+
+pub async fn delete_oauth_tokens_from_keychain(
+    server_name: &str,
+    url: &str,
+    credentials_provider: &dyn CredentialsProvider,
+    cx: &AsyncApp,
+) -> Result<bool> {
+    let keychain_url = keychain_url_for_mcp_oauth(server_name, url);
+
+    match credentials_provider
+        .delete_credentials(&keychain_url, cx)
+        .await
+    {
+        Ok(()) => {
+            log::debug!("Deleted OAuth tokens from keychain for '{}'", server_name);
+            let _ = delete_oauth_tokens(server_name, url);
+            Ok(true)
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to delete OAuth tokens from keychain for '{}': {}",
+                server_name,
+                e
+            );
+            delete_oauth_tokens(server_name, url)
+        }
+    }
 }
 
 async fn parse_json_body<T: serde::de::DeserializeOwned>(

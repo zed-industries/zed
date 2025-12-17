@@ -1,4 +1,5 @@
 pub mod client;
+pub mod errors;
 pub mod listener;
 pub mod oauth;
 pub mod protocol;
@@ -62,6 +63,7 @@ impl ContextServer {
         id: ContextServerId,
         endpoint: &Url,
         headers: HashMap<String, String>,
+        allow_auto_reauthentication: bool,
         http_client: Arc<dyn HttpClient>,
         executor: gpui::BackgroundExecutor,
     ) -> Result<Self> {
@@ -73,6 +75,7 @@ impl ContextServer {
                     http_client,
                     endpoint.clone(),
                     headers,
+                    allow_auto_reauthentication,
                     executor,
                 );
                 Arc::new(transport) as _
@@ -96,6 +99,65 @@ impl ContextServer {
 
     pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
         self.client.read().clone()
+    }
+
+    /// Manually trigger authentication for HTTP servers
+    pub async fn authenticate(&self) -> Result<bool> {
+        match &self.configuration {
+            ContextServerTransport::Custom(transport) => {
+                if let Some(http_transport) = transport.as_any().downcast_ref::<HttpTransport>() {
+                    http_transport.authenticate().await
+                } else {
+                    Ok(true) // Non-HTTP transports don't need auth
+                }
+            }
+            ContextServerTransport::Stdio(_, _) => Ok(true), // Stdio doesn't need auth
+        }
+    }
+
+    /// Check if this server needs authentication
+    pub fn needs_authentication(&self) -> bool {
+        match &self.configuration {
+            ContextServerTransport::Custom(transport) => {
+                if let Some(http_transport) = transport.as_any().downcast_ref::<HttpTransport>() {
+                    http_transport.needs_authentication()
+                } else {
+                    false
+                }
+            }
+            ContextServerTransport::Stdio(_, _) => false,
+        }
+    }
+
+    /// Check if this server is authenticated
+    pub fn is_authenticated(&self) -> bool {
+        match &self.configuration {
+            ContextServerTransport::Custom(transport) => {
+                if let Some(http_transport) = transport.as_any().downcast_ref::<HttpTransport>() {
+                    http_transport.is_authenticated()
+                } else {
+                    true // Non-HTTP transports are considered authenticated
+                }
+            }
+            ContextServerTransport::Stdio(_, _) => true,
+        }
+    }
+
+    /// Logout - clear tokens
+    pub fn logout(&self) {
+        if let ContextServerTransport::Custom(transport) = &self.configuration {
+            if let Some(http_transport) = transport.as_any().downcast_ref::<HttpTransport>() {
+                http_transport.logout();
+            }
+        }
+    }
+
+    /// Returns the current transport error if any
+    pub fn transport_error(&self) -> Option<crate::errors::ContextServerError> {
+        self.client
+            .read()
+            .as_ref()
+            .and_then(|client| client.transport_error())
     }
 
     pub async fn start(&self, cx: &AsyncApp) -> Result<()> {

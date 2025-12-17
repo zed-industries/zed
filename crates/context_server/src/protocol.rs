@@ -27,6 +27,7 @@ impl ModelContextProtocol {
     fn supported_protocols() -> Vec<types::ProtocolVersion> {
         vec![
             types::ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
+            types::ProtocolVersion(types::VERSION_2025_03_26.to_string()),
             types::ProtocolVersion(types::VERSION_2024_11_05.to_string()),
         ]
     }
@@ -121,5 +122,10 @@ impl InitializedContextServerProtocol {
         f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
     ) -> NotificationSubscription {
         self.inner.on_notification(method, f)
+    }
+
+    /// Returns the current transport error if any
+    pub fn transport_error(&self) -> Option<crate::errors::ContextServerError> {
+        self.inner.transport_error()
     }
 }

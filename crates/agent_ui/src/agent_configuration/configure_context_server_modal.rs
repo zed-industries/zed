@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use context_server::{ContextServerCommand, ContextServerId};
+use context_server::{ContextServerCommand, ContextServerId, errors::ContextServerError};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
@@ -172,6 +172,7 @@ impl ConfigurationSource {
                                 enabled: true,
                                 url,
                                 headers: auth,
+                                allow_auto_reauthentication: false,
                             },
                         )
                     })
@@ -340,6 +341,7 @@ enum State {
     Idle,
     Waiting,
     Error(SharedString),
+    NeedsAuthentication(ContextServerId),
 }
 
 pub struct ConfigureContextServerModal {
@@ -411,6 +413,7 @@ impl ConfigureContextServerModal {
                     enabled: _,
                     url,
                     headers,
+                    allow_auto_reauthentication: _,
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
@@ -474,9 +477,63 @@ impl ConfigureContextServerModal {
         })
     }
 
-    fn set_error(&mut self, err: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.state = State::Error(err.into());
+    fn set_error(&mut self, err: ContextServerError, cx: &mut Context<Self>) {
+        if err.is_auth_required() {
+            if let Ok((id, _)) = self.source.output(cx) {
+                self.state = State::NeedsAuthentication(id);
+            } else {
+                self.state = State::Error(err.to_string().into());
+            }
+        } else {
+            self.state = State::Error(err.to_string().into());
+        }
         cx.notify();
+    }
+
+    fn authenticate(&mut self, cx: &mut Context<Self>) {
+        let State::NeedsAuthentication(id) = &self.state else {
+            return;
+        };
+        let id = id.clone();
+
+        self.state = State::Waiting;
+        cx.notify();
+
+        let server = self.context_server_store.read(cx).server(&id);
+        let context_server_store = self.context_server_store.clone();
+        cx.spawn({
+            async move |this, cx| {
+                if let Some(server) = server {
+                    match server.authenticate().await {
+                        Ok(_) => {
+                            // Restart the server to establish connection with new tokens
+                            cx.update(|cx| {
+                                context_server_store.update(cx, |store, cx| {
+                                    store.start_server(server, cx);
+                                });
+                            })
+                            .ok();
+
+                            this.update(cx, |this, cx| {
+                                this.state = State::Idle;
+                                this.show_configured_context_server_toast(id, cx);
+                                cx.emit(DismissEvent);
+                            })
+                            .ok();
+                        }
+                        Err(err) => {
+                            this.update(cx, |this, cx| {
+                                this.state =
+                                    State::Error(format!("Authentication failed: {}", err).into());
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
@@ -488,7 +545,7 @@ impl ConfigureContextServerModal {
         let (id, settings) = match self.source.output(cx) {
             Ok(val) => val,
             Err(error) => {
-                self.set_error(error.to_string(), cx);
+                self.set_error(ContextServerError::Other(error.to_string().into()), cx);
                 return;
             }
         };
@@ -760,26 +817,37 @@ impl ConfigureContextServerModal {
                             cx.listener(|this, _event, _window, cx| this.cancel(&menu::Cancel, cx)),
                         ),
                     )
-                    .children(self.source.has_configuration_options().then(|| {
-                        Button::new(
-                            "add-server",
-                            if self.source.is_new() {
-                                "Add Server"
-                            } else {
-                                "Configure Server"
-                            },
-                        )
-                        .disabled(is_connecting)
-                        .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(
-                            cx.listener(|this, _event, _window, cx| {
-                                this.confirm(&menu::Confirm, cx)
-                            }),
-                        )
-                    })),
+                    .children(
+                        matches!(self.state, State::NeedsAuthentication(_)).then(|| {
+                            Button::new("authenticate", "Authenticate")
+                                .disabled(is_connecting)
+                                .on_click(
+                                    cx.listener(|this, _event, _window, cx| this.authenticate(cx)),
+                                )
+                        }),
+                    )
+                    .children(
+                        (self.source.has_configuration_options()
+                            && !matches!(self.state, State::NeedsAuthentication(_)))
+                        .then(|| {
+                            Button::new(
+                                "add-server",
+                                if self.source.is_new() {
+                                    "Add Server"
+                                } else {
+                                    "Configure Server"
+                                },
+                            )
+                            .disabled(is_connecting)
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(
+                                |this, _event, _window, cx| this.confirm(&menu::Confirm, cx),
+                            ))
+                        }),
+                    ),
             )
     }
 
@@ -856,6 +924,9 @@ impl Render for ConfigureContextServerModal {
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())
                                             }
+                                            State::NeedsAuthentication(_) => {
+                                                Self::render_modal_error("Authentication required. Click 'Authenticate' to sign in.".into())
+                                            }
                                         }),
                                 )
                                 .vertical_scrollbar_for(&self.scroll_handle, window, cx),
@@ -870,7 +941,7 @@ fn wait_for_context_server(
     context_server_store: &Entity<ContextServerStore>,
     context_server_id: ContextServerId,
     cx: &mut App,
-) -> Task<Result<(), Arc<str>>> {
+) -> Task<Result<(), ContextServerError>> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
@@ -888,7 +959,9 @@ fn wait_for_context_server(
                     if server_id == &context_server_id
                         && let Some(tx) = tx.lock().unwrap().take()
                     {
-                        let _ = tx.send(Err("Context server stopped running".into()));
+                        let _ = tx.send(Err(ContextServerError::Connection(
+                            "Context server stopped running".into(),
+                        )));
                     }
                 }
                 ContextServerStatus::Error(error) => {
@@ -904,9 +977,9 @@ fn wait_for_context_server(
     });
 
     cx.spawn(async move |_cx| {
-        let result = rx
-            .await
-            .map_err(|_| Arc::from("Context server store was dropped"))?;
+        let result = rx.await.map_err(|_| {
+            ContextServerError::Connection("Context server store was dropped".into())
+        })?;
         drop(subscription);
         result
     })

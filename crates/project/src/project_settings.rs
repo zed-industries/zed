@@ -141,6 +141,10 @@ pub enum ContextServerSettings {
         /// Optional authentication configuration for the remote server.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
+        /// Whether to allow automatic reauthentication when tokens expire.
+        /// If false (default), user must explicitly trigger reauthentication.
+        #[serde(default)]
+        allow_auto_reauthentication: bool,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -167,10 +171,12 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                allow_auto_reauthentication,
             } => ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
+                allow_auto_reauthentication,
             },
         }
     }
@@ -188,10 +194,12 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
                 enabled,
                 url,
                 headers,
+                allow_auto_reauthentication,
             } => settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
+                allow_auto_reauthentication,
             },
         }
     }
@@ -219,6 +227,30 @@ impl ContextServerSettings {
             ContextServerSettings::Http { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
         }
+    }
+
+    pub fn allow_auto_reauthentication(&self) -> bool {
+        match self {
+            ContextServerSettings::Http {
+                allow_auto_reauthentication,
+                ..
+            } => *allow_auto_reauthentication,
+            _ => false,
+        }
+    }
+
+    pub fn set_allow_auto_reauthentication(&mut self, allow: bool) {
+        if let ContextServerSettings::Http {
+            allow_auto_reauthentication,
+            ..
+        } = self
+        {
+            *allow_auto_reauthentication = allow;
+        }
+    }
+
+    pub fn is_http(&self) -> bool {
+        matches!(self, ContextServerSettings::Http { .. })
     }
 }
 

@@ -3625,6 +3625,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "collections",
+ "credentials_provider",
  "futures 0.3.31",
  "gpui",
  "http_client",

@@ -649,7 +649,21 @@ impl AgentConfiguration {
             .read(cx)
             .configuration_for_server(&context_server_id);
 
-        let is_running = matches!(server_status, ContextServerStatus::Running);
+        let has_auth_error = {
+            // Check if server status error indicates auth is needed
+            if let ContextServerStatus::Error(err) = &server_status {
+                err.is_auth_required()
+            } else {
+                // Check transport error
+                self.context_server_store
+                    .read(cx)
+                    .server(&context_server_id)
+                    .and_then(|s| s.transport_error())
+                    .map(|err| err.is_auth_required())
+                    .unwrap_or(false)
+            }
+        };
+        let is_running = matches!(server_status, ContextServerStatus::Running) && !has_auth_error;
         let item_id = SharedString::from(context_server_id.0.clone());
         // Servers without a configuration can only be provided by extensions.
         let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
@@ -659,11 +673,20 @@ impl AgentConfiguration {
             )
         });
 
-        let error = if let ContextServerStatus::Error(error) = server_status.clone() {
-            Some(error)
-        } else {
-            None
-        };
+        let transport_error = self
+            .context_server_store
+            .read(cx)
+            .server(&context_server_id)
+            .and_then(|s| s.transport_error());
+
+        let error: Option<SharedString> =
+            if let ContextServerStatus::Error(error) = server_status.clone() {
+                Some(error.to_string().into())
+            } else if let Some(transport_err) = transport_error {
+                Some(transport_err.to_string().into())
+            } else {
+                None
+            };
 
         let tool_count = self
             .context_server_registry
@@ -712,6 +735,35 @@ impl AgentConfiguration {
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
+        let server_settings = self
+            .context_server_store
+            .read(cx)
+            .settings_for_server(&context_server_id)
+            .cloned();
+        let allow_auto_reauth = server_settings
+            .as_ref()
+            .map(|s| s.allow_auto_reauthentication())
+            .unwrap_or(false);
+        let needs_authentication = {
+            // Check if server status error indicates auth is needed
+            if let ContextServerStatus::Error(err) = &server_status {
+                err.is_auth_required()
+            } else {
+                self.context_server_store
+                    .read(cx)
+                    .server(&context_server_id)
+                    .map(|s| {
+                        // Check if transport error indicates auth is needed
+                        if let Some(err) = s.transport_error() {
+                            if err.is_auth_required() {
+                                return true;
+                            }
+                        }
+                        s.needs_authentication()
+                    })
+                    .unwrap_or(true)
+            }
+        };
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
@@ -726,6 +778,7 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let workspace = self.workspace.clone();
                 let context_server_registry = self.context_server_registry.clone();
+                let context_server_store = self.context_server_store.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -772,6 +825,132 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .when(is_remote, |menu| {
+                            menu.separator()
+                                .when(needs_authentication, |menu| {
+                                    menu.entry("Authenticate", None, {
+                                        let fs = fs.clone();
+                                        let context_server_id = context_server_id.clone();
+                                        let context_server_store = context_server_store.clone();
+                                        move |_, cx| {
+                                            let fs = fs.clone();
+                                            let context_server_id = context_server_id.clone();
+                                            let context_server_store = context_server_store.clone();
+                                            cx.spawn(async move |cx| {
+                                                let server = cx
+                                                    .update(|cx| {
+                                                        context_server_store
+                                                            .read(cx)
+                                                            .server(&context_server_id)
+                                                    })
+                                                    .ok()
+                                                    .flatten();
+
+                                                if let Some(server) = server.clone() {
+                                                    if let Err(err) = server.authenticate().await {
+                                                        log::error!(
+                                                            "Authentication failed for '{}': {}",
+                                                            context_server_id.0,
+                                                            err
+                                                        );
+                                                    } else {
+                                                        // Enable the server in settings
+                                                        cx.update(|cx| {
+                                                            update_settings_file(fs.clone(), cx, {
+                                                                let context_server_id =
+                                                                    context_server_id.clone();
+                                                                move |settings, _| {
+                                                                    if let Some(server_settings) =
+                                                                        settings
+                                                                            .project
+                                                                            .context_servers
+                                                                            .get_mut(
+                                                                                &context_server_id.0,
+                                                                            )
+                                                                    {
+                                                                        server_settings
+                                                                            .set_enabled(true);
+                                                                    }
+                                                                }
+                                                            });
+                                                        })
+                                                        .ok();
+
+                                                        // Explicitly restart the server
+                                                        cx.update(|cx| {
+                                                            context_server_store.update(
+                                                                cx,
+                                                                |store, cx| {
+                                                                    store.start_server(server, cx);
+                                                                },
+                                                            );
+                                                        })
+                                                        .ok();
+                                                    }
+                                                }
+                                            })
+                                            .detach();
+                                        }
+                                    })
+                                })
+                                .when(!needs_authentication, |menu| {
+                                    menu.entry("Logout", None, {
+                                        let fs = fs.clone();
+                                        let context_server_id = context_server_id.clone();
+                                        let context_server_store = context_server_store.clone();
+                                        move |_, cx| {
+                                            if let Some(server) = context_server_store
+                                                .read(cx)
+                                                .server(&context_server_id)
+                                            {
+                                                server.logout();
+                                                log::info!(
+                                                    "Logged out from '{}'",
+                                                    context_server_id.0
+                                                );
+                                            }
+                                            // Disable the server after logout
+                                            update_settings_file(fs.clone(), cx, {
+                                                let context_server_id = context_server_id.clone();
+                                                move |settings, _| {
+                                                    if let Some(server_settings) = settings
+                                                        .project
+                                                        .context_servers
+                                                        .get_mut(&context_server_id.0)
+                                                    {
+                                                        server_settings.set_enabled(false);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    })
+                                })
+                                .toggleable_entry(
+                                    "Auto-Reauthenticate",
+                                    allow_auto_reauth,
+                                    IconPosition::Start,
+                                    None,
+                                    {
+                                        let fs = fs.clone();
+                                        let context_server_id = context_server_id.clone();
+                                        move |_, cx| {
+                                            let new_value = !allow_auto_reauth;
+                                            update_settings_file(
+                                                fs.clone(),
+                                                cx,
+                                                {
+                                                    let context_server_id = context_server_id.clone();
+                                                    move |settings, _| {
+                                                        if let Some(server_settings) = settings.project.context_servers.get_mut(&context_server_id.0) {
+                                                            server_settings.set_allow_auto_reauthentication(new_value);
+                                                        }
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    },
+                                )
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();

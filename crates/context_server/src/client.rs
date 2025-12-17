@@ -61,8 +61,15 @@ pub(crate) struct Client {
     executor: BackgroundExecutor,
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
-    transport_error: Arc<Mutex<Option<Arc<str>>>>,
+    transport_error: Arc<Mutex<Option<crate::errors::ContextServerError>>>,
     request_timeout: Option<Duration>,
+}
+
+impl Client {
+    /// Returns the current transport error if any
+    pub fn transport_error(&self) -> Option<crate::errors::ContextServerError> {
+        self.transport_error.lock().clone()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -324,7 +331,7 @@ impl Client {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        transport_error: Arc<Mutex<Option<Arc<str>>>>,
+        transport_error: Arc<Mutex<Option<crate::errors::ContextServerError>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -338,7 +345,7 @@ impl Client {
                 // Set transport_error BEFORE the deferred cleanup runs
                 // This ensures request_with sees the error instead of "connection closed"
                 log::error!("Transport error: {}", err);
-                *transport_error.lock() = Some(format!("{:#}", err).into());
+                *transport_error.lock() = Some(crate::errors::ContextServerError::from(&err));
                 return Err(err);
             }
         }

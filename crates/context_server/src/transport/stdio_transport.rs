@@ -143,6 +143,10 @@ impl Transport for StdioTransport {
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         Box::pin(self.stderr_receiver.clone())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Drop for StdioTransport {

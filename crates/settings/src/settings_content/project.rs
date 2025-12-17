@@ -215,6 +215,10 @@ pub enum ContextServerSettingsContent {
         /// Optional headers to send.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
+        /// Whether to allow automatic reauthentication when tokens expire.
+        /// If false (default), user must explicitly trigger reauthentication.
+        #[serde(default)]
+        allow_auto_reauthentication: bool,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -245,6 +249,16 @@ impl ContextServerSettingsContent {
                 enabled: remote_enabled,
                 ..
             } => *remote_enabled = enabled,
+        }
+    }
+
+    pub fn set_allow_auto_reauthentication(&mut self, allow: bool) {
+        if let ContextServerSettingsContent::Http {
+            allow_auto_reauthentication,
+            ..
+        } = self
+        {
+            *allow_auto_reauthentication = allow;
         }
     }
 }

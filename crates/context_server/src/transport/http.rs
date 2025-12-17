@@ -9,7 +9,7 @@ use http_client::{
 };
 use parking_lot::Mutex as SyncMutex;
 use smol::channel;
-use std::{pin::Pin, sync::Arc};
+use std::{fmt, pin::Pin, sync::Arc};
 use url::Url;
 
 use crate::oauth::OAuthManager;
@@ -19,6 +19,70 @@ use crate::transport::Transport;
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
+
+#[derive(Debug, Clone)]
+pub enum HttpTransportError {
+    AuthenticationRequired {
+        server_name: String,
+    },
+    AuthenticationExpiredManual {
+        server_name: String,
+    },
+    UnauthorizedMissingWwwAuthenticate {
+        server_name: String,
+    },
+    AuthenticationFailed {
+        server_name: String,
+        status: u16,
+        error_body: String,
+    },
+}
+
+impl fmt::Display for HttpTransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AuthenticationRequired { server_name } => write!(
+                f,
+                "Authentication required for '{server_name}'. Please click the Authenticate button in Agent Settings."
+            ),
+            Self::AuthenticationExpiredManual { server_name } => write!(
+                f,
+                "Authentication expired for '{server_name}'. Please reauthenticate manually from Agent Settings."
+            ),
+            Self::UnauthorizedMissingWwwAuthenticate { server_name } => write!(
+                f,
+                "Received 401 for '{server_name}' but no WWW-Authenticate header - cannot retry"
+            ),
+            Self::AuthenticationFailed {
+                server_name,
+                status,
+                error_body,
+            } => write!(
+                f,
+                "Authentication failed for '{server_name}': {status} - {error_body}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HttpTransportError {}
+
+impl HttpTransportError {
+    /// Returns true if this error indicates that authentication is required
+    /// (either initial auth or re-authentication after expiry)
+    pub fn is_auth_required(&self) -> bool {
+        matches!(
+            self,
+            Self::AuthenticationRequired { .. } | Self::AuthenticationExpiredManual { .. }
+        )
+    }
+
+    /// Check if an anyhow::Error is an auth-required HttpTransportError
+    pub fn is_auth_required_error(err: &anyhow::Error) -> bool {
+        err.downcast_ref::<Self>()
+            .is_some_and(|e| e.is_auth_required())
+    }
+}
 
 /// HTTP Transport with session management and SSE support
 pub struct HttpTransport {
@@ -36,14 +100,69 @@ pub struct HttpTransport {
     oauth: Option<OAuthManager>,
     /// Track if we've successfully completed initial authentication
     initial_auth_done: Arc<SyncMutex<bool>>,
+    /// Whether automatic reauthentication is allowed (opening browser without user action)
+    allow_auto_reauthentication: bool,
 }
 
 impl HttpTransport {
+    /// Manually trigger OAuth authentication. Returns Ok(true) if auth was successful.
+    pub async fn authenticate(&self) -> Result<bool> {
+        let Some(manager) = &self.oauth else {
+            log::debug!(
+                "No OAuth manager for '{}', authentication not needed",
+                self.server_name
+            );
+            return Ok(true);
+        };
+
+        manager.authenticate().await?;
+
+        // Clear the old session ID since we have a new OAuth token
+        // The old session is invalidated when we re-authenticate
+        let old_session = self.session_id.lock().take();
+        if old_session.is_some() {
+            log::info!(
+                "Cleared old session ID for '{}' after re-authentication",
+                self.server_name
+            );
+        }
+
+        // Mark initial auth as done after successful authentication
+        *self.initial_auth_done.lock() = true;
+        log::info!(
+            "Manual authentication completed successfully for '{}'",
+            self.server_name
+        );
+        Ok(true)
+    }
+
+    /// Check if this transport needs authentication
+    pub fn needs_authentication(&self) -> bool {
+        self.oauth
+            .as_ref()
+            .is_some_and(|m| m.needs_authentication())
+    }
+
+    /// Check if this transport is authenticated
+    pub fn is_authenticated(&self) -> bool {
+        self.oauth.as_ref().is_some_and(|m| m.is_authenticated())
+    }
+
+    /// Logout - clear tokens and reset auth state
+    pub fn logout(&self) {
+        if let Some(manager) = &self.oauth {
+            manager.logout();
+            *self.initial_auth_done.lock() = false;
+            log::info!("Logged out from '{}'", self.server_name);
+        }
+    }
+
     pub fn new(
         server_name: String,
         http_client: Arc<dyn HttpClient>,
         endpoint: Url,
         headers: HashMap<String, String>,
+        allow_auto_reauthentication: bool,
         executor: BackgroundExecutor,
     ) -> Self {
         let (response_tx, response_rx) = channel::unbounded();
@@ -74,6 +193,7 @@ impl HttpTransport {
             headers,
             oauth,
             initial_auth_done: Arc::new(SyncMutex::new(false)),
+            allow_auto_reauthentication,
         }
     }
 
@@ -224,11 +344,12 @@ impl HttpTransport {
                         let mut error_body = String::new();
                         futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body)
                             .await?;
-                        return Err(anyhow!(
-                            "Authentication failed for '{}': {}",
-                            self.server_name,
-                            error_body
-                        ));
+                        return Err(HttpTransportError::AuthenticationFailed {
+                            server_name: self.server_name.clone(),
+                            status: 401,
+                            error_body,
+                        }
+                        .into());
                     }
                 }
                 status if status.as_u16() == 422 && retry_auth => {
@@ -300,11 +421,10 @@ impl HttpTransport {
             .unwrap_or_default();
 
         if header.is_empty() {
-            log::warn!(
-                "Received 401 for '{}' but no WWW-Authenticate header - cannot retry",
-                self.server_name
-            );
-            return Ok(false);
+            return Err(HttpTransportError::UnauthorizedMissingWwwAuthenticate {
+                server_name: self.server_name.clone(),
+            }
+            .into());
         }
 
         log::info!(
@@ -312,43 +432,112 @@ impl HttpTransport {
             self.server_name,
             header
         );
-        log::trace!("OAuth manager address: {:p}", manager as *const _);
 
-        // Perform OAuth login
-        let result = manager.handle_www_authenticate(header).await;
-
-        if result.is_ok() {
-            // Clear the old session ID since we have a new OAuth token
-            // The old session is invalidated when we re-authenticate
-            let old_session = self.session_id.lock().take();
-            if old_session.is_some() {
+        let is_initial_auth = !*self.initial_auth_done.lock();
+        if !self.allow_auto_reauthentication {
+            if is_initial_auth {
                 log::info!(
-                    "Cleared old session ID for '{}' after re-authentication",
+                    "Authentication required for '{}'. User must click Authenticate button.",
                     self.server_name
                 );
+                return Err(HttpTransportError::AuthenticationRequired {
+                    server_name: self.server_name.clone(),
+                }
+                .into());
             }
 
-            // Proactively re-initialize the session after OAuth re-auth
-            // This avoids getting 422 "expect initialize request" on the retry
-            log::info!(
-                "Proactively re-initializing session for '{}' after OAuth re-auth...",
+            log::warn!(
+                "Reauthentication required for '{}' but auto-reauthentication is disabled. User must manually trigger authentication.",
                 self.server_name
             );
-            if let Err(err) = self.perform_reinitialize().await {
-                log::warn!(
-                    "Proactive re-initialization failed for '{}': {} - will retry on 422",
-                    self.server_name,
-                    err
-                );
-            } else {
-                log::info!(
-                    "Proactive re-initialization succeeded for '{}'",
-                    self.server_name
-                );
+            return Err(HttpTransportError::AuthenticationExpiredManual {
+                server_name: self.server_name.clone(),
+            }
+            .into());
+        }
+
+        // Auto-reauthentication is enabled. First attempt a silent refresh if possible, even on the
+        // first request after restart (initial_auth_done=false). This avoids forcing manual auth
+        // when a persisted access token is expired/invalid but a refresh token exists.
+        if manager.can_refresh() {
+            match manager.refresh_access_token().await {
+                Ok(true) => {
+                    log::info!(
+                        "Refreshed OAuth token for '{}' after 401, retrying request...",
+                        self.server_name
+                    );
+                    self.on_new_oauth_token().await;
+                    return Ok(true);
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    log::warn!(
+                        "OAuth token refresh failed for '{}' after 401: {}",
+                        self.server_name,
+                        err
+                    );
+                }
             }
         }
 
+        // Never automatically open a browser for initial authentication.
+        // User must explicitly trigger authentication from the UI.
+        if is_initial_auth {
+            log::info!(
+                "Authentication required for '{}'. User must click Authenticate button.",
+                self.server_name
+            );
+            return Err(HttpTransportError::AuthenticationRequired {
+                server_name: self.server_name.clone(),
+            }
+            .into());
+        }
+
+        log::info!(
+            "Auto-reauthentication enabled for '{}', proceeding with OAuth...",
+            self.server_name
+        );
+        log::trace!("OAuth manager address: {:p}", manager as *const _);
+
+        // Perform OAuth login (only for auto-reauthentication)
+        let result = manager.handle_www_authenticate(header).await;
+
+        if result.is_ok() {
+            self.on_new_oauth_token().await;
+        }
+
         result.map(|_| true)
+    }
+
+    async fn on_new_oauth_token(&self) {
+        // Clear the old session ID since we have a new OAuth token
+        // The old session is invalidated when we re-authenticate
+        let old_session = self.session_id.lock().take();
+        if old_session.is_some() {
+            log::info!(
+                "Cleared old session ID for '{}' after re-authentication",
+                self.server_name
+            );
+        }
+
+        // Proactively re-initialize the session after OAuth token changes.
+        // This avoids getting 422 "expect initialize request" on the retry.
+        log::info!(
+            "Proactively re-initializing session for '{}' after OAuth token change...",
+            self.server_name
+        );
+        if let Err(err) = self.perform_reinitialize().await {
+            log::warn!(
+                "Proactive re-initialization failed for '{}': {} - will retry on 422",
+                self.server_name,
+                err
+            );
+        } else {
+            log::info!(
+                "Proactive re-initialization succeeded for '{}'",
+                self.server_name
+            );
+        }
     }
 
     /// Builds an HTTP request with common headers (auth, custom headers, session ID).
@@ -584,6 +773,10 @@ impl Transport for HttpTransport {
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         Box::pin(self.error_rx.clone())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Drop for HttpTransport {
@@ -671,6 +864,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             HashMap::default(),
+            false,
             executor,
         );
 
@@ -729,6 +923,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             headers,
+            false,
             executor,
         );
 
@@ -763,6 +958,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             HashMap::default(),
+            false,
             executor,
         );
 
@@ -778,11 +974,17 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let err = result.unwrap_err();
+        let transport_err = err
+            .downcast_ref::<HttpTransportError>()
+            .expect("expected HttpTransportError");
         assert!(
-            err.contains("401") || err.contains("Authentication failed"),
-            "Expected auth failure error, got: {}",
-            err
+            matches!(
+                transport_err,
+                HttpTransportError::UnauthorizedMissingWwwAuthenticate { .. }
+            ),
+            "Expected UnauthorizedMissingWwwAuthenticate, got: {:?}",
+            transport_err
         );
     }
 
@@ -828,6 +1030,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             HashMap::default(),
+            false,
             executor,
         );
 
@@ -892,6 +1095,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             headers,
+            false,
             executor,
         );
 
@@ -924,6 +1128,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             HashMap::default(),
+            false,
             executor,
         );
 
@@ -954,6 +1159,7 @@ mod tests {
             client,
             Url::parse("http://example.com/mcp").unwrap(),
             HashMap::default(),
+            false,
             executor,
         );
 
@@ -965,5 +1171,129 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("500"), "Expected 500 error, got: {}", err);
+    }
+
+    #[gpui::test]
+    async fn test_http_transport_refreshes_token_on_initial_401_when_auto_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let refresh_count = Arc::new(AtomicUsize::new(0));
+        let seen_auth_headers = Arc::new(SyncMutex::new(Vec::<Option<String>>::new()));
+
+        let client = {
+            FakeHttpClient::create({
+                let request_count = request_count.clone();
+                let refresh_count = refresh_count.clone();
+                let seen_auth_headers = seen_auth_headers.clone();
+                move |req| {
+                    let request_count = request_count.clone();
+                    let refresh_count = refresh_count.clone();
+                    let seen_auth_headers = seen_auth_headers.clone();
+                    let uri = req.uri().to_string();
+                    let auth = req
+                        .headers()
+                        .get(http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(String::from);
+
+                    async move {
+                        if uri == "http://example.com/token" || uri.ends_with("/token") {
+                            refresh_count.fetch_add(1, Ordering::SeqCst);
+                            return Ok(Response::builder()
+                                .status(200)
+                                .header("Content-Type", "application/json")
+                                .body(AsyncBody::from(
+                                    json!({
+                                        "access_token": "new-token",
+                                        "token_type": "Bearer",
+                                        "expires_in": 3600u64,
+                                        "refresh_token": "refresh-2"
+                                    })
+                                    .to_string(),
+                                ))
+                                .unwrap());
+                        }
+
+                        let count = request_count.fetch_add(1, Ordering::SeqCst);
+                        seen_auth_headers.lock().push(auth);
+
+                        if count == 0 {
+                            return Ok(Response::builder()
+                                .status(401)
+                                .header(http::header::WWW_AUTHENTICATE, "Bearer scope=\"mcp\"")
+                                .body(AsyncBody::from("Unauthorized"))
+                                .unwrap());
+                        }
+
+                        Ok(create_mcp_response(
+                            count as i64,
+                            json!({
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {},
+                                "serverInfo": { "name": "test", "version": "1.0" }
+                            }),
+                        ))
+                    }
+                }
+            })
+        };
+
+        let executor = cx.executor();
+        let transport = HttpTransport::new(
+            "test-server".to_string(),
+            client.clone(),
+            Url::parse("http://example.com/mcp").unwrap(),
+            HashMap::default(),
+            true,
+            executor,
+        );
+
+        let oauth_tokens = crate::oauth::StoredOAuthTokens {
+            server_name: "test-server".to_string(),
+            url: "http://example.com/mcp".to_string(),
+            client_id: "client-id".to_string(),
+            token_endpoint: "http://example.com/token".to_string(),
+            access_token: "old-token".to_string(),
+            refresh_token: Some("refresh-1".to_string()),
+            expires_at: Some(u64::MAX),
+            scopes: Vec::new(),
+            client_secret: None,
+        };
+
+        transport
+            .oauth
+            .as_ref()
+            .expect("oauth manager should be present")
+            .set_tokens_for_test(oauth_tokens);
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {}
+        });
+
+        transport
+            .send(serde_json::to_string(&message).unwrap())
+            .await
+            .expect("send should succeed after refresh");
+
+        assert_eq!(request_count.load(Ordering::SeqCst), 4);
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+
+        let headers = seen_auth_headers.lock().clone();
+        assert_eq!(
+            headers.first().cloned(),
+            Some(Some("Bearer old-token".to_string()))
+        );
+        assert!(
+            headers
+                .iter()
+                .skip(1)
+                .all(|h| h.as_deref() == Some("Bearer new-token")),
+            "Expected all requests after refresh to use new token, got: {:?}",
+            headers
+        );
     }
 }
