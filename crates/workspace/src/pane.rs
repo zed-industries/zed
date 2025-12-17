@@ -625,11 +625,11 @@ impl Pane {
                     self.last_focus_handle_by_item.get(&active_item.item_id())
                     && let Some(focus_handle) = weak_last_focus_handle.upgrade()
                 {
-                    focus_handle.focus(window);
+                    focus_handle.focus(window, cx);
                     return;
                 }
 
-                active_item.item_focus_handle(cx).focus(window);
+                active_item.item_focus_handle(cx).focus(window, cx);
             } else if let Some(focused) = window.focused(cx)
                 && !self.context_menu_focused(window, cx)
             {
@@ -638,7 +638,7 @@ impl Pane {
             }
         } else if let Some(welcome_page) = self.welcome_page.as_ref() {
             if self.focus_handle.is_focused(window) {
-                welcome_page.read(cx).focus_handle(cx).focus(window);
+                welcome_page.read(cx).focus_handle(cx).focus(window, cx);
             }
         }
     }
@@ -1999,7 +1999,7 @@ impl Pane {
 
             let should_activate = activate_pane || self.has_focus(window, cx);
             if self.items.len() == 1 && should_activate {
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             } else {
                 self.activate_item(
                     index_to_activate,
@@ -2350,7 +2350,7 @@ impl Pane {
     pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_item) = self.active_item() {
             let focus_handle = active_item.item_focus_handle(cx);
-            window.focus(&focus_handle);
+            window.focus(&focus_handle, cx);
         }
     }
 

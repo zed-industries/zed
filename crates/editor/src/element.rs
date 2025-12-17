@@ -9231,9 +9231,11 @@ impl Element for EditorElement {
                     // the top of the window in terms of display rows.
                     // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
                     // but we don't modify scroll_position itself since the parent handles positioning.
-                    let start_row =
-                        DisplayRow((scroll_position.y + clipped_top_in_lines).floor() as u32);
                     let max_row = snapshot.max_point().row();
+                    let start_row = cmp::min(
+                        DisplayRow((scroll_position.y + clipped_top_in_lines).floor() as u32),
+                        max_row,
+                    );
                     let end_row = cmp::min(
                         (scroll_position.y + clipped_top_in_lines + visible_height_in_lines).ceil()
                             as u32,

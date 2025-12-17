@@ -409,7 +409,7 @@ impl TerminalView {
                 )
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,

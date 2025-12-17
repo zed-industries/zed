@@ -911,7 +911,7 @@ pub fn surrounding_html_tag(
     while let Some(cur_node) = last_child_node {
         if cur_node.child_count() >= 2 {
             let first_child = cur_node.child(0);
-            let last_child = cur_node.child(cur_node.child_count() - 1);
+            let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
             if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
@@ -2807,9 +2807,8 @@ mod test {
 
         for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(expected_state, *expected_mode);
         }
 
@@ -2830,9 +2829,8 @@ mod test {
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(initial_state, *mode);
         }
     }
@@ -3185,9 +3183,8 @@ mod test {
 
         for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(expected_state, *expected_mode);
         }
 
@@ -3208,9 +3205,8 @@ mod test {
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
             cx.set_state(initial_state, Mode::Normal);
-
+            cx.buffer(|buffer, _| buffer.parsing_idle()).await;
             cx.simulate_keystrokes(keystrokes);
-
             cx.assert_state(initial_state, *mode);
         }
     }

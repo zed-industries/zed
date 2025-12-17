@@ -753,7 +753,7 @@ mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             })
             .unwrap();
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
@@ -1000,7 +1000,7 @@ mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
-                window.focus(&editor.focus_handle(cx))
+                window.focus(&editor.focus_handle(cx), cx)
             })
             .unwrap();
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));

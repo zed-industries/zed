@@ -632,7 +632,7 @@ impl TerminalElement {
     ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
             if steal_focus {
-                window.focus(&focus_handle);
+                window.focus(&focus_handle, cx);
             } else if !focus_handle.is_focused(window) {
                 return;
             }
@@ -661,7 +661,7 @@ impl TerminalElement {
             let terminal_view = terminal_view.clone();
 
             move |e, window, cx| {
-                window.focus(&focus);
+                window.focus(&focus, cx);
 
                 let scroll_top = terminal_view.read(cx).scroll_top;
                 terminal.update(cx, |terminal, cx| {

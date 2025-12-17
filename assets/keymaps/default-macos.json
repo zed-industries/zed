@@ -51,6 +51,7 @@
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
       "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "ctrl-cmd-s": "workspace::ToggleWorktreeSecurity",
     },
   },
   {
@@ -265,6 +266,7 @@
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-k l": "agent::OpenRulesLibrary",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -291,6 +293,7 @@
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-y": "agent::AllowAlways",
       "cmd-alt-z": "agent::RejectOnce",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -303,7 +306,7 @@
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-c": "markdown::Copy",
+      "cmd-c": "markdown::CopyAsMarkdown",
     },
   },
   {
@@ -385,6 +388,7 @@
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll",
       "shift-tab": "agent::CycleModeSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -396,6 +400,7 @@
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll",
       "shift-tab": "agent::CycleModeSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -879,6 +884,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",
       "cmd-shift-enter": "inline_assistant::ThumbsUpResult",
@@ -975,6 +981,8 @@
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
+      "left": "git_panel::CollapseSelectedEntry",
+      "right": "git_panel::ExpandSelectedEntry",
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "cmd-up": "menu::SelectFirst",

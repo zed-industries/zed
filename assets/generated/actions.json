@@ -63,6 +63,12 @@
     "documentation": "Continues the thread with burn mode enabled."
   },
   {
+    "name": "agent::CycleFavoriteModels",
+    "human_name": "agent: cycle favorite models",
+    "deprecated_aliases": [],
+    "documentation": "Cycles through favorited models in the ACP model selector."
+  },
+  {
     "name": "agent::CycleModeSelector",
     "human_name": "agent: cycle mode selector",
     "deprecated_aliases": [],
@@ -3085,6 +3091,18 @@
     "documentation": "Closes the git panel."
   },
   {
+    "name": "git_panel::CollapseSelectedEntry",
+    "human_name": "git panel: collapse selected entry",
+    "deprecated_aliases": [],
+    "documentation": "Collapses the selected entry to hide its children."
+  },
+  {
+    "name": "git_panel::ExpandSelectedEntry",
+    "human_name": "git panel: expand selected entry",
+    "deprecated_aliases": [],
+    "documentation": "Expands the selected entry to show its children."
+  },
+  {
     "name": "git_panel::FocusChanges",
     "human_name": "git panel: focus changes",
     "deprecated_aliases": [],
@@ -3251,6 +3269,12 @@
     "human_name": "markdown: copy",
     "deprecated_aliases": [],
     "documentation": "Copies the selected text to the clipboard."
+  },
+  {
+    "name": "markdown::CopyAsMarkdown",
+    "human_name": "markdown: copy as markdown",
+    "deprecated_aliases": [],
+    "documentation": "Copies the selected text as markdown to the clipboard."
   },
   {
     "name": "markdown::OpenFollowingPreview",
@@ -4109,6 +4133,12 @@
     "human_name": "rules library: new rule",
     "deprecated_aliases": [],
     "documentation": "Creates a new rule in the rules library."
+  },
+  {
+    "name": "rules_library::RestoreDefaultContent",
+    "human_name": "rules library: restore default content",
+    "deprecated_aliases": [],
+    "documentation": "Restores a built-in rule to its default content."
   },
   {
     "name": "rules_library::ToggleDefaultRule",
@@ -6191,6 +6221,12 @@
     "documentation": "Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**."
   },
   {
+    "name": "workspace::ClearTrustedWorktrees",
+    "human_name": "workspace: clear trusted worktrees",
+    "deprecated_aliases": [],
+    "documentation": "Clears all trusted worktrees, placing them in restricted mode on next open.\nRequires restart to take effect on already opened projects."
+  },
+  {
     "name": "workspace::CloseActiveDock",
     "human_name": "workspace: close active dock",
     "deprecated_aliases": [],
@@ -6559,6 +6595,12 @@
     "human_name": "workspace: toggle vim mode",
     "deprecated_aliases": [],
     "documentation": "Toggles Vim mode on or off."
+  },
+  {
+    "name": "workspace::ToggleWorktreeSecurity",
+    "human_name": "workspace: toggle worktree security",
+    "deprecated_aliases": [],
+    "documentation": "If any worktrees are in restricted mode, shows a modal with possible actions.\nIf the modal is shown already, closes it without trusting any worktree."
   },
   {
     "name": "workspace::ToggleZoom",
