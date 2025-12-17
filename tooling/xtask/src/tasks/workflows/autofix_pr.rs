@@ -8,12 +8,15 @@ use crate::tasks::workflows::{
 
 pub fn autofix_pr() -> Workflow {
     let pr_number = WorkflowInput::string("pr_number", None);
-    let run_autofix = run_autofix(&pr_number);
+    let run_clippy = WorkflowInput::bool("run_clippy", Some(true));
+    let run_autofix = run_autofix(&pr_number, &run_clippy);
     let commit_changes = commit_changes(&pr_number, &run_autofix);
     named::workflow()
         .run_name(format!("autofix PR #{pr_number}"))
         .on(Event::default().workflow_dispatch(
-            WorkflowDispatch::default().add_input(pr_number.name, pr_number.input()),
+            WorkflowDispatch::default()
+                .add_input(pr_number.name, pr_number.input())
+                .add_input(run_clippy.name, run_clippy.input()),
         ))
         .add_job(run_autofix.name.clone(), run_autofix.job)
         .add_job(commit_changes.name, commit_changes.job)
@@ -44,7 +47,7 @@ fn download_patch_artifact() -> Step<Use> {
     .add_with(("name", PATCH_ARTIFACT_NAME))
 }
 
-fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
+fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
         named::bash(&format!("gh pr checkout {pr_number}"))
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
@@ -92,7 +95,7 @@ fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
             .add_step(steps::setup_pnpm())
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
-            .add_step(run_clippy_fix())
+            .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
