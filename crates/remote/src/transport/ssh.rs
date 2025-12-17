@@ -565,16 +565,20 @@ impl SshRemoteConnection {
         .await?;
         drop(askpass);
 
-        let ssh_shell = socket.shell().await;
+        let is_windows = socket.probe_is_windows().await;
+        log::info!("Remote is windows: {}", is_windows);
+
+        let ssh_shell = socket.shell(is_windows).await;
         log::info!("Remote shell discovered: {}", ssh_shell);
-        let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
+
+        let ssh_shell_kind = ShellKind::new(&ssh_shell, is_windows);
+        let ssh_platform = socket.platform(ssh_shell_kind, is_windows).await?;
         log::info!("Remote platform discovered: {:?}", ssh_platform);
+
         let (ssh_path_style, ssh_default_system_shell) = match ssh_platform.os {
-            // TODO: powershell could in theory not exist, we should also be probing for pwsh if its installed
-            RemoteOs::Windows => (PathStyle::Windows, String::from("powershell.exe")),
+            RemoteOs::Windows => (PathStyle::Windows, ssh_shell.clone()),
             _ => (PathStyle::Posix, String::from("/bin/sh")),
         };
-        let ssh_shell_kind = ShellKind::new(&ssh_shell, ssh_path_style.is_windows());
 
         let mut this = Self {
             socket,
@@ -1157,48 +1161,72 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let res = self.run_command(shell, "uname", &["-sm"], false).await;
-        match res {
-            Ok(output) => parse_platform(&output),
-            Err(uname_err) => {
-                // Might be a windows system, try to detect it
-                let res = self
-                    .run_command(
-                        shell,
-                        "cmd",
-                        &["/c", "echo", "%PROCESSOR_ARCHITECTURE%"],
-                        false,
-                    )
-                    .await;
-                match res {
-                    Ok(output) if !cfg!(debug_assertions) => anyhow::bail!(
-                        "Prebuilt remote servers are not yet available for windows-{}. See https://zed.dev/docs/remote-development",
-                        output.trim()
-                    ),
-                    Ok(output) => Ok(RemotePlatform {
-                        os: RemoteOs::Windows,
-                        arch: match output.trim() {
-                            "AMD64" => RemoteArch::X86_64,
-                            "ARM64" => RemoteArch::Aarch64,
-                            arch => anyhow::bail!(
-                                "Prebuilt remote servers are not yet available for windows-{arch}. See https://zed.dev/docs/remote-development"
-                            ),
-                        },
-                    }),
-                    Err(cmd_err) => {
-                        anyhow::bail!(
-                            "Failed to determine platform:\nuname error: {uname_err:#}\ncmd error: {cmd_err:#}"
-                        )
-                    }
-                }
-            }
+    async fn platform(&self, shell: ShellKind, is_windows: bool) -> Result<RemotePlatform> {
+        if is_windows {
+            self.platform_windows(shell).await
+        } else {
+            self.platform_posix(shell).await
         }
     }
 
-    async fn shell(&self) -> String {
+    async fn platform_posix(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let output = self
+            .run_command(shell, "uname", &["-sm"], false)
+            .await
+            .context("Failed to run 'uname -sm' to determine platform")?;
+        parse_platform(&output)
+    }
+
+    async fn platform_windows(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let output = self
+            .run_command(
+                shell,
+                "cmd",
+                &["/c", "echo", "%PROCESSOR_ARCHITECTURE%"],
+                false,
+            )
+            .await
+            .context(
+                "Failed to run 'echo %PROCESSOR_ARCHITECTURE%' to determine Windows architecture",
+            )?;
+
+        Ok(RemotePlatform {
+            os: RemoteOs::Windows,
+            arch: match output.trim() {
+                "AMD64" => RemoteArch::X86_64,
+                "ARM64" => RemoteArch::Aarch64,
+                arch => anyhow::bail!(
+                    "Prebuilt remote servers are not yet available for windows-{arch}. See https://zed.dev/docs/remote-development"
+                ),
+            },
+        })
+    }
+
+    /// Probes whether the remote host is running Windows.
+    ///
+    /// This is done by attempting to run a simple Windows-specific command.
+    /// If it succeeds and returns Windows-like output, we assume it's Windows.
+    async fn probe_is_windows(&self) -> bool {
+        match self
+            .run_command(ShellKind::PowerShell, "cmd", &["/c", "ver"], false)
+            .await
+        {
+            // Windows 'ver' command outputs something like "Microsoft Windows [Version 10.0.19045.5011]"
+            Ok(output) => output.trim().contains("indows"),
+            Err(_) => false,
+        }
+    }
+
+    async fn shell(&self, is_windows: bool) -> String {
+        if is_windows {
+            self.shell_windows().await
+        } else {
+            self.shell_posix().await
+        }
+    }
+
+    async fn shell_posix(&self) -> String {
         const DEFAULT_SHELL: &str = "sh";
-        // TODO: Implement shell detection for windows remotes
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
@@ -1209,6 +1237,13 @@ impl SshSocket {
                 DEFAULT_SHELL.to_owned()
             }
         }
+    }
+
+    async fn shell_windows(&self) -> String {
+        // powershell is always the default, and cannot really be removed from the system
+        // so we can rely on that fact and reasonably assume that we will be running in a
+        // powershell environment
+        "powershell.exe".to_owned()
     }
 }
 
