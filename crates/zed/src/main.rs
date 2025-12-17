@@ -742,16 +742,18 @@ pub fn main() {
             })
         }
 
-        match open_rx
-            .try_next()
-            .ok()
-            .flatten()
-            .and_then(|request| OpenRequest::parse(request, cx).log_err())
-        {
+        let request = open_rx.try_next().ok().flatten();
+        log::info!(
+            "finish_launching: try_next() returned {:?}",
+            request.as_ref().map(|r| &r.urls)
+        );
+        match request.and_then(|request| OpenRequest::parse(request, cx).log_err()) {
             Some(request) => {
+                log::info!("finish_launching: got request, calling handle_open_request");
                 handle_open_request(request, app_state.clone(), cx);
             }
             None => {
+                log::info!("finish_launching: no request, spawning restore_or_create_workspace");
                 cx.spawn({
                     let app_state = app_state.clone();
                     async move |cx| {

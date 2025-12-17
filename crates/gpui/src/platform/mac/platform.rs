@@ -1398,6 +1398,7 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
+    log::info!("did_finish_launching: entered");
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
@@ -1412,10 +1413,13 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         ];
 
         let platform = get_mac_platform(this);
+
+        log::info!("did_finish_launching: about to call finish_launching callback");
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
         }
+        log::info!("did_finish_launching: finish_launching callback completed");
     }
 }
 
@@ -1458,6 +1462,7 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
+    log::info!("open_urls: entered");
     let urls = unsafe {
         (0..urls.count())
             .filter_map(|i| {
@@ -1472,6 +1477,7 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             })
             .collect::<Vec<_>>()
     };
+    log::info!("open_urls: received {} URLs: {:?}", urls.len(), urls);
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
     if let Some(mut callback) = lock.open_urls.take() {
