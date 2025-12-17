@@ -1508,11 +1508,27 @@ impl Workspace {
                             && let Ok(display_uuid) = display.uuid()
                         {
                             let window_bounds = window.inner_window_bounds();
+                            let has_paths = !this.root_paths(cx).is_empty();
+                            if !has_paths {
+                                cx.background_executor()
+                                    .spawn(persistence::write_default_window_bounds(
+                                        window_bounds,
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
+                            }
                             if let Some(database_id) = workspace_id {
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
                                         database_id,
                                         SerializedWindowBounds(window_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
+                            } else {
+                                cx.background_executor()
+                                    .spawn(persistence::write_default_window_bounds(
+                                        window_bounds,
                                         display_uuid,
                                     ))
                                     .detach_and_log_err(cx);
@@ -1724,6 +1740,7 @@ impl Workspace {
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
+                let is_empty_workspace = project_paths.is_empty();
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
@@ -1733,6 +1750,13 @@ impl Workspace {
                         (workspace.display, workspace.window_bounds.as_ref())
                     {
                         (Some(bounds.0), Some(display))
+                    } else {
+                        (None, None)
+                    }
+                } else if is_empty_workspace {
+                    // Empty workspace - try to restore the last known no-project window bounds
+                    if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+                        (Some(bounds), Some(display))
                     } else {
                         (None, None)
                     }
@@ -8820,14 +8844,13 @@ pub fn remote_workspace_position_from_db(
         } else {
             let restorable_bounds = serialized_workspace
                 .as_ref()
-                .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                .or_else(|| {
-                    let (display, window_bounds) = DB.last_window().log_err()?;
-                    Some((display?, window_bounds?))
-                });
+                .and_then(|workspace| {
+                    Some((workspace.display?, workspace.window_bounds.map(|b| b.0)?))
+                })
+                .or_else(|| persistence::read_default_window_bounds());
 
-            if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                (Some(serialized_status.0), Some(serialized_display))
+            if let Some((serialized_display, serialized_bounds)) = restorable_bounds {
+                (Some(serialized_bounds), Some(serialized_display))
             } else {
                 (None, None)
             }

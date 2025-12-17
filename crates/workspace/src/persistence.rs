@@ -11,6 +11,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet, IndexSet};
 use db::{
+    kvp::KEY_VALUE_STORE,
     query,
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
@@ -27,6 +28,7 @@ use project::WorktreeId;
 use remote::{
     DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
+use serde::{Deserialize, Serialize};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -160,6 +162,124 @@ impl Column for SerializedWindowBounds {
         };
 
         Ok((status, next_index + 4))
+    }
+}
+
+const DEFAULT_WINDOW_BOUNDS_KEY: &str = "default_window_bounds";
+
+pub fn read_default_window_bounds() -> Option<(Uuid, WindowBounds)> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(DEFAULT_WINDOW_BOUNDS_KEY)
+        .log_err()
+        .flatten()?;
+
+    let (display_uuid, persisted) =
+        serde_json::from_str::<(Uuid, WindowBoundsJson)>(&json_str).ok()?;
+    Some((display_uuid, persisted.into()))
+}
+
+pub async fn write_default_window_bounds(
+    bounds: WindowBounds,
+    display_uuid: Uuid,
+) -> anyhow::Result<()> {
+    let persisted = WindowBoundsJson::from(bounds);
+    let json_str = serde_json::to_string(&(display_uuid, persisted))?;
+    KEY_VALUE_STORE
+        .write_kvp(DEFAULT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+        .await?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WindowBoundsJson {
+    Windowed {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Maximized {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Fullscreen {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+}
+
+impl From<WindowBounds> for WindowBoundsJson {
+    fn from(b: WindowBounds) -> Self {
+        match b {
+            WindowBounds::Windowed(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Windowed {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Maximized(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Maximized {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Fullscreen(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                WindowBoundsJson::Fullscreen {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+        }
+    }
+}
+
+impl From<WindowBoundsJson> for WindowBounds {
+    fn from(n: WindowBoundsJson) -> Self {
+        match n {
+            WindowBoundsJson::Windowed {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Windowed(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            WindowBoundsJson::Maximized {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Maximized(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            WindowBoundsJson::Fullscreen {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Fullscreen(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+        }
     }
 }
 
@@ -1379,24 +1499,6 @@ impl WorkspaceDb {
                 }))
             }
         }
-    }
-
-    pub(crate) fn last_window(
-        &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
-        let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
-                SELECT
-                display,
-                window_state, window_x, window_y, window_width, window_height
-                FROM workspaces
-                WHERE paths
-                IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ))?;
-        let result = prepared_query()?;
-        Ok(result.into_iter().next().unwrap_or((None, None)))
     }
 
     query! {
