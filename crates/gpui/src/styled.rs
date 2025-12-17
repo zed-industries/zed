@@ -637,6 +637,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the grid columns with min-content minimum sizing.
+    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
+    fn grid_cols_min_content(mut self, cols: u16) -> Self {
+        self.style().grid_cols_min_content = Some(cols);
+        self
+    }
+
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
         self.style().grid_rows = Some(rows);

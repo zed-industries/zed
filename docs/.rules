@@ -1,0 +1,157 @@
+# Zed Documentation Guidelines
+
+## Voice and Tone
+
+### Core Principles
+
+- **Practical over promotional**: Focus on what users can do, not on selling Zed. Avoid marketing language like "powerful," "revolutionary," or "best-in-class."
+- **Honest about limitations**: When Zed lacks a feature or doesn't match another tool's depth, say so directly. Pair limitations with workarounds or alternative workflows.
+- **Direct and concise**: Use short sentences. Get to the point. Developers are scanning, not reading novels.
+- **Second person**: Address the reader as "you." Avoid "the user" or "one."
+- **Present tense**: "Zed opens the file" not "Zed will open the file."
+
+### What to Avoid
+
+- Superlatives without substance ("incredibly fast," "seamlessly integrated")
+- Hedging language ("simply," "just," "easily")—if something is simple, the instructions will show it
+- Apologetic tone for missing features—state the limitation and move on
+- Comparisons that disparage other tools—be factual, not competitive
+- Meta-commentary about honesty ("the honest take is...", "to be frank...", "honestly...")—let honesty show through frank assessments, not announcements
+
+## Content Structure
+
+### Page Organization
+
+1. **Start with the goal**: Open with what the reader will accomplish, not background
+2. **Front-load the action**: Put the most common task first, edge cases later
+3. **Use headers liberally**: Readers scan; headers help them find what they need
+4. **End with "what's next"**: Link to related docs or logical next steps
+
+### Section Patterns
+
+For how-to content:
+1. Brief context (1-2 sentences max)
+2. Steps or instructions
+3. Example (code block or screenshot reference)
+4. Tips or gotchas (if any)
+
+For reference content:
+1. What it is (definition)
+2. How to access/configure it
+3. Options/parameters table
+4. Examples
+
+## Formatting Conventions
+
+### Keybindings
+
+- Use backticks for key combinations: `Cmd+Shift+P`
+- Show both macOS and Linux/Windows when they differ: `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+- Use `+` to join simultaneous keys, space for sequences: `Cmd+K Cmd+C`
+
+### Code and Settings
+
+- Inline code for setting names, file paths, commands: `format_on_save`, `.zed/settings.json`, `zed .`
+- Code blocks for JSON config, multi-line commands, or file contents
+- Always show complete, working examples—not fragments
+
+### Terminal Commands
+
+Use `sh` code blocks for terminal commands, not plain backticks:
+
+```sh
+brew install zed-editor/zed/zed
+```
+
+Not:
+```
+brew install zed-editor/zed/zed
+```
+
+For single inline commands in prose, backticks are fine: `zed .`
+
+### Tables
+
+Use tables for:
+- Keybinding comparisons between editors
+- Settings mappings (e.g., VS Code → Zed)
+- Feature comparisons with clear columns
+
+Format:
+```
+| Action | Shortcut | Notes |
+| --- | --- | --- |
+| Open File | `Cmd+O` | Works from any context |
+```
+
+### Tips and Notes
+
+Use blockquote format with bold label:
+```
+> **Tip:** Practical advice that helps bridge gaps or saves time.
+```
+
+Reserve tips for genuinely useful information, not padding.
+
+## Writing Guidelines
+
+### Settings Documentation
+
+- **Settings Editor first**: Show how to find and change settings in the UI before showing JSON
+- **JSON as secondary**: Present JSON examples as "Or add this to your settings.json" for users who prefer direct editing
+- **Complete examples**: Include the full JSON structure, not just the value
+
+### Migration Guides
+
+- **Jobs to be done**: Frame around tasks ("How do I search files?") not features ("File Search Feature")
+- **Acknowledge the source**: Respect that users have muscle memory and preferences from their previous editor
+- **Keybindings tables**: Essential for migration docs—show what maps, what's different, what's missing
+- **Trade-offs section**: Be explicit about what the user gains and loses in the switch
+
+### Feature Documentation
+
+- **Start with the default**: Document the out-of-box experience first
+- **Configuration options**: Group related settings together
+- **Cross-link generously**: Link to related features, settings reference, and relevant guides
+
+## Terminology
+
+| Use | Instead of |
+| --- | --- |
+| folder | directory (in user-facing text) |
+| project | workspace (Zed doesn't have workspaces) |
+| Settings Editor | settings UI, preferences |
+| command palette | command bar, action search |
+| language server | LSP (spell out first use, then LSP is fine) |
+| panel | tool window, sidebar (be specific: "Project Panel," "Terminal Panel") |
+
+## Examples
+
+### Good: Direct and actionable
+```
+To format on save, open the Settings Editor (`Cmd+,`) and search for `format_on_save`. Set it to `on`.
+
+Or add this to your settings.json:
+{
+  "format_on_save": "on"
+}
+```
+
+### Bad: Wordy and promotional
+```
+Zed provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Zed's incredible auto-formatting capabilities.
+```
+
+### Good: Honest about limitations
+```
+Zed doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
+
+**How to adapt:**
+- Use `Cmd+Shift+F` for project-wide text search
+- Use `Cmd+O` for symbol search (powered by your language server)
+```
+
+### Bad: Defensive or dismissive
+```
+While some users might miss indexing, Zed's approach is actually better because it's faster.
+```

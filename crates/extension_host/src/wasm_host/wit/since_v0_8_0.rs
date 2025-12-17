@@ -1,7 +1,7 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
-        StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
+        BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, StartDebuggingRequestArguments,
+        TcpArguments, TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
 };
