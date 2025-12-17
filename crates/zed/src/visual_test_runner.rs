@@ -144,7 +144,49 @@ fn main() {
                     eprintln!("Failed to add worktree: {:?}", e);
                 }
 
+                // Activate the window and bring it to front to ensure it's visible
+                // This is needed because macOS won't render occluded windows
+                cx.update(|cx| {
+                    cx.activate(true); // Activate the app
+                    workspace_window
+                        .update(cx, |_, window, _| {
+                            window.activate_window(); // Bring window to front
+                        })
+                        .ok();
+                })
+                .ok();
+
                 // Wait for UI to settle
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+
+                // Create and add the project panel to the workspace
+                let panel_task = cx.update(|cx| {
+                    workspace_window
+                        .update(cx, |_workspace, window, cx| {
+                            let weak_workspace = cx.weak_entity();
+                            window.spawn(cx, async move |cx| {
+                                ProjectPanel::load(weak_workspace, cx.clone()).await
+                            })
+                        })
+                        .ok()
+                });
+
+                if let Ok(Some(task)) = panel_task {
+                    if let Ok(panel) = task.await {
+                        cx.update(|cx| {
+                            workspace_window
+                                .update(cx, |workspace, window, cx| {
+                                    workspace.add_panel(panel, window, cx);
+                                })
+                                .ok();
+                        })
+                        .ok();
+                    }
+                }
+
+                // Wait for panel to be added
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(500))
                     .await;
@@ -208,12 +250,78 @@ fn main() {
                     }
                 }
 
+                // Request a window refresh to ensure all pending effects are processed
+                cx.refresh().ok();
+
                 // Wait for UI to fully stabilize
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(2))
                     .await;
 
-                // Run the visual test
+                // Activate window again before screenshot to ensure it's rendered
+                cx.update(|cx| {
+                    workspace_window
+                        .update(cx, |_, window, _| {
+                            window.activate_window();
+                        })
+                        .ok();
+                })
+                .ok();
+
+                // One more refresh and wait
+                cx.refresh().ok();
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+
+                // Track test results
+                let mut passed = 0;
+                let mut failed = 0;
+                let mut updated = 0;
+
+                // Run Test 1: Project Panel (with project panel visible)
+                println!("\n--- Test 1: project_panel ---");
+                let test_result = run_visual_test(
+                    "project_panel",
+                    workspace_window.into(),
+                    &mut cx,
+                    update_baseline,
+                )
+                .await;
+
+                match test_result {
+                    Ok(TestResult::Passed) => {
+                        println!("✓ project_panel: PASSED");
+                        passed += 1;
+                    }
+                    Ok(TestResult::BaselineUpdated(path)) => {
+                        println!("✓ project_panel: Baseline updated at {}", path.display());
+                        updated += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("✗ project_panel: FAILED - {}", e);
+                        failed += 1;
+                    }
+                }
+
+                // Close the project panel for the second test
+                cx.update(|cx| {
+                    workspace_window
+                        .update(cx, |workspace, window, cx| {
+                            workspace.close_panel::<ProjectPanel>(window, cx);
+                        })
+                        .ok();
+                })
+                .ok();
+
+                // Refresh and wait for panel to close
+                cx.refresh().ok();
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+
+                // Run Test 2: Workspace with Editor (without project panel)
+                println!("\n--- Test 2: workspace_with_editor ---");
                 let test_result = run_visual_test(
                     "workspace_with_editor",
                     workspace_window.into(),
@@ -224,17 +332,36 @@ fn main() {
 
                 match test_result {
                     Ok(TestResult::Passed) => {
-                        println!("\n=== Visual Test PASSED ===");
+                        println!("✓ workspace_with_editor: PASSED");
+                        passed += 1;
                     }
                     Ok(TestResult::BaselineUpdated(path)) => {
-                        println!("\n=== Baseline Updated ===");
-                        println!("New baseline saved to: {}", path.display());
+                        println!(
+                            "✓ workspace_with_editor: Baseline updated at {}",
+                            path.display()
+                        );
+                        updated += 1;
                     }
                     Err(e) => {
-                        eprintln!("\n=== Visual Test FAILED ===");
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
+                        eprintln!("✗ workspace_with_editor: FAILED - {}", e);
+                        failed += 1;
                     }
+                }
+
+                // Print summary
+                println!("\n=== Test Summary ===");
+                println!("Passed: {}", passed);
+                println!("Failed: {}", failed);
+                if updated > 0 {
+                    println!("Baselines Updated: {}", updated);
+                }
+
+                if failed > 0 {
+                    eprintln!("\n=== Visual Tests FAILED ===");
+                    cx.update(|cx| cx.quit()).ok();
+                    std::process::exit(1);
+                } else {
+                    println!("\n=== All Visual Tests PASSED ===");
                 }
 
                 cx.update(|cx| cx.quit()).ok();
