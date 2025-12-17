@@ -944,10 +944,10 @@ impl WaylandWindowStatePtr {
         let state = self.state.borrow();
         let client = state.client.get_client();
         #[allow(clippy::mutable_key_type)]
-        let childrens = state.children.clone();
+        let children = state.children.clone();
         drop(state);
 
-        for child in childrens {
+        for child in children {
             let mut client_state = client.borrow_mut();
             let window = get_window(&mut client_state, &child);
             drop(client_state);
