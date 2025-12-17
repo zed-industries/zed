@@ -972,6 +972,7 @@ impl AppState {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Arc<Self> {
+        use fs::Fs;
         use node_runtime::NodeRuntime;
         use session::Session;
         use settings::SettingsStore;
@@ -982,6 +983,7 @@ impl AppState {
         }
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
+        <dyn Fs>::set_global(fs.clone(), cx);
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
