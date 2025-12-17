@@ -209,16 +209,6 @@ members = [
     "crates/ztracing_macro",
 
     #
-    # Extensions
-    #
-
-    "extensions/glsl",
-    "extensions/html",
-    "extensions/proto",
-    "extensions/slash-commands-example",
-    "extensions/test-extension",
-
-    #
     # Tooling
     #
 

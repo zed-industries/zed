@@ -1728,12 +1728,7 @@
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
   "auto_install_extensions": {
-    "html": true,
-    "copilot-chat": true,
-    "anthropic": true,
     "google-ai": true,
-    "openai": true,
-    "openrouter": true,
   },
   // The capabilities granted to extensions.
   //
