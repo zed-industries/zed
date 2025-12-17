@@ -36,7 +36,6 @@ use smol::Async;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use std::pin::Pin;
 use std::{
     env,
     ffi::OsStr,
@@ -453,13 +452,10 @@ pub fn execute_run(
                 )
             };
 
-            let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
-                .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
             let node_runtime = NodeRuntime::new(
                 http_client.clone(),
                 Some(shell_env_loaded_rx),
                 node_settings_rx,
-                trust_task,
             );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());

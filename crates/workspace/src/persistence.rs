@@ -1919,7 +1919,6 @@ impl WorkspaceDb {
     pub(crate) async fn save_trusted_worktrees(
         &self,
         trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
-        trusted_workspaces: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -1936,7 +1935,6 @@ impl WorkspaceDb {
                     .into_iter()
                     .map(move |abs_path| (Some(abs_path), host.clone()))
             })
-            .chain(trusted_workspaces.into_iter().map(|host| (None, host)))
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
@@ -2001,7 +1999,7 @@ VALUES {placeholders};"#
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
-            .map(|(abs_path, user_name, host_name)| {
+            .filter_map(|(abs_path, user_name, host_name)| {
                 let db_host = match (user_name, host_name) {
                     (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
@@ -2014,21 +2012,17 @@ VALUES {placeholders};"#
                     }),
                 };
 
-                match abs_path {
-                    Some(abs_path) => {
-                        if db_host != host {
-                            (db_host, PathTrust::AbsPath(abs_path))
-                        } else if let Some(worktree_store) = &worktree_store {
-                            find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                                .map(PathTrust::Worktree)
-                                .map(|trusted_worktree| (host.clone(), trusted_worktree))
-                                .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
-                        } else {
-                            (db_host, PathTrust::AbsPath(abs_path))
-                        }
-                    }
-                    None => (db_host, PathTrust::Workspace),
-                }
+                let abs_path = abs_path?;
+                Some(if db_host != host {
+                    (db_host, PathTrust::AbsPath(abs_path))
+                } else if let Some(worktree_store) = &worktree_store {
+                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
+                        .map(PathTrust::Worktree)
+                        .map(|trusted_worktree| (host.clone(), trusted_worktree))
+                        .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
+                } else {
+                    (db_host, PathTrust::AbsPath(abs_path))
+                })
             })
             .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
                 acc.entry(remote_host)

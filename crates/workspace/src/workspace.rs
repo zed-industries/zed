@@ -1233,21 +1233,18 @@ impl Workspace {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
                 if let TrustedWorktreesEvent::Trusted(..) = e {
-                    let (new_trusted_workspaces, new_trusted_worktrees) = worktrees_store
-                        .update(cx, |worktrees_store, cx| {
-                            worktrees_store.trusted_paths_for_serialization(cx)
-                        });
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                        let new_trusted_worktrees =
+                            worktrees_store.update(cx, |worktrees_store, cx| {
+                                worktrees_store.trusted_paths_for_serialization(cx)
+                            });
                         let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
                         workspace._schedule_serialize_worktree_trust =
                             cx.background_spawn(async move {
                                 timeout.await;
                                 persistence::DB
-                                    .save_trusted_worktrees(
-                                        new_trusted_worktrees,
-                                        new_trusted_workspaces,
-                                    )
+                                    .save_trusted_worktrees(new_trusted_worktrees)
                                     .await
                                     .log_err();
                             });
