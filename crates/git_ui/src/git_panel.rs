@@ -35,10 +35,9 @@ use git::{
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point,
-    size, uniform_list,
+    EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
+    PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity, actions,
+    anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -212,8 +211,7 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
-const TREE_INDENT: f32 = 12.0;
-const TREE_INDENT_GUIDE_OFFSET: f32 = 16.0;
+const TREE_INDENT: f32 = 16.0;
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -4697,7 +4695,10 @@ impl GitPanel {
                                         },
                                     )
                                     .with_render_fn(cx.entity(), |_, params, _, _| {
-                                        let left_offset = px(TREE_INDENT_GUIDE_OFFSET);
+                                        // Magic number to align the tree item is 3 here
+                                        // because we're using 12px as the left-side padding
+                                        // and 3 makes the alignment work with the bounding box of the icon
+                                        let left_offset = px(TREE_INDENT + 3_f32);
                                         let indent_size = params.indent_size;
                                         let item_height = params.item_height;
 
@@ -4725,10 +4726,6 @@ impl GitPanel {
                         })
                         .size_full()
                         .flex_grow()
-                        .with_sizing_behavior(ListSizingBehavior::Auto)
-                        .with_horizontal_sizing_behavior(
-                            ListHorizontalSizingBehavior::Unconstrained,
-                        )
                         .with_width_from_item(self.max_width_item_index)
                         .track_scroll(&self.scroll_handle),
                     )
@@ -4752,7 +4749,7 @@ impl GitPanel {
     }
 
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
-        Label::new(label.into()).color(color).single_line()
+        Label::new(label.into()).color(color)
     }
 
     fn list_item_height(&self) -> Rems {
@@ -4774,8 +4771,8 @@ impl GitPanel {
             .h(self.list_item_height())
             .w_full()
             .items_end()
-            .px(rems(0.75)) // ~12px
-            .pb(rems(0.3125)) // ~ 5px
+            .px_3()
+            .pb_1()
             .child(
                 Label::new(header.title())
                     .color(Color::Muted)
@@ -4963,113 +4960,68 @@ impl GitPanel {
         let marked_bg_alpha = 0.12;
         let state_opacity_step = 0.04;
 
+        let info_color = cx.theme().status().info;
+
         let base_bg = match (selected, marked) {
-            (true, true) => cx
-                .theme()
-                .status()
-                .info
-                .alpha(selected_bg_alpha + marked_bg_alpha),
-            (true, false) => cx.theme().status().info.alpha(selected_bg_alpha),
-            (false, true) => cx.theme().status().info.alpha(marked_bg_alpha),
+            (true, true) => info_color.alpha(selected_bg_alpha + marked_bg_alpha),
+            (true, false) => info_color.alpha(selected_bg_alpha),
+            (false, true) => info_color.alpha(marked_bg_alpha),
             _ => cx.theme().colors().ghost_element_background,
         };
 
-        let hover_bg = if selected {
-            cx.theme()
-                .status()
-                .info
-                .alpha(selected_bg_alpha + state_opacity_step)
-        } else {
-            cx.theme().colors().ghost_element_hover
-        };
-
-        let active_bg = if selected {
-            cx.theme()
-                .status()
-                .info
-                .alpha(selected_bg_alpha + state_opacity_step * 2.0)
-        } else {
-            cx.theme().colors().ghost_element_active
-        };
-
-        let mut name_row = h_flex()
-            .items_center()
-            .gap_1()
-            .flex_1()
-            .pl(if tree_view {
-                px(depth as f32 * TREE_INDENT)
-            } else {
-                px(0.)
-            })
-            .child(git_status_icon(status));
-
-        name_row = if tree_view {
-            name_row.child(
-                self.entry_label(display_name, label_color)
-                    .when(status.is_deleted(), Label::strikethrough)
-                    .truncate(),
+        let (hover_bg, active_bg) = if selected {
+            (
+                info_color.alpha(selected_bg_alpha + state_opacity_step),
+                info_color.alpha(selected_bg_alpha + state_opacity_step * 2.0),
             )
         } else {
-            name_row.child(h_flex().items_center().flex_1().map(|this| {
-                self.path_formatted(
-                    this,
-                    entry.parent_dir(path_style),
-                    path_color,
-                    display_name,
-                    label_color,
-                    path_style,
-                    git_path_style,
-                    status.is_deleted(),
-                )
-            }))
+            (
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().ghost_element_active,
+            )
         };
+
+        let name_row = h_flex()
+            .min_w_0()
+            .flex_1()
+            .gap_1()
+            .child(git_status_icon(status))
+            .map(|this| {
+                if tree_view {
+                    this.pl(px(depth as f32 * TREE_INDENT)).child(
+                        self.entry_label(display_name, label_color)
+                            .when(status.is_deleted(), Label::strikethrough)
+                            .truncate(),
+                    )
+                } else {
+                    this.child(self.path_formatted(
+                        entry.parent_dir(path_style),
+                        path_color,
+                        display_name,
+                        label_color,
+                        path_style,
+                        git_path_style,
+                        status.is_deleted(),
+                    ))
+                }
+            });
 
         h_flex()
             .id(id)
             .h(self.list_item_height())
             .w_full()
+            .pl_3()
+            .pr_1()
+            .gap_1p5()
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
-            .px(rems(0.75)) // ~12px
-            .overflow_hidden()
-            .flex_none()
-            .gap_1p5()
             .bg(base_bg)
-            .hover(|this| this.bg(hover_bg))
-            .active(|this| this.bg(active_bg))
-            .on_click({
-                cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    this.selected_entry = Some(ix);
-                    cx.notify();
-                    if event.modifiers().secondary() {
-                        this.open_file(&Default::default(), window, cx)
-                    } else {
-                        this.open_diff(&Default::default(), window, cx);
-                        this.focus_handle.focus(window, cx);
-                    }
-                })
-            })
-            .on_mouse_down(
-                MouseButton::Right,
-                move |event: &MouseDownEvent, window, cx| {
-                    // why isn't this happening automatically? we are passing MouseButton::Right to `on_mouse_down`?
-                    if event.button != MouseButton::Right {
-                        return;
-                    }
-
-                    let Some(this) = handle.upgrade() else {
-                        return;
-                    };
-                    this.update(cx, |this, cx| {
-                        this.deploy_entry_context_menu(event.position, ix, window, cx);
-                    });
-                    cx.stop_propagation();
-                },
-            )
-            .child(name_row.overflow_x_hidden())
+            .hover(|s| s.bg(hover_bg))
+            .active(|s| s.bg(active_bg))
+            .child(name_row)
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5119,6 +5071,35 @@ impl GitPanel {
                             }),
                     ),
             )
+            .on_click({
+                cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    cx.notify();
+                    if event.modifiers().secondary() {
+                        this.open_file(&Default::default(), window, cx)
+                    } else {
+                        this.open_diff(&Default::default(), window, cx);
+                        this.focus_handle.focus(window, cx);
+                    }
+                })
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    // why isn't this happening automatically? we are passing MouseButton::Right to `on_mouse_down`?
+                    if event.button != MouseButton::Right {
+                        return;
+                    }
+
+                    let Some(this) = handle.upgrade() else {
+                        return;
+                    };
+                    this.update(cx, |this, cx| {
+                        this.deploy_entry_context_menu(event.position, ix, window, cx);
+                    });
+                    cx.stop_propagation();
+                },
+            )
             .into_any_element()
     }
 
@@ -5143,29 +5124,23 @@ impl GitPanel {
         let selected_bg_alpha = 0.08;
         let state_opacity_step = 0.04;
 
-        let base_bg = if selected {
-            cx.theme().status().info.alpha(selected_bg_alpha)
+        let info_color = cx.theme().status().info;
+        let colors = cx.theme().colors();
+
+        let (base_bg, hover_bg, active_bg) = if selected {
+            (
+                info_color.alpha(selected_bg_alpha),
+                info_color.alpha(selected_bg_alpha + state_opacity_step),
+                info_color.alpha(selected_bg_alpha + state_opacity_step * 2.0),
+            )
         } else {
-            cx.theme().colors().ghost_element_background
+            (
+                colors.ghost_element_background,
+                colors.ghost_element_hover,
+                colors.ghost_element_active,
+            )
         };
 
-        let hover_bg = if selected {
-            cx.theme()
-                .status()
-                .info
-                .alpha(selected_bg_alpha + state_opacity_step)
-        } else {
-            cx.theme().colors().ghost_element_hover
-        };
-
-        let active_bg = if selected {
-            cx.theme()
-                .status()
-                .info
-                .alpha(selected_bg_alpha + state_opacity_step * 2.0)
-        } else {
-            cx.theme().colors().ghost_element_active
-        };
         let folder_icon = if entry.expanded {
             IconName::FolderOpen
         } else {
@@ -5188,9 +5163,8 @@ impl GitPanel {
         };
 
         let name_row = h_flex()
-            .items_center()
+            .min_w_0()
             .gap_1()
-            .flex_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
             .child(
                 Icon::new(folder_icon)
@@ -5202,28 +5176,21 @@ impl GitPanel {
         h_flex()
             .id(id)
             .h(self.list_item_height())
+            .min_w_0()
             .w_full()
-            .items_center()
+            .pl_3()
+            .pr_1()
+            .gap_1p5()
+            .justify_between()
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
-            .px(rems(0.75))
-            .overflow_hidden()
-            .flex_none()
-            .gap_1p5()
             .bg(base_bg)
-            .hover(|this| this.bg(hover_bg))
-            .active(|this| this.bg(active_bg))
-            .on_click({
-                let key = entry.key.clone();
-                cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                    this.selected_entry = Some(ix);
-                    this.toggle_directory(&key, window, cx);
-                })
-            })
-            .child(name_row.overflow_x_hidden())
+            .hover(|s| s.bg(hover_bg))
+            .active(|s| s.bg(active_bg))
+            .child(name_row)
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5262,12 +5229,18 @@ impl GitPanel {
                             }),
                     ),
             )
+            .on_click({
+                let key = entry.key.clone();
+                cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    this.toggle_directory(&key, window, cx);
+                })
+            })
             .into_any_element()
     }
 
     fn path_formatted(
         &self,
-        parent: Div,
         directory: Option<String>,
         path_color: Color,
         file_name: String,
@@ -5276,41 +5249,31 @@ impl GitPanel {
         git_path_style: GitPathStyle,
         strikethrough: bool,
     ) -> Div {
-        parent
-            .when(git_path_style == GitPathStyle::FileNameFirst, |this| {
-                this.child(
-                    self.entry_label(
-                        match directory.as_ref().is_none_or(|d| d.is_empty()) {
-                            true => file_name.clone(),
-                            false => format!("{file_name} "),
-                        },
-                        label_color,
-                    )
-                    .when(strikethrough, Label::strikethrough),
-                )
-            })
-            .when_some(directory, |this, dir| {
-                match (
-                    !dir.is_empty(),
-                    git_path_style == GitPathStyle::FileNameFirst,
-                ) {
-                    (true, true) => this.child(
-                        self.entry_label(dir, path_color)
-                            .when(strikethrough, Label::strikethrough),
-                    ),
-                    (true, false) => this.child(
-                        self.entry_label(
-                            format!("{dir}{}", path_style.primary_separator()),
-                            path_color,
-                        )
-                        .when(strikethrough, Label::strikethrough),
-                    ),
-                    _ => this,
-                }
-            })
-            .when(git_path_style == GitPathStyle::FilePathFirst, |this| {
-                this.child(
+        let file_name_first = git_path_style == GitPathStyle::FileNameFirst;
+        let file_path_first = git_path_style == GitPathStyle::FilePathFirst;
+
+        let file_name = format!("{} ", file_name);
+
+        h_flex()
+            .min_w_0()
+            .overflow_hidden()
+            .when(file_path_first, |this| this.flex_row_reverse())
+            .child(
+                div().flex_none().child(
                     self.entry_label(file_name, label_color)
+                        .when(strikethrough, Label::strikethrough),
+                ),
+            )
+            .when_some(directory, |this, dir| {
+                let path_name = if file_name_first {
+                    dir
+                } else {
+                    format!("{dir}{}", path_style.primary_separator())
+                };
+
+                this.child(
+                    self.entry_label(path_name, path_color)
+                        .truncate()
                         .when(strikethrough, Label::strikethrough),
                 )
             })
