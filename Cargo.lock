@@ -18180,7 +18180,6 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
- "encoding_rs",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "fuzzy",
