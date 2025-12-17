@@ -34,6 +34,7 @@ indexmap.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
+markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 picker.workspace = true

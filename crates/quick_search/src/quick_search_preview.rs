@@ -49,6 +49,8 @@ pub(crate) enum PreviewRequest {
     ProjectPath {
         key: PreviewKey,
         project_path: ProjectPath,
+        strong_ranges: Vec<Range<Point>>,
+        weak_ranges: Vec<Range<Point>>,
         use_diff_preview: bool,
     },
     GitCommit {
@@ -744,6 +746,14 @@ impl PreviewState {
 
                     if let Some(qs) = quick_search.upgrade() {
                         let preview_id = preview_key_for_task.clone();
+                        let (strong_point_ranges, weak_point_ranges) = match &request_for_task {
+                            PreviewRequest::ProjectPath {
+                                strong_ranges,
+                                weak_ranges,
+                                ..
+                            } => (strong_ranges.clone(), weak_ranges.clone()),
+                            _ => (Vec::new(), Vec::new()),
+                        };
                         let mut should_apply_selection = false;
                         let update_result = app.update_entity(&qs, |qs, cx| {
                             if qs.preview.current_preview.as_ref() != Some(&preview_id)
@@ -760,6 +770,37 @@ impl PreviewState {
                                 .unwrap_or(true);
                             if buffer_changed {
                                 qs.preview.replace_preview(buffer_for_preview.clone(), cx);
+                            }
+
+                            if !strong_point_ranges.is_empty() || !weak_point_ranges.is_empty() {
+                                let snapshot = buffer_for_preview.read(cx).snapshot();
+                                qs.preview.current_preview_anchors = Some(
+                                    strong_point_ranges
+                                        .iter()
+                                        .cloned()
+                                        .map(|range| {
+                                            crate::types::point_range_to_anchor_range(
+                                                range,
+                                                &snapshot.text,
+                                            )
+                                        })
+                                        .collect(),
+                                );
+                                qs.preview.current_weak_preview_anchors = Some(
+                                    weak_point_ranges
+                                        .iter()
+                                        .cloned()
+                                        .map(|range| {
+                                            crate::types::point_range_to_anchor_range(
+                                                range,
+                                                &snapshot.text,
+                                            )
+                                        })
+                                        .collect(),
+                                );
+                            } else {
+                                qs.preview.current_preview_anchors = None;
+                                qs.preview.current_weak_preview_anchors = None;
                             }
                             qs.preview.clear_error();
                             qs.preview.needs_preview_scroll = true;

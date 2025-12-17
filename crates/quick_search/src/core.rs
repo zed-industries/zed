@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use gpui::{App, AppContext, AsyncApp, Context, Entity, WeakEntity};
+use gpui::{AnyView, App, AppContext, AsyncApp, Context, Entity, WeakEntity, Window};
 use log::debug;
 use project::Project;
 use project::search::SearchResult;
@@ -75,9 +75,103 @@ impl SearchCancellation {
         self.flag.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    pub fn cancel(&self) {
+        self.flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn flag(&self) -> Arc<AtomicBool> {
         self.flag.clone()
     }
+}
+
+#[derive(Clone, Default)]
+pub struct PreviewFooterHostState {
+    pub has_content: bool,
+    pub loading: bool,
+    pub loading_label: Option<Arc<str>>,
+}
+
+#[derive(Clone)]
+pub struct PreviewFooterHost {
+    state: Entity<PreviewFooterHostState>,
+}
+
+impl PreviewFooterHost {
+    pub fn new(cx: &mut App) -> Self {
+        Self {
+            state: cx.new(|_cx| PreviewFooterHostState::default()),
+        }
+    }
+
+    pub fn state_entity(&self) -> &Entity<PreviewFooterHostState> {
+        &self.state
+    }
+
+    pub fn set_loading(&self, loading: bool, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            if state.loading == loading {
+                return;
+            }
+            state.loading = loading;
+            if !loading {
+                state.loading_label = None;
+            }
+            cx.notify();
+        });
+    }
+
+    pub fn set_has_content(&self, has_content: bool, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            if state.has_content == has_content {
+                return;
+            }
+            state.has_content = has_content;
+            cx.notify();
+        });
+    }
+
+    pub fn set_loading_label(&self, label: Option<Arc<str>>, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            if state.loading_label == label {
+                return;
+            }
+            state.loading_label = label;
+            cx.notify();
+        });
+    }
+
+    pub fn snapshot(&self, cx: &App) -> PreviewFooterHostState {
+        self.state.read(cx).clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct FooterSpec {
+    pub title: Arc<str>,
+    pub toggleable: bool,
+    pub default_open: bool,
+}
+
+#[derive(Clone)]
+pub struct FooterContext {
+    pub project: Entity<Project>,
+    #[allow(dead_code)]
+    pub query: Arc<str>,
+    pub selected: Option<QuickMatch>,
+    pub cancellation: SearchCancellation,
+}
+
+#[derive(Clone)]
+pub enum FooterEvent {
+    OpenChanged(bool),
+    ContextChanged(FooterContext),
+}
+
+pub struct FooterInstance {
+    pub spec: FooterSpec,
+    pub host: PreviewFooterHost,
+    pub view: AnyView,
+    pub handle_event: Arc<dyn Fn(FooterEvent, &mut Window, &mut App) + Send + Sync>,
 }
 
 #[derive(Clone)]
@@ -238,6 +332,10 @@ pub trait QuickSearchSource {
         Ordering::Equal
     }
 
+    fn create_preview_footer(&self, _window: &mut Window, _cx: &mut App) -> Option<FooterInstance> {
+        None
+    }
+
     fn start_search(
         &self,
         ctx: SearchContext,
@@ -371,13 +469,16 @@ impl SourceRegistry {
     pub fn preview_request_for_match(
         &self,
         selected: &QuickMatch,
+        search_generation: usize,
         weak_ranges: Vec<Range<Point>>,
         use_diff_preview: bool,
         query: &str,
         project: &Entity<Project>,
         cx: &App,
     ) -> PreviewRequest {
-        let key = PreviewKey(selected.id);
+        let key = PreviewKey(
+            ((search_generation as u64) << 32) | (selected.id & 0xFFFF_FFFF),
+        );
         match &selected.kind {
             QuickMatchKind::Buffer {
                 buffer_id,
@@ -391,6 +492,8 @@ impl SourceRegistry {
                             PreviewRequest::ProjectPath {
                                 key,
                                 project_path: project_path.clone(),
+                                strong_ranges: ranges.clone(),
+                                weak_ranges,
                                 use_diff_preview,
                             }
                         }
@@ -426,6 +529,8 @@ impl SourceRegistry {
             QuickMatchKind::ProjectPath { project_path } => PreviewRequest::ProjectPath {
                 key,
                 project_path: project_path.clone(),
+                strong_ranges: Vec::new(),
+                weak_ranges: Vec::new(),
                 use_diff_preview,
             },
             QuickMatchKind::GitCommit {

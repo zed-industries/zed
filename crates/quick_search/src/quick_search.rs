@@ -19,6 +19,7 @@ use async_channel::Receiver;
 use file_icons::FileIcons;
 use gpui::AsyncApp;
 use project::search::SearchResult;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{sync::Arc, time::Duration};
@@ -29,17 +30,20 @@ use git_ui::commit_tooltip::CommitAvatar;
 use gpui::SharedString;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EntityInputHandler, FocusHandle, FocusOutEvent,
-    Focusable, HighlightStyle, Render, Styled, StyledText, Task, WeakEntity, Window,
+    Focusable, HighlightStyle, InteractiveElement, Render, StatefulInteractiveElement, Styled,
+    StyledText, Task, WeakEntity, Window,
 };
 use language::Buffer;
 use log::debug;
 use picker::{Picker, PickerDelegate};
 use project::{Project, debounced_delay::DebouncedDelay};
+use schemars::JsonSchema;
 use search::{
     SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleWholeWord,
     search_bar::{input_base_styles, render_text_input},
 };
 use settings::{Settings, SettingsStore};
+use serde::Deserialize;
 use ui::{
     Button, ButtonStyle, Chip, Color, DiffStat, Divider, DividerColor, HighlightedLabel, Icon,
     IconButton, IconButtonShape, IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon,
@@ -47,6 +51,7 @@ use ui::{
     rems_from_px,
 };
 use text::Point;
+use theme::ThemeSettings;
 use workspace::{ActivatePane, ModalView, Workspace, item::PreviewTabsSettings, pane};
 
 pub(crate) const MIN_QUERY_LEN: usize = 2;
@@ -78,6 +83,12 @@ fn snippet_shared_for_entry(entry: &QuickMatch) -> SharedString {
         .unwrap_or_else(|| Arc::<str>::from(""));
     SharedString::new(snippet_arc)
 }
+
+/// Toggles the preview-side footer (source-provided details panel).
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = quick_search, name = "TogglePreviewFooter")]
+#[serde(deny_unknown_fields)]
+struct TogglePreviewFooter;
 
 fn syntax_and_match_snippet_element(
     entry: &QuickMatch,
@@ -127,6 +138,7 @@ pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview: PreviewState,
     source_registry: core::SourceRegistry,
+    preview_footer: PreviewFooterState,
     focus_handle: FocusHandle,
 }
 
@@ -259,6 +271,7 @@ impl QuickSearch {
         let search_options = SearchOptions::from_settings(&editor_settings.search);
         let preview = PreviewState::new(preview_project, initial_buffer, window, cx);
         let source_registry = core::SourceRegistry::default();
+        let mut preview_footer = PreviewFooterState::new(&source_registry, window, cx);
         let initial_source_id = history::last_source_id();
         let initial_source = source_registry
             .available_sources()
@@ -275,7 +288,10 @@ impl QuickSearch {
             search_options,
             source_registry.clone(),
         );
-        delegate.search_engine.set_active_source(initial_source);
+        delegate
+            .search_engine
+            .set_active_source(initial_source.clone());
+        preview_footer.set_active_source(initial_source, window, cx);
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .modal(false)
@@ -291,6 +307,7 @@ impl QuickSearch {
             picker,
             preview,
             source_registry,
+            preview_footer,
             focus_handle,
         }
     }
@@ -347,6 +364,8 @@ impl QuickSearch {
         let owner = cx.entity().downgrade();
         self.preview
             .request_preview(PreviewRequest::Empty, &owner, window, cx);
+        self.preview_footer
+            .set_active_source(source_id.clone(), window, cx);
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
@@ -501,9 +520,229 @@ impl Layout {
     }
 }
 
+struct PreviewFooterState {
+    preview_visible: bool,
+    active_source: core::SourceId,
+    instances: HashMap<core::SourceId, core::FooterInstance>,
+    open_by_source: HashMap<core::SourceId, bool>,
+    cancellation_by_source: HashMap<core::SourceId, core::SearchCancellation>,
+}
+
+impl PreviewFooterState {
+    fn new(
+        source_registry: &core::SourceRegistry,
+        window: &mut Window,
+        cx: &mut Context<QuickSearch>,
+    ) -> Self {
+        let mut instances = HashMap::<core::SourceId, core::FooterInstance>::new();
+        let mut open_by_source = HashMap::<core::SourceId, bool>::new();
+
+        for source in source_registry.available_sources() {
+            let Some(instance) = source.create_preview_footer(window, cx) else {
+                continue;
+            };
+            let source_id = source.spec().id.clone();
+            open_by_source.insert(source_id.clone(), instance.spec.default_open);
+
+            cx.observe(instance.host.state_entity(), |this, _, cx| {
+                this.picker.update(cx, |_picker, cx| cx.notify());
+                cx.notify();
+            })
+            .detach();
+
+            instances.insert(source_id, instance);
+        }
+
+        Self {
+            preview_visible: true,
+            active_source: core::default_source_id(),
+            instances,
+            open_by_source,
+            cancellation_by_source: HashMap::new(),
+        }
+    }
+
+    fn set_preview_visible(&mut self, preview_visible: bool) {
+        self.preview_visible = preview_visible;
+    }
+
+    fn set_active_source(&mut self, source_id: core::SourceId, _window: &mut Window, cx: &mut App) {
+        if self.active_source == source_id {
+            return;
+        }
+
+        if let Some(cancellation) = self.cancellation_by_source.get(&self.active_source) {
+            cancellation.cancel();
+        }
+
+        self.active_source = source_id;
+        if let Some(instance) = self.instances.get(&self.active_source) {
+            instance.host.set_loading(false, cx);
+            instance.host.set_has_content(false, cx);
+        }
+    }
+
+    fn update_active_context(
+        &mut self,
+        selected: Option<QuickMatch>,
+        query: Arc<str>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(instance) = self.instances.get(&self.active_source) else {
+            return;
+        };
+
+        if let Some(prev) = self.cancellation_by_source.get(&self.active_source) {
+            prev.cancel();
+        }
+
+        let cancellation = core::SearchCancellation::new(Arc::new(AtomicBool::new(false)));
+        self.cancellation_by_source
+            .insert(self.active_source.clone(), cancellation.clone());
+
+        let selected = if self.preview_visible { selected } else { None };
+
+        if selected.is_none() {
+            instance.host.set_loading(false, cx);
+            instance.host.set_has_content(false, cx);
+        }
+
+        let open = self
+            .open_by_source
+            .get(&self.active_source)
+            .copied()
+            .unwrap_or(instance.spec.default_open);
+        (instance.handle_event)(core::FooterEvent::OpenChanged(open), window, cx);
+        (instance.handle_event)(
+            core::FooterEvent::ContextChanged(core::FooterContext {
+                project,
+                query,
+                selected,
+                cancellation,
+            }),
+            window,
+            cx,
+        );
+    }
+
+    fn toggle_active_open(
+        &mut self,
+        has_selected: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(instance) = self.instances.get(&self.active_source) else {
+            return;
+        };
+        if !instance.spec.toggleable {
+            return;
+        }
+        if !self.preview_visible {
+            return;
+        }
+        if !has_selected {
+            return;
+        }
+        let state = instance.host.snapshot(cx);
+        if !state.has_content && !state.loading {
+            return;
+        }
+
+        let current = self
+            .open_by_source
+            .get(&self.active_source)
+            .copied()
+            .unwrap_or(instance.spec.default_open);
+        let next = !current;
+        self.open_by_source.insert(self.active_source.clone(), next);
+        (instance.handle_event)(core::FooterEvent::OpenChanged(next), window, cx);
+    }
+
+    fn active_toggle_button(
+        &self,
+        selected: Option<&QuickMatch>,
+        cx: &App,
+    ) -> Option<(Arc<str>, bool)> {
+        if !self.preview_visible {
+            return None;
+        }
+        if selected.is_none() {
+            return None;
+        }
+
+        let instance = self.instances.get(&self.active_source)?;
+        if !instance.spec.toggleable {
+            return None;
+        }
+        let state = instance.host.snapshot(cx);
+        if !state.has_content && !state.loading {
+            return None;
+        }
+
+        let open = self
+            .open_by_source
+            .get(&self.active_source)
+            .copied()
+            .unwrap_or(instance.spec.default_open);
+        Some((instance.spec.title.clone(), open))
+    }
+
+    fn render_footer_for_active_source(
+        &self,
+        max_height: gpui::Pixels,
+        active_source: &core::SourceId,
+        selected: Option<&QuickMatch>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if !self.preview_visible {
+            return None;
+        }
+        if selected.is_none() {
+            return None;
+        }
+        if *active_source != self.active_source {
+            return None;
+        }
+
+        let instance = self.instances.get(active_source)?;
+        let state = instance.host.snapshot(cx);
+        if !state.has_content && !state.loading {
+            return None;
+        }
+
+        let open = self
+            .open_by_source
+            .get(active_source)
+            .copied()
+            .unwrap_or(instance.spec.default_open);
+        if !open {
+            return None;
+        }
+
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        Some(
+            div()
+                .id("quick_search-preview-footer")
+                .flex_shrink_0()
+                .max_h(max_height)
+                .overflow_y_scroll()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+                .text_size(buffer_font_size)
+                .child(instance.view.clone())
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let layout = Layout::compute(window);
+        self.preview_footer.set_preview_visible(layout.show_preview);
 
         div()
             .w(layout.modal_width)
@@ -516,6 +755,7 @@ impl Render for QuickSearch {
             .on_action(cx.listener(Self::handle_activate_next_item))
             .on_action(cx.listener(Self::handle_activate_previous_item))
             .on_action(cx.listener(Self::handle_activate_pane))
+            .on_action(cx.listener(Self::handle_toggle_preview_footer))
             .bg(cx.theme().colors().panel_background)
             .border_1()
             .border_color(cx.theme().colors().border)
@@ -525,8 +765,20 @@ impl Render for QuickSearch {
 }
 
 impl QuickSearch {
+    fn handle_toggle_preview_footer(
+        &mut self,
+        _: &TogglePreviewFooter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let has_selected = self.picker.read(cx).delegate.selected_match().is_some();
+        self.preview_footer.toggle_active_open(has_selected, window, cx);
+        self.picker.update(cx, |_picker, cx| cx.notify());
+        cx.notify();
+    }
+
     fn render_content(
-        &self,
+        &mut self,
         layout: &Layout,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -591,19 +843,41 @@ impl QuickSearch {
     }
 
     fn render_preview_panel(
-        &self,
+        &mut self,
         layout: &Layout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let selected = self.picker.read(cx).delegate.selected_match().cloned();
         let content = if layout.show_preview {
-            self.render_preview_content(selected, window, cx)
+            self.render_preview_content(selected.clone(), window, cx)
         } else {
             Self::render_placeholder("Preview hidden (window too small)")
         };
 
-        let base = v_flex().min_w_0().overflow_hidden().child(content);
+        let active_source = self.picker.read(cx).delegate.search_engine.active_source.clone();
+        let footer = if layout.show_preview {
+            let preview_height = if layout.is_horizontal {
+                layout.content_height
+            } else {
+                layout.content_height * 0.55
+            };
+            self.preview_footer.render_footer_for_active_source(
+                preview_height * 0.35,
+                &active_source,
+                selected.as_ref(),
+                window,
+                cx,
+            )
+        } else {
+            None
+        };
+
+        let base = v_flex()
+            .min_w_0()
+            .overflow_hidden()
+            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
+            .when_some(footer, |this, footer| this.child(footer));
 
         if layout.is_horizontal {
             base.flex_1().h(layout.content_height)
@@ -1368,8 +1642,8 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Box<dyn Fn(&mut Window, &mut App) + 'static>> {
         let selected = self.selected_match().cloned();
-        if let Some(selected) = selected.clone() {
-            self.schedule_enrichment_for(selected, cx);
+        if let Some(selected) = selected.as_ref() {
+            self.schedule_enrichment_for(selected.clone(), cx);
         }
         let weak_preview_ranges = selected
             .as_ref()
@@ -1383,6 +1657,7 @@ impl PickerDelegate for QuickSearchDelegate {
         let request = selected.as_ref().map_or(PreviewRequest::Empty, |selected| {
             self.source_registry.preview_request_for_match(
                 selected,
+                self.search_engine.generation(),
                 weak_preview_ranges.clone(),
                 use_diff_preview,
                 &self.current_query,
@@ -1390,6 +1665,9 @@ impl PickerDelegate for QuickSearchDelegate {
                 cx,
             )
         });
+        let footer_selected = selected;
+        let footer_query: Arc<str> = Arc::from(self.current_query.clone());
+        let footer_project = self.project.clone();
         let quick_search = self.quick_search.clone();
 
         Some(Box::new(move |window, cx| {
@@ -1402,6 +1680,13 @@ impl PickerDelegate for QuickSearchDelegate {
                 quick_search
                     .preview
                     .request_preview(request.clone(), &owner, window, cx);
+                quick_search.preview_footer.update_active_context(
+                    footer_selected.clone(),
+                    footer_query.clone(),
+                    footer_project.clone(),
+                    window,
+                    cx,
+                );
             });
         }))
     }
@@ -1935,6 +2220,11 @@ impl PickerDelegate for QuickSearchDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        let footer_toggle = self
+            .quick_search
+            .upgrade()
+            .and_then(|qs| qs.read(cx).preview_footer.active_toggle_button(self.selected_match(), cx));
+
         Some(
             h_flex()
                 .w_full()
@@ -1943,6 +2233,19 @@ impl PickerDelegate for QuickSearchDelegate {
                 .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
+                .when_some(footer_toggle, |this, (label, open)| {
+                    this.child(
+                        Button::new("quick-search-toggle-preview-footer", label.to_string())
+                            .toggle_state(open)
+                            .key_binding(
+                                KeyBinding::for_action(&TogglePreviewFooter, cx)
+                                    .size(rems_from_px(12.)),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(TogglePreviewFooter.boxed_clone(), cx);
+                            }),
+                    )
+                })
                 .child(
                     Button::new("quick-search-open-split", "Open in Split")
                         .key_binding(
