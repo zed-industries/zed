@@ -969,12 +969,12 @@ impl PickerDelegate for BranchListDelegate {
                                                             "No commits found".into(),
                                                             |subject| {
                                                                 if show_author_name
-                                                                    && author_name.is_some()
+                                                                    && let Some(author) =
+                                                                        author_name
                                                                 {
                                                                     format!(
                                                                         "{}  •  {}",
-                                                                        author_name.unwrap(),
-                                                                        subject
+                                                                        author, subject
                                                                     )
                                                                 } else {
                                                                     subject.to_string()

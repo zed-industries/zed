@@ -3303,8 +3303,7 @@ impl BufferSnapshot {
             // set its end to the outdent position
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
-                .filter(|indent_range| indent_range.contains(&outdent_position))
-                .next_back()
+                .rfind(|indent_range| indent_range.contains(&outdent_position))
             {
                 range_to_truncate.end = outdent_position;
             }
