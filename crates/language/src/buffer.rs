@@ -78,6 +78,7 @@ pub use lsp::DiagnosticSeverity;
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
 pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
+const MAX_BYTES_TO_RUN_QUERY: usize = 64 * 1024;
 
 /// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -3226,7 +3227,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_distance_from_inclusion_byte_range: Some(10 * 1024),
+                max_bytes_to_search_within: Some(MAX_BYTES_TO_RUN_QUERY),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -4343,10 +4344,10 @@ impl BufferSnapshot {
             let mut color_pairs = Vec::new();
 
             let mut matches = self.syntax.matches_with_options(
-                range.clone(),
+                chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_distance_from_inclusion_byte_range: Some(10 * 1024),
+                    max_bytes_to_search_within: Some(MAX_BYTES_TO_RUN_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),

@@ -1097,14 +1097,14 @@ impl<'a> SyntaxMapCaptures<'a> {
 #[derive(Default)]
 pub struct TreeSitterOptions {
     pub max_start_depth: Option<u32>,
-    pub max_distance_from_inclusion_byte_range: Option<usize>,
+    pub max_bytes_to_search_within: Option<usize>,
 }
 
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
-            max_distance_from_inclusion_byte_range: None,
+            max_bytes_to_search_within: None,
         }
     }
 }
@@ -1138,10 +1138,11 @@ impl<'a> SyntaxMapMatches<'a> {
             };
             cursor.set_max_start_depth(options.max_start_depth);
 
-            if let Some(window) = options.max_distance_from_inclusion_byte_range {
-                let containing_range =
-                    range.start.saturating_sub(window)..range.end.saturating_add(window);
-                cursor.set_containing_byte_range(containing_range);
+            if let Some(max_bytes_to_search) = options.max_bytes_to_search_within {
+                let midpoint = (range.start + range.end) / 2;
+                let containing_range_start = midpoint.saturating_sub(max_bytes_to_search / 2);
+                let containing_range_end = containing_range_start + max_bytes_to_search;
+                cursor.set_containing_byte_range(containing_range_start..containing_range_end);
             }
 
             cursor.set_byte_range(range.clone());
