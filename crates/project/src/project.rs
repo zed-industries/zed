@@ -10,6 +10,7 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
+mod persistence;
 pub mod prettier_store;
 mod project_search;
 pub mod project_settings;
@@ -19,6 +20,7 @@ pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
+pub mod trusted_worktrees;
 pub mod worktree_store;
 
 #[cfg(test)]
@@ -39,6 +41,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
 pub use git_store::{
@@ -1069,6 +1072,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1077,6 +1081,15 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+            if init_worktree_trust {
+                trusted_worktrees::track_worktree_trust(
+                    worktree_store.clone(),
+                    None,
+                    None,
+                    None,
+                    cx,
+                );
+            }
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1250,6 +1263,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1258,8 +1272,14 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
-            let (remote_proto, path_style) =
-                remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
+            let (remote_proto, path_style, connection_options) =
+                remote.read_with(cx, |remote, _| {
+                    (
+                        remote.proto_client(),
+                        remote.path_style(),
+                        remote.connection_options(),
+                    )
+                });
             let worktree_store = cx.new(|_| {
                 WorktreeStore::remote(
                     false,
@@ -1268,8 +1288,23 @@ impl Project {
                     path_style,
                 )
             });
+
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+            if init_worktree_trust {
+                match &connection_options {
+                    RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
+                        trusted_worktrees::track_worktree_trust(
+                            worktree_store.clone(),
+                            Some(RemoteHostLocation::from(connection_options)),
+                            None,
+                            Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                            cx,
+                        );
+                    }
+                    RemoteConnectionOptions::Docker(..) => {}
+                }
+            }
 
             let weak_self = cx.weak_entity();
             let context_server_store =
@@ -1450,6 +1485,9 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
+            remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
+            remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
+
             BufferStore::init(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
@@ -1810,6 +1848,7 @@ impl Project {
                     Arc::new(languages),
                     fs,
                     None,
+                    false,
                     cx,
                 )
             })
@@ -1835,6 +1874,25 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> Entity<Project> {
+        Self::test_project(fs, root_paths, false, cx).await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn test_with_worktree_trust(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
+        Self::test_project(fs, root_paths, true, cx).await
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    async fn test_project(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        init_worktree_trust: bool,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
@@ -1850,6 +1908,7 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
+                init_worktree_trust,
                 cx,
             )
         });
@@ -4757,9 +4816,14 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateWorktree>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |project, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(worktree_id, cx)
+                });
+            }
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
@@ -4784,6 +4848,61 @@ impl Project {
             this.buffer_store.clone()
         })?;
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
+    }
+
+    async fn handle_trust_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrustWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let remote_host = this
+                .read(cx)
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            trusted_worktrees.trust(
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(|proto_path| PathTrust::from_proto(proto_path))
+                    .collect(),
+                remote_host,
+                cx,
+            );
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_restrict_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestrictWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let mut restricted_paths = envelope
+                .payload
+                .worktree_ids
+                .into_iter()
+                .map(WorktreeId::from_proto)
+                .map(PathTrust::Worktree)
+                .collect::<HashSet<_>>();
+            if envelope.payload.restrict_workspace {
+                restricted_paths.insert(PathTrust::Workspace);
+            }
+            let remote_host = this
+                .read(cx)
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            trusted_worktrees.restrict(restricted_paths, remote_host, cx);
+        })?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_update_buffer(
