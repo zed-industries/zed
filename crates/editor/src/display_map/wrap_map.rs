@@ -867,9 +867,6 @@ impl WrapSnapshot {
         //                               (^)           ^^^^^^^^^^^^^^
         // point:                                            ^
         // point(col_zero):                           (^)
-        //
-        //
-        //
 
         while let Some(transform) = cursor.item() {
             if transform.is_isomorphic() {
@@ -879,6 +876,14 @@ impl WrapSnapshot {
                 // thats only if this transform has at least one newline
                 //
                 // "this wrap row is a tab row" <=> self.to_tab_point(WrapPoint::new(wrap_row, 0)).column() == 0
+
+                // Note on comparison:
+                // We have code that relies on this to be row > 1
+                // It should work with row >= 1 but it does not :(
+                //
+                // That means that if every line is wrapped we walk back all the
+                // way to the start. Which invalidates the entire state triggering
+                // a full re-render.
                 if tab_summary.lines.row > 1 {
                     let wrap_point_at_end = cursor.end().0.row();
                     return cmp::min(wrap_point_at_end - RowDelta(1), point.row());
@@ -1318,81 +1323,70 @@ mod tests {
     use text::Rope;
     use theme::LoadThemes;
 
-    // #[gpui::test]
-    // async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
-    //     init_test(cx);
-    //     let text_system = cx.read(|cx| cx.text_system().clone());
+    #[gpui::test]
+    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
 
-    //     let tab_size = 4.try_into().unwrap();
-    //     let font = test_font();
-    //     let _font_id = text_system.resolve_font(&font);
-    //     let font_size = px(14.0);
+        fn test_wrap_snapshot(
+            text: &str,
+            soft_wrap_every: usize, // font size multiple
+            cx: &mut gpui::TestAppContext,
+        ) -> WrapSnapshot {
+            let text_system = cx.read(|cx| cx.text_system().clone());
+            let tab_size = 4.try_into().unwrap();
+            let font = test_font();
+            let _font_id = text_system.resolve_font(&font);
+            let font_size = px(14.0);
+            // this is very much an estimate to try and get the wrapping to
+            // occur at `soft_wrap_every` we check that it pans out for every test case
+            let soft_wrapping = Some(font_size * soft_wrap_every * 0.6);
 
-    //     let buffer = cx.new(|cx| {
-    //         language::Buffer::local(
-    //             // "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
-    //             "1234", cx,
-    //         )
-    //     });
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+            let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+            let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+            let tabs_snapshot = tab_map.set_max_expansion_column(32);
+            let (_wrap_map, wrap_snapshot) =
+                cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, soft_wrapping, cx));
 
-    //     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    //     let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-    //     log::info!("Buffer text: {:?}", buffer_snapshot.text());
-    //     let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-    //     log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-    //     let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-    //     log::info!("FoldMap text: {:?}", fold_snapshot.text());
-    //     let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
-    //     let tabs_snapshot = tab_map.set_max_expansion_column(32);
-    //     log::info!("TabMap text: {:?}", tabs_snapshot.text());
-    //     let soft_wrapping = Some(font_size * 3);
-    //     let (_wrap_map, wrap_snapshot) =
-    //         cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
+            wrap_snapshot
+        }
 
-    //     assert_eq!(wrap_snapshot.text(), "123\n4");
-    // }
+        // These two should pass but dont, see the comparison note in
+        // prev_row_boundary about why.
+        //
+        // //                                      0123  4567  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("1234\n5678", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 3);
 
-    // #[gpui::test]
-    // async fn test_prev_row_boundary_random(cx: &mut gpui::TestAppContext, mut test_rng: TestRng) {
-    //     init_test(cx);
-    //     let text_system = cx.read(|cx| cx.text_system().clone());
+        // //                                      012  345  678  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("123\n456\n789", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 5);
 
-    //     let tab_size = 4.try_into().unwrap();
-    //     let font = test_font();
-    //     let _font_id = text_system.resolve_font(&font);
-    //     let font_size = px(14.0);
+        //                                      012345678  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123456789", 1, cx);
+        assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 0);
 
-    //     let buffer = cx.new(|cx| {
-    //         language::Buffer::local(
-    //             "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
-    //             cx,
-    //         )
-    //     });
+        //                                      111  2222    44  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123\n4567\n\n89", 4, cx);
+        assert_eq!(wrap_snapshot.text(), "123\n4567\n\n89");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 2);
 
-    //     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    //     let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-    //     log::info!("Buffer text: {:?}", buffer_snapshot.text());
-    //     let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-    //     log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-    //     let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-    //     log::info!("FoldMap text: {:?}", fold_snapshot.text());
-    //     let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
-    //     let tabs_snapshot = tab_map.set_max_expansion_column(32);
-    //     log::info!("TabMap text: {:?}", tabs_snapshot.text());
-    //     let soft_wrapping = Some(font_size * 3);
-    //     let (_wrap_map, wrap_snapshot) =
-    //         cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
-
-    //     assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
-    //     assert_eq!(
-    //         wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(8, 0))),
-    //         WrapRow(7)
-    //     );
-    //     assert_eq!(
-    //         wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
-    //         WrapRow(9)
-    //     );
-    // }
+        //                                      11  2223   wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("12\n3456\n\n", 3, cx);
+        assert_eq!(wrap_snapshot.text(), "12\n345\n6\n\n");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 3);
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
