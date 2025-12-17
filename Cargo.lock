@@ -7372,6 +7372,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "pin-project",
+ "png 0.17.16",
  "postage",
  "pretty_assertions",
  "profiling",
