@@ -7137,6 +7137,7 @@ dependencies = [
  "tracing",
  "ui",
  "unindent",
+ "url",
  "util",
  "watch",
  "windows 0.61.3",

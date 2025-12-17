@@ -5948,6 +5948,11 @@ impl Repository {
         self.pending_ops.edit(edits, ());
         ids
     }
+    pub fn default_remote_url(&self) -> Option<String> {
+        self.remote_upstream_url
+            .clone()
+            .or(self.remote_origin_url.clone())
+    }
 }
 
 fn get_permalink_in_rust_registry_src(

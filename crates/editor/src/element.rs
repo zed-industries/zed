@@ -39,7 +39,8 @@ use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
 use git::{
     Oid,
-    blame::{BlameEntry, ParsedCommitMessage},
+    blame::BlameEntry,
+    commit::ParsedCommitMessage,
     status::FileStatus,
 };
 use gpui::{

@@ -4,7 +4,8 @@ use collections::HashMap;
 
 use git::{
     GitHostingProviderRegistry, GitRemote, Oid,
-    blame::{Blame, BlameEntry, ParsedCommitMessage},
+    blame::{Blame, BlameEntry},
+    commit::ParsedCommitMessage,
     parse_git_remote_url,
 };
 use gpui::{
@@ -526,10 +527,7 @@ impl GitBlame {
                                 .read(cx)
                                 .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
                                 .and_then(|(repo, _)| {
-                                    repo.read(cx)
-                                        .remote_upstream_url
-                                        .clone()
-                                        .or(repo.read(cx).remote_origin_url.clone())
+                                    repo.read(cx).default_remote_url()
                                 });
                             let blame_buffer = project
                                 .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx));

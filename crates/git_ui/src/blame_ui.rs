@@ -3,10 +3,7 @@ use crate::{
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
-use git::{
-    blame::{BlameEntry, ParsedCommitMessage},
-    repository::CommitSummary,
-};
+use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -395,7 +392,7 @@ fn deploy_blame_entry_context_menu(
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
-                |this, url| {
+                |this, url: url::Url| {
                     this.entry("Open permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })

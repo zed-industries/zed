@@ -20,7 +20,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
-use git::blame::ParsedCommitMessage;
+use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
     PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
@@ -30,8 +30,8 @@ use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
-    TrashUntrackedFiles, UnstageAll,
+    ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
+    StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
@@ -5534,47 +5534,53 @@ struct GitPanelMessageTooltip {
 
 impl GitPanelMessageTooltip {
     fn new(
-        git_panel: Entity<GitPanel>,
-        sha: SharedString,
-        repository: Entity<Repository>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        cx.new(|cx| {
-            cx.spawn_in(window, async move |this, cx| {
-                let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
-                    (
-                        git_panel.load_commit_details(sha.to_string(), cx),
-                        git_panel.workspace.clone(),
-                    )
-                })?;
-                let details = details.await?;
+          git_panel: Entity<GitPanel>,
+          sha: SharedString,
+          repository: Entity<Repository>,
+          window: &mut Window,
+          cx: &mut App,
+      ) -> Entity<Self> {
+          let remote_url = repository.read(cx).default_remote_url();
+          cx.new(|cx| {
+              cx.spawn_in(window, async move |this, cx| {
+                  let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
+                      (
+                          git_panel.load_commit_details(sha.to_string(), cx),
+                          git_panel.workspace.clone(),
+                      )
+                  })?;
+                  let details = details.await?;
+                  let provider_registry = cx
+                      .update(|_, app| GitHostingProviderRegistry::default_global(app))
+                      .ok();
 
-                let commit_details = crate::commit_tooltip::CommitDetails {
-                    sha: details.sha.clone(),
-                    author_name: details.author_name.clone(),
-                    author_email: details.author_email.clone(),
-                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(ParsedCommitMessage {
-                        message: details.message,
-                        ..Default::default()
-                    }),
-                };
+                  let commit_details = crate::commit_tooltip::CommitDetails {
+                      sha: details.sha.clone(),
+                      author_name: details.author_name.clone(),
+                      author_email: details.author_email.clone(),
+                      commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                      message: Some(ParsedCommitMessage::parse(
+                          details.sha.to_string(),
+                          details.message.to_string(),
+                          remote_url.as_deref(),
+                          provider_registry,
+                      )),
+                  };
 
-                this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
-                    this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(commit_details, repository, workspace, cx)
-                    }));
-                    cx.notify();
-                })
-            })
-            .detach();
+                  this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
+                      this.commit_tooltip = Some(cx.new(move |cx| {
+                          CommitTooltip::new(commit_details, repository, workspace, cx)
+                      }));
+                      cx.notify();
+                  })
+              })
+              .detach();
 
-            Self {
-                commit_tooltip: None,
-            }
-        })
-    }
+              Self {
+                  commit_tooltip: None,
+              }
+          })
+      }
 }
 
 impl Render for GitPanelMessageTooltip {
