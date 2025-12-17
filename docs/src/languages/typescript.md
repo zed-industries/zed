@@ -47,19 +47,10 @@ Prettier will also be used for TypeScript files by default. To disable this:
 
 ## Using the Tailwind CSS Language Server with TypeScript
 
-It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in TypeScript files.
-
-In order to do that you need to update your `settings.json`, to include the
-Tailwind CSS language server for TypeScript and configure the `classRegex`
-settings to recognize Tailwind CSS classes in TypeScript code:
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in vanilla TypeScript files (`.ts`), you can customize the `classRegex` field under it in your `settings.json`:
 
 ```json [settings]
 {
-  "languages": {
-    "TypeScript": {
-      "language_servers": ["tailwindcss-language-server", "..."]
-    }
-  },
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
@@ -81,30 +72,6 @@ settings to recognize Tailwind CSS classes in TypeScript code:
   }
 }
 ```
-
-You can now get Tailwind CSS autocomplete, linting, and hover previews in your TypeScript files.
-
-Example:
-
-```ts
-const element: HTMLElement | null = document.getElementById("my-element");
-if (element) {
-  element.className = "bg-yellow-500 <completion here>";
-  element.className += "bg-white <completion here>";
-  element.classList.add("text-sky-500 <completion here>");
-  element.classList.remove("shadow-amber-400 <completion here>");
-  element.classList.toggle("shadow-amber-100 <completion here>");
-  element.classList.replace(
-    "to-red-500 <completion here>",
-    "to-blue-500 <completion here>",
-  );
-  element.classList.contains("bg-green-500 <completion here>");
-  element.setAttributeNS(null, "class", "bg-purple-500 <completion here>");
-  element.setAttribute("class", "via-black <completion here>");
-}
-```
-
-Note: For TSX files please refer to: [Tailwind CSS Configuration](./tailwindcss.md)
 
 ## Large projects
 
@@ -228,7 +195,7 @@ The following can be debugged without writing additional configuration:
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
->
+
 > **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.

@@ -177,19 +177,10 @@ You can configure ESLint's `workingDirectory` setting:
 
 ## Using the Tailwind CSS Language Server with JavaScript
 
-It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in JavaScript files.
-
-In order to do that you need to update your `settings.json`, to include the
-Tailwind CSS language server for JavaScript and configure the `classRegex`
-settings to recognize Tailwind CSS classes in JavaScript code:
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in vanilla JavaScript files (`.js`), you can customize the `classRegex` field under it in your `settings.json`:
 
 ```json [settings]
 {
-  "languages": {
-    "JavaScript": {
-      "language_servers": ["tailwindcss-language-server", "..."]
-    }
-  },
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
@@ -212,30 +203,6 @@ settings to recognize Tailwind CSS classes in JavaScript code:
 }
 ```
 
-You can now get Tailwind CSS autocomplete, linting, and hover previews in your JavaScript files.
-
-Example:
-
-```js
-const element = document.getElementById("my-element");
-if (element) {
-  element.className = "bg-yellow-500 <completion here>";
-  element.className += "bg-white <completion here>";
-  element.classList.add("text-sky-500 <completion here>");
-  element.classList.remove("shadow-amber-400 <completion here>");
-  element.classList.toggle("shadow-amber-100 <completion here>");
-  element.classList.replace(
-    "to-red-500 <completion here>",
-    "to-blue-500 <completion here>",
-  );
-  element.classList.contains("bg-green-500 <completion here>");
-  element.setAttributeNS(null, "class", "bg-purple-500 <completion here>");
-  element.setAttribute("class", "via-black <completion here>");
-}
-```
-
-Note: For JSX files please refer to: [Tailwind CSS Configuration](./tailwindcss.md)
-
 ## Debugging
 
 Zed supports debugging JavaScript code out of the box with `vscode-js-debug`.
@@ -247,7 +214,7 @@ The following can be debugged without writing additional configuration:
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
->
+
 > **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
