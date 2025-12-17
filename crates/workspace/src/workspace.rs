@@ -1648,7 +1648,7 @@ impl Workspace {
 
                         workspace.centered_layout = centered_layout;
                         
-                        // Call init callback before window renders to avoid flicker
+                        // Call init callback to add items before window renders
                         if let Some(init) = init {
                             init(&mut workspace, window, cx);
                         }
@@ -1697,7 +1697,7 @@ impl Workspace {
                             );
                             workspace.centered_layout = centered_layout;
                             
-                            // Call init callback before window renders to avoid flicker
+                            // Call init callback to add items before window renders
                             if let Some(init) = init {
                                 init(&mut workspace, window, cx);
                             }
@@ -7900,7 +7900,7 @@ pub fn open_new(
     );
     cx.spawn(async move |_cx| {
         let (_workspace, _opened_paths) = task.await?;
-        // Init callback is called synchronously during window creation to avoid flicker
+        // Init callback is called synchronously during workspace creation
         Ok(())
     })
 }
