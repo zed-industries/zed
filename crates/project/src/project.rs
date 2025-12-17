@@ -10,7 +10,6 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
-mod persistence;
 pub mod prettier_store;
 mod project_search;
 pub mod project_settings;

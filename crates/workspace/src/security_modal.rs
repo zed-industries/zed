@@ -131,14 +131,14 @@ impl Render for SecurityModal {
                             None => match &restricted_path.host {
                                 Some(remote_host) => match &remote_host.user_name {
                                     Some(user_name) => format!(
-                                        "Empty project ({}@{})",
+                                        "Workspace trust ({}@{})",
                                         user_name, remote_host.host_identifier
                                     ),
                                     None => {
-                                        format!("Empty project ({})", remote_host.host_identifier)
+                                        format!("Workspace trust ({})", remote_host.host_identifier)
                                     }
                                 },
-                                None => "Empty project".to_string(),
+                                None => "Workspace trust".to_string(),
                             },
                         };
                         h_flex()

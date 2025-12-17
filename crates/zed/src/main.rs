@@ -407,7 +407,14 @@ pub fn main() {
     });
 
     app.run(move |cx| {
-        trusted_worktrees::init(None, None, cx);
+        let trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx) {
+            Ok(trusted_paths) => trusted_paths,
+            Err(e) => {
+                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                HashMap::default()
+            }
+        };
+        trusted_worktrees::init(trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
