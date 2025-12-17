@@ -123,8 +123,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
 
     fn commit_and_push(token: &StepOutput) -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            git add -A
-            git commit -m "Autofix"
+            git commit -am "Autofix"
             git push
         "#})
         .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
