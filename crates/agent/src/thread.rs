@@ -108,7 +108,13 @@ impl Message {
 
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
         match self {
-            Message::User(message) => vec![message.to_request()],
+            Message::User(message) => {
+                if message.content.is_empty() {
+                    vec![]
+                } else {
+                    vec![message.to_request()]
+                }
+            }
             Message::Agent(message) => message.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
@@ -1089,6 +1095,28 @@ impl Thread {
         })
     }
 
+    /// Get the total input token count as of the message before the given message.
+    ///
+    /// Returns `None` if:
+    /// - `target_id` is the first message (no previous message)
+    /// - The previous message hasn't received a response yet (no usage data)
+    /// - `target_id` is not found in the messages
+    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&UserMessageId> = None;
+
+        for message in &self.messages {
+            if let Message::User(user_msg) = message {
+                if &user_msg.id == target_id {
+                    let prev_id = previous_user_message_id?;
+                    let usage = self.request_token_usage.get(prev_id)?;
+                    return Some(usage.input_tokens);
+                }
+                previous_user_message_id = Some(&user_msg.id);
+            }
+        }
+        None
+    }
+
     /// Look up the active profile and resolve its preferred model if one is configured.
     fn resolve_profile_model(
         profile_id: &AgentProfileId,
@@ -1141,11 +1169,6 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let model = self.model().context("No language model configured")?;
-
-        log::info!("Thread::send called with model: {}", model.name().0);
-        self.advance_prompt_id();
-
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
@@ -1153,8 +1176,57 @@ impl Thread {
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
+        self.send_existing(cx)
+    }
+
+    pub fn send_existing(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        let model = self.model().context("No language model configured")?;
+
+        log::info!("Thread::send called with model: {}", model.name().0);
+        self.advance_prompt_id();
+
         log::debug!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
+    }
+
+    pub fn push_acp_user_block(
+        &mut self,
+        id: UserMessageId,
+        blocks: impl IntoIterator<Item = acp::ContentBlock>,
+        path_style: PathStyle,
+        cx: &mut Context<Self>,
+    ) {
+        let content = blocks
+            .into_iter()
+            .map(|block| UserMessageContent::from_content_block(block, path_style))
+            .collect::<Vec<_>>();
+        self.messages
+            .push(Message::User(UserMessage { id, content }));
+        cx.notify();
+    }
+
+    pub fn push_acp_agent_block(&mut self, block: acp::ContentBlock, cx: &mut Context<Self>) {
+        let text = match block {
+            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Image(_) => "[image]".to_string(),
+            acp::ContentBlock::Audio(_) => "[audio]".to_string(),
+            acp::ContentBlock::ResourceLink(resource_link) => resource_link.uri,
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => resource.uri,
+                acp::EmbeddedResourceResource::BlobResourceContents(resource) => resource.uri,
+                _ => "[resource]".to_string(),
+            },
+            _ => "[unknown]".to_string(),
+        };
+
+        self.messages.push(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text)],
+            ..Default::default()
+        }));
+        cx.notify();
     }
 
     #[cfg(feature = "eval")]

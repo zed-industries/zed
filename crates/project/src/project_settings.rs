@@ -23,13 +23,14 @@ use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
     SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
+    trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -83,6 +84,12 @@ pub struct SessionSettings {
     ///
     /// Default: true
     pub restore_unsaved_buffers: bool,
+    /// Whether or not to skip worktree trust checks.
+    /// When trusted, project settings are synchronized automatically,
+    /// language and MCP servers are downloaded and started automatically.
+    ///
+    /// Default: false
+    pub trust_all_worktrees: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -570,6 +577,7 @@ impl Settings for ProjectSettings {
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
+                trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
         }
     }
@@ -595,6 +603,9 @@ pub struct SettingsObserver {
     worktree_store: Entity<WorktreeStore>,
     project_id: u64,
     task_store: Entity<TaskStore>,
+    pending_local_settings:
+        HashMap<PathTrust, BTreeMap<(WorktreeId, Arc<RelPath>), Option<String>>>,
+    _trusted_worktrees_watcher: Option<Subscription>,
     _user_settings_watcher: Option<Subscription>,
     _global_task_config_watcher: Task<()>,
     _global_debug_config_watcher: Task<()>,
@@ -620,11 +631,61 @@ impl SettingsObserver {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
 
+        let _trusted_worktrees_watcher =
+            TrustedWorktrees::try_get_global(cx).map(|trusted_worktrees| {
+                cx.subscribe(
+                    &trusted_worktrees,
+                    move |settings_observer, _, e, cx| match e {
+                        TrustedWorktreesEvent::Trusted(_, trusted_paths) => {
+                            for trusted_path in trusted_paths {
+                                if let Some(pending_local_settings) = settings_observer
+                                    .pending_local_settings
+                                    .remove(trusted_path)
+                                {
+                                    for ((worktree_id, directory_path), settings_contents) in
+                                        pending_local_settings
+                                    {
+                                        apply_local_settings(
+                                            worktree_id,
+                                            &directory_path,
+                                            LocalSettingsKind::Settings,
+                                            &settings_contents,
+                                            cx,
+                                        );
+                                        if let Some(downstream_client) =
+                                            &settings_observer.downstream_client
+                                        {
+                                            downstream_client
+                                                .send(proto::UpdateWorktreeSettings {
+                                                    project_id: settings_observer.project_id,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    path: directory_path.to_proto(),
+                                                    content: settings_contents,
+                                                    kind: Some(
+                                                        local_settings_kind_to_proto(
+                                                            LocalSettingsKind::Settings,
+                                                        )
+                                                        .into(),
+                                                    ),
+                                                })
+                                                .log_err();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TrustedWorktreesEvent::Restricted(..) => {}
+                    },
+                )
+            });
+
         Self {
             worktree_store,
             task_store,
             mode: SettingsObserverMode::Local(fs.clone()),
             downstream_client: None,
+            _trusted_worktrees_watcher,
+            pending_local_settings: HashMap::default(),
             _user_settings_watcher: None,
             project_id: REMOTE_SERVER_PROJECT_ID,
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
@@ -677,6 +738,8 @@ impl SettingsObserver {
             mode: SettingsObserverMode::Remote,
             downstream_client: None,
             project_id: REMOTE_SERVER_PROJECT_ID,
+            _trusted_worktrees_watcher: None,
+            pending_local_settings: HashMap::default(),
             _user_settings_watcher: user_settings_watcher,
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
                 fs.clone(),
@@ -975,36 +1038,32 @@ impl SettingsObserver {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
         let task_store = self.task_store.clone();
-
+        let can_trust_worktree = OnceCell::new();
         for (directory, kind, file_content) in settings_contents {
+            let mut applied = true;
             match kind {
-                LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => cx
-                    .update_global::<SettingsStore, _>(|store, cx| {
-                        let result = store.set_local_settings(
-                            worktree_id,
-                            directory.clone(),
-                            kind,
-                            file_content.as_deref(),
-                            cx,
-                        );
-
-                        match result {
-                            Err(InvalidSettingsError::LocalSettings { path, message }) => {
-                                log::error!("Failed to set local settings in {path:?}: {message}");
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
-                                    InvalidSettingsError::LocalSettings { path, message },
-                                )));
-                            }
-                            Err(e) => {
-                                log::error!("Failed to set local settings: {e}");
-                            }
-                            Ok(()) => {
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
-                                    .as_std_path()
-                                    .join(local_settings_file_relative_path().as_std_path()))));
-                            }
+                LocalSettingsKind::Settings => {
+                    if *can_trust_worktree.get_or_init(|| {
+                        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(worktree_id, cx)
+                            })
+                        } else {
+                            true
                         }
-                    }),
+                    }) {
+                        apply_local_settings(worktree_id, &directory, kind, &file_content, cx)
+                    } else {
+                        applied = false;
+                        self.pending_local_settings
+                            .entry(PathTrust::Worktree(worktree_id))
+                            .or_default()
+                            .insert((worktree_id, directory.clone()), file_content.clone());
+                    }
+                }
+                LocalSettingsKind::Editorconfig => {
+                    apply_local_settings(worktree_id, &directory, kind, &file_content, cx)
+                }
                 LocalSettingsKind::Tasks => {
                     let result = task_store.update(cx, |task_store, cx| {
                         task_store.update_user_tasks(
@@ -1067,16 +1126,18 @@ impl SettingsObserver {
                 }
             };
 
-            if let Some(downstream_client) = &self.downstream_client {
-                downstream_client
-                    .send(proto::UpdateWorktreeSettings {
-                        project_id: self.project_id,
-                        worktree_id: remote_worktree_id.to_proto(),
-                        path: directory.to_proto(),
-                        content: file_content.clone(),
-                        kind: Some(local_settings_kind_to_proto(kind).into()),
-                    })
-                    .log_err();
+            if applied {
+                if let Some(downstream_client) = &self.downstream_client {
+                    downstream_client
+                        .send(proto::UpdateWorktreeSettings {
+                            project_id: self.project_id,
+                            worktree_id: remote_worktree_id.to_proto(),
+                            path: directory.to_proto(),
+                            content: file_content.clone(),
+                            kind: Some(local_settings_kind_to_proto(kind).into()),
+                        })
+                        .log_err();
+                }
             }
         }
     }
@@ -1191,6 +1252,37 @@ impl SettingsObserver {
             }
         })
     }
+}
+
+fn apply_local_settings(
+    worktree_id: WorktreeId,
+    directory: &Arc<RelPath>,
+    kind: LocalSettingsKind,
+    file_content: &Option<String>,
+    cx: &mut Context<'_, SettingsObserver>,
+) {
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        let result = store.set_local_settings(
+            worktree_id,
+            directory.clone(),
+            kind,
+            file_content.as_deref(),
+            cx,
+        );
+
+        match result {
+            Err(InvalidSettingsError::LocalSettings { path, message }) => {
+                log::error!("Failed to set local settings in {path:?}: {message}");
+                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
+                    InvalidSettingsError::LocalSettings { path, message },
+                )));
+            }
+            Err(e) => log::error!("Failed to set local settings: {e}"),
+            Ok(()) => cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
+                .as_std_path()
+                .join(local_settings_file_relative_path().as_std_path())))),
+        }
+    })
 }
 
 pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {

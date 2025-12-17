@@ -222,7 +222,6 @@ impl ManageProfilesModal {
         let profile_id_for_closure = profile_id.clone();
 
         let model_picker = cx.new(|cx| {
-            let fs = fs.clone();
             let profile_id = profile_id_for_closure.clone();
 
             language_model_selector(
@@ -250,22 +249,36 @@ impl ManageProfilesModal {
                             })
                     }
                 },
-                move |model, cx| {
-                    let provider = model.provider_id().0.to_string();
-                    let model_id = model.id().0.to_string();
-                    let profile_id = profile_id.clone();
+                {
+                    let fs = fs.clone();
+                    move |model, cx| {
+                        let provider = model.provider_id().0.to_string();
+                        let model_id = model.id().0.to_string();
+                        let profile_id = profile_id.clone();
 
-                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                        let agent_settings = settings.agent.get_or_insert_default();
-                        if let Some(profiles) = agent_settings.profiles.as_mut() {
-                            if let Some(profile) = profiles.get_mut(profile_id.0.as_ref()) {
-                                profile.default_model = Some(LanguageModelSelection {
-                                    provider: LanguageModelProviderSetting(provider.clone()),
-                                    model: model_id.clone(),
-                                });
+                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            let agent_settings = settings.agent.get_or_insert_default();
+                            if let Some(profiles) = agent_settings.profiles.as_mut() {
+                                if let Some(profile) = profiles.get_mut(profile_id.0.as_ref()) {
+                                    profile.default_model = Some(LanguageModelSelection {
+                                        provider: LanguageModelProviderSetting(provider.clone()),
+                                        model: model_id.clone(),
+                                    });
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
+                },
+                {
+                    let fs = fs.clone();
+                    move |model, should_be_favorite, cx| {
+                        crate::favorite_models::toggle_in_settings(
+                            model,
+                            should_be_favorite,
+                            fs.clone(),
+                            cx,
+                        );
+                    }
                 },
                 false, // Do not use popover styles for the model picker
                 self.focus_handle.clone(),
