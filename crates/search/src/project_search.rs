@@ -658,66 +658,6 @@ impl Item for ProjectSearchView {
             _ => {}
         }
     }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        if self.has_matches() {
-            ToolbarItemLocation::Secondary
-        } else {
-            ToolbarItemLocation::Hidden
-        }
-    }
-
-    fn breadcrumbs(&self, _theme: &theme::Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
-        // This should only show the prefix - hence it cannot be none right now
-        Some(vec![])
-    }
-
-    fn breadcrumb_prefix(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.has_matches() {
-            return None;
-        }
-
-        let is_collapsed = self.results_collapsed;
-
-        let (icon, label, tooltip_label) = if is_collapsed {
-            (
-                IconName::ChevronUpDown,
-                "Expand All",
-                "Expand All Search Results",
-            )
-        } else {
-            (
-                IconName::ChevronDownUp,
-                "Collapse All",
-                "Collapse All Search Results",
-            )
-        };
-
-        let focus_handle = self.query_editor.focus_handle(cx);
-
-        Some(
-            Button::new("project-search-collapse-expand", label)
-                .icon(icon)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action_in(
-                        tooltip_label,
-                        &ToggleAllSearchResults,
-                        &focus_handle,
-                        cx,
-                    )
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_all_search_results(&ToggleAllSearchResults, window, cx);
-                }))
-                .into_any_element(),
-        )
-    }
 }
 
 impl ProjectSearchView {
@@ -2038,10 +1978,10 @@ impl ProjectSearchBar {
 impl Render for ProjectSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(search) = self.active_project_search.clone() else {
-            return div();
+            return div().into_any_element();
         };
         let search = search.read(cx);
-        let focus_handle = search.focus_handle(cx);
+        let focus_handle = search.focus_handle(cx).clone();
 
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
@@ -2204,9 +2144,38 @@ impl Render for ProjectSearchBar {
             ))
             .child(matches_column);
 
+        let is_collapsed = search.results_collapsed;
+
+        let (icon, tooltip_label) = if is_collapsed {
+            (IconName::ChevronUpDown, "Expand All Search Results")
+        } else {
+            (IconName::ChevronDownUp, "Collapse All Search Results")
+        };
+
+        let tooltip_focus_handle = focus_handle.clone();
+
+        let expand_button = IconButton::new("project-search-collapse-expand", icon)
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in(
+                    tooltip_label,
+                    &ToggleAllSearchResults,
+                    &tooltip_focus_handle.clone(),
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                if let Some(active_view) = &this.active_project_search {
+                    active_view.update(cx, |active_view, cx| {
+                        active_view.toggle_all_search_results(&ToggleAllSearchResults, window, cx);
+                    })
+                }
+            }));
+
         let search_line = h_flex()
+            .pl_1()
             .w_full()
             .gap_2()
+            .child(expand_button)
             .child(query_column)
             .child(mode_column);
 
@@ -2325,7 +2294,7 @@ impl Render for ProjectSearchBar {
 
         v_flex()
             .gap_2()
-            .py(px(1.0))
+            .py_px()
             .w_full()
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, window, cx| {
@@ -2372,6 +2341,7 @@ impl Render for ProjectSearchBar {
             .children(replace_line)
             .children(filter_line)
             .children(filter_error_line)
+            .into_any_element()
     }
 }
 
