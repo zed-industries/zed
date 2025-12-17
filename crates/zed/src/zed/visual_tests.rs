@@ -1,46 +1,10 @@
-#![allow(dead_code, unused_imports)]
-
-//! Visual testing infrastructure for Zed.
-//!
-//! This module provides utilities for visual regression testing of Zed's UI.
-//! It allows capturing screenshots of the real Zed application window and comparing
-//! them against baseline images.
-//!
-//! ## Important: Main Thread Requirement
-//!
-//! On macOS, the `VisualTestAppContext` must be created on the main thread.
-//! Standard Rust tests run on worker threads, so visual tests that use
-//! `VisualTestAppContext::new()` must be run with special consideration.
-//!
-//! ## Running Visual Tests
-//!
-//! Visual tests are marked with `#[ignore]` by default because:
-//! 1. They require macOS with Screen Recording permission
-//! 2. They need to run on the main thread
-//! 3. They may produce different results on different displays/resolutions
-//!
-//! To run visual tests:
-//! ```bash
-//! # Run all visual tests (requires macOS, may need Screen Recording permission)
-//! cargo test -p zed visual_tests -- --ignored --test-threads=1
-//!
-//! # Update baselines when UI intentionally changes
-//! UPDATE_BASELINES=1 cargo test -p zed visual_tests -- --ignored --test-threads=1
-//! ```
-//!
-//! ## Screenshot Output
-//!
-//! Screenshots are saved to the directory specified by `VISUAL_TEST_OUTPUT_DIR`
-//! environment variable, or `target/visual_tests` by default.
+#![allow(dead_code)]
 
 use anyhow::{Result, anyhow};
-use gpui::{
-    AnyWindowHandle, AppContext as _, Empty, Size, VisualTestAppContext, WindowHandle, px, size,
-};
+use gpui::{AppContext as _, Empty, Size, VisualTestAppContext, WindowHandle, px, size};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use workspace::AppState;
 
 /// Initialize a visual test context with all necessary Zed subsystems.
@@ -99,65 +63,6 @@ pub async fn open_test_workspace(
 /// Returns the default window size for visual tests (1280x800).
 pub fn default_window_size() -> Size<gpui::Pixels> {
     size(px(1280.0), px(800.0))
-}
-
-/// Waits for the UI to stabilize by running pending work and waiting for animations.
-pub async fn wait_for_ui_stabilization(cx: &VisualTestAppContext) {
-    cx.run_until_parked();
-    cx.background_executor
-        .timer(Duration::from_millis(100))
-        .await;
-    cx.run_until_parked();
-}
-
-/// Captures a screenshot of the given window and optionally saves it to a file.
-///
-/// # Arguments
-/// * `cx` - The visual test context
-/// * `window` - The window to capture
-/// * `output_path` - Optional path to save the screenshot
-///
-/// # Returns
-/// The captured screenshot as an RgbaImage
-pub async fn capture_and_save_screenshot(
-    cx: &mut VisualTestAppContext,
-    window: AnyWindowHandle,
-    output_path: Option<&Path>,
-) -> Result<RgbaImage> {
-    wait_for_ui_stabilization(cx).await;
-
-    let screenshot = cx.capture_screenshot(window)?;
-
-    if let Some(path) = output_path {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        screenshot.save(path)?;
-        println!("Screenshot saved to: {}", path.display());
-    }
-
-    Ok(screenshot)
-}
-
-/// Check if we should update baselines (controlled by UPDATE_BASELINES env var).
-pub fn should_update_baselines() -> bool {
-    std::env::var("UPDATE_BASELINES").is_ok()
-}
-
-/// Assert that a screenshot matches a baseline, or update the baseline if UPDATE_BASELINES is set.
-pub fn assert_or_update_baseline(
-    actual: &RgbaImage,
-    baseline_path: &Path,
-    tolerance: f64,
-    per_pixel_threshold: u8,
-) -> Result<()> {
-    if should_update_baselines() {
-        save_baseline(actual, baseline_path)?;
-        println!("Updated baseline: {}", baseline_path.display());
-        Ok(())
-    } else {
-        assert_screenshot_matches(actual, baseline_path, tolerance, per_pixel_threshold)
-    }
 }
 
 /// Result of comparing two screenshots.
@@ -450,89 +355,6 @@ mod tests {
             "Failed to open workspace: {:?}",
             workspace_result.err()
         );
-
-        cx.run_until_parked();
-    }
-
-    /// This test captures a screenshot of an empty Zed workspace.
-    ///
-    /// Note: This test is ignored by default because:
-    /// 1. It requires macOS with Screen Recording permission granted
-    /// 2. It must run on the main thread (standard test threads won't work)
-    /// 3. Screenshot capture may fail in CI environments without display access
-    ///
-    /// The test will gracefully handle screenshot failures and print an error
-    /// message rather than failing hard, to allow running in environments
-    /// where screen capture isn't available.
-    #[test]
-    #[ignore]
-    fn test_workspace_screenshot() {
-        let mut cx = VisualTestAppContext::new();
-        let app_state = init_visual_test(&mut cx);
-
-        smol::block_on(async {
-            app_state
-                .fs
-                .as_fake()
-                .insert_tree(
-                    "/project",
-                    serde_json::json!({
-                        "src": {
-                            "main.rs": "fn main() {\n    println!(\"Hello, world!\");\n}\n"
-                        },
-                        "README.md": "# Test Project\n\nThis is a test project for visual testing.\n"
-                    }),
-                )
-                .await;
-        });
-
-        let workspace = smol::block_on(open_test_workspace(app_state, &mut cx))
-            .expect("Failed to open workspace");
-
-        smol::block_on(async {
-            wait_for_ui_stabilization(&cx).await;
-
-            let screenshot_result = cx.capture_screenshot(workspace.into());
-
-            match screenshot_result {
-                Ok(screenshot) => {
-                    println!(
-                        "Screenshot captured successfully: {}x{}",
-                        screenshot.width(),
-                        screenshot.height()
-                    );
-
-                    let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
-                        .unwrap_or_else(|_| "target/visual_tests".to_string());
-                    let output_path = Path::new(&output_dir).join("workspace_screenshot.png");
-
-                    if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                        eprintln!("Warning: Failed to create output directory: {}", e);
-                    }
-
-                    if let Err(e) = screenshot.save(&output_path) {
-                        eprintln!("Warning: Failed to save screenshot: {}", e);
-                    } else {
-                        println!("Screenshot saved to: {}", output_path.display());
-                    }
-
-                    assert!(
-                        screenshot.width() > 0,
-                        "Screenshot width should be positive"
-                    );
-                    assert!(
-                        screenshot.height() > 0,
-                        "Screenshot height should be positive"
-                    );
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Screenshot capture failed (this may be expected in CI without screen recording permission): {}",
-                        e
-                    );
-                }
-            }
-        });
 
         cx.run_until_parked();
     }

@@ -6,7 +6,6 @@ use crate::{
     app::GpuiMode, current_platform,
 };
 use anyhow::anyhow;
-use image::RgbaImage;
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A test context that uses real macOS rendering instead of mocked rendering.
@@ -337,23 +336,6 @@ impl VisualTestAppContext {
                 .timer(Duration::from_millis(10))
                 .await;
         }
-    }
-
-    /// Captures a screenshot of the specified window using direct texture capture.
-    ///
-    /// This renders the scene to a Metal texture and reads the pixels directly,
-    /// which does not require the window to be visible on screen.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
-        self.update_window(window, |_, window, _cx| window.render_to_image())?
-    }
-
-    /// Waits for animations to complete by waiting a couple of frames.
-    pub async fn wait_for_animations(&self) {
-        self.background_executor
-            .timer(Duration::from_millis(32))
-            .await;
-        self.run_until_parked();
     }
 }
 
