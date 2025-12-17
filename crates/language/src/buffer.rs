@@ -8,8 +8,8 @@ use crate::{
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
-        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
-        SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
+        MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
+        SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
     text_diff::text_diff,
@@ -78,7 +78,6 @@ pub use lsp::DiagnosticSeverity;
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
 pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
-const MAX_BYTES_TO_RUN_QUERY: usize = 64 * 1024;
 
 /// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -3227,7 +3226,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_bytes_to_search_within: Some(MAX_BYTES_TO_RUN_QUERY),
+                max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -4347,7 +4346,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_bytes_to_search_within: Some(MAX_BYTES_TO_RUN_QUERY),
+                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),

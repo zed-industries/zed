@@ -21,6 +21,8 @@ use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
+pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
+
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
@@ -1097,14 +1099,14 @@ impl<'a> SyntaxMapCaptures<'a> {
 #[derive(Default)]
 pub struct TreeSitterOptions {
     pub max_start_depth: Option<u32>,
-    pub max_bytes_to_search_within: Option<usize>,
+    pub max_bytes_to_query: Option<usize>,
 }
 
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
-            max_bytes_to_search_within: None,
+            max_bytes_to_query: None,
         }
     }
 }
@@ -1138,10 +1140,11 @@ impl<'a> SyntaxMapMatches<'a> {
             };
             cursor.set_max_start_depth(options.max_start_depth);
 
-            if let Some(max_bytes_to_search) = options.max_bytes_to_search_within {
+            if let Some(max_bytes_to_query) = options.max_bytes_to_query {
                 let midpoint = (range.start + range.end) / 2;
-                let containing_range_start = midpoint.saturating_sub(max_bytes_to_search / 2);
-                let containing_range_end = containing_range_start + max_bytes_to_search;
+                let containing_range_start = midpoint.saturating_sub(max_bytes_to_query / 2);
+                let containing_range_end =
+                    containing_range_start.saturating_add(max_bytes_to_query);
                 cursor.set_containing_byte_range(containing_range_start..containing_range_end);
             }
 
@@ -1653,7 +1656,8 @@ impl<'a> SyntaxLayer<'a> {
         let mut query_cursor = QueryCursorHandle::new();
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
         query_cursor.set_containing_byte_range(
-            offset.saturating_sub(10 * 1024)..offset.saturating_add(10 * 1024),
+            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
+                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
         );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
