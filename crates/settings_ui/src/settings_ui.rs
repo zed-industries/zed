@@ -890,7 +890,7 @@ impl SettingsPageItem {
                             .size(ButtonSize::Medium)
                             .on_click({
                                 let sub_page_link = sub_page_link.clone();
-                                cx.listener(move |this, _, _, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     let mut section_index = item_index;
                                     let current_page = this.current_page();
 
@@ -909,7 +909,7 @@ impl SettingsPageItem {
                                         )
                                     };
 
-                                    this.push_sub_page(sub_page_link.clone(), header, cx)
+                                    this.push_sub_page(sub_page_link.clone(), header, window, cx)
                                 })
                             }),
                         )
@@ -2995,8 +2995,8 @@ impl SettingsWindow {
                             IconButton::new("back-btn", IconName::ArrowLeft)
                                 .icon_size(IconSize::Small)
                                 .shape(IconButtonShape::Square)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.pop_sub_page(cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.pop_sub_page(window, cx);
                                 })),
                         )
                         .child(self.render_sub_page_breadcrumbs()),
@@ -3355,17 +3355,22 @@ impl SettingsWindow {
         &mut self,
         sub_page_link: SubPageLink,
         section_header: &'static str,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
         sub_page_stack_mut().push(SubPage {
             link: sub_page_link,
             section_header,
         });
+        self.sub_page_scroll_handle
+            .set_offset(point(px(0.), px(0.)));
+        self.content_focus_handle.focus_handle(cx).focus(window);
         cx.notify();
     }
 
-    fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
+    fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         sub_page_stack_mut().pop();
+        self.content_focus_handle.focus_handle(cx).focus(window);
         cx.notify();
     }
 
