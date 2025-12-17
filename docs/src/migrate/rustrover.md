@@ -482,10 +482,7 @@ If you work with multiple Cargo projects that aren't in a workspace, you can tel
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
-        "linkedProjects": [
-          "./project-a/Cargo.toml",
-          "./project-b/Cargo.toml"
-        ]
+        "linkedProjects": ["./project-a/Cargo.toml", "./project-b/Cargo.toml"]
       }
     }
   }

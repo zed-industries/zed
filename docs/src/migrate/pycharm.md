@@ -259,14 +259,14 @@ Zed has none of this. The language server sees Python code as Python code—it d
 
 PyCharm organizes auxiliary views into numbered tool windows (Project = 1, Python Console = 4, Terminal = Alt+F12, etc.). Zed uses a similar concept called "docks":
 
-| PyCharm Tool Window  | Zed Equivalent | Shortcut (JetBrains keymap) |
-| -------------------- | -------------- | --------------------------- |
-| Project (1)          | Project Panel  | `Cmd + 1`                   |
-| Git (9 or Cmd+0)     | Git Panel      | `Cmd + 0`                   |
-| Terminal (Alt+F12)   | Terminal Panel | `Alt + F12`                 |
-| Structure (7)        | Outline Panel  | `Cmd + 7`                   |
-| Problems (6)         | Diagnostics    | `Cmd + 6`                   |
-| Debug (5)            | Debug Panel    | `Cmd + 5`                   |
+| PyCharm Tool Window | Zed Equivalent | Shortcut (JetBrains keymap) |
+| ------------------- | -------------- | --------------------------- |
+| Project (1)         | Project Panel  | `Cmd + 1`                   |
+| Git (9 or Cmd+0)    | Git Panel      | `Cmd + 0`                   |
+| Terminal (Alt+F12)  | Terminal Panel | `Alt + F12`                 |
+| Structure (7)       | Outline Panel  | `Cmd + 7`                   |
+| Problems (6)        | Diagnostics    | `Cmd + 6`                   |
+| Debug (5)           | Debug Panel    | `Cmd + 5`                   |
 
 Zed has three dock positions: left, bottom, and right. Panels can be moved between docks by dragging or through settings.
 
