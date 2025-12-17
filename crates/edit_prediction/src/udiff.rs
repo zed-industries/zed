@@ -151,6 +151,21 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
     Ok(text)
 }
 
+pub fn invert_diff(diff_str: &str) -> String {
+    diff_str
+        .lines()
+        .map(|line| {
+            let parsed = DiffLine::parse(line);
+            match parsed {
+                DiffLine::Deletion(content) => format!("+{content}"),
+                DiffLine::Addition(content) => format!("-{content}"),
+                _ => line.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 struct PatchFile<'a> {
     old_path: Cow<'a, str>,
     new_path: Cow<'a, str>,

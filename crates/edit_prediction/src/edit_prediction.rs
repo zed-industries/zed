@@ -57,7 +57,6 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-#[cfg(any(test, feature = "test-support", feature = "cli-support"))]
 pub mod udiff;
 
 mod zed_edit_prediction_delegate;
