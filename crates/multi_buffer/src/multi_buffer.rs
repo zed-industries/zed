@@ -2606,19 +2606,41 @@ impl MultiBuffer {
 
     pub fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<Anchor>], cx: &App) -> bool {
         let snapshot = self.read(cx);
+        print!("[ ");
+        for range in ranges {
+            let range = range.to_point(&snapshot);
+            print!("{range:?}, ");
+        }
+        println!(" ]");
+        let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
+        cursor.next();
+        println!("{{ ");
+        while let Some(item) = cursor.item() {
+            if let Some(hunk_info) = item.hunk_info() {
+                println!("  {:?}-{:?} {hunk_info:?}, ", cursor.start(), cursor.end());
+            } else {
+                println!("  {:?}-{:?}, ", cursor.start(), cursor.end());
+            }
+            cursor.next();
+        }
+        println!("}}");
         let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
         for range in ranges {
             let range = range.to_point(&snapshot);
             let start = snapshot.point_to_offset(Point::new(range.start.row, 0));
             let end = snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-            let start = start.saturating_sub_usize(1);
-            let end = snapshot.len().min(end + 1usize);
-            cursor.seek(&start, Bias::Right);
+            let new_start = start.saturating_sub_usize(0);
+            let new_end = snapshot.len().min(end);
+            println!("TRYING {range:?} ({start:?}-{end:?}) => ({new_start:?}-{new_end:?})");
+            cursor.seek(&new_start, Bias::Right);
             while let Some(item) = cursor.item() {
-                if *cursor.start() >= end {
+                println!("  ?? {:?}-{:?}", cursor.start(), cursor.end());
+                if *cursor.start() > new_end {
+                    println!("    BREAK");
                     break;
                 }
                 if item.hunk_info().is_some() {
+                    println!("    HIT");
                     return true;
                 }
                 cursor.next();
@@ -2634,6 +2656,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         if self.snapshot.borrow().all_diff_hunks_expanded && !expand {
+            println!("early exit");
             return;
         }
         self.sync_mut(cx);
@@ -2642,6 +2665,7 @@ impl MultiBuffer {
         let mut last_hunk_row = None;
         for (range, end_excerpt_id) in ranges {
             for diff_hunk in snapshot.diff_hunks_in_range(range) {
+                println!("  >> {diff_hunk:?}");
                 if diff_hunk.excerpt_id.cmp(&end_excerpt_id, &snapshot).is_gt() {
                     continue;
                 }
@@ -3859,6 +3883,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
+        println!("query_range={query_range:?}");
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let diff = self.diffs.get(&buffer.remote_id())?;
             let buffer_start = buffer.anchor_before(buffer_range.start);
@@ -3874,6 +3899,7 @@ impl MultiBufferSnapshot {
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
+            println!("  -> range={range:?}");
             if range.start != range.end && range.end == query_range.start && !hunk.range.is_empty()
             {
                 return None;

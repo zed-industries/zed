@@ -29335,3 +29335,190 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(after);
 }
+
+#[gpui::test]
+async fn test_toggle_selected_diff_hunks_neighbor(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        line0
+        lineA
+        lineB
+        lineC
+        lineD
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        line0
+        ˇlineA1
+        lineB
+        lineD
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + ˇlineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_right(&MoveRight, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + lineA1
+          lˇineB
+        - lineC
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + lineA1
+          lˇineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_up(&MoveUp, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+          lˇineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_selected_diff_hunks_neighbor_edge_case(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        line0
+        lineA
+        lineB
+        lineC
+        lineD
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        line0
+        ˇlineA1
+        lineB
+        lineD
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + ˇlineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + lineA1
+          ˇlineB
+        - lineC
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+        - lineA
+        + lineA1
+          ˇlineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_up(&MoveUp, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          line0
+          ˇlineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+}

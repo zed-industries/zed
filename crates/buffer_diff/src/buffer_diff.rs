@@ -616,11 +616,13 @@ impl BufferDiffInner {
         secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let range = range.to_offset(buffer);
+        println!("  >>> range = {range:?}");
 
         let mut cursor = self
             .hunks
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
                 let summary_range = summary.buffer_range.to_offset(buffer);
+                println!("  >>> summary_range = {:?}", summary_range);
                 let before_start = summary_range.end < range.start;
                 let after_end = summary_range.start > range.end;
                 !before_start && !after_end

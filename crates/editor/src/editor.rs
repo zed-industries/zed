@@ -20094,8 +20094,10 @@ impl Editor {
         ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Editor>,
     ) {
+        println!("\n\nin toggle_diff_hunks_in_ranges");
         self.buffer.update(cx, |buffer, cx| {
             let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
+            println!("expand={expand}\n\n");
             buffer.expand_or_collapse_diff_hunks(ranges, expand, cx);
         })
     }
