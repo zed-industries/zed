@@ -280,7 +280,6 @@ pub struct AcpThreadView {
     list_state: ListState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
-    expanded_tool_call_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -433,7 +432,6 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
-            expanded_tool_call_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -2429,30 +2427,8 @@ impl AcpThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let has_input = tool_call.raw_input.is_some();
-        let is_input_open = self.expanded_tool_call_inputs.contains(&tool_call.id);
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
-
-        let tool_input_display = if has_input && is_input_open {
-            Some(
-                v_flex()
-                    .w_full()
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        div()
-                            .text_ui_sm(cx)
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(
-                                serde_json::to_string_pretty(tool_call.raw_input.as_ref().unwrap())
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                            ),
-                    ),
-            )
-        } else {
-            None
-        };
 
         let tool_output_display =
             if is_open {
@@ -2586,30 +2562,11 @@ impl AcpThreadView {
                                 window,
                                 cx,
                             ))
-                            .when(has_input || is_collapsible || failed_or_canceled, |this| {
+                            .when(is_collapsible || failed_or_canceled, |this| {
                                 this.child(
                                     h_flex()
                                         .px_1()
                                         .gap_px()
-                                        .when(has_input, |this| {
-                                            this.child(
-                                                Disclosure::new(("expand-input", entry_ix), is_input_open)
-                                                    .opened_icon(IconName::ChevronUp)
-                                                    .closed_icon(IconName::ChevronDown)
-                                                    .visible_on_hover(&card_header_id)
-                                                    .on_click(cx.listener({
-                                                        let id = tool_call.id.clone();
-                                                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                            if is_input_open {
-                                                                this.expanded_tool_call_inputs.remove(&id);
-                                                            } else {
-                                                                this.expanded_tool_call_inputs.insert(id.clone());
-                                                            }
-                                                            cx.notify();
-                                                        }
-                                                    })),
-                                            )
-                                        })
                                         .when(is_collapsible, |this| {
                                             this.child(
                                             Disclosure::new(("expand-output", entry_ix), is_open)
@@ -2641,7 +2598,6 @@ impl AcpThreadView {
                     )
                 }
             })
-            .children(tool_input_display)
             .children(tool_output_display)
     }
 
