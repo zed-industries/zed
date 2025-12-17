@@ -720,7 +720,7 @@ impl RulesLibrary {
             if focus {
                 rule_editor
                     .body_editor
-                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
+                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx));
             }
             self.set_active_rule(Some(prompt_id), window, cx);
         } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
@@ -763,7 +763,7 @@ impl RulesLibrary {
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
-                                window.focus(&editor.focus_handle(cx));
+                                window.focus(&editor.focus_handle(cx), cx);
                             }
                             editor
                         });
@@ -939,7 +939,7 @@ impl RulesLibrary {
         if let Some(active_rule) = self.active_rule_id {
             self.rule_editors[&active_rule]
                 .body_editor
-                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
+                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx));
             cx.stop_propagation();
         }
     }
@@ -998,7 +998,7 @@ impl RulesLibrary {
         if let Some(rule_id) = self.active_rule_id
             && let Some(rule_editor) = self.rule_editors.get(&rule_id)
         {
-            window.focus(&rule_editor.body_editor.focus_handle(cx));
+            window.focus(&rule_editor.body_editor.focus_handle(cx), cx);
         }
     }
 
@@ -1011,7 +1011,7 @@ impl RulesLibrary {
         if let Some(rule_id) = self.active_rule_id
             && let Some(rule_editor) = self.rule_editors.get(&rule_id)
         {
-            window.focus(&rule_editor.title_editor.focus_handle(cx));
+            window.focus(&rule_editor.title_editor.focus_handle(cx), cx);
         }
     }
 
@@ -1308,8 +1308,8 @@ impl RulesLibrary {
                         .size_full()
                         .relative()
                         .overflow_hidden()
-                        .on_click(cx.listener(move |_, _, window, _| {
-                            window.focus(&focus_handle);
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            window.focus(&focus_handle, cx);
                         }))
                         .child(
                             h_flex()

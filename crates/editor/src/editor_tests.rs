@@ -18201,7 +18201,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     );
 
     editor_handle.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
         });

@@ -477,7 +477,7 @@ pub fn initialize_workspace(
         initialize_panels(prompt_builder.clone(), window, cx);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window);
+        workspace.focus_handle(cx).focus(window, cx);
     })
     .detach();
 }

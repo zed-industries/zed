@@ -281,7 +281,7 @@ fn show_menu<M: ManagedView>(
             if modal.focus_handle(cx).contains_focused(window, cx)
                 && let Some(previous_focus_handle) = previous_focus_handle.as_ref()
             {
-                window.focus(previous_focus_handle);
+                window.focus(previous_focus_handle, cx);
             }
             *menu2.borrow_mut() = None;
             window.refresh();
@@ -296,8 +296,8 @@ fn show_menu<M: ManagedView>(
     // flickering when opening popover menus.
     let focus_handle = new_menu.focus_handle(cx);
     window.on_next_frame(move |window, _cx| {
-        window.on_next_frame(move |window, _cx| {
-            window.focus(&focus_handle);
+        window.on_next_frame(move |window, cx| {
+            window.focus(&focus_handle, cx);
         });
     });
     *menu.borrow_mut() = Some(new_menu);

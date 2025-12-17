@@ -91,7 +91,7 @@ pub fn popover(
             window,
             cx,
         );
-        list.focus_handle(cx).focus(window);
+        list.focus_handle(cx).focus(window, cx);
         list
     })
 }
@@ -1880,7 +1880,7 @@ mod tests {
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
-                window.focus(&branch_list.picker_focus_handle);
+                window.focus(&branch_list.picker_focus_handle, cx);
                 assert!(
                     branch_list.picker_focus_handle.is_focused(window),
                     "Branch picker should be focused when selecting an entry"
@@ -1898,7 +1898,7 @@ mod tests {
 
         branch_list.update_in(cx, |branch_list, window, cx| {
             // Re-focus the picker since workspace initialization during run_until_parked
-            window.focus(&branch_list.picker_focus_handle);
+            window.focus(&branch_list.picker_focus_handle, cx);
 
             branch_list.picker.update(cx, |picker, cx| {
                 let last_match = picker.delegate.matches.last().unwrap();

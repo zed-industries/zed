@@ -707,7 +707,7 @@ impl MarkdownElement {
                                 pending: true,
                                 mode,
                             };
-                            window.focus(&markdown.focus_handle);
+                            window.focus(&markdown.focus_handle, cx);
                         }
 
                         window.prevent_default();
