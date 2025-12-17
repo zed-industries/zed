@@ -47,8 +47,9 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    Callout, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
+    KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Workspace};
@@ -2105,6 +2106,7 @@ impl AcpThreadView {
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
                 let is_last = entry_ix + 1 == total_entries;
 
+                let mut md_selection = None;
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
@@ -2113,12 +2115,22 @@ impl AcpThreadView {
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
                                 block.markdown().map(|md| {
+                                    let md_c = md
+                                        .read(cx)
+                                        .selected_text()
+                                        .unwrap_or_else(|| md.read(cx).source().to_string());
+                                    md_selection = Some(md_c);
                                     self.render_markdown(md.clone(), style.clone())
                                         .into_any_element()
                                 })
                             }
                             AssistantMessageChunk::Thought { block } => {
                                 block.markdown().map(|md| {
+                                    let md_c = md
+                                        .read(cx)
+                                        .selected_text()
+                                        .unwrap_or_else(|| md.read(cx).source().to_string());
+                                    md_selection = Some(md_c);
                                     self.render_thinking_block(
                                         entry_ix,
                                         chunk_ix,
@@ -2133,13 +2145,33 @@ impl AcpThreadView {
                     ))
                     .into_any();
 
+                let message_body_with_menu =
+                    right_click_menu(format!("assistant_context_menu-{}", entry_ix))
+                        .trigger(move |_, _, _| message_body)
+                        .menu(move |window, cx| {
+                            let selection = md_selection.clone();
+                            ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                let selection2 = selection.clone();
+                                menu.entry("Copy", None, move |_, cx| match selection2.as_ref() {
+                                    Some(text) => {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                                            "{}",
+                                            text
+                                        )));
+                                    }
+                                    None => {}
+                                })
+                            })
+                        })
+                        .into_any();
+
                 v_flex()
                     .px_5()
                     .py_1p5()
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
-                    .child(message_body)
+                    .child(message_body_with_menu)
                     .into_any()
             }
             AgentThreadEntry::ToolCall(tool_call) => {
