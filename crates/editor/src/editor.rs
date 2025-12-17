@@ -20574,7 +20574,7 @@ impl Editor {
         EditorSettings::get_global(cx).gutter.line_numbers
     }
 
-    pub fn relative_line_numbers(&self, cx: &mut App) -> RelativeLineNumbers {
+    pub fn relative_line_numbers(&self, cx: &App) -> RelativeLineNumbers {
         match (
             self.use_relative_line_numbers,
             EditorSettings::get_global(cx).relative_line_numbers,
@@ -25010,25 +25010,39 @@ impl EditorSnapshot {
         column_pixels(style, digit_count as usize, window)
     }
 
-    /// Returns the line delta from `line1` to `line2` in the multibuffer, ignoring wrapped lines.
+    /// Returns the line delta from `base` to `line` in the multibuffer, ignoring wrapped lines.
     ///
-    /// This is positive if `line1` is before `line2`.
-    fn relative_line_delta(&self, line1: DisplayRow, line2: DisplayRow) -> i64 {
-        let point1 = DisplayPoint::new(line1, 0).to_point(self);
-        let point2 = DisplayPoint::new(line2, 0).to_point(self);
-        point2.row as i64 - point1.row as i64
+    /// This is positive if `base` is before `line`.
+    fn relative_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
+        let point = DisplayPoint::new(line, 0).to_point(self);
+        self.relative_line_delta_to_point(base, point)
     }
 
-    /// Returns the line delta from `line1` to `line2` in the multibuffer, counting wrapped lines.
+    /// Returns the line delta from `base` to `point` in the multibuffer, ignoring wrapped lines.
     ///
-    /// This is positive if `line1` is before `line2`.
-    fn relative_wrapped_line_delta(&self, line1: DisplayRow, line2: DisplayRow) -> i64 {
-        let point1 = DisplayPoint::new(line1, 0).to_point(self);
-        let point2 = DisplayPoint::new(line2, 0).to_point(self);
+    /// This is positive if `base` is before `point`.
+    pub fn relative_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
+        let base_point = DisplayPoint::new(base, 0).to_point(self);
+        point.row as i64 - base_point.row as i64
+    }
+
+    /// Returns the line delta from `base` to `line` in the multibuffer, counting wrapped lines.
+    ///
+    /// This is positive if `base` is before `line`.
+    fn relative_wrapped_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
+        let point = DisplayPoint::new(line, 0).to_point(self);
+        self.relative_wrapped_line_delta_to_point(base, point)
+    }
+
+    /// Returns the line delta from `base` to `point` in the multibuffer, counting wrapped lines.
+    ///
+    /// This is positive if `base` is before `point`.
+    pub fn relative_wrapped_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
+        let base_point = DisplayPoint::new(base, 0).to_point(self);
         let wrap_snapshot = self.wrap_snapshot();
-        let wrap_row1 = wrap_snapshot.make_wrap_point(point1, Bias::Left).row();
-        let wrap_row2 = wrap_snapshot.make_wrap_point(point2, Bias::Left).row();
-        wrap_row2.0 as i64 - wrap_row1.0 as i64
+        let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
+        let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+        wrap_row.0 as i64 - base_wrap_row.0 as i64
     }
 
     /// Returns the unsigned relative line number to display for each row in `rows`.
@@ -25051,7 +25065,10 @@ impl EditorSnapshot {
             .enumerate()
             .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info));
         display_row_infos
-            .filter(|(_row, row_info)| row_info.buffer_row.is_some() || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some()))
+            .filter(|(_row, row_info)| {
+                row_info.buffer_row.is_some()
+                    || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
+            })
             .enumerate()
             .map(|(i, (row, _row_info))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()

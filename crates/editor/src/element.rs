@@ -70,7 +70,7 @@ use project::{
 };
 use settings::{
     GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
-    Settings,
+    RelativeLineNumbers, Settings,
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -3238,7 +3238,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
-        newest_selection_head: Option<DisplayPoint>,
+        relative_line_base: Option<DisplayRow>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -3250,34 +3250,12 @@ impl EditorElement {
             return Arc::default();
         }
 
-        let (newest_selection_head, relative) = self.editor.update(cx, |editor, cx| {
-            let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx));
-                SelectionLayout::new(
-                    newest,
-                    editor.selections.line_mode(),
-                    editor.cursor_offset_on_selection,
-                    editor.cursor_shape,
-                    &snapshot.display_snapshot,
-                    true,
-                    true,
-                    None,
-                )
-                .head
-            });
-            let relative = editor.relative_line_numbers(cx);
-            (newest_selection_head, relative)
-        });
+        let relative = self.editor.read(cx).relative_line_numbers(cx);
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_rows = if relative_line_numbers_enabled {
-            snapshot.calculate_relative_line_numbers(
-                &rows,
-                newest_selection_head.row(),
-                relative.wrapped(),
-            )
+        let relative_rows = if relative_line_numbers_enabled && let Some(base) = relative_line_base
+        {
+            snapshot.calculate_relative_line_numbers(&rows, base, relative.wrapped())
         } else {
             Default::default()
         };
@@ -4604,6 +4582,8 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         text_hitbox: &Hitbox,
         style: &EditorStyle,
+        relative_line_numbers: RelativeLineNumbers,
+        relative_to: Option<DisplayRow>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
@@ -4633,9 +4613,21 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
-                let number = (start_point.row + 1).to_string();
+                let relative_number = relative_to.and_then(|base| match relative_line_numbers {
+                    RelativeLineNumbers::Disabled => None,
+                    RelativeLineNumbers::Enabled => {
+                        Some(snapshot.relative_line_delta_to_point(base, start_point))
+                    }
+                    RelativeLineNumbers::Wrapped => {
+                        Some(snapshot.relative_wrapped_line_delta_to_point(base, start_point))
+                    }
+                });
+                let number = relative_number
+                    .filter(|&delta| delta != 0)
+                    .map(|delta| delta.abs() as u32)
+                    .unwrap_or(start_point.row + 1);
                 let color = cx.theme().colors().editor_line_number;
-                self.shape_line_number(SharedString::from(number), color, window)
+                self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
             lines.push(StickyHeaderLine::new(
@@ -9367,6 +9359,28 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
+
+                    // relative rows are based on newest selection, even outside the visible area
+                    let relative_row_base =  self.editor.update(cx, |editor, cx| {
+                        if editor.selections.count()==0 {
+                            return None;
+                        }
+                            let newest = editor
+                                .selections
+                                .newest::<Point>(&editor.display_snapshot(cx));
+                            Some(SelectionLayout::new(
+                                newest,
+                                editor.selections.line_mode(),
+                                editor.cursor_offset_on_selection,
+                                editor.cursor_shape,
+                                &snapshot.display_snapshot,
+                                true,
+                                true,
+                                None,
+                            )
+                            .head.row())
+                        });
+
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
@@ -9384,7 +9398,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &row_infos,
                         &active_rows,
-                        newest_selection_head,
+                        relative_row_base,
                         &snapshot,
                         window,
                         cx,
@@ -9704,6 +9718,7 @@ impl Element for EditorElement {
                         && is_singleton
                         && EditorSettings::get_global(cx).sticky_scroll.enabled
                     {
+                        let relative = self.editor.read(cx).relative_line_numbers(cx);
                         self.layout_sticky_headers(
                             &snapshot,
                             editor_width,
@@ -9715,6 +9730,8 @@ impl Element for EditorElement {
                             &gutter_hitbox,
                             &text_hitbox,
                             &style,
+                            relative,
+                            relative_row_base,
                             window,
                             cx,
                         )
