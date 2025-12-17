@@ -6,26 +6,19 @@
 - [Installation](./installation.md)
   - [Update](./update.md)
   - [Uninstall](./uninstall.md)
-- [Authenticate](./authentication.md)
-- [Telemetry](./telemetry.md)
 - [Troubleshooting](./troubleshooting.md)
 
-# Configuration
+# Customization
 
-- [Configuring Zed](./configuring-zed.md)
-- [Configuring Languages](./configuring-languages.md)
-  - [Toolchains](./toolchains.md)
-- [Key bindings](./key-bindings.md)
-  - [All Actions](./all-actions.md)
+- [Appearance](./themes.md)
+  - [Themes](./themes.md)
+  - [Icon Themes](./icon-themes.md)
+  - [Fonts & Visual Tweaks](./visual-customization.md)
+- [Keybindings](./key-bindings.md)
+  - [Custom Key Bindings](./key-bindings.md)
+  - [Vim Mode](./vim.md)
+  - [Helix Mode](./helix.md)
 - [Snippets](./snippets.md)
-- [Themes](./themes.md)
-- [Icon Themes](./icon-themes.md)
-- [Visual Customization](./visual-customization.md)
-- [Vim Mode](./vim.md)
-- [Helix Mode](./helix.md)
-- [Privacy and Security](./ai/privacy-and-security.md)
-  - [Worktree Trust](./worktree-trust.md)
-  - [AI Improvement](./ai/ai-improvement.md)
 
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
@@ -106,6 +99,8 @@
 # Language Support
 
 - [All Languages](./languages.md)
+- [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
@@ -177,9 +172,13 @@
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
-# Reference
+# Account & Privacy
 
-- [Command-line Interface](./command-line-interface.md)
+- [Sign In](./authentication.md)
+- [Privacy and Security](./ai/privacy-and-security.md)
+  - [Worktree Trust](./worktree-trust.md)
+  - [AI Improvement](./ai/ai-improvement.md)
+- [Telemetry](./telemetry.md)
 
 # Developing Zed
 
