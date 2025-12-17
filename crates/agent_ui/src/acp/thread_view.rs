@@ -2445,23 +2445,8 @@ impl AcpThreadView {
                             .text_ui_sm(cx)
                             .text_color(cx.theme().colors().text_muted)
                             .child(
-                                MarkdownElement::new(
-                                    format!(
-                                        "```json\n{}\n```",
-                                        serde_json::to_string_pretty(
-                                            tool_call.raw_input.as_ref().unwrap()
-                                        )
-                                        .unwrap_or_else(|_| "{}".to_string())
-                                    ),
-                                    default_markdown_style(false, true, window, cx),
-                                )
-                                .code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: true,
-                                        copy_button_on_hover: true,
-                                        border: false,
-                                    },
-                                ),
+                                serde_json::to_string_pretty(tool_call.raw_input.as_ref().unwrap())
+                                    .unwrap_or_else(|_| "{}".to_string()),
                             ),
                     ),
             )
@@ -2622,8 +2607,7 @@ impl AcpThreadView {
                                                             }
                                                             cx.notify();
                                                         }
-                                                    }))
-                                                    .tooltip(|cx| Tooltip::text("Toggle Input", cx)),
+                                                    })),
                                             )
                                         })
                                         .when(is_collapsible, |this| {
@@ -2642,8 +2626,7 @@ impl AcpThreadView {
                                                         }
                                                         cx.notify();
                                                     }
-                                                }))
-                                                .tooltip(|cx| Tooltip::text("Toggle Output", cx)),
+                                                })),
                                         )
                                         })
                                         .when(failed_or_canceled, |this| {
