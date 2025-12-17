@@ -1842,17 +1842,22 @@ impl AgentPanel {
             .into_any()
     }
 
-    fn handle_regenerate_thread_title(
-        thread_view: Entity<AcpThreadView>,
-        _window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn handle_regenerate_thread_title(thread_view: Entity<AcpThreadView>, cx: &mut App) {
         thread_view.update(cx, |thread_view, cx| {
             if let Some(thread) = thread_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
                     thread.generate_title(cx);
                 });
             }
+        });
+    }
+
+    fn handle_regenerate_text_thread_title(
+        text_thread_editor: Entity<TextThreadEditor>,
+        cx: &mut App,
+    ) {
+        text_thread_editor.update(cx, |text_thread_editor, cx| {
+            text_thread_editor.regenerate_summary(cx);
         });
     }
 
@@ -1875,16 +1880,33 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
 
-        let show_regenerate_thread_title = match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view } => {
-                thread_view.read(cx).has_user_submitted_prompt(cx)
-            }
+        let text_thread_view = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => Some(text_thread_editor.clone()),
+            _ => None,
+        };
+        let text_thread_with_messages = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => text_thread_editor
+                .read(cx)
+                .text_thread()
+                .read(cx)
+                .messages(cx)
+                .any(|message| message.role == language_model::Role::Assistant),
             _ => false,
         };
 
         let thread_view = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => Some(thread_view.clone()),
             _ => None,
+        };
+        let thread_with_messages = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.read(cx).has_user_submitted_prompt(cx)
+            }
+            _ => false,
         };
 
         PopoverMenu::new("agent-options-menu")
@@ -1947,16 +1969,30 @@ impl AgentPanel {
                                 .separator()
                         }
 
-                        if show_regenerate_thread_title {
+                        if thread_with_messages | text_thread_with_messages {
+                            menu = menu.header("Current Thread");
+
+                            if let Some(text_thread_view) = text_thread_view.as_ref() {
+                                menu = menu
+                                    .entry("Regenerate Thread Title", None, {
+                                        let text_thread_view = text_thread_view.clone();
+                                        move |_, cx| {
+                                            Self::handle_regenerate_text_thread_title(
+                                                text_thread_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
+
                             if let Some(thread_view) = thread_view.as_ref() {
                                 menu = menu
-                                    .header("Current Thread")
                                     .entry("Regenerate Thread Title", None, {
                                         let thread_view = thread_view.clone();
-                                        move |window, cx| {
+                                        move |_, cx| {
                                             Self::handle_regenerate_thread_title(
                                                 thread_view.clone(),
-                                                window,
                                                 cx,
                                             );
                                         }
