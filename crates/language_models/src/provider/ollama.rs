@@ -23,8 +23,8 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, InlineCode, List, ListBulletItem,
-    Tooltip, prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
+    prelude::*,
 };
 use ui_input::InputField;
 

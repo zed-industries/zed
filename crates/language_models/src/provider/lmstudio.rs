@@ -20,7 +20,7 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, InlineCode, List, ListBulletItem, prelude::*};
+use ui::{ButtonLike, Indicator, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
