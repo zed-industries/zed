@@ -1448,8 +1448,8 @@ impl llm_provider::Host for WasmState {
                     cx.update(|cx| {
                         let settings_store = cx.global::<SettingsStore>();
                         let user_settings = settings_store.raw_user_settings();
-                        let language_models = user_settings
-                            .and_then(|s| s.content.language_models.as_ref());
+                        let language_models =
+                            user_settings.and_then(|s| s.content.language_models.as_ref());
 
                         // Map provider IDs to their settings
                         // The provider_id from the extension is just the provider part (e.g., "google-ai")

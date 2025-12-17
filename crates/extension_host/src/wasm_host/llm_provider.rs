@@ -10,8 +10,8 @@ use crate::wasm_host::wit::{
     LlmStopReason, LlmThinkingContent, LlmToolChoice, LlmToolDefinition, LlmToolInputFormat,
     LlmToolResult, LlmToolResultContent, LlmToolUse,
 };
-use collections::HashMap;
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use extension::{LanguageModelAuthConfig, OAuthConfig};
 use futures::future::BoxFuture;
@@ -29,8 +29,8 @@ use language_model::{
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, RateLimiter,
-    StopReason, TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, RateLimiter, StopReason,
+    TokenUsage,
 };
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
@@ -150,13 +150,14 @@ impl ExtensionLanguageModelProvider {
         model_info: &LlmModelInfo,
         cache_configs: &HashMap<String, LlmCacheConfiguration>,
     ) -> Arc<dyn LanguageModel> {
-        let cache_config = cache_configs.get(&model_info.id).map(|config| {
-            LanguageModelCacheConfiguration {
-                max_cache_anchors: config.max_cache_anchors as usize,
-                should_speculate: false,
-                min_total_token: config.min_total_token_count,
-            }
-        });
+        let cache_config =
+            cache_configs
+                .get(&model_info.id)
+                .map(|config| LanguageModelCacheConfiguration {
+                    max_cache_anchors: config.max_cache_anchors as usize,
+                    should_speculate: false,
+                    min_total_token: config.min_total_token_count,
+                });
 
         Arc::new(ExtensionLanguageModel {
             extension: self.extension.clone(),
@@ -1640,9 +1641,7 @@ impl LanguageModel for ExtensionLanguageModel {
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model_info.capabilities.tool_input_format {
             LlmToolInputFormat::JsonSchema => LanguageModelToolSchemaFormat::JsonSchema,
-            LlmToolInputFormat::JsonSchemaSubset => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
+            LlmToolInputFormat::JsonSchemaSubset => LanguageModelToolSchemaFormat::JsonSchemaSubset,
             LlmToolInputFormat::Simplified => LanguageModelToolSchemaFormat::JsonSchema,
         }
     }
