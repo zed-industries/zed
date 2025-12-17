@@ -5252,7 +5252,7 @@ impl GitPanel {
         let file_name_first = git_path_style == GitPathStyle::FileNameFirst;
         let file_path_first = git_path_style == GitPathStyle::FilePathFirst;
 
-        let file_name = format!("{} ", file_name.clone());
+        let file_name = format!("{} ", file_name);
 
         h_flex()
             .min_w_0()
