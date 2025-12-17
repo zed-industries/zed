@@ -255,7 +255,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -304,7 +304,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -336,7 +336,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -458,7 +458,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -505,7 +505,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -580,7 +580,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -669,7 +669,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -698,7 +698,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -783,7 +783,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -816,7 +816,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -846,7 +846,7 @@ mod tests {
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 4)),
                 command: None,
                 text_document: lsp::VersionedTextDocumentIdentifier {
-                    uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                     version: 0,
                 },
             }],
@@ -936,7 +936,7 @@ mod tests {
                             ),
                             command: None,
                             text_document: lsp::VersionedTextDocumentIdentifier {
-                                uri: Uri::from_file_path("/root/dir/file.rs").unwrap(),
+                                uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
                                 version: 0,
                             },
                         }],
