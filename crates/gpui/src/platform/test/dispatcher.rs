@@ -69,6 +69,7 @@ impl TestDispatcher {
 
     pub fn drain_tasks(&self) {
         // dropping runnables may reschedule tasks
+        // due to drop impls with executors in them
         // so drop until we reach a fixpoint
         loop {
             let mut state = self.state.lock();
