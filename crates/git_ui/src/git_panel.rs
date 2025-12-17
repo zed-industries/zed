@@ -5256,6 +5256,7 @@ impl GitPanel {
 
         h_flex()
             .min_w_0()
+            .overflow_hidden()
             .when(file_path_first, |this| this.flex_row_reverse())
             .child(
                 div().flex_none().child(
