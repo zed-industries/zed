@@ -7468,26 +7468,6 @@ impl Editor {
         .unwrap_or(false)
     }
 
-    fn cycle_edit_prediction(
-        &mut self,
-        direction: Direction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<()> {
-        let provider = self.edit_prediction_provider()?;
-        let cursor = self.selections.newest_anchor().head();
-        let (buffer, cursor_buffer_position) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if self.edit_predictions_hidden_for_vim_mode || !self.should_show_edit_predictions() {
-            return None;
-        }
-
-        provider.cycle(buffer, cursor_buffer_position, direction, cx);
-        self.update_visible_edit_prediction(window, cx);
-
-        Some(())
-    }
-
     pub fn show_edit_prediction(
         &mut self,
         _: &ShowEditPrediction,
@@ -7523,42 +7503,6 @@ impl Editor {
             .ok()
         })
         .detach();
-    }
-
-    pub fn next_edit_prediction(
-        &mut self,
-        _: &NextEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.has_active_edit_prediction() {
-            self.cycle_edit_prediction(Direction::Next, window, cx);
-        } else {
-            let is_copilot_disabled = self
-                .refresh_edit_prediction(false, true, window, cx)
-                .is_none();
-            if is_copilot_disabled {
-                cx.propagate();
-            }
-        }
-    }
-
-    pub fn previous_edit_prediction(
-        &mut self,
-        _: &PreviousEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.has_active_edit_prediction() {
-            self.cycle_edit_prediction(Direction::Prev, window, cx);
-        } else {
-            let is_copilot_disabled = self
-                .refresh_edit_prediction(false, true, window, cx)
-                .is_none();
-            if is_copilot_disabled {
-                cx.propagate();
-            }
-        }
     }
 
     pub fn accept_partial_edit_prediction(
