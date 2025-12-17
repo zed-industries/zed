@@ -455,15 +455,15 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.2", features = [
+aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.80.0", features = [
+aws-sdk-bedrockruntime = { version = "1.112.0", features = [
     "behavior-version-latest",
 ] }
-aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
-aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"

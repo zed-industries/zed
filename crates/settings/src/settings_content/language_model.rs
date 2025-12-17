@@ -83,6 +83,8 @@ pub enum BedrockAuthMethodContent {
     NamedProfile,
     #[serde(rename = "sso")]
     SingleSignOn,
+    #[serde(rename = "api_key")]
+    ApiKey,
     /// IMDSv2, PodIdentity, env vars, etc.
     #[serde(rename = "default")]
     Automatic,
