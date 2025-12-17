@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+pub(crate) const ENABLE_SUBPIXEL_TEXT_RENDERING: bool = true;
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -759,6 +760,12 @@ impl DirectWriteState {
             m => m,
         };
 
+        let antialias_mode = if ENABLE_SUBPIXEL_TEXT_RENDERING {
+            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
+        } else {
+            DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE
+        };
+
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
@@ -766,7 +773,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                antialias_mode,
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -777,7 +784,13 @@ impl DirectWriteState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+        let texture_type = if ENABLE_SUBPIXEL_TEXT_RENDERING {
+            DWRITE_TEXTURE_CLEARTYPE_3x1
+        } else {
+            DWRITE_TEXTURE_ALIASED_1x1
+        };
+
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
 
         if bounds.right < bounds.left {
             Ok(Bounds {
@@ -839,21 +852,55 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
-        let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+        if !ENABLE_SUBPIXEL_TEXT_RENDERING {
+            let mut bitmap_data =
+                vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+
+            let glyph_analysis = self.create_glyph_run_analysis(params)?;
+            unsafe {
+                glyph_analysis.CreateAlphaTexture(
+                    DWRITE_TEXTURE_ALIASED_1x1,
+                    &RECT {
+                        left: glyph_bounds.origin.x.0,
+                        top: glyph_bounds.origin.y.0,
+                        right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
+                        bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
+                    },
+                    &mut bitmap_data,
+                )?;
+            }
+
+            return Ok(bitmap_data);
+        }
+
+        let width = glyph_bounds.size.width.0 as usize;
+        let height = glyph_bounds.size.height.0 as usize;
+        let pixel_count = width * height;
+
+        let mut bitmap_data = vec![0u8; pixel_count * 4];
 
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                DWRITE_TEXTURE_ALIASED_1x1,
+                DWRITE_TEXTURE_CLEARTYPE_3x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
                     top: glyph_bounds.origin.y.0,
                     right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
                     bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
                 },
-                &mut bitmap_data,
+                &mut bitmap_data[..pixel_count * 3],
             )?;
+        }
+
+        // The output buffer expects RGBA data, so pad the alpha channel with zeros.
+        for pixel_ix in (0..pixel_count).rev() {
+            let src = pixel_ix * 3;
+            let dst = pixel_ix * 4;
+            bitmap_data[dst] = bitmap_data[src];
+            bitmap_data[dst + 1] = bitmap_data[src + 1];
+            bitmap_data[dst + 2] = bitmap_data[src + 2];
+            bitmap_data[dst + 3] = 0;
         }
 
         Ok(bitmap_data)
