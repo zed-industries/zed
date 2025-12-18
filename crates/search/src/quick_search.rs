@@ -43,8 +43,8 @@ fn find_safe_char_boundaries(text: &str, start: usize, end: usize) -> Option<(us
     }
 
     let mut safe_end = end.min(text.len());
-    while safe_end < text.len() && !text.is_char_boundary(safe_end) {
-        safe_end += 1;
+    while safe_end > 0 && !text.is_char_boundary(safe_end) {
+        safe_end -= 1;
     }
 
     if safe_start < safe_end {
