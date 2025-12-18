@@ -76,7 +76,13 @@ impl Settings for ItemSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
-            git_status: tabs.git_status.unwrap(),
+            git_status: tabs.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             close_position: tabs.close_position.unwrap(),
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
