@@ -1197,23 +1197,21 @@ pub fn new_terminal_pane(
                         // call mark_positions (via split) synchronously.
                         cx.spawn_in(window, async move |_, cx| {
                             cx.update(|window, cx| {
-                                let Ok(new_pane) = terminal_panel.update(cx, |terminal_panel, cx| {
-                                    let new_pane = new_terminal_pane(
-                                        workspace,
-                                        project,
-                                        is_zoomed,
-                                        window,
-                                        cx,
-                                    );
-                                    terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                    terminal_panel.center.split(
-                                        &this_pane,
-                                        &new_pane,
-                                        split_direction,
-                                        cx,
-                                    )?;
-                                    anyhow::Ok(new_pane)
-                                }) else {
+                                let Ok(new_pane) =
+                                    terminal_panel.update(cx, |terminal_panel, cx| {
+                                        let new_pane = new_terminal_pane(
+                                            workspace, project, is_zoomed, window, cx,
+                                        );
+                                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                        terminal_panel.center.split(
+                                            &this_pane,
+                                            &new_pane,
+                                            split_direction,
+                                            cx,
+                                        )?;
+                                        anyhow::Ok(new_pane)
+                                    })
+                                else {
                                     return;
                                 };
 
