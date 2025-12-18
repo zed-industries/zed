@@ -2204,8 +2204,10 @@ impl EditorElement {
             .display_diff_hunks_for_rows(display_rows, folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
-        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
-        if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+        let git_settings = &ProjectSettings::get_global(cx).git;
+        let git_gutter_setting = git_settings.git_gutter;
+        let git_diff_enabled = git_settings.integration.is_git_diff_enabled();
+        if git_diff_enabled && matches!(git_gutter_setting, GitGutterSetting::TrackedFiles) {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds =
@@ -6465,15 +6467,14 @@ impl EditorElement {
             }
         }
 
+        let git_settings = &ProjectSettings::get_global(cx).git;
         let show_git_gutter = layout
             .position_map
             .snapshot
             .show_git_diff_gutter
             .unwrap_or_else(|| {
-                matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
-                )
+                git_settings.integration.is_git_diff_enabled()
+                    && matches!(git_settings.git_gutter, GitGutterSetting::TrackedFiles)
             });
         if show_git_gutter {
             Self::paint_gutter_diff_hunks(layout, window, cx)

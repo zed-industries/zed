@@ -54,7 +54,7 @@ impl Settings for OutlinePanelSettings {
                 && content
                     .git
                     .unwrap()
-                    .enabled
+                    .integration
                     .unwrap()
                     .is_git_status_enabled(),
             indent_size: panel.indent_size.unwrap(),

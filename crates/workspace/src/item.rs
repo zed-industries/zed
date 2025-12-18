@@ -80,7 +80,7 @@ impl Settings for ItemSettings {
                 && content
                     .git
                     .unwrap()
-                    .enabled
+                    .integration
                     .unwrap()
                     .is_git_status_enabled(),
             close_position: tabs.close_position.unwrap(),

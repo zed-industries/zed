@@ -1321,14 +1321,16 @@
   "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
-    // Global switch to enable or disable all git integration features.
-    // If set to true, disables all git integration features.
-    // If set to false, individual git integration features below will be independently enabled or disabled.
-    "disable_git": false,
-    // Whether to enable git status tracking.
-    "enable_status": true,
-    // Whether to enable git diff display.
-    "enable_diff": true,
+    // Controls which git integration features are enabled. May take 4 values:
+    // 1. Enable all git integration features (status and diff):
+    //      "integration": "full"
+    // 2. Enable only git status features (file status indicators):
+    //      "integration": "status_only"
+    // 3. Enable only git diff features (gutter diff hunks, scrollbar diff):
+    //      "integration": "diff_only"
+    // 4. Disable all git integration features:
+    //      "integration": "disabled"
+    "integration": "full",
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"

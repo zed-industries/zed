@@ -96,7 +96,7 @@ impl Settings for ProjectPanelSettings {
                 && content
                     .git
                     .unwrap()
-                    .enabled
+                    .integration
                     .unwrap()
                     .is_git_status_enabled(),
             indent_size: project_panel.indent_size.unwrap(),

@@ -288,11 +288,10 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
-    /// Whether or not to enable git integration.
+    /// Controls which git integration features are enabled.
     ///
-    /// Default: true
-    #[serde(flatten)]
-    pub enabled: Option<GitEnabledSettings>,
+    /// Default: full
+    pub integration: Option<GitIntegration>,
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
@@ -322,22 +321,40 @@ pub struct GitSettings {
     pub path_style: Option<GitPathStyle>,
 }
 
-#[with_fallible_options]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+/// Controls which git integration features are enabled.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
-pub struct GitEnabledSettings {
-    pub disable_git: Option<bool>,
-    pub enable_status: Option<bool>,
-    pub enable_diff: Option<bool>,
+pub enum GitIntegration {
+    /// Enable all git integration features (status and diff).
+    #[default]
+    Full,
+    /// Enable only git status features (file status indicators).
+    StatusOnly,
+    /// Enable only git diff features (gutter diff hunks, scrollbar diff).
+    DiffOnly,
+    /// Disable all git integration features.
+    Disabled,
 }
 
-impl GitEnabledSettings {
+impl GitIntegration {
     pub fn is_git_status_enabled(&self) -> bool {
-        !self.disable_git.unwrap_or(false) && self.enable_status.unwrap_or(true)
+        matches!(self, GitIntegration::Full | GitIntegration::StatusOnly)
     }
 
     pub fn is_git_diff_enabled(&self) -> bool {
-        !self.disable_git.unwrap_or(false) && self.enable_diff.unwrap_or(true)
+        matches!(self, GitIntegration::Full | GitIntegration::DiffOnly)
     }
 }
 
