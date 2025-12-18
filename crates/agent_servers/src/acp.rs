@@ -52,6 +52,7 @@ pub struct AcpSession {
     suppress_abort_err: bool,
     models: Option<Rc<RefCell<acp::SessionModelState>>>,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
+    config_options: Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 }
 
 pub async fn connect(
@@ -322,8 +323,22 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
-            let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
-            let models = response.models.map(|models| Rc::new(RefCell::new(models)));
+            // Only use config_options if present, don't mix with legacy modes/models
+            let (modes, models, config_options) = if response.config_options.is_some() {
+                // Config options take precedence - don't use modes/models
+                (
+                    None,
+                    None,
+                    response
+                        .config_options
+                        .map(|opts| Rc::new(RefCell::new(opts))),
+                )
+            } else {
+                // Fall back to legacy modes/models
+                let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
+                let models = response.models.map(|models| Rc::new(RefCell::new(models)));
+                (modes, models, None)
+            };
 
             if let Some(default_mode) = default_mode {
                 if let Some(modes) = modes.as_ref() {
@@ -432,6 +447,7 @@ impl AgentConnection for AcpConnection {
                 suppress_abort_err: false,
                 session_modes: modes,
                 models,
+                config_options,
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -567,6 +583,23 @@ impl AgentConnection for AcpConnection {
         }
     }
 
+    fn session_config_options(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionConfigOptions>> {
+        let sessions = self.sessions.borrow();
+        let session = sessions.get(session_id)?;
+
+        session.config_options.as_ref().map(|config_opts| {
+            Rc::new(AcpSessionConfigOptions {
+                session_id: session_id.clone(),
+                connection: self.connection.clone(),
+                state: config_opts.clone(),
+            }) as _
+        })
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
@@ -685,6 +718,40 @@ impl acp_thread::AgentModelSelector for AcpModelSelector {
     }
 }
 
+struct AcpSessionConfigOptions {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+    state: Rc<RefCell<Vec<acp::SessionConfigOption>>>,
+}
+
+impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
+    fn config_options(&self) -> Vec<acp::SessionConfigOption> {
+        self.state.borrow().clone()
+    }
+
+    fn set_config_option(
+        &self,
+        config_id: acp::SessionConfigId,
+        value: acp::SessionConfigValueId,
+        cx: &mut App,
+    ) -> Task<Result<Vec<acp::SessionConfigOption>>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        let state = self.state.clone();
+
+        cx.foreground_executor().spawn(async move {
+            let response = connection
+                .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+                    session_id, config_id, value,
+                ))
+                .await?;
+
+            *state.borrow_mut() = response.config_options.clone();
+            Ok(response.config_options)
+        })
+    }
+}
+
 struct ClientDelegate {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     cx: AsyncApp,
@@ -774,6 +841,20 @@ impl acp::Client for ClientDelegate {
             } else {
                 log::error!(
                     "Got a `CurrentModeUpdate` notification, but they agent didn't specify `modes` during setting setup."
+                );
+            }
+        }
+
+        if let acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate {
+            config_options,
+            ..
+        }) = &notification.update
+        {
+            if let Some(opts) = &session.config_options {
+                *opts.borrow_mut() = config_options.clone();
+            } else {
+                log::error!(
+                    "Got a `ConfigOptionUpdate` notification, but the agent didn't specify `configOptions` during session setup."
                 );
             }
         }

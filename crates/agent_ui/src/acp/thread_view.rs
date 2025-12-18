@@ -1522,6 +1522,10 @@ impl AcpThreadView {
                 // The connection keeps track of the mode
                 cx.notify();
             }
+            AcpThreadEvent::ConfigOptionsUpdated(_) => {
+                // The connection keeps track of the config options
+                cx.notify();
+            }
         }
         cx.notify();
     }
