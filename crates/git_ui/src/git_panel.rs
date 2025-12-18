@@ -2454,14 +2454,12 @@ impl GitPanel {
         is_using_legacy_zed_pro: bool,
         cx: &mut AsyncApp,
     ) -> String {
-        const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
-
         // Remove this once we stop supporting legacy Zed Pro
         // In legacy Zed Pro, Git commit summary generation did not count as a
         // prompt. If the user changes the prompt, our classification will fail,
         // meaning that users will be charged for generating commit messages.
         if is_using_legacy_zed_pro {
-            return DEFAULT_PROMPT.to_string();
+            return BuiltInPrompt::CommitMessage.default_content().to_string();
         }
 
         let load = async {
@@ -2474,7 +2472,8 @@ impl GitPanel {
                 .await
                 .ok()
         };
-        load.await.unwrap_or_else(|| DEFAULT_PROMPT.to_string())
+        load.await
+            .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
     }
 
     /// Generates a commit message using an LLM.
