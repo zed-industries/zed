@@ -36,6 +36,7 @@
 DerivedData/
 Packages
 xcuserdata/
+assets/generated
 
 # Don't commit any secrets to the repo.
 .env
