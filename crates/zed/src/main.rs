@@ -35,10 +35,12 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
+    cell::RefCell,
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
+    rc::Rc,
     sync::{Arc, OnceLock},
     time::Instant,
 };
@@ -897,15 +899,37 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::GitClone { repo_url } => {
                 workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-                    clone_and_open(
-                        repo_url,
-                        cx.entity().downgrade(),
-                        window,
-                        cx,
-                        Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
-                            workspace.focus_panel::<ProjectPanel>(window, cx);
-                        }),
-                    );
+                    if window.is_window_active() {
+                        clone_and_open(
+                            repo_url,
+                            cx.weak_entity(),
+                            window,
+                            cx,
+                            Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                                workspace.focus_panel::<ProjectPanel>(window, cx);
+                            }),
+                        );
+                        return;
+                    }
+
+                    let subscription = Rc::new(RefCell::new(None));
+                    subscription.replace(Some(cx.observe_in(&cx.entity(), window, {
+                        let subscription = subscription.clone();
+                        let repo_url = repo_url.clone();
+                        move |_, workspace_entity, window, cx| {
+                            if window.is_window_active() && subscription.take().is_some() {
+                                clone_and_open(
+                                    repo_url.clone(),
+                                    workspace_entity.downgrade(),
+                                    window,
+                                    cx,
+                                    Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                                        workspace.focus_panel::<ProjectPanel>(window, cx);
+                                    }),
+                                );
+                            }
+                        }
+                    })));
                 });
             }
             OpenRequestKind::GitCommit { sha } => {

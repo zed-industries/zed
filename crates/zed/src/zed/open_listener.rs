@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
@@ -59,7 +60,7 @@ pub enum OpenRequestKind {
         setting_path: Option<String>,
     },
     GitClone {
-        repo_url: String,
+        repo_url: SharedString,
     },
     GitCommit {
         sha: String,
@@ -160,7 +161,8 @@ impl OpenRequest {
             .find_map(|(key, value)| (key == "repo").then_some(value))
             .filter(|s| !s.is_empty())
             .context("invalid git clone url: missing repo query parameter")?
-            .to_string();
+            .to_string()
+            .into();
 
         self.kind = Some(OpenRequestKind::GitClone { repo_url });
 

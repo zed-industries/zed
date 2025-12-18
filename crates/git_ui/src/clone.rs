@@ -1,12 +1,12 @@
 use gpui::{App, Context, WeakEntity, Window};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use std::sync::Arc;
-use ui::{Color, IconName};
+use ui::{Color, IconName, SharedString};
 use util::ResultExt;
 use workspace::{self, Workspace};
 
 pub fn clone_and_open(
-    repo_url: String,
+    repo_url: SharedString,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
@@ -57,8 +57,14 @@ pub fn clone_and_open(
                 return None;
             }
 
-            let prompt_answer = cx
-                .update(|window, cx| {
+            let has_worktrees = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.project().read(cx).worktrees(cx).next().is_some()
+                })
+                .ok()?;
+
+            let prompt_answer = if has_worktrees {
+                cx.update(|window, cx| {
                     window.prompt(
                         gpui::PromptLevel::Info,
                         &format!("Git Clone: {}", repo_name),
@@ -67,11 +73,17 @@ pub fn clone_and_open(
                         cx,
                     )
                 })
-                .ok()?;
+                .ok()?
+                .await
+                .ok()?
+            } else {
+                // Don't ask if project is empty
+                0
+            };
 
             destination_dir.push(&repo_name);
 
-            match prompt_answer.await.ok()? {
+            match prompt_answer {
                 0 => {
                     workspace
                         .update_in(cx, |workspace, window, cx| {

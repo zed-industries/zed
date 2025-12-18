@@ -2851,7 +2851,7 @@ impl GitPanel {
         let workspace = self.workspace.clone();
 
         crate::clone::clone_and_open(
-            repo,
+            repo.into(),
             workspace,
             window,
             cx,
