@@ -151,7 +151,9 @@ impl<'a> SerializedThreadTaskTimings<'a> {
     }
 }
 
-// Allow 20mb of task timing entries
+// Allow 20mb of task timing entries.
+// VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid
+// wasting memory.
 const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
 pub(crate) type TaskTimings = VecDeque<TaskTiming>;
