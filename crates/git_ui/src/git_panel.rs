@@ -1978,7 +1978,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(cx))?
+                    .update(cx, |repo, cx| repo.stash_all(None, cx))?
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
