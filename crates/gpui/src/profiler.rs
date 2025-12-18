@@ -189,7 +189,7 @@ thread_local! {
 pub(crate) struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
-    pub timings: TaskTimings,
+    timings: TaskTimings,
 }
 
 impl ThreadTimings {
@@ -213,6 +213,10 @@ impl ThreadTimings {
             }
             self.timings.push_back(timing);
         }
+    }
+
+    pub fn copy_timings(&self) -> Vec<TaskTiming> {
+        self.timings.iter().cloned().collect()
     }
 }
 

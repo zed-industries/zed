@@ -172,17 +172,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-            vec
-        })
+        THREAD_TIMINGS.with(|timings| timings.lock().copy_timings())
     }
 
     fn is_main_thread(&self) -> bool {
