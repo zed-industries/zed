@@ -179,6 +179,65 @@ impl LineWrapper {
         }
     }
 
+    /// Truncate a line of text from the start to the given width.
+    /// Truncates from the beginning, e.g., "…ong text here"
+    pub fn truncate_line_start<'a>(
+        &mut self,
+        line: SharedString,
+        truncate_width: Pixels,
+        truncation_prefix: &str,
+        runs: &'a [TextRun],
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
+        // First, measure the full line width to see if truncation is needed
+        let full_width: Pixels = line.chars().map(|c| self.width_for_char(c)).sum();
+
+        if full_width <= truncate_width {
+            return (line, Cow::Borrowed(runs));
+        }
+
+        let prefix_width: Pixels = truncation_prefix
+            .chars()
+            .map(|c| self.width_for_char(c))
+            .sum();
+
+        let available_width = truncate_width - prefix_width;
+
+        if available_width <= px(0.) {
+            return (
+                SharedString::from(truncation_prefix.to_string()),
+                Cow::Owned(vec![]),
+            );
+        }
+
+        // Work backwards from the end to find where to start the visible text
+        let char_indices: Vec<(usize, char)> = line.char_indices().collect();
+        let mut width_from_end = px(0.);
+        let mut start_byte_index = line.len();
+
+        for (byte_index, c) in char_indices.iter().rev() {
+            let char_width = self.width_for_char(*c);
+            if width_from_end + char_width > available_width {
+                break;
+            }
+            width_from_end += char_width;
+            start_byte_index = *byte_index;
+        }
+
+        if start_byte_index == 0 {
+            return (line, Cow::Borrowed(runs));
+        }
+
+        let result = SharedString::from(format!(
+            "{}{}",
+            truncation_prefix,
+            &line[start_byte_index..]
+        ));
+        let mut runs = runs.to_vec();
+        update_runs_after_start_truncation(&result, truncation_prefix, start_byte_index, &mut runs);
+
+        (result, Cow::Owned(runs))
+    }
+
     /// Any character in this list should be treated as a word character,
     /// meaning it can be part of a word that should not be wrapped.
     pub(crate) fn is_word_char(c: char) -> bool {
@@ -254,6 +313,52 @@ fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<Tex
             run.len = truncate_at + ellipsis.len();
             runs.truncate(run_index + 1);
             break;
+        }
+    }
+}
+
+fn update_runs_after_start_truncation(
+    result: &str,
+    prefix: &str,
+    bytes_removed: usize,
+    runs: &mut Vec<TextRun>,
+) {
+    let prefix_len = prefix.len();
+
+    let mut bytes_to_skip = bytes_removed;
+    let mut first_relevant_run = 0;
+
+    for (index, run) in runs.iter().enumerate() {
+        if bytes_to_skip >= run.len {
+            bytes_to_skip -= run.len;
+            first_relevant_run = index + 1;
+        } else {
+            break;
+        }
+    }
+
+    if first_relevant_run > 0 {
+        runs.drain(0..first_relevant_run);
+    }
+
+    if !runs.is_empty() && bytes_to_skip > 0 {
+        runs[0].len -= bytes_to_skip;
+    }
+
+    if !runs.is_empty() {
+        runs[0].len += prefix_len;
+    } else {
+        runs.push(TextRun {
+            len: result.len(),
+            ..Default::default()
+        });
+    }
+
+    let total_run_len: usize = runs.iter().map(|r| r.len).sum();
+    if total_run_len != result.len() && !runs.is_empty() {
+        let diff = result.len() as isize - total_run_len as isize;
+        if let Some(last) = runs.last_mut() {
+            last.len = (last.len as isize + diff) as usize;
         }
     }
 }
