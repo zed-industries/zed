@@ -469,28 +469,23 @@ impl PromptStore {
             return Task::ready(Err(anyhow!("this prompt cannot be edited")));
         }
 
-        let body_string = body.to_string();
+        let body = body.to_string();
         let is_default_content = id
             .as_built_in()
-            .is_some_and(|builtin| body_string.trim() == builtin.default_content().trim());
+            .is_some_and(|builtin| body.trim() == builtin.default_content().trim());
 
-        if is_default_content {
-            if let Some(builtin) = id.as_built_in() {
-                self.metadata_cache
-                    .write()
-                    .insert(PromptMetadata::builtin(builtin));
-            } else {
-                self.metadata_cache.write().remove(id);
-            }
+        let metadata = if let Some(builtin) = id.as_built_in() {
+            PromptMetadata::builtin(builtin)
         } else {
-            let prompt_metadata = PromptMetadata {
+            PromptMetadata {
                 id,
                 title: title.clone(),
                 default,
                 saved_at: Utc::now(),
-            };
-            self.metadata_cache.write().insert(prompt_metadata);
-        }
+            }
+        };
+
+        self.metadata_cache.write().insert(metadata.clone());
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
@@ -503,14 +498,8 @@ impl PromptStore {
                 metadata_db.delete(&mut txn, &id)?;
                 bodies.delete(&mut txn, &id)?;
             } else {
-                let prompt_metadata = PromptMetadata {
-                    id,
-                    title,
-                    default,
-                    saved_at: Utc::now(),
-                };
-                metadata_db.put(&mut txn, &id, &prompt_metadata)?;
-                bodies.put(&mut txn, &id, &body_string)?;
+                metadata_db.put(&mut txn, &id, &metadata)?;
+                bodies.put(&mut txn, &id, &body)?;
             }
 
             txn.commit()?;
