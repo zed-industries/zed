@@ -10,7 +10,15 @@ use gpui::{
 use language::{Buffer, BufferEvent, HighlightId};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, search::SearchQuery};
-use std::{path::Path, pin::pin, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    pin::pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use text::{ToOffset as _, ToPoint as _};
 use ui::{
     Button, ButtonStyle, Color, Divider, Icon, IconButton, IconButtonShape, IconName, KeyBinding,
@@ -28,17 +36,209 @@ use crate::{
 
 type AnchorRange = std::ops::Range<text::Anchor>;
 
+fn find_safe_char_boundaries(text: &str, start: usize, end: usize) -> Option<(usize, usize)> {
+    let mut safe_start = start.min(text.len());
+    while safe_start > 0 && !text.is_char_boundary(safe_start) {
+        safe_start -= 1;
+    }
+
+    let mut safe_end = end.min(text.len());
+    while safe_end < text.len() && !text.is_char_boundary(safe_end) {
+        safe_end += 1;
+    }
+
+    if safe_start < safe_end {
+        Some((safe_start, safe_end))
+    } else {
+        None
+    }
+}
+
+struct BufferExtractData {
+    worktree_id: project::WorktreeId,
+    path: Arc<util::rel_path::RelPath>,
+    snapshot: language::BufferSnapshot,
+    ranges: Vec<AnchorRange>,
+}
+
+fn extract_buffer_data(
+    buf: &Buffer,
+    ranges: Vec<AnchorRange>,
+    cx: &App,
+) -> Option<BufferExtractData> {
+    let file = buf.file()?;
+    Some(BufferExtractData {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().clone(),
+        snapshot: buf.snapshot(),
+        ranges,
+    })
+}
+
+struct LineInfo {
+    line_start_offset: usize,
+    line_text: String,
+    trim_start: usize,
+    match_ranges: Vec<AnchorRange>,
+}
+
+fn group_ranges_by_line(
+    ranges: &[AnchorRange],
+    snapshot: &language::BufferSnapshot,
+) -> (HashMap<u32, LineInfo>, Vec<u32>) {
+    let estimated_lines = ranges.len().min(MAX_LINES_PER_FILE);
+    let mut lines_data: HashMap<u32, LineInfo> = HashMap::default();
+    lines_data.reserve(estimated_lines);
+    let mut line_order = Vec::with_capacity(estimated_lines);
+
+    for range in ranges {
+        let start_point = range.start.to_point(snapshot);
+        let line = start_point.row;
+
+        if let Some(line_data) = lines_data.get_mut(&line) {
+            line_data.match_ranges.push(range.clone());
+        } else {
+            let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
+            let line_end_col = snapshot.line_len(line);
+            let line_end = snapshot.point_to_offset(text::Point::new(line, line_end_col));
+
+            let line_text: String = snapshot.text_for_range(line_start..line_end).collect();
+            let trim_start = line_text.len() - line_text.trim_start().len();
+
+            lines_data.insert(
+                line,
+                LineInfo {
+                    line_start_offset: line_start,
+                    line_text,
+                    trim_start,
+                    match_ranges: vec![range.clone()],
+                },
+            );
+            line_order.push(line);
+        }
+
+        if line_order.len() >= MAX_LINES_PER_FILE {
+            break;
+        }
+    }
+
+    (lines_data, line_order)
+}
+
+fn create_line_match_data(
+    line: u32,
+    info: LineInfo,
+    snapshot: &language::BufferSnapshot,
+    project_path: &ProjectPath,
+    file_key: &SharedString,
+) -> LineMatchData {
+    let preview_text = truncate_preview(&info.line_text, MAX_PREVIEW_BYTES);
+    let preview_len = preview_content_len(&preview_text);
+    let line_label: SharedString = (line + 1).to_string().into();
+
+    let mut match_positions = Vec::new();
+    let preview_str: &str = preview_text.as_ref();
+    for range in &info.match_ranges {
+        let match_start_offset = range.start.to_offset(snapshot);
+        let match_end_offset = range.end.to_offset(snapshot);
+
+        let start_in_line = match_start_offset.saturating_sub(info.line_start_offset);
+        let end_in_line = match_end_offset.saturating_sub(info.line_start_offset);
+
+        let start_in_preview = start_in_line.saturating_sub(info.trim_start);
+        let end_in_preview = end_in_line.saturating_sub(info.trim_start);
+
+        if start_in_preview < preview_len && end_in_preview > 0 {
+            let clamped_start = start_in_preview.min(preview_len);
+            let clamped_end = end_in_preview.min(preview_len);
+            if let Some((safe_start, safe_end)) =
+                find_safe_char_boundaries(preview_str, clamped_start, clamped_end)
+            {
+                match_positions.push(safe_start..safe_end);
+            }
+        }
+    }
+
+    LineMatchData {
+        project_path: project_path.clone(),
+        file_key: file_key.clone(),
+        line,
+        line_label,
+        preview_text,
+        match_ranges: Arc::new(info.match_ranges),
+        match_positions: Arc::new(match_positions),
+        trim_start: info.trim_start,
+        syntax_highlights: None,
+    }
+}
+
+fn process_file_matches(data: BufferExtractData) -> Option<FileMatchResult> {
+    let project_path = ProjectPath {
+        worktree_id: data.worktree_id,
+        path: data.path.clone(),
+    };
+
+    let (file_name, parent_path) = extract_path_parts(&data.path);
+    let file_key = format_file_key(&parent_path, &file_name);
+    let snapshot = &data.snapshot;
+
+    let (mut lines_data, line_order) = group_ranges_by_line(&data.ranges, snapshot);
+
+    if line_order.is_empty() {
+        return None;
+    }
+
+    let matches = line_order
+        .into_iter()
+        .filter_map(|line| {
+            let info = lines_data.remove(&line)?;
+            Some(create_line_match_data(
+                line,
+                info,
+                snapshot,
+                &project_path,
+                &file_key,
+            ))
+        })
+        .collect();
+
+    Some(FileMatchResult {
+        file_name,
+        parent_path,
+        file_key,
+        matches,
+    })
+}
+
 const MODAL_HEIGHT: Pixels = px(800.);
 const MODAL_WIDTH: Pixels = px(1400.);
 const LEFT_PANEL_WIDTH: Pixels = px(400.);
 const MAX_PREVIEW_BYTES: usize = 200;
-const SEARCH_DEBOUNCE_MS: u64 = 100;
 const PREVIEW_DEBOUNCE_MS: u64 = 50;
 const EDIT_OPEN_DELAY_MS: u64 = 200;
-const STREAM_CHUNK_SIZE: usize = 1024;
+const STREAM_CHUNK_SIZE: usize = 64;
+const FIRST_BATCH_THRESHOLD: usize = 16;
+const BACKGROUND_BATCH_THRESHOLD: usize = 128;
 const MAX_LINES_PER_FILE: usize = 800;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+
+fn compute_search_debounce_ms(file_count: usize) -> u64 {
+    match file_count {
+        0..100 => 0,
+        100..1_000 => 50,
+        1_000..10_000 => 100,
+        10_000..50_000 => 150,
+        _ => 200,
+    }
+}
+
+fn get_project_file_count(project: &Project, cx: &App) -> usize {
+    project
+        .worktrees(cx)
+        .map(|worktree| worktree.read(cx).snapshot().file_count())
+        .sum()
+}
 
 actions!(search, [QuickSearch]);
 
@@ -90,140 +290,17 @@ fn preview_content_len(preview_text: &str) -> usize {
         })
 }
 
-fn extract_file_matches(buf: &Buffer, ranges: &[AnchorRange], cx: &App) -> Option<FileMatchResult> {
-    let file = buf.file()?;
-    let project_path = ProjectPath {
-        worktree_id: file.worktree_id(cx),
-        path: file.path().clone(),
-    };
-
-    let (file_name, parent_path) = extract_path_parts(&project_path.path);
-    let file_key = format_file_key(&parent_path, &file_name);
-
-    let snapshot = buf.snapshot();
-
-    struct LineInfo {
-        line_start_offset: usize,
-        line_text: String,
-        trim_start: usize,
-        match_ranges: Vec<AnchorRange>,
-    }
-
-    let estimated_lines = ranges.len().min(MAX_LINES_PER_FILE);
-    let mut lines_data: HashMap<u32, LineInfo> = HashMap::default();
-    lines_data.reserve(estimated_lines);
-    let mut line_order = Vec::with_capacity(estimated_lines);
-
-    for range in ranges {
-        let start_point = range.start.to_point(&snapshot);
-        let line = start_point.row;
-
-        if let Some(data) = lines_data.get_mut(&line) {
-            data.match_ranges.push(range.clone());
-        } else {
-            let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
-            let line_end_col = snapshot.line_len(line);
-            let line_end = snapshot.point_to_offset(text::Point::new(line, line_end_col));
-
-            let line_text: String = snapshot.text_for_range(line_start..line_end).collect();
-            let trim_start = line_text.len() - line_text.trim_start().len();
-
-            lines_data.insert(
-                line,
-                LineInfo {
-                    line_start_offset: line_start,
-                    line_text,
-                    trim_start,
-                    match_ranges: vec![range.clone()],
-                },
-            );
-            line_order.push(line);
-        }
-
-        if line_order.len() >= MAX_LINES_PER_FILE {
-            break;
-        }
-    }
-
-    if line_order.is_empty() {
+fn extract_syntax_highlights_for_line(
+    snapshot: &language::BufferSnapshot,
+    preview_text: &str,
+    line: u32,
+    trim_start: usize,
+) -> Option<Vec<(std::ops::Range<usize>, HighlightId)>> {
+    let preview_len = preview_content_len(preview_text);
+    if preview_len == 0 {
         return None;
     }
 
-    let matches = line_order
-        .into_iter()
-        .filter_map(|line| {
-            let info = lines_data.remove(&line)?;
-            let preview_text = truncate_preview(&info.line_text, MAX_PREVIEW_BYTES);
-            let preview_len = preview_content_len(&preview_text);
-            let line_label: SharedString = (line + 1).to_string().into();
-
-            let mut match_positions = Vec::new();
-            let preview_str: &str = preview_text.as_ref();
-            for range in &info.match_ranges {
-                let match_start_offset = range.start.to_offset(&snapshot);
-                let match_end_offset = range.end.to_offset(&snapshot);
-
-                let start_in_line = match_start_offset.saturating_sub(info.line_start_offset);
-                let end_in_line = match_end_offset.saturating_sub(info.line_start_offset);
-
-                let start_in_preview = start_in_line.saturating_sub(info.trim_start);
-                let end_in_preview = end_in_line.saturating_sub(info.trim_start);
-
-                if start_in_preview < preview_len && end_in_preview > 0 {
-                    let clamped_start = start_in_preview.min(preview_len);
-                    let clamped_end = end_in_preview.min(preview_len);
-                    if clamped_start < clamped_end {
-                        let mut safe_start = clamped_start.min(preview_str.len());
-                        while safe_start > 0 && !preview_str.is_char_boundary(safe_start) {
-                            safe_start -= 1;
-                        }
-
-                        let mut safe_end = clamped_end.min(preview_str.len());
-                        while safe_end < preview_str.len()
-                            && !preview_str.is_char_boundary(safe_end)
-                        {
-                            safe_end += 1;
-                        }
-
-                        if safe_start < safe_end {
-                            match_positions.push(safe_start..safe_end);
-                        }
-                    }
-                }
-            }
-
-            let syntax_highlights =
-                extract_syntax_highlights_for_line(&snapshot, line, info.trim_start, preview_len)
-                    .map(Arc::new);
-
-            Some(LineMatchData {
-                project_path: project_path.clone(),
-                file_key: file_key.clone(),
-                line,
-                line_label,
-                preview_text,
-                match_ranges: Arc::new(info.match_ranges),
-                match_positions: Arc::new(match_positions),
-                trim_start: info.trim_start,
-                syntax_highlights,
-            })
-        })
-        .collect();
-
-    Some(FileMatchResult {
-        file_name,
-        parent_path,
-        file_key,
-        matches,
-    })
-}
-
-fn extract_syntax_highlights_for_line(
-    snapshot: &language::BufferSnapshot,
-    line: u32,
-    trim_start: usize,
-    preview_len: usize,
-) -> Option<Vec<(std::ops::Range<usize>, HighlightId)>> {
     let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
     let line_len = snapshot.line_len(line);
     let line_end = snapshot.point_to_offset(text::Point::new(line, line_len));
@@ -245,8 +322,10 @@ fn extract_syntax_highlights_for_line(
                 let clamped_start = rel_start.min(preview_len);
                 let clamped_end = rel_end.min(preview_len);
 
-                if clamped_start < clamped_end {
-                    highlights.push((clamped_start..clamped_end, highlight_id));
+                if let Some((safe_start, safe_end)) =
+                    find_safe_char_boundaries(preview_text, clamped_start, clamped_end)
+                {
+                    highlights.push((safe_start..safe_end, highlight_id));
                 }
             }
         }
@@ -293,17 +372,7 @@ enum QuickSearchItem {
         parent_path: SharedString,
         file_key: SharedString,
     },
-    LineMatch {
-        project_path: ProjectPath,
-        file_key: SharedString,
-        line: u32,
-        line_label: SharedString,
-        preview_text: SharedString,
-        match_ranges: Arc<Vec<AnchorRange>>,
-        match_positions: Arc<Vec<std::ops::Range<usize>>>,
-        trim_start: usize,
-        syntax_highlights: Option<Arc<Vec<(std::ops::Range<usize>, HighlightId)>>>,
-    },
+    LineMatch(LineMatchData),
 }
 
 pub struct QuickSearchDelegate {
@@ -315,7 +384,7 @@ pub struct QuickSearchDelegate {
     visible_line_match_indices: Vec<usize>,
     collapsed_files: HashSet<SharedString>,
     selected_index: usize,
-    pending_search_id: usize,
+    search_cancelled: Option<Arc<AtomicBool>>,
     quick_search: WeakEntity<QuickSearchModal>,
     match_count: usize,
     file_count: usize,
@@ -404,7 +473,7 @@ impl Render for QuickSearchModal {
                                     .overflow_hidden()
                                     .bg(cx.theme().colors().editor_background)
                                     .on_click(move |_, window, cx| {
-                                        window.focus(&picker.focus_handle(cx));
+                                        window.focus(&picker.focus_handle(cx), cx);
                                     })
                                     .on_action({
                                         move |_: &Save, window, cx| {
@@ -538,7 +607,7 @@ impl QuickSearchModal {
             visible_line_match_indices: Vec::new(),
             collapsed_files: HashSet::default(),
             selected_index: 0,
-            pending_search_id: 0,
+            search_cancelled: None,
             quick_search: weak_self,
             match_count: 0,
             file_count: 0,
@@ -623,6 +692,9 @@ impl QuickSearchModal {
             return;
         };
 
+        // Delay before opening the file in the workspace to handle focus transitions:
+        // when the file opens in the workspace, it steals focus from the Quick Search.
+        // After opening, we restore focus to the preview editor so the user can continue editing.
         self._open_in_workspace_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(EDIT_OPEN_DELAY_MS))
@@ -646,7 +718,7 @@ impl QuickSearchModal {
                 cx.spawn_in(window, async move |_, cx| {
                     let _ = open_task.await;
                     cx.update(|window, cx| {
-                        window.focus(&preview_editor.focus_handle(cx));
+                        window.focus(&preview_editor.focus_handle(cx), cx);
                     })
                     .log_err();
                 })
@@ -876,17 +948,7 @@ fn process_buffer_into_batch(
     counters.total_files += 1;
 
     for match_data in file_result.matches {
-        batch.items.push(QuickSearchItem::LineMatch {
-            project_path: match_data.project_path,
-            file_key: match_data.file_key,
-            line: match_data.line,
-            line_label: match_data.line_label,
-            preview_text: match_data.preview_text,
-            match_ranges: match_data.match_ranges,
-            match_positions: match_data.match_positions,
-            trim_start: match_data.trim_start,
-            syntax_highlights: match_data.syntax_highlights,
-        });
+        batch.items.push(QuickSearchItem::LineMatch(match_data));
         counters.total_line_matches += 1;
     }
 
@@ -897,21 +959,194 @@ fn process_buffer_into_batch(
     }
 }
 
-impl SearchResults {
-    fn first_line_match(&self) -> Option<(ProjectPath, u32, Arc<Vec<AnchorRange>>)> {
-        self.items.iter().find_map(|item| {
-            if let QuickSearchItem::LineMatch {
-                project_path,
-                line,
-                match_ranges,
-                ..
-            } = item
-            {
-                Some((project_path.clone(), *line, match_ranges.clone()))
+fn process_results_in_background(
+    buffer_data_list: Vec<(BufferExtractData, Entity<Buffer>)>,
+) -> Vec<(FileMatchResult, Entity<Buffer>)> {
+    buffer_data_list
+        .into_iter()
+        .filter_map(|(data, buffer)| process_file_matches(data).map(|result| (result, buffer)))
+        .collect()
+}
+
+fn apply_batch_to_picker(
+    delegate: &mut QuickSearchDelegate,
+    batch: SearchResults,
+    total_line_matches: usize,
+    total_files: usize,
+    is_first: bool,
+    cx: &mut Context<Picker<QuickSearchDelegate>>,
+) -> Option<(ProjectPath, u32, Arc<Vec<AnchorRange>>)> {
+    let prev_items_len = delegate.items.len();
+    delegate.items.extend(batch.items);
+
+    for (project_path, buffer) in batch.buffers {
+        if delegate.buffer_subscriptions.contains_key(&project_path) {
+            delegate.buffer_cache.insert(project_path, buffer);
+            continue;
+        }
+
+        let pp = project_path.clone();
+        let subscription = cx.subscribe(&buffer, move |picker, _buffer, event, cx| {
+            if matches!(event, BufferEvent::Reparsed) {
+                picker.delegate.update_syntax_highlights_for_buffer(&pp, cx);
+                cx.notify();
+            }
+        });
+        delegate
+            .buffer_subscriptions
+            .insert(project_path.clone(), subscription);
+        delegate.buffer_cache.insert(project_path, buffer);
+    }
+
+    delegate.update_visible_indices_from(prev_items_len);
+    delegate.match_count = total_line_matches;
+    delegate.file_count = total_files;
+
+    if is_first {
+        let first_selectable = delegate
+            .visible_indices
+            .iter()
+            .position(|&actual_idx| {
+                matches!(
+                    delegate.items.get(actual_idx),
+                    Some(QuickSearchItem::LineMatch(_))
+                )
+            })
+            .unwrap_or(0);
+        delegate.selected_index = first_selectable;
+    }
+
+    cx.notify();
+
+    if is_first {
+        delegate.items.iter().find_map(|item| {
+            if let QuickSearchItem::LineMatch(data) = item {
+                Some((data.project_path.clone(), data.line, data.match_ranges.clone()))
             } else {
                 None
             }
         })
+    } else {
+        None
+    }
+}
+
+fn trigger_preview_update(
+    quick_search: &WeakEntity<QuickSearchModal>,
+    preview_data: Option<(ProjectPath, u32, Arc<Vec<AnchorRange>>)>,
+    cx: &mut gpui::AsyncWindowContext,
+) {
+    if let Some(first_match) = preview_data {
+        if let Some(quick_search) = quick_search.upgrade() {
+            quick_search
+                .update_in(cx, |qs, window, cx| {
+                    qs.update_preview(Some(first_match), window, cx);
+                })
+                .log_err();
+        }
+    }
+}
+
+async fn process_and_apply_batch(
+    buffer_data: Vec<(BufferExtractData, Entity<Buffer>)>,
+    counters: &mut BatchCounters,
+    is_first_batch: &mut bool,
+    limit_reached: bool,
+    picker: &WeakEntity<Picker<QuickSearchDelegate>>,
+    quick_search: &WeakEntity<QuickSearchModal>,
+    cancelled: &AtomicBool,
+    cx: &mut gpui::AsyncWindowContext,
+) {
+    let processed_results = cx
+        .background_executor()
+        .spawn(async move { process_results_in_background(buffer_data) })
+        .await;
+
+    if cancelled.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let mut batch = SearchResults {
+        items: Vec::with_capacity(processed_results.len() * 2),
+        buffers: HashMap::default(),
+    };
+
+    for (file_result, buffer) in processed_results {
+        process_buffer_into_batch(file_result, buffer, &mut batch, counters);
+        if counters.search_limited {
+            break;
+        }
+    }
+
+    if limit_reached {
+        counters.search_limited = true;
+    }
+
+    if !batch.items.is_empty() {
+        let is_first = *is_first_batch;
+        let total_line_matches = counters.total_line_matches;
+        let total_files = counters.total_files;
+
+        let preview_data = picker
+            .update_in(cx, |picker, _window, cx| {
+                if cancelled.load(Ordering::Relaxed) {
+                    return None;
+                }
+                apply_batch_to_picker(
+                    &mut picker.delegate,
+                    batch,
+                    total_line_matches,
+                    total_files,
+                    is_first,
+                    cx,
+                )
+            })
+            .ok()
+            .flatten();
+
+        trigger_preview_update(quick_search, preview_data, cx);
+        *is_first_batch = false;
+    }
+}
+
+struct PendingBufferData {
+    list: Vec<(BufferExtractData, Entity<Buffer>)>,
+    limit_reached: bool,
+    first_batch_sent: bool,
+}
+
+impl PendingBufferData {
+    fn new() -> Self {
+        Self {
+            list: Vec::with_capacity(BACKGROUND_BATCH_THRESHOLD),
+            limit_reached: false,
+            first_batch_sent: false,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    fn should_process(&self) -> bool {
+        if self.limit_reached {
+            return true;
+        }
+        let threshold = if self.first_batch_sent {
+            BACKGROUND_BATCH_THRESHOLD
+        } else {
+            FIRST_BATCH_THRESHOLD
+        };
+        self.len() >= threshold
+    }
+
+    fn take(&mut self) -> Vec<(BufferExtractData, Entity<Buffer>)> {
+        self.first_batch_sent = true;
+        std::mem::take(&mut self.list)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.list.is_empty()
     }
 }
 
@@ -948,7 +1183,9 @@ impl QuickSearchDelegate {
         self.items.clear();
         self.visible_indices.clear();
         self.visible_line_match_indices.clear();
-        self.pending_search_id = 0;
+        if let Some(cancelled) = self.search_cancelled.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
         self.match_count = 0;
         self.file_count = 0;
         self.is_limited = false;
@@ -970,18 +1207,24 @@ impl QuickSearchDelegate {
     }
 
     fn update_visible_indices(&mut self) {
-        self.visible_indices.clear();
-        self.visible_indices.reserve(self.items.len());
-        self.visible_line_match_indices.clear();
-        self.visible_line_match_indices.reserve(self.items.len());
+        self.update_visible_indices_from(0);
+    }
 
-        for (idx, item) in self.items.iter().enumerate() {
+    fn update_visible_indices_from(&mut self, start_index: usize) {
+        if start_index == 0 {
+            self.visible_indices.clear();
+            self.visible_indices.reserve(self.items.len());
+            self.visible_line_match_indices.clear();
+            self.visible_line_match_indices.reserve(self.items.len());
+        }
+
+        for (idx, item) in self.items.iter().enumerate().skip(start_index) {
             match item {
                 QuickSearchItem::FileHeader { .. } => {
                     self.visible_indices.push(idx);
                 }
-                QuickSearchItem::LineMatch { file_key, .. } => {
-                    if !self.collapsed_files.contains(file_key) {
+                QuickSearchItem::LineMatch(data) => {
+                    if !self.collapsed_files.contains(&data.file_key) {
                         let visible_idx = self.visible_indices.len();
                         self.visible_indices.push(idx);
                         self.visible_line_match_indices.push(visible_idx);
@@ -1022,11 +1265,10 @@ impl QuickSearchDelegate {
         let mut indices_to_remove = Vec::new();
 
         for (visible_idx, &actual_idx) in self.visible_indices.iter().enumerate() {
-            if matches!(
-                self.items.get(actual_idx),
-                Some(QuickSearchItem::LineMatch { file_key: fk, .. }) if fk == file_key
-            ) {
-                indices_to_remove.push(visible_idx);
+            if let Some(QuickSearchItem::LineMatch(data)) = self.items.get(actual_idx) {
+                if &data.file_key == file_key {
+                    indices_to_remove.push(visible_idx);
+                }
             }
         }
 
@@ -1057,7 +1299,7 @@ impl QuickSearchDelegate {
             .enumerate()
             .skip(header_actual_idx + 1)
             .take_while(|(_, item)| {
-                matches!(item, QuickSearchItem::LineMatch { file_key: fk, .. } if fk == file_key)
+                matches!(item, QuickSearchItem::LineMatch(data) if &data.file_key == file_key)
             })
             .map(|(idx, _)| idx)
             .collect();
@@ -1076,7 +1318,7 @@ impl QuickSearchDelegate {
         for (visible_idx, &actual_idx) in self.visible_indices.iter().enumerate() {
             if matches!(
                 self.items.get(actual_idx),
-                Some(QuickSearchItem::LineMatch { .. })
+                Some(QuickSearchItem::LineMatch(_))
             ) {
                 self.visible_line_match_indices.push(visible_idx);
             }
@@ -1095,22 +1337,13 @@ impl QuickSearchDelegate {
         let snapshot = buffer.read(cx).snapshot();
 
         for item in &mut self.items {
-            if let QuickSearchItem::LineMatch {
-                project_path: pp,
-                line,
-                trim_start,
-                preview_text,
-                syntax_highlights,
-                ..
-            } = item
-            {
-                if pp == project_path && syntax_highlights.is_none() {
-                    let preview_len = preview_content_len(preview_text);
-                    *syntax_highlights = extract_syntax_highlights_for_line(
+            if let QuickSearchItem::LineMatch(data) = item {
+                if &data.project_path == project_path && data.syntax_highlights.is_none() {
+                    data.syntax_highlights = extract_syntax_highlights_for_line(
                         &snapshot,
-                        *line,
-                        *trim_start,
-                        preview_len,
+                        &data.preview_text,
+                        data.line,
+                        data.trim_start,
                     )
                     .map(Arc::new);
                 }
@@ -1129,7 +1362,7 @@ impl QuickSearchDelegate {
             .get(visible_index)
             .and_then(|&actual_idx| self.items.get(actual_idx))
             .map_or(false, |item| {
-                matches!(item, QuickSearchItem::LineMatch { .. })
+                matches!(item, QuickSearchItem::LineMatch(_))
             })
     }
 
@@ -1203,7 +1436,7 @@ impl QuickSearchDelegate {
                         cx.stop_propagation();
                         if let Some(qs) = quick_search.upgrade() {
                             qs.update(cx, |qs, cx| {
-                                window.focus(&qs.picker.focus_handle(cx));
+                                window.focus(&qs.picker.focus_handle(cx), cx);
                                 qs.picker.update(cx, |picker, cx| {
                                     if event.modifiers().alt {
                                         picker.delegate.toggle_all_files_collapsed(&file_key);
@@ -1243,6 +1476,14 @@ impl QuickSearchDelegate {
         cx: &App,
     ) -> ListItem {
         let quick_search = self.quick_search.clone();
+        let preview_str: &str = preview_text.as_ref();
+
+        let is_valid_range = |range: &std::ops::Range<usize>| -> bool {
+            range.start < range.end
+                && range.end <= preview_str.len()
+                && preview_str.is_char_boundary(range.start)
+                && preview_str.is_char_boundary(range.end)
+        };
 
         let syntax_theme = cx.theme().syntax();
         let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = syntax_highlights
@@ -1250,6 +1491,9 @@ impl QuickSearchDelegate {
             .map(|sh| {
                 sh.iter()
                     .filter_map(|(range, id)| {
+                        if !is_valid_range(range) {
+                            return None;
+                        }
                         id.style(&syntax_theme).map(|style| (range.clone(), style))
                     })
                     .collect()
@@ -1257,6 +1501,9 @@ impl QuickSearchDelegate {
             .unwrap_or_default();
 
         for range in match_positions.iter() {
+            if !is_valid_range(range) {
+                continue;
+            }
             let match_style = HighlightStyle {
                 font_weight: Some(gpui::FontWeight::BOLD),
                 ..Default::default()
@@ -1279,19 +1526,18 @@ impl QuickSearchDelegate {
                             let delegate = &modal.picker.read(cx).delegate;
                             delegate.actual_index(ix).and_then(|idx| {
                                 match delegate.items.get(idx) {
-                                    Some(QuickSearchItem::LineMatch {
-                                        project_path,
-                                        line,
-                                        match_ranges,
-                                        ..
-                                    }) => Some((project_path.clone(), *line, match_ranges.clone())),
+                                    Some(QuickSearchItem::LineMatch(data)) => Some((
+                                        data.project_path.clone(),
+                                        data.line,
+                                        data.match_ranges.clone(),
+                                    )),
                                     _ => None,
                                 }
                             })
                         };
 
                         qs.update(cx, |modal, cx| {
-                            window.focus(&modal.picker.focus_handle(cx));
+                            window.focus(&modal.picker.focus_handle(cx), cx);
                             modal.picker.update(cx, |picker, cx| {
                                 picker.delegate.selected_index = ix;
                                 cx.notify();
@@ -1373,12 +1619,9 @@ impl PickerDelegate for QuickSearchDelegate {
         let quick_search = self.quick_search.clone();
         let actual_index = self.actual_index(self.selected_index);
         let preview_data = actual_index.and_then(|idx| match self.items.get(idx) {
-            Some(QuickSearchItem::LineMatch {
-                project_path,
-                line,
-                match_ranges,
-                ..
-            }) => Some((project_path.clone(), *line, match_ranges.clone())),
+            Some(QuickSearchItem::LineMatch(data)) => {
+                Some((data.project_path.clone(), data.line, data.match_ranges.clone()))
+            }
             _ => None,
         });
 
@@ -1487,21 +1730,27 @@ impl PickerDelegate for QuickSearchDelegate {
 
         self.is_searching = true;
 
-        self.pending_search_id += 1;
-        let search_id = self.pending_search_id;
+        if let Some(prev_cancelled) = self.search_cancelled.take() {
+            prev_cancelled.store(true, Ordering::Relaxed);
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.search_cancelled = Some(cancelled.clone());
+
+        let file_count = get_project_file_count(self.project.read(cx), cx);
+        let debounce_ms = compute_search_debounce_ms(file_count);
+
         let project = self.project.clone();
         let search_options = self.search_options;
         let quick_search = self.quick_search.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            smol::Timer::after(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+            if debounce_ms > 0 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(debounce_ms))
+                    .await;
+            }
 
-            let is_stale = picker
-                .update(cx, |picker, _| {
-                    picker.delegate.pending_search_id != search_id
-                })
-                .unwrap_or(true);
-            if is_stale {
+            if cancelled.load(Ordering::Relaxed) {
                 return;
             }
 
@@ -1540,7 +1789,7 @@ impl PickerDelegate for QuickSearchDelegate {
 
             picker
                 .update(cx, |picker, cx| {
-                    if picker.delegate.pending_search_id == search_id {
+                    if !cancelled.load(Ordering::Relaxed) {
                         picker.delegate.reset_for_new_search();
                         cx.notify();
                     }
@@ -1553,13 +1802,13 @@ impl PickerDelegate for QuickSearchDelegate {
                 search_limited: false,
             };
             let mut is_first_batch = true;
+            let mut pending = PendingBufferData::new();
 
             let mut results_stream = pin!(project_search_results.ready_chunks(STREAM_CHUNK_SIZE));
             while let Some(results) = results_stream.next().await {
-                let mut batch = SearchResults {
-                    items: Vec::with_capacity(results.len() * 2),
-                    buffers: HashMap::default(),
-                };
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
 
                 for result in results {
                     match result {
@@ -1568,127 +1817,68 @@ impl PickerDelegate for QuickSearchDelegate {
                                 continue;
                             }
 
-                            let file_result = cx
+                            let extract_data = cx
                                 .read_entity(&buffer, |buf, cx| {
-                                    extract_file_matches(buf, &ranges, cx)
+                                    extract_buffer_data(buf, ranges, cx)
                                 })
                                 .log_err()
                                 .flatten();
 
-                            let Some(file_result) = file_result else {
-                                continue;
-                            };
-
-                            process_buffer_into_batch(
-                                file_result,
-                                buffer,
-                                &mut batch,
-                                &mut counters,
-                            );
-
-                            if counters.search_limited {
-                                break;
+                            if let Some(data) = extract_data {
+                                pending.list.push((data, buffer));
                             }
                         }
                         project::search::SearchResult::LimitReached => {
-                            counters.search_limited = true;
+                            pending.limit_reached = true;
                             break;
                         }
                     }
                 }
 
-                if !batch.items.is_empty() {
-                    let first_line_match = if is_first_batch {
-                        batch.first_line_match()
-                    } else {
-                        None
-                    };
-                    let quick_search_clone = quick_search.clone();
-                    let is_first = is_first_batch;
-                    let total_line_matches = counters.total_line_matches;
-                    let total_files = counters.total_files;
-
-                    let preview_data = picker
-                        .update_in(cx, |picker, _window, cx| {
-                            if picker.delegate.pending_search_id != search_id {
-                                return None;
-                            }
-
-                            picker.delegate.items.extend(batch.items);
-
-                            for (project_path, buffer) in batch.buffers {
-                                if picker
-                                    .delegate
-                                    .buffer_subscriptions
-                                    .contains_key(&project_path)
-                                {
-                                    picker.delegate.buffer_cache.insert(project_path, buffer);
-                                    continue;
-                                }
-
-                                let pp = project_path.clone();
-                                let subscription =
-                                    cx.subscribe(&buffer, move |picker, _buffer, event, cx| {
-                                        if matches!(event, BufferEvent::Reparsed) {
-                                            picker
-                                                .delegate
-                                                .update_syntax_highlights_for_buffer(&pp, cx);
-                                            cx.notify();
-                                        }
-                                    });
-                                picker
-                                    .delegate
-                                    .buffer_subscriptions
-                                    .insert(project_path.clone(), subscription);
-                                picker.delegate.buffer_cache.insert(project_path, buffer);
-                            }
-
-                            picker.delegate.update_visible_indices();
-                            picker.delegate.match_count = total_line_matches;
-                            picker.delegate.file_count = total_files;
-
-                            if is_first {
-                                let first_selectable = picker
-                                    .delegate
-                                    .visible_indices
-                                    .iter()
-                                    .position(|&actual_idx| {
-                                        matches!(
-                                            picker.delegate.items.get(actual_idx),
-                                            Some(QuickSearchItem::LineMatch { .. })
-                                        )
-                                    })
-                                    .unwrap_or(0);
-                                picker.delegate.selected_index = first_selectable;
-                            }
-                            cx.notify();
-
-                            first_line_match
-                        })
-                        .ok()
-                        .flatten();
-
-                    if let Some(first_match) = preview_data {
-                        if let Some(quick_search) = quick_search_clone.upgrade() {
-                            quick_search
-                                .update_in(cx, |qs, window, cx| {
-                                    qs.update_preview(Some(first_match), window, cx);
-                                })
-                                .log_err();
-                        }
-                    }
-
-                    is_first_batch = false;
+                if !pending.should_process() {
+                    continue;
                 }
+
+                let buffer_data_to_process = pending.take();
+                let limit_reached = pending.limit_reached;
+
+                process_and_apply_batch(
+                    buffer_data_to_process,
+                    &mut counters,
+                    &mut is_first_batch,
+                    limit_reached,
+                    &picker,
+                    &quick_search,
+                    &cancelled,
+                    cx,
+                )
+                .await;
 
                 if counters.search_limited {
                     break;
                 }
             }
 
+            if !pending.is_empty() && !cancelled.load(Ordering::Relaxed) {
+                let buffer_data_to_process = pending.take();
+                let limit_reached = pending.limit_reached;
+
+                process_and_apply_batch(
+                    buffer_data_to_process,
+                    &mut counters,
+                    &mut is_first_batch,
+                    limit_reached,
+                    &picker,
+                    &quick_search,
+                    &cancelled,
+                    cx,
+                )
+                .await;
+            }
+
             picker
                 .update(cx, |picker, cx| {
-                    if picker.delegate.pending_search_id == search_id {
+                    if !cancelled.load(Ordering::Relaxed) {
                         picker.delegate.is_limited = counters.search_limited;
                         picker.delegate.is_searching = false;
                         cx.notify();
@@ -1704,15 +1894,12 @@ impl PickerDelegate for QuickSearchDelegate {
             None => return,
         };
 
-        let Some(QuickSearchItem::LineMatch {
-            project_path, line, ..
-        }) = self.items.get(actual_index)
-        else {
+        let Some(QuickSearchItem::LineMatch(data)) = self.items.get(actual_index) else {
             return;
         };
 
-        let project_path = project_path.clone();
-        let line = *line;
+        let project_path = data.project_path.clone();
+        let line = data.line;
 
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -1760,19 +1947,13 @@ impl PickerDelegate for QuickSearchDelegate {
                 parent_path,
                 file_key,
             } => Some(self.render_file_header(ix, file_name, parent_path, file_key, cx)),
-            QuickSearchItem::LineMatch {
-                line_label,
-                preview_text,
-                match_positions,
-                syntax_highlights,
-                ..
-            } => Some(self.render_line_match(
+            QuickSearchItem::LineMatch(data) => Some(self.render_line_match(
                 ix,
                 selected,
-                line_label,
-                preview_text,
-                match_positions,
-                syntax_highlights,
+                &data.line_label,
+                &data.preview_text,
+                &data.match_positions,
+                &data.syntax_highlights,
                 cx,
             )),
         }
@@ -2013,7 +2194,7 @@ mod tests {
     }
 
     fn line_match(file_key: &str, line: u32, preview: &str) -> QuickSearchItem {
-        QuickSearchItem::LineMatch {
+        QuickSearchItem::LineMatch(LineMatchData {
             project_path: ProjectPath {
                 worktree_id: project::WorktreeId::from_usize(0),
                 path: util::rel_path::rel_path(file_key).into(),
@@ -2026,7 +2207,7 @@ mod tests {
             match_positions: Arc::new(Vec::new()),
             trim_start: 0,
             syntax_highlights: None,
-        }
+        })
     }
 
     #[gpui::test]
@@ -2045,12 +2226,12 @@ mod tests {
         let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn test() {}\n"})).await;
 
         fixture.set_query("test");
-        assert_eq!(fixture.delegate(|d| d.pending_search_id), 1);
+        assert!(fixture.delegate(|d| d.search_cancelled.is_some()));
 
         fixture.search("").await;
         fixture.delegate(|d| {
             assert_eq!(d.items.len(), 0);
-            assert_eq!(d.pending_search_id, 0);
+            assert!(d.search_cancelled.is_none());
         });
     }
 
@@ -2063,17 +2244,22 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_quick_search_query_updates_search_id(cx: &mut TestAppContext) {
+    async fn test_quick_search_query_sets_cancellation_flag(cx: &mut TestAppContext) {
         let mut fixture =
             TestFixture::new(cx, json!({"file.rs": "fn hello() {}\nfn world() {}\n"})).await;
 
-        assert_eq!(fixture.delegate(|d| d.pending_search_id), 0);
+        assert!(fixture.delegate(|d| d.search_cancelled.is_none()));
 
         fixture.set_query("hello");
-        assert_eq!(fixture.delegate(|d| d.pending_search_id), 1);
+        let first_cancelled = fixture.delegate(|d| d.search_cancelled.clone());
+        assert!(first_cancelled.is_some());
+        assert!(!first_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
 
         fixture.set_query("world");
-        assert_eq!(fixture.delegate(|d| d.pending_search_id), 2);
+        let second_cancelled = fixture.delegate(|d| d.search_cancelled.clone());
+        assert!(second_cancelled.is_some());
+        assert!(first_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
+        assert!(!second_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
     }
 
     #[gpui::test]
@@ -2310,5 +2496,98 @@ mod tests {
 
         fixture.search("hello").await;
         assert!(fixture.delegate(|d| d.match_count) > 0);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_many_matches(cx: &mut TestAppContext) {
+        let content = (0..500)
+            .map(|i| format!("fn test_function_{}() {{}}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut fixture = TestFixture::new(cx, json!({ "large_file.rs": content })).await;
+
+        fixture.search("test_function").await;
+
+        let (match_count, file_count) =
+            fixture.delegate(|d| (d.match_count, d.file_count));
+
+        assert_eq!(match_count, 500);
+        assert_eq!(file_count, 1);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_rapid_query_updates(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn main() {}\n"})).await;
+
+        fixture.set_query("fn");
+        fixture.set_query("fn m");
+        fixture.set_query("fn ma");
+        fixture.set_query("fn mai");
+        fixture.set_query("fn main");
+
+        fixture.quick_search.update(&mut fixture.cx, |modal, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.delegate.is_searching = false;
+                cx.notify();
+            });
+        });
+
+        fixture.search("fn main").await;
+
+        let match_count = fixture.delegate(|d| d.match_count);
+        assert!(match_count > 0);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_unicode_query(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({
+                "unicode.rs": "// 日本語コメント\nfn main() { println!(\"こんにちは\"); }\n",
+                "emoji.rs": "// 🎉 celebration\nfn party() {}\n"
+            }),
+        )
+        .await;
+
+        fixture.search("日本語").await;
+        assert!(fixture.delegate(|d| d.match_count) > 0);
+
+        fixture.search("🎉").await;
+        assert!(fixture.delegate(|d| d.match_count) > 0);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_special_regex_chars(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({
+                "file.rs": "let x = a + b;\nlet y = (a * b);\n"
+            }),
+        )
+        .await;
+
+        fixture.search("(a * b)").await;
+        let match_count = fixture.delegate(|d| d.match_count);
+        assert!(match_count > 0);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_empty_file(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({
+                "empty.rs": "",
+                "nonempty.rs": "fn main() {}"
+            }),
+        )
+        .await;
+
+        fixture.search("fn main").await;
+        let (match_count, file_count) =
+            fixture.delegate(|d| (d.match_count, d.file_count));
+
+        assert_eq!(match_count, 1);
+        assert_eq!(file_count, 1);
     }
 }
