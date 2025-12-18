@@ -1169,64 +1169,67 @@ pub fn new_terminal_pane(
                         let source = tab.pane.clone();
                         let item_id_to_move = item.item_id();
 
-                        let Ok(new_split_pane) = pane
-                            .drag_split_direction()
-                            .map(|split_direction| {
-                                drop_closure_terminal_panel.update(cx, |terminal_panel, cx| {
-                                    let is_zoomed = if terminal_panel.active_pane == this_pane {
-                                        pane.is_zoomed()
-                                    } else {
-                                        terminal_panel.active_pane.read(cx).is_zoomed()
-                                    };
-                                    let new_pane = new_terminal_pane(
-                                        workspace.clone(),
-                                        project.clone(),
-                                        is_zoomed,
-                                        window,
-                                        cx,
-                                    );
-                                    terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                    terminal_panel.center.split(
-                                        &this_pane,
-                                        &new_pane,
-                                        split_direction,
-                                        cx,
-                                    )?;
-                                    anyhow::Ok(new_pane)
-                                })
-                            })
-                            .transpose()
-                        else {
-                            return ControlFlow::Break(());
+                        // If no split direction, let the regular pane drop handler take care of it
+                        let Some(split_direction) = pane.drag_split_direction() else {
+                            return ControlFlow::Continue(());
                         };
 
-                        match new_split_pane.transpose() {
-                            // Source pane may be the one currently updated, so defer the move.
-                            Ok(Some(new_pane)) => cx
-                                .spawn_in(window, async move |_, cx| {
-                                    cx.update(|window, cx| {
-                                        move_item(
-                                            &source,
-                                            &new_pane,
-                                            item_id_to_move,
-                                            new_pane.read(cx).active_item_index(),
-                                            true,
-                                            window,
-                                            cx,
+                        // Gather data synchronously before deferring
+                        let is_zoomed = drop_closure_terminal_panel
+                            .upgrade()
+                            .map(|terminal_panel| {
+                                let terminal_panel = terminal_panel.read(cx);
+                                if terminal_panel.active_pane == this_pane {
+                                    pane.is_zoomed()
+                                } else {
+                                    terminal_panel.active_pane.read(cx).is_zoomed()
+                                }
+                            })
+                            .unwrap_or(false);
+
+                        let workspace = workspace.clone();
+                        let terminal_panel = drop_closure_terminal_panel.clone();
+
+                        // Defer the split operation to avoid re-entrancy panic.
+                        // The pane may be the one currently being updated, so we cannot
+                        // call mark_positions (via split) synchronously.
+                        cx.spawn_in(window, async move |_, cx| {
+                            cx.update(|window, cx| {
+                                let Ok(new_pane) =
+                                    terminal_panel.update(cx, |terminal_panel, cx| {
+                                        let new_pane = new_terminal_pane(
+                                            workspace, project, is_zoomed, window, cx,
                                         );
+                                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                        terminal_panel.center.split(
+                                            &this_pane,
+                                            &new_pane,
+                                            split_direction,
+                                            cx,
+                                        )?;
+                                        anyhow::Ok(new_pane)
                                     })
-                                    .ok();
-                                })
-                                .detach(),
-                            // If we drop into existing pane or current pane,
-                            // regular pane drop handler will take care of it,
-                            // using the right tab index for the operation.
-                            Ok(None) => return ControlFlow::Continue(()),
-                            err @ Err(_) => {
-                                err.log_err();
-                                return ControlFlow::Break(());
-                            }
-                        };
+                                else {
+                                    return;
+                                };
+
+                                let Some(new_pane) = new_pane.log_err() else {
+                                    return;
+                                };
+
+                                move_item(
+                                    &source,
+                                    &new_pane,
+                                    item_id_to_move,
+                                    new_pane.read(cx).active_item_index(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        })
+                        .detach();
                     } else if let Some(project_path) = item.project_path(cx)
                         && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
                     {
