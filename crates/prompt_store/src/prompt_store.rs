@@ -52,6 +52,17 @@ pub struct PromptMetadata {
     pub saved_at: DateTime<Utc>,
 }
 
+impl PromptMetadata {
+    fn builtin(builtin: BuiltInPrompt) -> Self {
+        Self {
+            id: PromptId::BuiltIn(builtin),
+            title: Some(builtin.title().into()),
+            default: false,
+            saved_at: DateTime::default(),
+        }
+    }
+}
+
 /// Built-in prompts that have default content and can be customized by users.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
 pub enum BuiltInPrompt {
@@ -181,22 +192,17 @@ impl MetadataCache {
         txn: &RoTxn,
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
-
         for result in db.iter(txn)? {
             let (prompt_id, metadata) = result?;
             cache.metadata.push(metadata.clone());
             cache.metadata_by_id.insert(prompt_id, metadata);
         }
 
+        // Insert all the built-in prompts that were not customized by the user
         for builtin in BuiltInPrompt::iter() {
             let builtin_id = PromptId::BuiltIn(builtin);
             if !cache.metadata_by_id.contains_key(&builtin_id) {
-                let metadata = PromptMetadata {
-                    id: builtin_id,
-                    title: Some(builtin.title().into()),
-                    default: false,
-                    saved_at: DateTime::default(),
-                };
+                let metadata = PromptMetadata::builtin(builtin);
                 cache.metadata.push(metadata.clone());
                 cache.metadata_by_id.insert(builtin_id, metadata);
             }
@@ -470,13 +476,9 @@ impl PromptStore {
 
         if is_default_content {
             if let Some(builtin) = id.as_built_in() {
-                let default_metadata = PromptMetadata {
-                    id,
-                    title: Some(builtin.title().into()),
-                    default: false,
-                    saved_at: DateTime::default(),
-                };
-                self.metadata_cache.write().insert(default_metadata);
+                self.metadata_cache
+                    .write()
+                    .insert(PromptMetadata::builtin(builtin));
             } else {
                 self.metadata_cache.write().remove(id);
             }
