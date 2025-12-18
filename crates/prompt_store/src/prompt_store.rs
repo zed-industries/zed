@@ -585,9 +585,11 @@ mod tests {
             .await
             .unwrap();
 
+        let mut expected_content = BuiltInPrompt::CommitMessage.default_content().to_string();
+        LineEnding::normalize(&mut expected_content);
         assert_eq!(
             loaded_content.trim(),
-            BuiltInPrompt::CommitMessage.default_content().trim(),
+            expected_content.trim(),
             "Loading a built-in prompt not in DB should return default content"
         );
 
@@ -669,9 +671,12 @@ mod tests {
             .update(cx, |store, cx| store.load(commit_message_id, cx))
             .await
             .unwrap();
+        let mut expected_content_after_reset =
+            BuiltInPrompt::CommitMessage.default_content().to_string();
+        LineEnding::normalize(&mut expected_content_after_reset);
         assert_eq!(
             loaded_after_reset.trim(),
-            BuiltInPrompt::CommitMessage.default_content().trim(),
+            expected_content_after_reset.trim(),
             "After saving default content, load should return default"
         );
     }
