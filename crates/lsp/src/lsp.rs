@@ -882,7 +882,9 @@ impl LanguageServer {
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
                     show_message: Some(ShowMessageRequestClientCapabilities {
-                        message_action_item: None,
+                        message_action_item: Some(MessageActionItemCapabilities {
+                            additional_properties_support: Some(true),
+                        }),
                     }),
                     ..WindowClientCapabilities::default()
                 }),

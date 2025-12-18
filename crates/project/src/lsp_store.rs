@@ -128,6 +128,7 @@ use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
     paths::{PathStyle, SanitizedPath},
     post_inc,
+    redact::redact_command,
     rel_path::RelPath,
 };
 
@@ -577,9 +578,12 @@ impl LocalLspStore {
                                 },
                             },
                         );
-                        log::error!("Failed to start language server {server_name:?}: {err:?}");
+                        log::error!(
+                            "Failed to start language server {server_name:?}: {}",
+                            redact_command(&format!("{err:?}"))
+                        );
                         if !log.is_empty() {
-                            log::error!("server stderr: {log}");
+                            log::error!("server stderr: {}", redact_command(&log));
                         }
                         None
                     }
