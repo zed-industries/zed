@@ -11418,7 +11418,7 @@ impl LspStore {
             server_id,
             LanguageServerStatus {
                 name: language_server.name(),
-                server_version: language_server.server_version(),
+                server_version: language_server.version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),

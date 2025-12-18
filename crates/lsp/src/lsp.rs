@@ -89,8 +89,8 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
+    version: Option<SharedString>,
     process_name: Arc<str>,
-    server_version: Option<SharedString>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
@@ -502,12 +502,12 @@ impl LanguageServer {
             response_handlers,
             io_handlers,
             name: server_name,
+            version: None,
             process_name: binary
                 .path
                 .file_name()
                 .map(|name| Arc::from(name.to_string_lossy()))
                 .unwrap_or_default(),
-            server_version: None,
             binary,
             capabilities: Default::default(),
             configuration,
@@ -925,8 +925,8 @@ impl LanguageServer {
                     )
                 })?;
             if let Some(info) = response.server_info {
+                self.version = info.version.map(SharedString::from);
                 self.process_name = info.name.clone().into();
-                self.server_version = info.version.map(SharedString::from);
             }
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
@@ -1156,12 +1156,13 @@ impl LanguageServer {
         self.name.clone()
     }
 
-    pub fn process_name(&self) -> &str {
-        &self.process_name
+    /// Get the version of the running language server.
+    pub fn version(&self) -> Option<SharedString> {
+        self.version.clone()
     }
 
-    pub fn server_version(&self) -> Option<SharedString> {
-        self.server_version.clone()
+    pub fn process_name(&self) -> &str {
+        &self.process_name
     }
 
     /// Get the reported capabilities of the running language server.
