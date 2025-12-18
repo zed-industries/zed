@@ -22,12 +22,17 @@ pub trait ModalView: ManagedView {
     fn fade_out_background(&self) -> bool {
         false
     }
+
+    fn render_bare(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
+    fn render_bare(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -41,6 +46,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
+    }
+
+    fn render_bare(&self, cx: &mut App) -> bool {
+        self.read(cx).render_bare()
     }
 }
 
@@ -116,7 +125,7 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_modal.focus_handle(cx));
+            window.focus(&new_modal.focus_handle(cx), cx);
         });
         cx.notify();
     }
@@ -144,7 +153,7 @@ impl ModalLayer {
             if let Some(previous_focus) = active_modal.previous_focus_handle
                 && active_modal.focus_handle.contains_focused(window, cx)
             {
-                previous_focus.focus(window);
+                previous_focus.focus(window, cx);
             }
             cx.notify();
         }
@@ -167,19 +176,22 @@ impl ModalLayer {
 impl Render for ModalLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
-            return div();
+            return div().into_any_element();
         };
 
+        if active_modal.modal.render_bare(cx) {
+            return active_modal.modal.view().into_any_element();
+        }
+
         div()
-            .occlude()
             .absolute()
             .size_full()
-            .top_0()
-            .left_0()
-            .when(active_modal.modal.fade_out_background(cx), |el| {
+            .inset_0()
+            .occlude()
+            .when(active_modal.modal.fade_out_background(cx), |this| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
-                el.bg(background)
+                this.bg(background)
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -191,8 +203,6 @@ impl Render for ModalLayer {
                 v_flex()
                     .h(px(0.0))
                     .top_20()
-                    .flex()
-                    .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
                     .child(
@@ -204,5 +214,6 @@ impl Render for ModalLayer {
                             }),
                     ),
             )
+            .into_any_element()
     }
 }

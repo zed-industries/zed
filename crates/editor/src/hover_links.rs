@@ -9,8 +9,10 @@ use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{InlayId, LocationLink, Project, ResolvedPath};
+use regex::Regex;
 use settings::Settings;
-use std::ops::Range;
+use std::{ops::Range, sync::LazyLock};
+use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
 use util::{ResultExt, TryFutureExt as _, maybe};
 
@@ -168,7 +170,7 @@ impl Editor {
                     match EditorSettings::get_global(cx).go_to_definition_fallback {
                         GoToDefinitionFallback::None => None,
                         GoToDefinitionFallback::FindAllReferences => {
-                            editor.find_all_references(&FindAllReferences, window, cx)
+                            editor.find_all_references(&FindAllReferences::default(), window, cx)
                         }
                     }
                 })
@@ -216,7 +218,7 @@ impl Editor {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
                 if !self.focus_handle.is_focused(window) {
-                    window.focus(&self.focus_handle);
+                    window.focus(&self.focus_handle, cx);
                 }
 
                 // exclude links pointing back to the current anchor
@@ -595,7 +597,8 @@ pub(crate) async fn find_file(
     let project = project?;
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
     let scope = snapshot.language_scope_at(position);
-    let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
+    let (range, candidate_file_path) = surrounding_filename(&snapshot, position)?;
+    let candidate_len = candidate_file_path.len();
 
     async fn check_path(
         candidate_file_path: &str,
@@ -612,29 +615,66 @@ pub(crate) async fn find_file(
             .filter(|s| s.is_file())
     }
 
-    if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
-        return Some((range, existing_path));
+    let pattern_candidates = link_pattern_file_candidates(&candidate_file_path);
+
+    for (pattern_candidate, pattern_range) in &pattern_candidates {
+        if let Some(existing_path) = check_path(&pattern_candidate, &project, buffer, cx).await {
+            let offset_range = range.to_offset(&snapshot);
+            let actual_start = offset_range.start + pattern_range.start;
+            let actual_end = offset_range.end - (candidate_len - pattern_range.end);
+            return Some((
+                snapshot.anchor_before(actual_start)..snapshot.anchor_after(actual_end),
+                existing_path,
+            ));
+        }
     }
-
     if let Some(scope) = scope {
-        for suffix in scope.path_suffixes() {
-            if candidate_file_path.ends_with(format!(".{suffix}").as_str()) {
-                continue;
-            }
+        for (pattern_candidate, pattern_range) in pattern_candidates {
+            for suffix in scope.path_suffixes() {
+                if pattern_candidate.ends_with(format!(".{suffix}").as_str()) {
+                    continue;
+                }
 
-            let suffixed_candidate = format!("{candidate_file_path}.{suffix}");
-            if let Some(existing_path) = check_path(&suffixed_candidate, &project, buffer, cx).await
-            {
-                return Some((range, existing_path));
+                let suffixed_candidate = format!("{pattern_candidate}.{suffix}");
+                if let Some(existing_path) =
+                    check_path(&suffixed_candidate, &project, buffer, cx).await
+                {
+                    let offset_range = range.to_offset(&snapshot);
+                    let actual_start = offset_range.start + pattern_range.start;
+                    let actual_end = offset_range.end - (candidate_len - pattern_range.end);
+                    return Some((
+                        snapshot.anchor_before(actual_start)..snapshot.anchor_after(actual_end),
+                        existing_path,
+                    ));
+                }
             }
         }
     }
-
     None
 }
 
+// Tries to capture potentially inlined links, like those found in markdown,
+// e.g. [LinkTitle](link_file.txt)
+// Since files can have parens, we should always return the full string
+// (literally, [LinkTitle](link_file.txt)) as a candidate.
+fn link_pattern_file_candidates(candidate: &str) -> Vec<(String, Range<usize>)> {
+    static MD_LINK_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\(([^)]*)\)").expect("Failed to create REGEX"));
+
+    let candidate_len = candidate.len();
+
+    let mut candidates = vec![(candidate.to_string(), 0..candidate_len)];
+
+    if let Some(captures) = MD_LINK_REGEX.captures(candidate) {
+        if let Some(link) = captures.get(1) {
+            candidates.push((link.as_str().to_string(), link.range()));
+        }
+    }
+    candidates
+}
+
 fn surrounding_filename(
-    snapshot: language::BufferSnapshot,
+    snapshot: &language::BufferSnapshot,
     position: text::Anchor,
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
@@ -735,7 +775,7 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::Modifiers;
+    use gpui::{Modifiers, MousePressureEvent, PressureStage};
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
     use multi_buffer::MultiBufferOffset;
@@ -1316,6 +1356,58 @@ mod tests {
         assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
     }
 
+    #[test]
+    fn test_link_pattern_file_candidates() {
+        let candidates: Vec<String> = link_pattern_file_candidates("[LinkTitle](link_file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(
+            candidates,
+            vec!["[LinkTitle](link_file.txt)", "link_file.txt",]
+        );
+        // Link title with spaces in it
+        let candidates: Vec<String> = link_pattern_file_candidates("LinkTitle](link_file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(
+            candidates,
+            vec!["LinkTitle](link_file.txt)", "link_file.txt",]
+        );
+
+        // Link with spaces
+        let candidates: Vec<String> = link_pattern_file_candidates("LinkTitle](link\\ _file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+
+        assert_eq!(
+            candidates,
+            vec!["LinkTitle](link\\ _file.txt)", "link\\ _file.txt",]
+        );
+        //
+        // Square brackets not strictly necessary
+        let candidates: Vec<String> = link_pattern_file_candidates("(link_file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+
+        assert_eq!(candidates, vec!["(link_file.txt)", "link_file.txt",]);
+
+        // No nesting
+        let candidates: Vec<String> =
+            link_pattern_file_candidates("LinkTitle](link_(link_file)file.txt)")
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
+
+        assert_eq!(
+            candidates,
+            vec!["LinkTitle](link_(link_file)file.txt)", "link_(link_file",]
+        )
+    }
+
     #[gpui::test]
     async fn test_surrounding_filename(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
@@ -1374,7 +1466,7 @@ mod tests {
                 (positions, snapshot)
             });
 
-            let result = surrounding_filename(snapshot, position);
+            let result = surrounding_filename(&snapshot, position);
 
             if let Some(expected) = expected {
                 assert!(result.is_some(), "Failed to find file path: {}", input);
@@ -1705,5 +1797,78 @@ mod tests {
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_pressure_links(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+                    fn ˇtest() { do_work(); }
+                    fn do_work() { test(); }
+                "});
+
+        // Position the mouse over a symbol that has a definition
+        let hover_point = cx.pixel_position(indoc! {"
+                    fn test() { do_wˇork(); }
+                    fn do_work() { test(); }
+                "});
+        let symbol_range = cx.lsp_range(indoc! {"
+                    fn test() { «do_work»(); }
+                    fn do_work() { test(); }
+                "});
+        let target_range = cx.lsp_range(indoc! {"
+                    fn test() { do_work(); }
+                    fn «do_work»() { test(); }
+                "});
+
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
+
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
+
+        // First simulate Normal pressure to set up the previous stage
+        cx.simulate_event(MousePressureEvent {
+            pressure: 0.5,
+            stage: PressureStage::Normal,
+            position: hover_point,
+            modifiers: Modifiers::none(),
+        });
+        cx.background_executor.run_until_parked();
+
+        // Now simulate Force pressure to trigger the force click and go-to definition
+        cx.simulate_event(MousePressureEvent {
+            pressure: 1.0,
+            stage: PressureStage::Force,
+            position: hover_point,
+            modifiers: Modifiers::none(),
+        });
+        requests.next().await;
+        cx.background_executor.run_until_parked();
+
+        // Assert that we navigated to the definition
+        cx.assert_editor_state(indoc! {"
+                    fn test() { do_work(); }
+                    fn «do_workˇ»() { test(); }
+                "});
     }
 }

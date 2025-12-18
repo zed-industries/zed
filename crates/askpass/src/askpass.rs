@@ -257,7 +257,7 @@ impl PasswordProxy {
         // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File '{}'",
+            "powershell.exe -ExecutionPolicy Bypass -File \"{}\"",
             askpass_script_path.display()
         );
 

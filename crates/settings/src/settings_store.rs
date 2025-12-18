@@ -25,7 +25,7 @@ use std::{
 use util::{
     ResultExt as _,
     rel_path::RelPath,
-    schemars::{DefaultDenyUnknownFields, replace_subschema},
+    schemars::{AllowTrailingCommas, DefaultDenyUnknownFields, replace_subschema},
 };
 
 pub type EditorconfigProperties = ec4rs::Properties;
@@ -247,6 +247,7 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
+    fn clear_local_values(&mut self, root_id: WorktreeId);
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -971,6 +972,11 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        self.raw_editorconfig_settings
+            .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        for setting_value in self.setting_values.values_mut() {
+            setting_value.clear_local_values(root_id);
+        }
         self.recompute_values(Some((root_id, RelPath::empty())), cx);
         Ok(())
     }
@@ -1010,6 +1016,7 @@ impl SettingsStore {
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
             .into_generator();
 
         UserSettingsContent::json_schema(&mut generator);
@@ -1336,6 +1343,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             Ok(ix) => self.local_values[ix].2 = value,
             Err(ix) => self.local_values.insert(ix, (root_id, path, value)),
         }
+    }
+
+    fn clear_local_values(&mut self, root_id: WorktreeId) {
+        self.local_values
+            .retain(|(worktree_id, _, _)| *worktree_id != root_id);
     }
 }
 

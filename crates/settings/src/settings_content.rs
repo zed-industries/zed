@@ -161,6 +161,9 @@ pub struct SettingsContent {
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
 
+    /// Settings for the which-key popup.
+    pub which_key: Option<WhichKeySettingsContent>,
+
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
 }
@@ -289,6 +292,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_sign_in: Option<bool>,
+    /// Whether to show the user menu button in the title bar.
+    ///
+    /// Default: true
+    pub show_user_menu: Option<bool>,
     /// Whether to show the menus in the title bar.
     ///
     /// Default: false
@@ -514,6 +521,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+
+    /// Whether to show entries with tree or flat view in the panel
+    ///
+    /// Default: false
+    pub tree_view: Option<bool>,
 }
 
 #[derive(
@@ -902,7 +914,17 @@ pub enum ImageFileSizeUnit {
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
+    pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct DevContainerConnection {
+    pub name: SharedString,
+    pub container_id: SharedString,
 }
 
 #[with_fallible_options]
@@ -914,7 +936,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: collections::BTreeSet<SshProject>,
+    pub projects: collections::BTreeSet<RemoteProject>,
     /// Name to use for this server in UI.
     pub nickname: Option<String>,
     // By default Zed will download the binary to the host directly.
@@ -924,6 +946,9 @@ pub struct SshConnection {
     pub upload_binary_over_ssh: Option<bool>,
 
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+    /// Timeout in seconds for SSH connection and downloading the remote server binary.
+    /// Defaults to 10 seconds if not specified.
+    pub connection_timeout: Option<u16>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
@@ -931,14 +956,14 @@ pub struct WslConnection {
     pub distro_name: SharedString,
     pub user: Option<String>,
     #[serde(default)]
-    pub projects: BTreeSet<SshProject>,
+    pub projects: BTreeSet<RemoteProject>,
 }
 
 #[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
-pub struct SshProject {
+pub struct RemoteProject {
     pub paths: Vec<String>,
 }
 
@@ -965,6 +990,19 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 128
     pub max_columns: Option<usize>,
+}
+
+/// Settings for configuring the which-key popup behaviour.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct WhichKeySettingsContent {
+    /// Whether to show the which-key popup when holding down key combinations
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Delay in milliseconds before showing the which-key popup.
+    ///
+    /// Default: 700
+    pub delay_ms: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

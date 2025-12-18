@@ -23,10 +23,6 @@ pub(crate) mod tests {
 }
 
 impl AgentServer for Codex {
-    fn telemetry_id(&self) -> &'static str {
-        "codex"
-    }
-
     fn name(&self) -> SharedString {
         "Codex".into()
     }
@@ -42,7 +38,7 @@ impl AgentServer for Codex {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+            .and_then(|s| s.default_mode.clone().map(acp::SessionModeId::new))
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -63,7 +59,7 @@ impl AgentServer for Codex {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_model.clone().map(|m| acp::ModelId(m.into())))
+            .and_then(|s| s.default_model.clone().map(acp::ModelId::new))
     }
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -84,7 +80,6 @@ impl AgentServer for Codex {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let telemetry_id = self.telemetry_id();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
@@ -110,7 +105,6 @@ impl AgentServer for Codex {
 
             let connection = crate::acp::connect(
                 name,
-                telemetry_id,
                 command,
                 root_dir.as_ref(),
                 default_mode,

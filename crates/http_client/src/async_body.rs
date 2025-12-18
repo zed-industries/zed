@@ -88,17 +88,6 @@ impl From<&'static str> for AsyncBody {
     }
 }
 
-impl TryFrom<reqwest::Body> for AsyncBody {
-    type Error = anyhow::Error;
-
-    fn try_from(value: reqwest::Body) -> Result<Self, Self::Error> {
-        value
-            .as_bytes()
-            .ok_or_else(|| anyhow::anyhow!("Underlying data is a stream"))
-            .map(|bytes| Self::from_bytes(Bytes::copy_from_slice(bytes)))
-    }
-}
-
 impl<T: Into<Self>> From<Option<T>> for AsyncBody {
     fn from(body: Option<T>) -> Self {
         match body {

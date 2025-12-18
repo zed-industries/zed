@@ -3,6 +3,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        docker::{DockerConnectionOptions, DockerExecConnection},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -48,10 +49,58 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteOs {
+    Linux,
+    MacOs,
+    Windows,
+}
+
+impl RemoteOs {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "linux",
+            RemoteOs::MacOs => "macos",
+            RemoteOs::Windows => "windows",
+        }
+    }
+
+    pub fn is_windows(&self) -> bool {
+        matches!(self, RemoteOs::Windows)
+    }
+}
+
+impl std::fmt::Display for RemoteOs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteArch {
+    X86_64,
+    Aarch64,
+}
+
+impl RemoteArch {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteArch::X86_64 => "x86_64",
+            RemoteArch::Aarch64 => "aarch64",
+        }
+    }
+}
+
+impl std::fmt::Display for RemoteArch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct RemotePlatform {
-    pub os: &'static str,
-    pub arch: &'static str,
+    pub os: RemoteOs,
+    pub arch: RemoteArch,
 }
 
 #[derive(Clone, Debug)]
@@ -88,7 +137,8 @@ pub trait RemoteClientDelegate: Send + Sync {
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-const INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+const INITIAL_CONNECTION_TIMEOUT: Duration =
+    Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
 const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
@@ -328,8 +378,15 @@ impl RemoteClient {
                 let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
                 let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-                let client =
-                    cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
+                let client = cx.update(|cx| {
+                    ChannelClient::new(
+                        incoming_rx,
+                        outgoing_tx,
+                        cx,
+                        "client",
+                        remote_connection.has_wsl_interop(),
+                    )
+                })?;
 
                 let path_style = remote_connection.path_style();
                 let this = cx.new(|_| Self {
@@ -420,8 +477,9 @@ impl RemoteClient {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
         name: &'static str,
+        has_wsl_interop: bool,
     ) -> AnyProtoClient {
-        ChannelClient::new(incoming_rx, outgoing_tx, cx, name).into()
+        ChannelClient::new(incoming_rx, outgoing_tx, cx, name, has_wsl_interop).into()
     }
 
     pub fn shutdown_processes<T: RequestMessage>(
@@ -912,17 +970,19 @@ impl RemoteClient {
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
     ) -> (RemoteConnectionOptions, AnyProtoClient) {
+        use crate::transport::ssh::SshConnectionHost;
+
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
         let opts = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "<fake>".to_string(),
+            host: SshConnectionHost::from("<fake>".to_string()),
             port: Some(port),
             ..Default::default()
         });
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let server_client =
-            server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
+        let server_client = server_cx
+            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server", false));
         let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
             connection_options: opts.clone(),
             server_cx: fake::SendableCx::new(server_cx),
@@ -1034,6 +1094,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::Docker(opts) => {
+                            DockerExecConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1069,13 +1134,15 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Docker(DockerConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
         }
     }
 }
@@ -1140,6 +1207,7 @@ pub trait RemoteConnection: Send + Sync {
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
+    fn has_wsl_interop(&self) -> bool;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1188,6 +1256,7 @@ struct ChannelClient {
     name: &'static str,
     task: Mutex<Task<Result<()>>>,
     remote_started: Signal<()>,
+    has_wsl_interop: bool,
 }
 
 impl ChannelClient {
@@ -1196,6 +1265,7 @@ impl ChannelClient {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
         name: &'static str,
+        has_wsl_interop: bool,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             outgoing_tx: Mutex::new(outgoing_tx),
@@ -1211,6 +1281,7 @@ impl ChannelClient {
                 &cx.to_async(),
             )),
             remote_started: Signal::new(cx),
+            has_wsl_interop,
         })
     }
 
@@ -1489,6 +1560,10 @@ impl ProtoClient for ChannelClient {
     fn is_via_collab(&self) -> bool {
         false
     }
+
+    fn has_wsl_interop(&self) -> bool {
+        self.has_wsl_interop
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1651,6 +1726,10 @@ mod fake {
 
         fn default_system_shell(&self) -> String {
             "sh".to_owned()
+        }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
         }
     }
 

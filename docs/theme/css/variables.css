@@ -5,11 +5,11 @@
 
   --logo-brightness: brightness(1);
 
-  --sidebar-width: 300px;
+  --sidebar-width: 280px;
   --sidebar-resize-indicator-width: 0px;
   --sidebar-resize-indicator-space: 2px;
   --page-padding: 15px;
-  --content-max-width: 750px;
+  --content-max-width: 690px;
   --menu-bar-height: 64px;
   --font: "IA Writer Quattro S", sans-serif;
   --title-font: "Lora", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -19,6 +19,7 @@
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 
+  --noise-opacity: 0.024;
   --bg: hsla(50, 25%, 96%);
   --fg: hsl(220, 13%, 34%);
   --title-color: hsl(220, 92%, 42%);
@@ -29,12 +30,14 @@
 
   --media-bg: hsl(50, 25%, 92%);
 
+  --sidebar-bg: hsla(50, 25%, 94%);
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
   --sidebar-active: hsl(220, 93%, 42%);
   --sidebar-active-bg: hsl(220, 93%, 42%, 0.1);
+  --sidebar-mobile-shadow: 0px 16px 16px hsl(0, 0%, 0%, 0.1);
 
-  --divider: hsl(220, 93%, 42%, 0.15);
+  --divider: hsl(220, 50%, 45%, 0.1);
   --scrollbar: #8f8f8f;
 
   --icons: #747474;
@@ -56,9 +59,13 @@
   --pre-border: hsla(220, 93%, 42%, 0.3);
   --pre-shadow: hsla(220, 93%, 42%, 0.07);
 
-  --theme-popup-bg: #fafafa;
-  --theme-popup-border: #cccccc;
+  --popover-bg: #fafafa;
+  --popover-border: #cccccc;
+  --popover-shadow:
+    0 10px 15px -3px hsl(0, 0%, 0%, 0.1), 0 4px 6px -4px hsl(0, 0%, 0%, 0.1);
+
   --theme-hover: #e6e6e6;
+  --hover-section-title: hsl(50, 25%, 88%);
 
   --quote-bg: hsl(197, 37%, 96%);
   --quote-border: hsl(197, 37%, 84%);
@@ -71,12 +78,14 @@
   --table-border-color: hsl(220, 93%, 42%, 0.15);
   --table-alternate-bg: hsl(220, 10%, 90%, 0.4);
 
+  --toc-link-underline: hsl(0, 0%, 0%, 0.1);
+  --toc-link-underline-hover: hsl(0, 0%, 0%, 0.5);
+
   --searchbar-border-color: #aaa;
   --searchbar-bg: #fafafa;
   --searchbar-fg: #000;
   --searchbar-shadow-color: #aaa;
   --searchresults-header-fg: #666;
-  --searchresults-border-color: #888;
   --searchresults-li-bg: #e4f2fe;
   --search-mark-bg: #a2cff5;
 
@@ -86,6 +95,10 @@
   --download-btn-border: hsla(220, 60%, 40%, 0.2);
   --download-btn-border-hover: hsla(220, 60%, 50%, 0.2);
   --download-btn-shadow: hsla(220, 40%, 60%, 0.1);
+
+  --search-btn-bg: hsl(220, 100%, 100%);
+  --search-btn-bg-hover: hsla(50, 25%, 97%);
+  --search-btn-border: hsl(220, 50%, 45%, 0.2);
 
   --toast-bg: hsla(220, 93%, 98%);
   --toast-border: hsla(220, 93%, 42%, 0.3);
@@ -103,7 +116,8 @@
 
   --logo-brightness: brightness(2);
 
-  --bg: hsl(220, 13%, 10%);
+  --noise-opacity: 0.012;
+  --bg: hsl(220, 13%, 7.5%);
   --fg: hsl(220, 14%, 70%);
   --title-color: hsl(220, 92%, 80%);
 
@@ -113,13 +127,14 @@
 
   --media-bg: hsl(220, 13%, 8%);
 
-  --sidebar-bg: hsl(220, 13%, 10%);
+  --sidebar-bg: hsl(220, 13%, 6.5%);
   --sidebar-fg: hsl(220, 14%, 71%);
   --sidebar-non-existant: #505254;
   --sidebar-active: hsl(220, 92%, 75%);
   --sidebar-active-bg: hsl(220, 93%, 42%, 0.25);
+  --sidebar-mobile-shadow: 0px 16px 16px hsl(0, 0%, 0%, 0.6);
 
-  --divider: hsl(220, 13%, 20%);
+  --divider: hsl(220, 13%, 12%);
   --scrollbar: hsl(220, 13%, 30%);
 
   --icons: hsl(220, 14%, 71%);
@@ -140,9 +155,13 @@
   --pre-border: hsla(220, 93%, 70%, 0.3);
   --pre-shadow: hsla(220, 93%, 70%, 0.1);
 
-  --theme-popup-bg: hsl(220, 13%, 15%);
-  --theme-popup-border: hsl(220, 13%, 20%);
+  --popover-bg: hsl(220, 13%, 8%);
+  --popover-border: hsl(220, 13%, 20%);
+  --popover-shadow:
+    0 10px 15px -3px hsl(0, 0%, 0%, 0.1), 0 4px 6px -4px hsl(0, 0%, 0%, 0.1);
+
   --theme-hover: hsl(220, 13%, 25%);
+  --hover-section-title: hsl(220, 13%, 11%);
 
   --quote-bg: hsl(220, 13%, 25%, 0.4);
   --quote-border: hsl(220, 13%, 32%, 0.5);
@@ -150,6 +169,9 @@
   --table-border-color: hsl(220, 13%, 30%, 0.5);
   --table-header-bg: hsl(220, 13%, 25%, 0.5);
   --table-alternate-bg: hsl(220, 13%, 20%, 0.4);
+
+  --toc-link-underline: hsl(255, 100%, 100%, 0.1);
+  --toc-link-underline-hover: hsl(255, 100%, 100%, 0.4);
 
   --warning-border: hsl(25, 100%, 85%, 0.2);
   --warning-bg: hsl(42, 100%, 40%, 0.1);
@@ -160,7 +182,6 @@
   --searchbar-fg: hsl(220, 14%, 71%);
   --searchbar-shadow-color: hsl(220, 13%, 15%);
   --searchresults-header-fg: hsl(220, 14%, 60%);
-  --searchresults-border-color: hsl(220, 13%, 30%);
   --searchresults-li-bg: hsl(220, 13%, 25%);
   --search-mark-bg: hsl(220, 93%, 60%);
 
@@ -170,6 +191,10 @@
   --download-btn-border: hsla(220, 90%, 80%, 0.2);
   --download-btn-border-hover: hsla(220, 90%, 80%, 0.4);
   --download-btn-shadow: hsla(220, 50%, 60%, 0.15);
+
+  --search-btn-bg: hsl(220, 90%, 90%, 0.05);
+  --search-btn-bg-hover: hsl(220, 90%, 90%, 0.1);
+  --search-btn-border: hsla(220, 90%, 80%, 0.1);
 
   --toast-bg: hsla(220, 20%, 98%, 0.05);
   --toast-border: hsla(220, 93%, 70%, 0.2);

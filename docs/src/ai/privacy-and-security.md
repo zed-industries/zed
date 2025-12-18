@@ -2,7 +2,7 @@
 
 ## Philosophy
 
-Zed aims to collect on the minimum data necessary to serve and improve our product.
+Zed aims to collect only the minimum data necessary to serve and improve our product.
 
 We believe in opt-in data sharing as the default in building AI products, rather than opt-out, like most of our competitors. Privacy Mode is not a setting to be toggled, it's a default stance.
 
@@ -11,6 +11,8 @@ As an open-source product, we believe in maximal transparency, and invite you to
 It is entirely possible to use Zed, including Zed's AI capabilities, without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
 
 ## Documentation
+
+- [Worktree trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
 
 - [Telemetry](../telemetry.md): How Zed collects general telemetry data.
 
