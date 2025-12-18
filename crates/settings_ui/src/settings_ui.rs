@@ -7,9 +7,10 @@ use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, ClipboardItem, CursorStyle, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity,
-    FocusHandle, Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, canvas, div, list, point, prelude::*, px, uniform_list,
+    FocusHandle, Focusable, Global, HitboxBehavior, KeyContext, ListState, ReadGlobal as _,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, canvas, div, list, point, prelude::*, px,
+    uniform_list,
 };
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
@@ -3563,10 +3564,12 @@ impl Render for SettingsWindow {
                         .child({
                             let mouse_cursor_hidden = self.mouse_cursor_hidden;
                             canvas(
-                                |_bounds, _window, _cx| {},
-                                move |_bounds, _hitbox, window, _cx| {
+                                |bounds, window, _cx| {
+                                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                                },
+                                move |_bounds, hitbox, window, _cx| {
                                     if mouse_cursor_hidden {
-                                        window.set_window_cursor_style(CursorStyle::None);
+                                        window.set_cursor_style(CursorStyle::None, &hitbox);
                                     }
                                 },
                             )

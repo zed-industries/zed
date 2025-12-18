@@ -7486,10 +7486,12 @@ impl Render for Workspace {
                         .child({
                             let mouse_cursor_hidden = self.mouse_cursor_hidden;
                             canvas(
-                                |_bounds, _window, _cx| {},
-                                move |_bounds, _hitbox, window, _cx| {
+                                |bounds, window, _cx| {
+                                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                                },
+                                move |_bounds, hitbox, window, _cx| {
                                     if mouse_cursor_hidden {
-                                        window.set_window_cursor_style(CursorStyle::None);
+                                        window.set_cursor_style(CursorStyle::None, &hitbox);
                                     }
                                 },
                             )
