@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
@@ -147,8 +147,8 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiGoogle
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiGoogle)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

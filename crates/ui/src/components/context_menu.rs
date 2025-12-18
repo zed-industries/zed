@@ -893,39 +893,57 @@ impl ContextMenu {
                 entry_render,
                 handler,
                 selectable,
+                documentation_aside,
                 ..
             } => {
                 let handler = handler.clone();
                 let menu = cx.entity().downgrade();
                 let selectable = *selectable;
-                ListItem::new(ix)
-                    .inset(true)
-                    .toggle_state(if selectable {
-                        Some(ix) == self.selected_index
-                    } else {
-                        false
-                    })
-                    .selectable(selectable)
-                    .when(selectable, |item| {
-                        item.on_click({
-                            let context = self.action_context.clone();
-                            let keep_open_on_confirm = self.keep_open_on_confirm;
-                            move |_, window, cx| {
-                                handler(context.as_ref(), window, cx);
-                                menu.update(cx, |menu, cx| {
-                                    menu.clicked = true;
 
-                                    if keep_open_on_confirm {
-                                        menu.rebuild(window, cx);
-                                    } else {
-                                        cx.emit(DismissEvent);
+                div()
+                    .id(("context-menu-child", ix))
+                    .when_some(documentation_aside.clone(), |this, documentation_aside| {
+                        this.occlude()
+                            .on_hover(cx.listener(move |menu, hovered, _, cx| {
+                            if *hovered {
+                                menu.documentation_aside = Some((ix, documentation_aside.clone()));
+                            } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix)
+                            {
+                                menu.documentation_aside = None;
+                            }
+                            cx.notify();
+                        }))
+                    })
+                    .child(
+                        ListItem::new(ix)
+                            .inset(true)
+                            .toggle_state(if selectable {
+                                Some(ix) == self.selected_index
+                            } else {
+                                false
+                            })
+                            .selectable(selectable)
+                            .when(selectable, |item| {
+                                item.on_click({
+                                    let context = self.action_context.clone();
+                                    let keep_open_on_confirm = self.keep_open_on_confirm;
+                                    move |_, window, cx| {
+                                        handler(context.as_ref(), window, cx);
+                                        menu.update(cx, |menu, cx| {
+                                            menu.clicked = true;
+
+                                            if keep_open_on_confirm {
+                                                menu.rebuild(window, cx);
+                                            } else {
+                                                cx.emit(DismissEvent);
+                                            }
+                                        })
+                                        .ok();
                                     }
                                 })
-                                .ok();
-                            }
-                        })
-                    })
-                    .child(entry_render(window, cx))
+                            })
+                            .child(entry_render(window, cx)),
+                    )
                     .into_any_element()
             }
         }

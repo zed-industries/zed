@@ -16,10 +16,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-### Backend Dependencies (optional) {#backend-dependencies}
-
-If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
-
 ### Linkers {#linker}
 
 On Linux, Rust's default linker is [LLVM's `lld`](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/). Alternative linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold) can significantly improve clean and incremental build time.

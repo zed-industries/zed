@@ -354,6 +354,8 @@ pub mod agent {
             ResetAgentZoom,
             /// Toggles the utility/agent pane open/closed state.
             ToggleAgentPane,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
 }

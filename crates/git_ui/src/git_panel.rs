@@ -58,7 +58,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::{PromptId, PromptStore, RULES_FILE_NAMES};
+use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -2579,25 +2579,26 @@ impl GitPanel {
         is_using_legacy_zed_pro: bool,
         cx: &mut AsyncApp,
     ) -> String {
-        const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
-
         // Remove this once we stop supporting legacy Zed Pro
         // In legacy Zed Pro, Git commit summary generation did not count as a
         // prompt. If the user changes the prompt, our classification will fail,
         // meaning that users will be charged for generating commit messages.
         if is_using_legacy_zed_pro {
-            return DEFAULT_PROMPT.to_string();
+            return BuiltInPrompt::CommitMessage.default_content().to_string();
         }
 
         let load = async {
             let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
             store
-                .update(cx, |s, cx| s.load(PromptId::CommitMessage, cx))
+                .update(cx, |s, cx| {
+                    s.load(PromptId::BuiltIn(BuiltInPrompt::CommitMessage), cx)
+                })
                 .ok()?
                 .await
                 .ok()
         };
-        load.await.unwrap_or_else(|| DEFAULT_PROMPT.to_string())
+        load.await
+            .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
     }
 
     /// Generates a commit message using an LLM.

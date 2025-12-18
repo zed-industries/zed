@@ -6,8 +6,8 @@ use futures::{StreamExt, channel::mpsc};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Task};
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -91,25 +91,9 @@ fn all_models(cx: &App) -> GroupedModels {
 type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 
 #[derive(Clone)]
-enum ProviderIcon {
-    Name(IconName),
-    Path(SharedString),
-}
-
-impl ProviderIcon {
-    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
-        if let Some(path) = provider.icon_path() {
-            Self::Path(path)
-        } else {
-            Self::Name(provider.icon())
-        }
-    }
-}
-
-#[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: ProviderIcon,
+    icon: IconOrSvg,
     is_favorite: bool,
 }
 
@@ -125,7 +109,7 @@ impl ModelInfo {
 
         Self {
             model,
-            icon: ProviderIcon::from_provider(provider),
+            icon: provider.icon(),
             is_favorite,
         }
     }
@@ -236,7 +220,7 @@ impl LanguageModelPickerDelegate {
     fn authenticate_all_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -600,8 +584,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
                         .map(|this| match &model_info.icon {
-                            ProviderIcon::Name(icon_name) => this.icon(*icon_name),
-                            ProviderIcon::Path(icon_path) => this.icon_path(icon_path.clone()),
+                            IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
+                            IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),
                         })
                         .is_selected(is_selected)
                         .is_focused(selected)
@@ -738,7 +722,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: ProviderIcon::Name(IconName::Ai),
+                    icon: IconOrSvg::Icon(IconName::Ai),
                     is_favorite,
                 }
             })

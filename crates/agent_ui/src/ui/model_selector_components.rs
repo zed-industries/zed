@@ -114,14 +114,14 @@ impl RenderOnce for ModelSelectorListItem {
                     .w_full()
                     .gap_1p5()
                     .when_some(self.icon, |this, icon| {
-                        this.child(match icon {
-                            ModelIcon::Name(icon_name) => Icon::new(icon_name)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
-                            ModelIcon::Path(icon_path) => Icon::from_external_svg(icon_path)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
-                        })
+                        this.child(
+                            match icon {
+                                ModelIcon::Name(icon_name) => Icon::new(icon_name),
+                                ModelIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                            }
+                            .color(model_icon_color)
+                            .size(IconSize::Small),
+                        )
                     })
                     .child(Label::new(self.title).truncate()),
             )

@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -169,7 +169,7 @@ impl LanguageModels {
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -431,7 +431,7 @@ impl NativeAgent {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
-                        uuid: prompt_metadata.id.user_id()?,
+                        uuid: prompt_metadata.id.as_user()?,
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),

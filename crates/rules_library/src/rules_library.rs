@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    Action, App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
-    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size, transparent_black,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
+    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -21,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
-use ui::{Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
@@ -206,13 +206,8 @@ impl PickerDelegate for RulePickerDelegate {
         self.filtered_entries.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
-        let text = if self.store.read(cx).prompt_count() == 0 {
-            "No rules.".into()
-        } else {
-            "No rules found matching your search.".into()
-        };
-        Some(text)
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No rules found matching your search.".into())
     }
 
     fn selected_index(&self) -> usize {
@@ -680,13 +675,13 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(default_content) = prompt_id.default_content() else {
+        let Some(built_in) = prompt_id.as_built_in() else {
             return;
         };
 
         if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
             rule_editor.body_editor.update(cx, |editor, cx| {
-                editor.set_text(default_content, window, cx);
+                editor.set_text(built_in.default_content(), window, cx);
             });
         }
     }
@@ -1428,31 +1423,7 @@ impl Render for RulesLibrary {
                             this.border_t_1().border_color(cx.theme().colors().border)
                         })
                         .child(self.render_rule_list(cx))
-                        .map(|el| {
-                            if self.store.read(cx).prompt_count() == 0 {
-                                el.child(
-                                    v_flex()
-                                        .h_full()
-                                        .flex_1()
-                                        .items_center()
-                                        .justify_center()
-                                        .border_l_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_background)
-                                        .child(
-                                            Button::new("create-rule", "New Rule")
-                                                .style(ButtonStyle::Outlined)
-                                                .key_binding(KeyBinding::for_action(&NewRule, cx))
-                                                .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(NewRule.boxed_clone(), cx)
-                                                }),
-                                        ),
-                                )
-                            } else {
-                                el.child(self.render_active_rule(cx))
-                            }
-                        }),
+                        .child(self.render_active_rule(cx)),
                 ),
             window,
             cx,

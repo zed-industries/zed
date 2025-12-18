@@ -5519,6 +5519,102 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         SettingsPage {
             title: "Version Control",
             items: vec![
+                SettingsPageItem::SectionHeader("Git Integration"),
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER,
+                        title: "Disable Git Integration",
+                        description: "Disable all Git integration features in Zed.",
+                        field: Box::new(SettingField::<bool> {
+                            json_path: Some("git.disable_git"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .enabled
+                                    .as_ref()?
+                                    .disable_git
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .enabled
+                                    .get_or_insert_default()
+                                    .disable_git = value;
+                            },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        let disabled = settings_content
+                            .git
+                            .as_ref()?
+                            .enabled
+                            .as_ref()?
+                            .disable_git
+                            .unwrap_or(false);
+                        Some(if disabled { 0 } else { 1 })
+                    },
+                    fields: vec![
+                        vec![],
+                        vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Enable Git Status",
+                                description: "Show Git status information in the editor.",
+                                field: Box::new(SettingField::<bool> {
+                                    json_path: Some("git.enable_status"),
+                                    pick: |settings_content| {
+                                        settings_content
+                                            .git
+                                            .as_ref()?
+                                            .enabled
+                                            .as_ref()?
+                                            .enable_status
+                                            .as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content
+                                            .git
+                                            .get_or_insert_default()
+                                            .enabled
+                                            .get_or_insert_default()
+                                            .enable_status = value;
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Enable Git Diff",
+                                description: "Show Git diff information in the editor.",
+                                field: Box::new(SettingField::<bool> {
+                                    json_path: Some("git.enable_diff"),
+                                    pick: |settings_content| {
+                                        settings_content
+                                            .git
+                                            .as_ref()?
+                                            .enabled
+                                            .as_ref()?
+                                            .enable_diff
+                                            .as_ref()
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content
+                                            .git
+                                            .get_or_insert_default()
+                                            .enabled
+                                            .get_or_insert_default()
+                                            .enable_diff = value;
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                        ],
+                    ],
+                }),
                 SettingsPageItem::SectionHeader("Git Gutter"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Visibility",

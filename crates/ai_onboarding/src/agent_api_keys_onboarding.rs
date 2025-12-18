@@ -1,25 +1,9 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
-use language_model::{LanguageModelProvider, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use language_model::{IconOrSvg, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
 
-#[derive(Clone)]
-enum ProviderIcon {
-    Name(IconName),
-    Path(SharedString),
-}
-
-impl ProviderIcon {
-    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
-        if let Some(path) = provider.icon_path() {
-            Self::Path(path)
-        } else {
-            Self::Name(provider.icon())
-        }
-    }
-}
-
 pub struct ApiKeysWithProviders {
-    configured_providers: Vec<(ProviderIcon, SharedString)>,
+    configured_providers: Vec<(IconOrSvg, SharedString)>,
 }
 
 impl ApiKeysWithProviders {
@@ -43,19 +27,14 @@ impl ApiKeysWithProviders {
         }
     }
 
-    fn compute_configured_providers(cx: &App) -> Vec<(ProviderIcon, SharedString)> {
+    fn compute_configured_providers(cx: &App) -> Vec<(IconOrSvg, SharedString)> {
         LanguageModelRegistry::read_global(cx)
             .visible_providers()
             .iter()
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| {
-                (
-                    ProviderIcon::from_provider(provider.as_ref()),
-                    provider.name().0,
-                )
-            })
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }
@@ -71,8 +50,8 @@ impl Render for ApiKeysWithProviders {
                         .gap_1p5()
                         .child(
                             match icon {
-                                ProviderIcon::Name(icon_name) => Icon::new(icon_name),
-                                ProviderIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                                IconOrSvg::Icon(icon_name) => Icon::new(icon_name),
+                                IconOrSvg::Svg(icon_path) => Icon::from_external_svg(icon_path),
                             }
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
