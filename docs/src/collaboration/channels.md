@@ -35,7 +35,7 @@ Once you have added someone, they can either join your channel by clicking on it
 You can mute/unmute your microphone via the microphone icon in the upper right-hand side of the window.
 
 > Note: When joining a channel, Zed will automatically share your microphone with other users in the call, if your OS allows it.
-> If you'd prefer your microphone to be off when joining a channel, you can do so via the [`mute_on_join`](../configuring-zed.md#calls) setting.
+> If you'd prefer your microphone to be off when joining a channel, you can do so via the [`mute_on_join`](../reference/all-settings.md#calls) setting.
 
 ## Sharing Projects
 

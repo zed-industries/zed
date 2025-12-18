@@ -49,16 +49,16 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
-- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
-- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
-- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
-- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
-- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
-- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
-- [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
-- [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
-- [`colorize_brackets`](./configuring-zed.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
+- [`tab_size`](./reference/all-settings.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./reference/all-settings.md#formatter): The tool used for code formatting
+- [`format_on_save`](./reference/all-settings.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./reference/all-settings.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./reference/all-settings.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./reference/all-settings.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./reference/all-settings.md#soft-wrap): How to wrap long lines of code
+- [`show_completions_on_input`](./reference/all-settings.md#show-completions-on-input): Whether or not to show completions as you type
+- [`show_completion_documentation`](./reference/all-settings.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`colorize_brackets`](./reference/all-settings.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -66,7 +66,7 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./reference/all-settings.md#file-types) setting in your `settings.json`:
 
 ```json [settings]
 "file_types": {
@@ -266,7 +266,7 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
+Zed supports both built-in and external formatters. See [`formatter`](./reference/all-settings.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
 ```json [settings]
 "languages": {

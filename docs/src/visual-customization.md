@@ -525,7 +525,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
   }
 ```
 
-See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual customization options.
+See [Terminal settings](./reference/all-settings.md#terminal) for additional non-visual customization options.
 
 ### Other Panels
 
