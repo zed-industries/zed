@@ -2,13 +2,13 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
+use futures::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt};
 use gpui::Entity;
 use itertools::Itertools as _;
 use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
-    io::{BufRead, BufReader, Read},
     ops::Range,
     sync::{Arc, LazyLock},
 };
@@ -326,37 +326,38 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) fn detect(
-        &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<bool> {
-        if self.as_str().is_empty() {
+    pub(crate) async fn detect(&self, mut reader: impl AsyncBufRead + Unpin) -> Result<bool> {
+        let query_str = self.as_str();
+        let needle_len = query_str.as_bytes().len();
+        if needle_len == 0 {
             return Ok(false);
         }
 
+        let mut text = String::new();
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(reader).next();
-                match mat {
-                    Some(Ok(_)) => Ok(true),
-                    Some(Err(err)) => Err(err.into()),
-                    None => Ok(false),
+                if query_str.contains('\n') {
+                    reader.read_to_string(&mut text).await?;
+                    Ok(search.find(&text).is_some())
+                } else {
+                    while reader.read_line(&mut text).await? > 0 {
+                        if search.find(&text).is_some() {
+                            return Ok(true);
+                        }
+                        text.clear();
+                    }
+                    Ok(false)
                 }
             }
             Self::Regex {
                 regex, multiline, ..
             } => {
                 if *multiline {
-                    let mut text = String::new();
-                    if let Err(err) = reader.read_to_string(&mut text) {
-                        Err(err.into())
-                    } else {
-                        Ok(regex.find(&text)?.is_some())
-                    }
+                    reader.read_to_string(&mut text).await?;
+                    Ok(regex.find(&text)?.is_some())
                 } else {
-                    for line in reader.lines() {
-                        let line = line?;
-                        if regex.find(&line)?.is_some() {
+                    while reader.read_line(&mut text).await? > 0 {
+                        if regex.find(&text)?.is_some() {
                             return Ok(true);
                         }
                     }

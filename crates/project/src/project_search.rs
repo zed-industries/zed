@@ -1,7 +1,6 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufReader, Cursor, Read},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -11,7 +10,7 @@ use std::{
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
+use futures::{AsyncBufReadExt, SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
@@ -685,17 +684,22 @@ impl RequestHandler<'_> {
         _ = (async move || -> anyhow::Result<()> {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
 
-            // Avoid blocking IO here: cancellation of the search is implemented via task drop, and a
-            // synchronous `std::fs::File::open` / `Read::read` can delay task cancellation for a long time.
-            let contents = self
+            let file = self
                 .fs
                 .context("Trying to query filesystem in remote project search")?
-                .load_bytes(&abs_path)
+                .open_read(&abs_path)
                 .await?;
 
+            let mut file = futures::io::BufReader::new(file);
+
             // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
-            // That way we can still match files without having to look at "obviously binary" files.
-            if let Err(error) = std::str::from_utf8(&contents) {
+            // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
+            //
+            // Use `fill_buf` so we can "peek" without consuming bytes, and reuse the same stream for detection.
+            let buffer = file.fill_buf().await?;
+            let prefix_len = buffer.len().min(8192);
+
+            if let Err(error) = std::str::from_utf8(&buffer[..prefix_len]) {
                 if let Some(starting_position) = error.error_len() {
                     log::debug!(
                         "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
@@ -704,10 +708,7 @@ impl RequestHandler<'_> {
                 }
             }
 
-            let file: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(contents));
-            let file = BufReader::new(file);
-
-            if self.query.detect(file).unwrap_or(false) {
+            if self.query.detect(file).await.unwrap_or(false) {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send(entry.path).await?;
             }

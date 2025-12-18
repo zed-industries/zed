@@ -1,5 +1,4 @@
 use std::{
-    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     pin::pin,
     sync::{Arc, atomic::AtomicUsize},
@@ -8,7 +7,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
 use fs::{Fs, copy_recursive};
-use futures::{FutureExt, SinkExt, future::Shared};
+use futures::{AsyncBufReadExt as _, FutureExt, SinkExt, future::Shared, io::BufReader};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
@@ -1024,15 +1023,15 @@ impl WorktreeStore {
         let mut input = pin!(input);
         while let Some(mut entry) = input.next().await {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
+            let Some(file) = fs.open_read(&abs_path).await.log_err() else {
                 continue;
             };
 
             let mut file = BufReader::new(file);
-            let file_start = file.fill_buf()?;
+            let file_start = file.fill_buf().await?;
 
             if let Err(Some(starting_position)) =
-                std::str::from_utf8(file_start).map_err(|e| e.error_len())
+                std::str::from_utf8(&file_start).map_err(|e| e.error_len())
             {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
@@ -1042,7 +1041,7 @@ impl WorktreeStore {
                 continue;
             }
 
-            if query.detect(file).unwrap_or(false) {
+            if query.detect(file).await.unwrap_or(false) {
                 entry.respond.send(entry.path).await?
             }
         }

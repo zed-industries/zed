@@ -66,6 +66,8 @@ use std::ffi::OsStr;
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
+pub type AsyncReadBox = Pin<Box<dyn AsyncRead + Send>>;
+
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -116,7 +118,7 @@ pub trait Fs: Send + Sync {
         self.remove_file(path, options).await
     }
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
+    async fn open_read(&self, path: &Path) -> Result<AsyncReadBox>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
@@ -732,8 +734,8 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
-        Ok(Box::new(std::fs::File::open(path)?))
+    async fn open_read(&self, path: &Path) -> Result<AsyncReadBox> {
+        Ok(Box::pin(smol::fs::File::open(path).await?))
     }
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
@@ -2530,9 +2532,9 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
+    async fn open_read(&self, path: &Path) -> Result<AsyncReadBox> {
         let bytes = self.load_internal(path).await?;
-        Ok(Box::new(io::Cursor::new(bytes)))
+        Ok(Box::pin(futures::io::Cursor::new(bytes)))
     }
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
