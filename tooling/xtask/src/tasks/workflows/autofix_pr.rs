@@ -96,6 +96,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
             .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),

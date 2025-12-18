@@ -58,6 +58,9 @@ jobs:
       if: ${{ inputs.run_clippy }}
       run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
       shell: bash -euxo pipefail {0}
+    - name: ./script/generate-action-metadata
+      run: ./script/generate-action-metadata
+      shell: bash -euxo pipefail {0}
     - id: create-patch
       name: autofix_pr::run_autofix::create_patch
       run: |
