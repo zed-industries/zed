@@ -153,7 +153,11 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(provider.icon()),
+            icon: Some(if let Some(path) = provider.icon_path() {
+                acp_thread::AgentModelIcon::Path(path)
+            } else {
+                acp_thread::AgentModelIcon::Named(provider.icon())
+            }),
         }
     }
 
@@ -1630,7 +1634,9 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(ui::IconName::ZedAssistant),
+                    icon: Some(acp_thread::AgentModelIcon::Named(
+                        ui::IconName::ZedAssistant
+                    )),
                 }]
             )])
         );

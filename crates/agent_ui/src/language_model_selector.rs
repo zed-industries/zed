@@ -92,9 +92,25 @@ fn all_models(cx: &App) -> GroupedModels {
 type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 
 #[derive(Clone)]
+enum ProviderIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
+impl ProviderIcon {
+    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
+        if let Some(path) = provider.icon_path() {
+            Self::Path(path)
+        } else {
+            Self::Name(provider.icon())
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: IconName,
+    icon: ProviderIcon,
     is_favorite: bool,
 }
 
@@ -110,7 +126,7 @@ impl ModelInfo {
 
         Self {
             model,
-            icon: provider.icon(),
+            icon: ProviderIcon::from_provider(provider),
             is_favorite,
         }
     }
@@ -566,7 +582,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
-                        .icon(model_info.icon)
+                        .map(|this| match &model_info.icon {
+                            ProviderIcon::Name(icon_name) => this.icon(*icon_name),
+                            ProviderIcon::Path(icon_path) => this.icon_path(icon_path.clone()),
+                        })
                         .is_selected(is_selected)
                         .is_focused(selected)
                         .is_favorite(is_favorite)
@@ -702,7 +721,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: IconName::Ai,
+                    icon: ProviderIcon::Name(IconName::Ai),
                     is_favorite,
                 }
             })

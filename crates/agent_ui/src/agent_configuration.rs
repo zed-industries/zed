@@ -261,9 +261,13 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        if let Some(icon_path) = provider.icon_path() {
+                                            Icon::from_external_svg(icon_path)
+                                        } else {
+                                            Icon::new(provider.icon())
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()

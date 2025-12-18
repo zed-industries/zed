@@ -210,12 +210,21 @@ pub trait AgentModelSelector: 'static {
     }
 }
 
+/// Icon for a model in the model selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelIcon {
+    /// A built-in icon from Zed's icon set.
+    Named(IconName),
+    /// Path to a custom SVG icon file.
+    Path(SharedString),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
-    pub icon: Option<IconName>,
+    pub icon: Option<AgentModelIcon>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {

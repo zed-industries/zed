@@ -2205,7 +2205,8 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon = match active_provider {
+        let provider_icon_path = active_provider.as_ref().and_then(|p| p.icon_path());
+        let provider_icon_name = match &active_provider {
             Some(provider) => provider.icon(),
             None => IconName::Ai,
         };
@@ -2217,6 +2218,14 @@ impl TextThreadEditor {
         } else {
             (Color::Muted, IconName::ChevronDown)
         };
+
+        let provider_icon_element = if let Some(icon_path) = provider_icon_path {
+            Icon::from_external_svg(icon_path)
+        } else {
+            Icon::new(provider_icon_name)
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
         let tooltip = Tooltip::element({
             move |_, cx| {
@@ -2265,7 +2274,7 @@ impl TextThreadEditor {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
+                        .child(provider_icon_element)
                         .child(
                             Label::new(model_name)
                                 .color(color)
