@@ -3553,6 +3553,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "configuration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "hex",
+ "log",
+ "parking_lot",
+ "pretty_assertions",
+ "proto",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "sha2",
+ "shellexpand 2.1.2",
+ "task",
+ "util",
+]
+
+[[package]]
+name = "configurations_ui"
+version = "0.1.0"
+dependencies = [
+ "configuration",
+ "editor",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "picker",
+ "project",
+ "schemars",
+ "serde",
+ "settings",
+ "task",
+ "terminal_view",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12473,6 +12520,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "configuration",
  "context_server",
  "dap",
  "dap_adapters",
@@ -16844,6 +16892,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "configurations_ui",
  "db",
  "gpui",
  "http_client",
@@ -20633,6 +20682,8 @@ dependencies = [
  "collections",
  "command_palette",
  "component",
+ "configuration",
+ "configurations_ui",
  "copilot",
  "crashes",
  "dap",

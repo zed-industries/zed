@@ -136,6 +136,7 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
+    configurations_toolbar: Entity<configurations_ui::ConfigurationsToolbar>,
 }
 
 impl Render for TitleBar {
@@ -202,6 +203,7 @@ impl Render for TitleBar {
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
+                .child(self.configurations_toolbar.clone())
                 .children(self.render_connection_status(status, cx))
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
@@ -315,6 +317,7 @@ impl TitleBar {
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+        let configurations_toolbar = cx.new(|cx| configurations_ui::ConfigurationsToolbar::new(workspace.weak_handle(), cx));
 
         Self {
             platform_titlebar,
@@ -326,6 +329,7 @@ impl TitleBar {
             _subscriptions: subscriptions,
             banner,
             screen_share_popover_handle: PopoverMenuHandle::default(),
+            configurations_toolbar,
         }
     }
 

@@ -224,6 +224,7 @@ pub enum LocalSettingsKind {
     Tasks,
     Editorconfig,
     Debug,
+    Configurations,
 }
 
 impl Global for SettingsStore {}
@@ -858,6 +859,11 @@ impl SettingsStore {
                         .to_path_buf(),
                 });
             }
+            (LocalSettingsKind::Configurations, _) => {
+                return Err(InvalidSettingsError::InvalidConfigurationFile(
+                    "Attempted to submit configurations into the settings store. Configurations are handled separately.".to_string()
+                ));
+            }
             (LocalSettingsKind::Settings, None) => {
                 zed_settings_changed = self
                     .local_settings
@@ -1263,6 +1269,7 @@ pub enum InvalidSettingsError {
     Editorconfig { path: Arc<RelPath>, message: String },
     Tasks { path: PathBuf, message: String },
     Debug { path: PathBuf, message: String },
+    InvalidConfigurationFile(String),
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1274,7 +1281,8 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. } => {
+            | InvalidSettingsError::Debug { message, .. }
+            | InvalidSettingsError::InvalidConfigurationFile(message) => {
                 write!(f, "{message}")
             }
         }

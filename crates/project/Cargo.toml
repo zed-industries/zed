@@ -38,6 +38,7 @@ circular-buffer.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+configuration.workspace = true
 context_server.workspace = true
 dap.workspace = true
 encoding_rs.workspace = true
