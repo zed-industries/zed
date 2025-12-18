@@ -1,4 +1,5 @@
 mod configuration_template;
+mod recipe;
 
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,7 @@ use std::path::PathBuf;
 use task::{TaskContext, TaskVariables};
 
 pub use configuration_template::{ConfigurationTemplate, ConfigurationTemplates, ConfigurationType};
+pub use recipe::{Recipe, Recipes};
 
 /// Configuration identifier, unique within the application.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]

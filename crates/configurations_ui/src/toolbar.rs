@@ -130,23 +130,71 @@ impl ConfigurationsToolbar {
     }
 
     fn run_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("Run configuration clicked");
         if let Some((_source, template)) = &self.selected_configuration {
+            log::info!("Running configuration: {}", template.label);
             if let Some(workspace) = self.workspace.upgrade() {
                 let template = template.clone();
                 workspace.update(cx, |workspace, cx| {
-                    // Create a SpawnInTerminal from the configuration template
-                    let command_label = if template.args.is_empty() {
-                        template.command.clone()
+                    let project = workspace.project().clone();
+                    
+                    // All configurations must have a recipe
+                    let recipe_name = &template.recipe;
+                    log::info!("Using recipe: {}", recipe_name);
+                    
+                    // Determine the command to run using the recipe
+                    let (command, args) = {
+                        let Some(config_store) = project.read(cx).configuration_store() else {
+                            log::error!("Configuration store not available");
+                            return;
+                        };
+                        
+                        let Some(recipe_store) = config_store.read(cx).recipe_store() else {
+                            log::error!("Recipe store not available");
+                            return;
+                        };
+                        
+                        // Get worktree ID for recipe lookup
+                        let worktree_id = project.read(cx).worktrees(cx).next()
+                            .map(|wt| wt.read(cx).id());
+                        
+                        let Some(recipe) = recipe_store.read(cx).get_recipe(recipe_name, worktree_id) else {
+                            log::error!("Recipe '{}' not found", recipe_name);
+                            return;
+                        };
+                        
+                        log::info!("Found recipe, rendering with variables: {:?}", template.variables);
+                        
+                        match recipe.render_run(&template.variables) {
+                            Ok(rendered_command) => {
+                                log::info!("Rendered command: {}", rendered_command);
+                                // Parse the rendered command into command and args
+                                let parts: Vec<&str> = rendered_command.split_whitespace().collect();
+                                if parts.is_empty() {
+                                    log::error!("Empty command from recipe '{}'", recipe_name);
+                                    return;
+                                }
+                                (parts[0].to_string(), parts[1..].iter().map(|s| s.to_string()).collect::<Vec<String>>())
+                            }
+                            Err(err) => {
+                                log::error!("Failed to render recipe '{}': {}", recipe_name, err);
+                                return;
+                            }
+                        }
+                    };
+                    
+                    let command_label = if args.is_empty() {
+                        command.clone()
                     } else {
-                        format!("{} {}", template.command, template.args.join(" "))
+                        format!("{} {}", command, args.join(" "))
                     };
                     
                     let spawn_in_terminal = SpawnInTerminal {
                         id: task::TaskId(template.label.clone().into()),
                         full_label: template.label.clone(),
                         label: template.label.clone(),
-                        command: Some(template.command.clone()),
-                        args: template.args.clone(),
+                        command: Some(command),
+                        args,
                         command_label,
                         cwd: template.cwd.as_ref().map(|s| PathBuf::from(s)),
                         env: template.env.clone(),
@@ -168,22 +216,87 @@ impl ConfigurationsToolbar {
     }
 
     fn debug_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("Debug configuration clicked");
         if let Some((_source, template)) = &self.selected_configuration {
-            // Check if this is a debug configuration
-            if template.config_type != ConfigurationType::Debug {
-                // If it's a run configuration, just run it for now
-                // In the future, we might want to show a warning or convert it to debug mode
-                self.run_configuration(window, cx);
-                return;
-            }
+            log::info!("Debugging configuration: {}", template.label);
             
-            // TODO: Implement debug session launch via DAP
-            // For now, we'll just run the configuration in a terminal
-            // In the future, this should:
-            // 1. Check if a debug adapter is configured
-            // 2. Start a DAP session
-            // 3. Connect the debugger
-            self.run_configuration(window, cx);
+            if let Some(workspace) = self.workspace.upgrade() {
+                let template = template.clone();
+                workspace.update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    
+                    // All configurations must have a recipe
+                    let recipe_name = &template.recipe;
+                    log::info!("Using recipe for debug: {}", recipe_name);
+                    
+                    // Determine the debug command to run using the recipe
+                    let (command, args) = {
+                        let Some(config_store) = project.read(cx).configuration_store() else {
+                            log::error!("Configuration store not available");
+                            return;
+                        };
+                        
+                        let Some(recipe_store) = config_store.read(cx).recipe_store() else {
+                            log::error!("Recipe store not available");
+                            return;
+                        };
+                        
+                        let worktree_id = project.read(cx).worktrees(cx).next()
+                            .map(|wt| wt.read(cx).id());
+                        
+                        let Some(recipe) = recipe_store.read(cx).get_recipe(recipe_name, worktree_id) else {
+                            log::error!("Recipe '{}' not found", recipe_name);
+                            return;
+                        };
+                        
+                        log::info!("Found recipe for debug, rendering with variables: {:?}", template.variables);
+                        
+                        match recipe.render_debug(&template.variables) {
+                            Ok(rendered_command) => {
+                                log::info!("Rendered debug command: {}", rendered_command);
+                                let parts: Vec<&str> = rendered_command.split_whitespace().collect();
+                                if parts.is_empty() {
+                                    log::error!("Empty debug command from recipe '{}'", recipe_name);
+                                    return;
+                                }
+                                (parts[0].to_string(), parts[1..].iter().map(|s| s.to_string()).collect::<Vec<String>>())
+                            }
+                            Err(err) => {
+                                log::error!("Failed to render debug recipe '{}': {}", recipe_name, err);
+                                return;
+                            }
+                        }
+                    };
+                    
+                    let command_label = if args.is_empty() {
+                        command.clone()
+                    } else {
+                        format!("{} {}", command, args.join(" "))
+                    };
+                    
+                    let spawn_in_terminal = SpawnInTerminal {
+                        id: task::TaskId(template.label.clone().into()),
+                        full_label: template.label.clone(),
+                        label: format!("{} (Debug)", template.label),
+                        command: Some(command),
+                        args,
+                        command_label,
+                        cwd: template.cwd.as_ref().map(|s| PathBuf::from(s)),
+                        env: template.env.clone(),
+                        use_new_terminal: false,
+                        allow_concurrent_runs: false,
+                        reveal: task::RevealStrategy::default(),
+                        reveal_target: task::RevealTarget::default(),
+                        hide: task::HideStrategy::default(),
+                        shell: task::Shell::default(),
+                        show_summary: true,
+                        show_command: true,
+                        show_rerun: true,
+                    };
+                    
+                    workspace.spawn_in_terminal(spawn_in_terminal, window, cx).detach();
+                });
+            }
         }
     }
 }
@@ -250,7 +363,7 @@ impl Render for ConfigurationsToolbar {
             )
             .child(
                 // Separator/spacer
-                div().w_4()
+                div().w_1()
             )
             .child(
                 // Run button
@@ -273,6 +386,10 @@ impl Render for ConfigurationsToolbar {
                         this.debug_configuration(window, cx);
                     }))
                     .tooltip(|window, cx| Tooltip::text("Debug configuration")(window, cx)),
+            )
+            .child(
+                // Extra spacer before sign-in button
+                div().w_4()
             )
     }
 }

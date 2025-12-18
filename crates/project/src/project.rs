@@ -16,6 +16,7 @@ pub mod project_settings;
 pub mod search;
 mod configuration_inventory;
 pub mod configuration_store;
+pub mod recipe_store;
 mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;

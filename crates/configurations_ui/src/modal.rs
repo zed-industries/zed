@@ -203,7 +203,7 @@ impl PickerDelegate for ConfigurationsModalDelegate {
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().colors().text_muted)
-                                .child(format!("{}", template.command)),
+                                .child(format!("Recipe: {}", template.recipe)),
                         ),
                 )
         )

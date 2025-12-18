@@ -21,6 +21,7 @@ pub enum ConfigurationStore {
 pub struct ConfigStoreState {
     mode: ConfigStoreMode,
     configuration_inventory: Entity<ConfigurationInventory>,
+    recipe_store: Entity<crate::recipe_store::RecipeStore>,
     buffer_store: WeakEntity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: std::sync::Arc<dyn LanguageToolchainStore>,
@@ -61,6 +62,7 @@ impl ConfigurationStore {
                 environment,
             },
             configuration_inventory: ConfigurationInventory::new(cx),
+            recipe_store: crate::recipe_store::RecipeStore::new(cx),
             buffer_store,
             toolchain_store,
             worktree_store,
@@ -83,6 +85,7 @@ impl ConfigurationStore {
                 project_id,
             },
             configuration_inventory: ConfigurationInventory::new(cx),
+            recipe_store: crate::recipe_store::RecipeStore::new(cx),
             buffer_store,
             toolchain_store,
             worktree_store,
@@ -117,6 +120,13 @@ impl ConfigurationStore {
     pub fn configuration_inventory(&self) -> Option<&Entity<ConfigurationInventory>> {
         match self {
             ConfigurationStore::Functional(state) => Some(&state.configuration_inventory),
+            ConfigurationStore::Noop => None,
+        }
+    }
+    
+    pub fn recipe_store(&self) -> Option<&Entity<crate::recipe_store::RecipeStore>> {
+        match self {
+            ConfigurationStore::Functional(state) => Some(&state.recipe_store),
             ConfigurationStore::Noop => None,
         }
     }
@@ -179,7 +189,7 @@ impl ConfigurationStore {
                 let configs = parse_configuration_file(json_str.to_string())?;
                 log::info!("Successfully parsed {} configurations", configs.len());
                 for (i, config) in configs.iter().enumerate() {
-                    log::info!("  Config {}: label='{}', type={:?}", i + 1, config.label, config.config_type);
+                    log::info!("  Config {}: label='{}', recipe='{}'", i + 1, config.label, config.recipe);
                 }
                 configs
             } else {

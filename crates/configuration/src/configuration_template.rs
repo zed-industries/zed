@@ -24,24 +24,22 @@ pub enum ConfigurationType {
     Debug,
 }
 
-/// A configuration template that can be resolved with a context to create an executable configuration.
-/// Similar to JetBrains run configurations - defines how to execute a program with template variables.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// A configuration template that uses a recipe to execute.
+/// Recipes define how to run and debug programs with template variables.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ConfigurationTemplate {
     /// Human-readable name of the configuration
     pub label: String,
     
-    /// Type of configuration (run or debug)
-    #[serde(default)]
-    pub config_type: ConfigurationType,
+    /// Recipe name to use (e.g., "uv", "cargo", "npm", "custom")
+    /// The recipe defines how to execute the run and debug commands
+    pub recipe: String,
     
-    /// The executable command to run
-    pub command: String,
-    
-    /// Arguments to pass to the command
+    /// Variables to pass to the recipe template
+    /// These variables are substituted into the recipe's executeRun/executeDebug templates
     #[serde(default)]
-    pub args: Vec<String>,
+    pub variables: HashMap<String, String>,
     
     /// Working directory for execution (defaults to project root)
     #[serde(default)]
@@ -50,14 +48,6 @@ pub struct ConfigurationTemplate {
     /// Environment variables to set
     #[serde(default)]
     pub env: HashMap<String, String>,
-    
-    /// For NPM/Node.js configurations - npm script to run
-    #[serde(default)]
-    pub npm_script: Option<String>,
-    
-    /// For test configurations - test filter/pattern
-    #[serde(default)]
-    pub test_filter: Option<String>,
     
     /// For test configurations - test harness to use
     #[serde(default)]
@@ -89,8 +79,10 @@ const MAX_DISPLAY_VARIABLE_LENGTH: usize = 15;
 
 impl ConfigurationTemplate {
     /// Resolves the template with the given context to create a ResolvedConfiguration
+    /// Note: This method is deprecated in favor of using recipes directly.
+    /// It's kept for compatibility but may not work correctly with recipe-based configurations.
     pub fn resolve(&self, id_base: &str, cx: &ConfigurationContext) -> Option<ResolvedConfiguration> {
-        if self.label.trim().is_empty() || self.command.trim().is_empty() {
+        if self.label.trim().is_empty() || self.recipe.trim().is_empty() {
             return None;
         }
 
@@ -164,23 +156,7 @@ impl ConfigurationTemplate {
             string
         });
 
-        // Resolve command
-        let command = substitute_all_template_variables_in_str(
-            &self.command,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
-
-        // Resolve args
-        let args = substitute_all_template_variables_in_vec(
-            &self.args,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
-
-        // Generate ID
+        // Generate ID from recipe and variables
         let template_hash = to_hex_hash(self)
             .context("hashing configuration template")
             .log_err()?;
@@ -193,16 +169,17 @@ impl ConfigurationTemplate {
         let env = {
             let mut env = cx.project_env.clone();
             env.extend(self.env.clone());
-            let mut env = substitute_all_template_variables_in_map(
+            let env = substitute_all_template_variables_in_map(
                 &env,
                 &task_variables,
                 &variable_names,
                 &mut substituted_variables,
             )?;
-            env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
             env
         };
 
+        // Note: Recipe-based configurations don't pre-render commands here
+        // Commands are rendered at execution time using the recipe templates
         Some(ResolvedConfiguration {
             id: id.clone(),
             substituted_variables,
@@ -212,11 +189,11 @@ impl ConfigurationTemplate {
                 id,
                 full_label,
                 label: human_readable_label,
-                command: Some(command),
-                args,
+                command: Some(format!("<recipe: {}>", self.recipe)),
+                args: vec![],
                 cwd,
                 env,
-                config_type: self.config_type,
+                config_type: ConfigurationType::Run,
             },
         })
     }
