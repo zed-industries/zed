@@ -29,15 +29,16 @@
 
 # Working with Code
 
-### Editing Code
+- [Editing Code](./editing-code.md)
   - [Code Completions](./completions.md)
+  - [Snippets](./snippets.md)
   - [Diagnostics & Quick Fixes](./diagnostics.md)
   - [Multibuffers](./multibuffers.md)
-### Finding & Navigating
+- [Finding & Navigating](./finding-navigating.md)
   - [Command Palette](./command-palette.md)
   - [Outline Panel](./outline-panel.md)
   - [Tab Switcher](./tab-switcher.md)
-### Running & Testing
+- [Running & Testing](./running-testing.md)
   - [Tasks](./tasks.md)
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)
@@ -70,7 +71,6 @@
 - [Keybindings](./key-bindings.md)
   - [Vim Mode](./vim.md)
   - [Helix Mode](./helix.md)
-- [Snippets](./snippets.md)
 
 # Language Support
 
