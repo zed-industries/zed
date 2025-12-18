@@ -293,6 +293,40 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                let tooltip_meta = "Powered by Ollama";
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| this.build_ollama_context_menu(window, cx))
+                                .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("ollama-icon", IconName::ZedPredict)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
@@ -547,6 +581,9 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
+        // Ollama is always available as it runs locally
+        providers.push(EditPredictionProvider::Ollama);
+
         if cx.has_flag::<SweepFeatureFlag>()
             && edit_prediction::sweep_ai::sweep_api_token(cx)
                 .read(cx)
@@ -595,6 +632,7 @@ impl EditPredictionButton {
                     EditPredictionProvider::Copilot => "GitHub Copilot",
                     EditPredictionProvider::Supermaven => "Supermaven",
                     EditPredictionProvider::Codestral => "Codestral",
+                    EditPredictionProvider::Ollama => "Ollama",
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => "Sweep",
@@ -980,6 +1018,20 @@ impl EditPredictionButton {
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Codestral, cx);
+
+            menu
+        })
+    }
+
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let menu = self.build_language_settings_menu(menu, window, cx);
+            let menu =
+                self.add_provider_switching_section(menu, EditPredictionProvider::Ollama, cx);
 
             menu
         })

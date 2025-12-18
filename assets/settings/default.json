@@ -1422,6 +1422,10 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:3b-base",
+    },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true,
