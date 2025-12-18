@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
-    hash::Hasher,
-    hash::{DefaultHasher, Hash},
+    collections::VecDeque,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     thread::ThreadId,
     time::Instant,
@@ -154,7 +154,7 @@ impl<'a> SerializedThreadTaskTimings<'a> {
 // Allow 20mb of task timing entries
 const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
-pub(crate) type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
+pub(crate) type TaskTimings = VecDeque<TaskTiming>;
 pub(crate) type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
 
 pub(crate) struct GlobalThreadTimings {
@@ -189,7 +189,7 @@ thread_local! {
 pub(crate) struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
-    pub timings: Box<TaskTimings>,
+    pub timings: TaskTimings,
 }
 
 impl ThreadTimings {
@@ -197,7 +197,21 @@ impl ThreadTimings {
         ThreadTimings {
             thread_name,
             thread_id,
-            timings: TaskTimings::boxed(),
+            timings: TaskTimings::new(),
+        }
+    }
+
+    fn add_task_timing(&mut self, timing: TaskTiming) {
+        if let Some(last_timing) = self.timings.iter_mut().rev().next()
+            && last_timing.location == timing.location
+        {
+            last_timing.end = timing.end;
+        } else {
+            while self.timings.len() >= MAX_TASK_TIMINGS {
+                // This should only ever pop one element because it matches the insertion below.
+                self.timings.pop_front();
+            }
+            self.timings.push_back(timing);
         }
     }
 }
@@ -219,16 +233,6 @@ impl Drop for ThreadTimings {
 
 pub(crate) fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                last_timing.end = timing.end;
-                return;
-            }
-        }
-
-        timings.push_back(timing);
+        timings.lock().add_task_timing(timing);
     });
 }
