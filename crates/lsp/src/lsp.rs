@@ -926,7 +926,7 @@ impl LanguageServer {
                 })?;
             if let Some(info) = response.server_info {
                 self.version = info.version.map(SharedString::from);
-                self.process_name = info.name.clone().into();
+                self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
