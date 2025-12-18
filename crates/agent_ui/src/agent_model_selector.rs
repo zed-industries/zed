@@ -4,7 +4,7 @@ use crate::{
 };
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use language_model::ProviderIcon;
+use language_model::IconOrSvg;
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
@@ -106,8 +106,8 @@ impl Render for AgentModelSelector {
                 .when_some(provider_icon, |this, icon| {
                     this.child(
                         match icon {
-                            ProviderIcon::Path(path) => Icon::from_external_svg(path),
-                            ProviderIcon::Name(name) => Icon::new(name),
+                            IconOrSvg::Path(path) => Icon::from_external_svg(path),
+                            IconOrSvg::Name(name) => Icon::new(name),
                         }
                         .color(color)
                         .size(IconSize::XSmall),

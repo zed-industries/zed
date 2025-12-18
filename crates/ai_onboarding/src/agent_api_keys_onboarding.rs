@@ -1,9 +1,9 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
-use language_model::{LanguageModelRegistry, ProviderIcon, ZED_CLOUD_PROVIDER_ID};
+use language_model::{LanguageModelRegistry, IconOrSvg, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
 
 pub struct ApiKeysWithProviders {
-    configured_providers: Vec<(ProviderIcon, SharedString)>,
+    configured_providers: Vec<(IconOrSvg, SharedString)>,
 }
 
 impl ApiKeysWithProviders {
@@ -27,7 +27,7 @@ impl ApiKeysWithProviders {
         }
     }
 
-    fn compute_configured_providers(cx: &App) -> Vec<(ProviderIcon, SharedString)> {
+    fn compute_configured_providers(cx: &App) -> Vec<(IconOrSvg, SharedString)> {
         LanguageModelRegistry::read_global(cx)
             .visible_providers()
             .iter()
@@ -50,8 +50,8 @@ impl Render for ApiKeysWithProviders {
                         .gap_1p5()
                         .child(
                             match icon {
-                                ProviderIcon::Name(icon_name) => Icon::new(icon_name),
-                                ProviderIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                                IconOrSvg::Name(icon_name) => Icon::new(icon_name),
+                                IconOrSvg::Path(icon_path) => Icon::from_external_svg(icon_path),
                             }
                             .size(IconSize::XSmall)
                             .color(Color::Muted),

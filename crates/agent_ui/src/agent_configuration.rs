@@ -22,7 +22,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ProviderIcon,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, IconOrSvg,
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
@@ -263,10 +263,10 @@ impl AgentConfiguration {
                                     .gap_1p5()
                                     .child(
                                         match provider.icon() {
-                                            ProviderIcon::Path(path) => {
+                                            IconOrSvg::Path(path) => {
                                                 Icon::from_external_svg(path)
                                             }
-                                            ProviderIcon::Name(name) => Icon::new(name),
+                                            IconOrSvg::Name(name) => Icon::new(name),
                                         }
                                         .size(IconSize::Small)
                                         .color(Color::Muted),

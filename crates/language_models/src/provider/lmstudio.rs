@@ -12,7 +12,7 @@ use language_model::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ProviderIcon, RateLimiter, Role,
+    LanguageModelRequest, IconOrSvg, RateLimiter, Role,
 };
 use lmstudio::{ModelType, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
@@ -175,8 +175,8 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiLmStudio)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiLmStudio)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {

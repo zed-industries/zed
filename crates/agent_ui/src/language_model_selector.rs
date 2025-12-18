@@ -8,7 +8,7 @@ use gpui::{
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry, ProviderIcon,
+    LanguageModelProviderId, LanguageModelRegistry, IconOrSvg,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -94,7 +94,7 @@ type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: ProviderIcon,
+    icon: IconOrSvg,
     is_favorite: bool,
 }
 
@@ -567,8 +567,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
                         .map(|this| match &model_info.icon {
-                            ProviderIcon::Name(icon_name) => this.icon(*icon_name),
-                            ProviderIcon::Path(icon_path) => this.icon_path(icon_path.clone()),
+                            IconOrSvg::Name(icon_name) => this.icon(*icon_name),
+                            IconOrSvg::Path(icon_path) => this.icon_path(icon_path.clone()),
                         })
                         .is_selected(is_selected)
                         .is_focused(selected)
@@ -705,7 +705,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: ProviderIcon::Name(IconName::Ai),
+                    icon: IconOrSvg::Name(IconName::Ai),
                     is_favorite,
                 }
             })

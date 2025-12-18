@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    ProviderIcon, RateLimiter, Role, StopReason, env_var,
+    IconOrSvg, RateLimiter, Role, StopReason, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -125,8 +125,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiAnthropic)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiAnthropic)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

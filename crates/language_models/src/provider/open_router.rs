@@ -8,7 +8,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderIcon, RateLimiter,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, IconOrSvg, RateLimiter,
     Role, StopReason, TokenUsage, env_var,
 };
 use open_router::{
@@ -180,8 +180,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiOpenRouter)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

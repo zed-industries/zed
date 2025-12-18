@@ -34,7 +34,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderIcon,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, IconOrSvg,
     RateLimiter, Role, TokenUsage, env_var,
 };
 use schemars::JsonSchema;
@@ -426,8 +426,8 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiBedrock)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiBedrock)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

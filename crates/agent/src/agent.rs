@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry, ProviderIcon};
+use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -154,8 +154,8 @@ impl LanguageModels {
             name: model.name().0,
             description: None,
             icon: Some(match provider.icon() {
-                ProviderIcon::Path(path) => acp_thread::AgentModelIcon::Path(path),
-                ProviderIcon::Name(name) => acp_thread::AgentModelIcon::Named(name),
+                IconOrSvg::Path(path) => acp_thread::AgentModelIcon::Path(path),
+                IconOrSvg::Name(name) => acp_thread::AgentModelIcon::Named(name),
             }),
         }
     }

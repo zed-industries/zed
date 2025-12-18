@@ -7,7 +7,7 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, ProviderIcon, RateLimiter, Role, env_var,
+    LanguageModelRequest, LanguageModelToolChoice, IconOrSvg, RateLimiter, Role, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::VercelAvailableModel as AvailableModel;
@@ -117,8 +117,8 @@ impl LanguageModelProvider for VercelLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiVZero)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiVZero)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

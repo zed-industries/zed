@@ -9,7 +9,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, ProviderIcon, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, IconOrSvg, RateLimiter, Role, StopReason, TokenUsage,
     env_var,
 };
 use menu;
@@ -123,8 +123,8 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> ProviderIcon {
-        ProviderIcon::Name(IconName::AiOpenAi)
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Name(IconName::AiOpenAi)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
