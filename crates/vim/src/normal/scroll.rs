@@ -1,7 +1,6 @@
 use crate::Vim;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, SelectionEffects,
-    display_map::DisplayRow,
+    DisplayPoint, Editor, EditorSettings, SelectionEffects, display_map::DisplayRow,
     scroll::ScrollAmount,
 };
 use gpui::{Context, Window, actions};
