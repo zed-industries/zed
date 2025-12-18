@@ -1642,19 +1642,25 @@ impl Workspace {
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
-                    let restorable_bounds = serialized_workspace
+                    let from_serialized_workspace = serialized_workspace
                         .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                        .or_else(|| {
-                            let (display, window_bounds) = DB.last_window().log_err()?;
-                            Some((display?, window_bounds?))
+                        .and_then(|workspace| workspace.window_bounds)
+                        .map(|bounds| {
+                            (
+                                bounds.0,
+                                serialized_workspace.as_ref().and_then(|w| w.display),
+                            )
                         });
 
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
-                    } else {
-                        (None, None)
-                    }
+                    let (bounds, display) = from_serialized_workspace
+                        .or_else(|| {
+                            let (display, window_bounds) = DB.last_window().log_err()?;
+                            let bounds = window_bounds?;
+                            Some((bounds.0, display))
+                        })
+                        .unzip();
+
+                    (bounds, display.flatten())
                 };
 
                 // Use the serialized workspace to construct the new window
@@ -8522,19 +8528,25 @@ pub fn remote_workspace_position_from_db(
         let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
             (Some(WindowBounds::Windowed(bounds)), None)
         } else {
-            let restorable_bounds = serialized_workspace
+            let from_serialized_workspace = serialized_workspace
                 .as_ref()
-                .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                .or_else(|| {
-                    let (display, window_bounds) = DB.last_window().log_err()?;
-                    Some((display?, window_bounds?))
+                .and_then(|workspace| workspace.window_bounds)
+                .map(|bounds| {
+                    (
+                        bounds.0,
+                        serialized_workspace.as_ref().and_then(|w| w.display),
+                    )
                 });
 
-            if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                (Some(serialized_status.0), Some(serialized_display))
-            } else {
-                (None, None)
-            }
+            let (bounds, display) = from_serialized_workspace
+                .or_else(|| {
+                    let (display, window_bounds) = DB.last_window().log_err()?;
+                    let bounds = window_bounds?;
+                    Some((bounds.0, display))
+                })
+                .unzip();
+
+            (bounds, display.flatten())
         };
 
         let centered_layout = serialized_workspace
