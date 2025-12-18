@@ -10,6 +10,7 @@ use gpui::{AppContext, Context, IntoElement, Subscription, WeakEntity, Window};
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
 };
+use language::language_settings::SoftWrap;
 use log::debug;
 use multi_buffer::{ExcerptRange, PathKey};
 use project::Project;
@@ -1108,6 +1109,7 @@ fn build_preview_editor(
         editor.set_read_only(true);
         editor.set_searchable(false);
         editor.set_in_project_search(true);
+        editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
         if include_commit_addon {
             editor.set_expand_all_diff_hunks(cx);
             editor.register_addon(CommitPreviewAddon {
