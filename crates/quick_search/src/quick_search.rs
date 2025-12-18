@@ -370,7 +370,7 @@ impl QuickSearch {
             picker.delegate.is_streaming = false;
             picker.delegate.stream_finished = true;
             picker.delegate.clear_grouped_list_state();
-            picker.delegate.rebuild_rows_after_match_list_changed(cx);
+            picker.delegate.rebuild_rows_after_match_list_changed();
             picker.refresh_placeholder(window, cx);
             let query = picker.query(cx);
             let _scheduled = picker.delegate.search_engine.schedule_search_with_delay(
@@ -1327,6 +1327,7 @@ impl QuickSearch {
 struct QuickSearchDelegate {
     match_list: MatchList,
     selection: Option<MatchKey>,
+    grouped_rows_dirty: bool,
     quick_search: WeakEntity<QuickSearch>,
     workspace: WeakEntity<Workspace>,
     window_handle: gpui::AnyWindowHandle,
@@ -1360,6 +1361,7 @@ impl QuickSearchDelegate {
         Self {
             match_list: MatchList::new(MAX_RESULTS),
             selection: None,
+            grouped_rows_dirty: false,
             quick_search,
             workspace,
             window_handle,
@@ -1404,6 +1406,7 @@ impl QuickSearchDelegate {
                     return Task::ready(());
                 }
 
+                picker.delegate.ensure_grouped_rows_built(cx);
                 if picker.delegate.notify_pending {
                     cx.notify();
                 }
@@ -1426,6 +1429,7 @@ impl QuickSearchDelegate {
         }
 
         if immediate {
+            self.ensure_grouped_rows_built(cx);
             cx.notify();
             self.notify_pending = false;
             self.notify_scheduled = false;
@@ -1539,26 +1543,31 @@ impl QuickSearchDelegate {
 
     fn clear_grouped_list_state(&mut self) {
         self.grouped_list.clear();
+        self.grouped_rows_dirty = false;
     }
 
-    fn rebuild_rows_after_match_list_changed(&mut self, cx: &App) {
-        if self.is_grouped_list_active() {
-            self.rebuild_grouped_rows(cx);
-        } else {
-            self.clear_grouped_list_state();
+    fn ensure_grouped_rows_built(&mut self, cx: &App) {
+        if !self.is_grouped_list_active() || !self.grouped_rows_dirty {
+            return;
         }
-    }
-
-    fn rebuild_grouped_rows(&mut self, cx: &App) {
         let selected_id = self.selection.and_then(|k| self.match_list.id_by_key(k));
-        let selected_row =
-            self.grouped_list
-                .rebuild(&mut self.match_list, selected_id, &self.project, cx);
-        if selected_row.is_none() {
-            self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
+            let selected_row =
+                self.grouped_list
+                    .rebuild(&mut self.match_list, selected_id, &self.project, cx);
+            if selected_row.is_none() {
+                self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
                 GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
                 _ => None,
             });
+        }
+        self.grouped_rows_dirty = false;
+    }
+
+    fn rebuild_rows_after_match_list_changed(&mut self) {
+        if self.is_grouped_list_active() {
+            self.grouped_rows_dirty = true;
+        } else {
+            self.clear_grouped_list_state();
         }
     }
 
@@ -1697,7 +1706,11 @@ impl PickerDelegate for QuickSearchDelegate {
 
     fn match_count(&self) -> usize {
         if self.is_grouped_list_active() {
-            self.grouped_list.rows.len()
+            if self.grouped_rows_dirty {
+                self.match_list.match_count()
+            } else {
+                self.grouped_list.rows.len()
+            }
         } else {
             self.match_list.match_count()
         }
@@ -1705,7 +1718,11 @@ impl PickerDelegate for QuickSearchDelegate {
 
     fn selected_index(&self) -> usize {
         if self.is_grouped_list_active() {
-            self.selected_row_index()
+            if self.grouped_rows_dirty {
+                0
+            } else {
+                self.selected_row_index()
+            }
         } else {
             self.selected_match_index().unwrap_or(0)
         }
@@ -2438,7 +2455,7 @@ pub(crate) fn apply_source_event(
                                 .delegate
                                 .match_list
                                 .sort_by(|a, b| source.cmp_matches(a, b));
-                            picker.delegate.rebuild_rows_after_match_list_changed(cx);
+                            picker.delegate.rebuild_rows_after_match_list_changed();
                         }
                     }
                 }
@@ -2461,7 +2478,7 @@ pub(crate) fn apply_source_event(
 
                 let reached_cap = picker.delegate.match_list.extend(matches);
                 picker.delegate.total_results = picker.delegate.match_list.total_results();
-                picker.delegate.rebuild_rows_after_match_list_changed(cx);
+                picker.delegate.rebuild_rows_after_match_list_changed();
 
                 let new_render_rows = picker.delegate.match_count();
                 let need_notify = new_render_rows != previous_render_rows

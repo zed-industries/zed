@@ -1,6 +1,6 @@
 use crate::types::{MatchId, MatchKey, QuickMatch, QuickMatchPatch};
+use collections::HashMap;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 pub struct MatchList {
     items: Vec<QuickMatch>,
@@ -15,9 +15,9 @@ impl MatchList {
     pub fn new(max_results: usize) -> Self {
         Self {
             items: Vec::new(),
-            id_index: HashMap::new(),
-            key_index: HashMap::new(),
-            pending_patches_by_key: HashMap::new(),
+            id_index: HashMap::default(),
+            key_index: HashMap::default(),
+            pending_patches_by_key: HashMap::default(),
             max_results,
             truncated: false,
         }
