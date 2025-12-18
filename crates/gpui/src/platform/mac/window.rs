@@ -1474,6 +1474,9 @@ impl PlatformWindow for MacWindow {
 
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
+        #[cfg(feature = "macos-blade")]
+        this.renderer.draw(scene).log_err();
+        #[cfg(not(feature = "macos-blade"))]
         this.renderer.draw(scene);
     }
 

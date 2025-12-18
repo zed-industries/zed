@@ -1,7 +1,7 @@
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
-use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
+use crate::platform::blade::{BladeAtlas, BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
@@ -21,7 +21,7 @@ use x11rb::{
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
-        xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
+        xproto::{self, ClientMessageEvent, ConnectionExt, EventMask, TranslateCoordinatesReply},
     },
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
@@ -81,6 +81,7 @@ x11rb::atom_manager! {
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
         _NET_CLIENT_LIST_STACKING,
+        _GPUI_FORCE_UPDATE_WINDOW,
     }
 }
 
@@ -227,12 +228,15 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
     set
 }
 
-struct RawWindow {
+pub(crate) struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
     window_id: u32,
     visual_id: u32,
 }
+
+// RawWindow contains a pointer to an XCB connection, which is thread-safe by design.
+unsafe impl Send for RawWindow {}
 
 #[derive(Default)]
 pub struct Callbacks {
@@ -882,9 +886,90 @@ impl X11Window {
         xcb_flush(&self.0.xcb);
         Ok(())
     }
+
+    fn send_force_update(&self, force_update_atom: xproto::Atom) {
+        let message =
+            ClientMessageEvent::new(32, self.0.x_window, force_update_atom, [0, 0, 0, 0, 0]);
+        check_reply(
+            || "X11 SendEvent for GPU recovery force update failed",
+            self.0
+                .xcb
+                .send_event(false, self.0.x_window, EventMask::default(), message),
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn handle_draw_failure(&self, err: anyhow::Error) {
+        log::error!("Renderer draw failed: {}", err);
+        let inner = self.0.state.borrow();
+        let client = inner.client.clone();
+        let force_update_atom = inner.atoms._GPUI_FORCE_UPDATE_WINDOW;
+        drop(inner);
+
+        if let Err(recovery_err) = client.recover_gpu() {
+            panic!(
+                "GPU hung (recovery failed: {}), original error: {}",
+                recovery_err, err
+            );
+        }
+
+        self.send_force_update(force_update_atom);
+    }
 }
 
 impl X11WindowStatePtr {
+    pub(crate) fn resume_rendering(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.resume_rendering();
+    }
+
+    pub(crate) fn pause_rendering(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.pause_rendering();
+    }
+
+    pub(crate) fn destroy_surface(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.destroy_surface();
+    }
+
+    pub(crate) fn renderer_params(&self) -> (RawWindow, gpu::Extent, bool) {
+        let state = self.state.borrow();
+        let screen_index = state.display.id().0 as usize;
+        let visual_set = find_visuals(&self.xcb, screen_index);
+        let visual = visual_set.transparent.unwrap_or(visual_set.inherit);
+        let raw_window = RawWindow {
+            connection: self.xcb.get_raw_xcb_connection(),
+            screen_id: screen_index,
+            window_id: self.x_window,
+            visual_id: visual.id,
+        };
+        let extent = state.renderer.viewport_size();
+        let transparent = state.is_transparent();
+        (raw_window, extent, transparent)
+    }
+
+    pub(crate) fn get_atlas(&self) -> Arc<BladeAtlas> {
+        let state = self.state.borrow();
+        Arc::clone(state.renderer.sprite_atlas())
+    }
+
+    pub(crate) fn prepare_atlas(&self) {
+        let state = self.state.borrow();
+        state.renderer.prepare_atlas();
+    }
+
+    pub(crate) fn replace_renderer(
+        &self,
+        mut new_renderer: BladeRenderer,
+        atlas: &Arc<BladeAtlas>,
+    ) {
+        new_renderer.adopt_atlas(atlas);
+        let mut state = self.state.borrow_mut();
+        state.renderer = new_renderer;
+    }
+
     pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
@@ -1472,7 +1557,10 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        if let Err(err) = inner.renderer.draw(scene) {
+            drop(inner);
+            self.handle_draw_failure(err);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
