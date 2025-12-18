@@ -68,7 +68,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
-use encoding_rs;
+
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -5596,35 +5596,30 @@ impl Project {
         cx: &mut App,
         update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
     ) {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo(settings_ui) error?
-            return;
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path,
         };
+        let buffer_store = self.buffer_store.clone();
+
         cx.spawn(async move |cx| {
-            let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
+            let buffer = buffer_store
+                .update(cx, |store, cx| store.open_buffer(project_path, cx))
                 .await
-                .context("Failed to load settings file")?;
+                .context("Failed to open settings file")?;
 
-            let has_bom = file.has_bom;
-
-            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
-                store.new_text_for_update(file.text, move |settings| update(settings, cx))
+            buffer.update(cx, |buffer, cx| {
+                let current_text = buffer.text();
+                let new_text = cx
+                    .global::<SettingsStore>()
+                    .new_text_for_update(current_text, |settings| update(settings, cx));
+                buffer.edit([(0..buffer.len(), new_text)], None, cx);
             });
-            worktree
-                .update(cx, |worktree, cx| {
-                    let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        new_text.into(),
-                        line_ending,
-                        encoding_rs::UTF_8,
-                        has_bom,
-                        cx,
-                    )
-                })
+
+            buffer_store
+                .update(cx, |store, cx| store.save_buffer(buffer, cx))
                 .await
-                .context("Failed to write settings file")?;
+                .context("Failed to save settings file")?;
 
             anyhow::Ok(())
         })
