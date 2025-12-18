@@ -4,7 +4,7 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -180,8 +180,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenRouter
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

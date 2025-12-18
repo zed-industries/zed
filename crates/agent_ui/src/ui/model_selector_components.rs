@@ -1,6 +1,11 @@
 use gpui::{Action, FocusHandle, prelude::*};
 use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 
+enum ModelIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
 #[derive(IntoElement)]
 pub struct ModelSelectorHeader {
     title: SharedString,
@@ -39,7 +44,7 @@ impl RenderOnce for ModelSelectorHeader {
 pub struct ModelSelectorListItem {
     index: usize,
     title: SharedString,
-    icon: Option<IconName>,
+    icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
     is_favorite: bool,
@@ -60,7 +65,12 @@ impl ModelSelectorListItem {
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
-        self.icon = Some(icon);
+        self.icon = Some(ModelIcon::Name(icon));
+        self
+    }
+
+    pub fn icon_path(mut self, path: SharedString) -> Self {
+        self.icon = Some(ModelIcon::Path(path));
         self
     }
 
@@ -105,9 +115,12 @@ impl RenderOnce for ModelSelectorListItem {
                     .gap_1p5()
                     .when_some(self.icon, |this, icon| {
                         this.child(
-                            Icon::new(icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
+                            match icon {
+                                ModelIcon::Name(icon_name) => Icon::new(icon_name),
+                                ModelIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                            }
+                            .color(model_icon_color)
+                            .size(IconSize::Small),
                         )
                     })
                     .child(Label::new(self.title).truncate()),

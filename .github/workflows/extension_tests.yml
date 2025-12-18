@@ -61,8 +61,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
-    - id: cargo_fmt
-      name: steps::cargo_fmt
+    - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
     - name: extension_tests::run_clippy

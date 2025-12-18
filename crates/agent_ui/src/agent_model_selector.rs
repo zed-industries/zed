@@ -4,6 +4,7 @@ use crate::{
 };
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
+use language_model::IconOrSvg;
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
@@ -103,7 +104,14 @@ impl Render for AgentModelSelector {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                    this.child(
+                        match icon {
+                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                            IconOrSvg::Icon(name) => Icon::new(name),
+                        }
+                        .color(color)
+                        .size(IconSize::XSmall),
+                    )
                 })
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
@@ -115,7 +123,7 @@ impl Render for AgentModelSelector {
                 .child(
                     Icon::new(IconName::ChevronDown)
                         .color(color)
-                        .size(IconSize::Small),
+                        .size(IconSize::XSmall),
                 ),
             move |_window, cx| {
                 Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)

@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -93,7 +93,7 @@ impl LanguageModels {
     fn refresh_list(&mut self, cx: &App) {
         let providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -153,7 +153,10 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(provider.icon()),
+            icon: Some(match provider.icon() {
+                IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
+                IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
+            }),
         }
     }
 
@@ -164,7 +167,7 @@ impl LanguageModels {
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -1630,7 +1633,9 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(ui::IconName::ZedAssistant),
+                    icon: Some(acp_thread::AgentModelIcon::Named(
+                        ui::IconName::ZedAssistant
+                    )),
                 }]
             )])
         );
