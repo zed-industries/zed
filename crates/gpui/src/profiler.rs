@@ -202,7 +202,7 @@ impl ThreadTimings {
     }
 
     fn add_task_timing(&mut self, timing: TaskTiming) {
-        if let Some(last_timing) = self.timings.iter_mut().rev().next()
+        if let Some(last_timing) = self.timings.back_mut()
             && last_timing.location == timing.location
         {
             last_timing.end = timing.end;
