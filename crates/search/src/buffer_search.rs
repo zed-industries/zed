@@ -37,7 +37,7 @@ use ui::{
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    DeploySearch, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle,
@@ -132,7 +132,7 @@ impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.dismissed {
-            return div().id("search_bar");
+            return div().id("search_bar").into_any_element();
         }
 
         let focus_handle = self.focus_handle(cx);
@@ -850,19 +850,18 @@ impl BufferSearchBar {
 
     fn active_item_is_multibuffer(&self, cx: &App) -> bool {
         if let Some(item) = &self.active_searchable_item {
-            dbg!("Calling");
             let buffer_kind = item.buffer_kind(cx);
 
-            if item
-                .act_as_type(TypeId::of::<ProjectSearchView>(), cx)
-                .is_some()
-            {
-                dbg!("Called success");
-                return false;
+            if buffer_kind == ItemBufferKind::Multibuffer {
+                if let Some(editor) = item.act_as_type(TypeId::of::<Editor>(), cx) {
+                    let editor = editor.downcast::<Editor>().expect("is an editor");
+                    return !editor.read(cx).in_project_search;
+                } else {
+                    return false;
+                }
+            } else {
+                false
             }
-            dbg!("Called fail");
-
-            buffer_kind == ItemBufferKind::Multibuffer
         } else {
             false
         }
