@@ -226,6 +226,8 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
+pub const STYLE_FAILED_OUTPUT: &str = "style_failed";
+
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
@@ -241,11 +243,19 @@ fn check_style() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
-            .add_step(steps::script("./script/prettier"))
+            .add_step(steps::prettier())
             .add_step(steps::cargo_fmt())
+            .add_step(steps::record_style_failure())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .outputs([(
+                STYLE_FAILED_OUTPUT.to_owned(),
+                format!(
+                    "${{{{ steps.{}.outputs.failed == 'true' }}}}",
+                    steps::RECORD_STYLE_FAILURE_STEP_ID
+                ),
+            )]),
     )
 }
 
@@ -262,6 +272,10 @@ fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob 
         .add_env(("GITHUB_TOKEN", "${{ steps.get-app-token.outputs.token }}"))
     }
 
+    let style_failed_expr = format!(
+        "needs.{}.outputs.{} == 'true'",
+        check_style.name, STYLE_FAILED_OUTPUT
+    );
     let clippy_failed_expr = format!(
         "needs.{}.outputs.{} == 'true'",
         run_tests_linux.name, CLIPPY_FAILED_OUTPUT
@@ -271,8 +285,8 @@ fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .cond(Expression::new(format!(
-            "(needs.{}.result == 'failure' || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
-            check_style.name, clippy_failed_expr
+            "always() && ({} || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
+            style_failed_expr, clippy_failed_expr
         )))
         .needs(vec![check_style.name.clone(), run_tests_linux.name.clone()])
         .add_step(authenticate)
@@ -365,6 +379,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::record_clippy_failure())
+            })
+            .when(platform == Platform::Linux, |job| {
                 job.add_step(steps::cargo_install_nextest())
             })
             .add_step(steps::clear_target_dir_if_large(platform))
@@ -374,8 +391,8 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
                 job.outputs([(
                     CLIPPY_FAILED_OUTPUT.to_owned(),
                     format!(
-                        "${{{{ steps.{}.outcome == 'failure' }}}}",
-                        steps::CLIPPY_STEP_ID
+                        "${{{{ steps.{}.outputs.failed == 'true' }}}}",
+                        steps::RECORD_CLIPPY_FAILURE_STEP_ID
                     ),
                 )])
             }),
