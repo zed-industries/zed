@@ -51,7 +51,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +153,13 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: `true`
+    pub word_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -366,6 +373,8 @@ impl InlayHintSettings {
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
+    /// Whether to use the experimental edit prediction context retrieval system.
+    pub use_context: bool,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
@@ -595,6 +604,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
 
@@ -614,6 +624,11 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
+        let use_edit_prediction_context = all_languages
+            .features
+            .as_ref()
+            .and_then(|f| f.experimental_edit_prediction_context_retrieval)
+            .unwrap_or_default();
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -641,7 +656,7 @@ impl settings::Settings for AllLanguageSettings {
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
@@ -650,7 +665,10 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().unwrap());
+            file_types.insert(
+                language.clone(),
+                (builder.build().unwrap(), patterns.0.clone()),
+            );
         }
 
         Self {
@@ -660,6 +678,7 @@ impl settings::Settings for AllLanguageSettings {
                 } else {
                     EditPredictionProvider::None
                 },
+                use_context: use_edit_prediction_context,
                 disabled_globs: disabled_globs
                     .iter()
                     .filter_map(|g| {

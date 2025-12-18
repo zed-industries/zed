@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
+use ztracing::instrument;
 
 pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
@@ -50,22 +51,30 @@ impl Rope {
 
     #[track_caller]
     #[inline(always)]
-    pub fn assert_char_boundary(&self, offset: usize) {
+    pub fn assert_char_boundary<const PANIC: bool>(&self, offset: usize) -> bool {
         if self.chunks.is_empty() && offset == 0 {
-            return;
+            return true;
         }
         let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
         match item {
             Some(chunk) => {
                 let chunk_offset = offset - start;
-                chunk.assert_char_boundary(chunk_offset);
+                chunk.assert_char_boundary::<PANIC>(chunk_offset)
             }
-            None => {
+            None if PANIC => {
                 panic!(
                     "byte index {} is out of bounds of rope (length: {})",
                     offset,
                     self.len()
                 );
+            }
+            None => {
+                log::error!(
+                    "byte index {} is out of bounds of rope (length: {})",
+                    offset,
+                    self.len()
+                );
+                false
             }
         }
     }
@@ -218,7 +227,7 @@ impl Rope {
         #[cfg(all(test, not(rust_analyzer)))]
         const PARALLEL_THRESHOLD: usize = 4;
         #[cfg(not(all(test, not(rust_analyzer))))]
-        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
+        const PARALLEL_THRESHOLD: usize = 84 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks
@@ -420,6 +429,7 @@ impl Rope {
             })
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;
@@ -715,10 +725,8 @@ impl<'a> Chunks<'a> {
             range.start
         };
         let chunk_offset = offset - chunks.start();
-        if let Some(chunk) = chunks.item()
-            && !chunk.text.is_char_boundary(chunk_offset)
-        {
-            panic!("byte index {} is not a char boundary", offset);
+        if let Some(chunk) = chunks.item() {
+            chunk.assert_char_boundary::<true>(chunk_offset);
         }
         Self {
             chunks,

@@ -111,7 +111,7 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
@@ -240,6 +240,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         Some(completion_tx),
@@ -309,7 +311,7 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
@@ -369,6 +371,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         None,

@@ -471,7 +471,7 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 }
 ```
 
-Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
+Subword motion, which allows you to navigate and select individual words in `camelCase` or `snake_case`, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json [settings]
 {
@@ -484,6 +484,9 @@ Subword motion, which allows you to navigate and select individual words in came
   }
 }
 ```
+
+> Note: Operations like `dw` remain unaffected. If you would like operations to
+> also use subword motion, remove `vim_mode != operator` from the `context`.
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
@@ -566,7 +569,8 @@ You can change the following settings to modify vim mode's behavior:
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | deprecated                                                                                                                                                                                    |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
-| toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
+| toggle_relative_line_numbers | deprecated                                                                                                                                                                                    | false         |
+| relative_line_numbers        | If "enabled", line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                      | "disabled"    |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
 | highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
 
@@ -590,7 +594,7 @@ Here's an example of these settings changed:
     "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
-    "toggle_relative_line_numbers": true,
+    "relative_line_numbers": "enabled",
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"

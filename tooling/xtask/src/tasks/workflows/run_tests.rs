@@ -7,7 +7,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
     steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
-    vars::PathCondition,
+    vars::{self, PathCondition},
 };
 
 use super::{
@@ -45,11 +45,15 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
+    let check_style = check_style();
+    let run_tests_linux = run_platform_tests(Platform::Linux);
+    let call_autofix = call_autofix(&check_style, &run_tests_linux);
+
     let mut jobs = vec![
         orchestrate,
-        check_style(),
+        check_style,
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
+        should_run_tests.guard(run_tests_linux),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
@@ -106,6 +110,7 @@ pub(crate) fn run_tests() -> Workflow {
             workflow
         })
         .add_job(tests_pass.name, tests_pass.job)
+        .add_job(call_autofix.name, call_autofix.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
@@ -221,13 +226,15 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
+pub const STYLE_FAILED_OUTPUT: &str = "style_failed";
+
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
             "crate-ci",
             "typos",
-            "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
-        ) // v1.38.1
+            "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
+        ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
     named::job(
@@ -236,12 +243,56 @@ fn check_style() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
-            .add_step(steps::script("./script/prettier"))
+            .add_step(steps::prettier())
+            .add_step(steps::cargo_fmt())
+            .add_step(steps::record_style_failure())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
-            .add_step(steps::cargo_fmt()),
+            .outputs([(
+                STYLE_FAILED_OUTPUT.to_owned(),
+                format!(
+                    "${{{{ steps.{}.outputs.failed == 'true' }}}}",
+                    steps::RECORD_STYLE_FAILURE_STEP_ID
+                ),
+            )]),
     )
+}
+
+fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob {
+    fn dispatch_autofix(run_tests_linux_name: &str) -> Step<Run> {
+        let clippy_failed_expr = format!(
+            "needs.{}.outputs.{} == 'true'",
+            run_tests_linux_name, CLIPPY_FAILED_OUTPUT
+        );
+        named::bash(format!(
+            "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy=${{{{ {} }}}}",
+            clippy_failed_expr
+        ))
+        .add_env(("GITHUB_TOKEN", "${{ steps.get-app-token.outputs.token }}"))
+    }
+
+    let style_failed_expr = format!(
+        "needs.{}.outputs.{} == 'true'",
+        check_style.name, STYLE_FAILED_OUTPUT
+    );
+    let clippy_failed_expr = format!(
+        "needs.{}.outputs.{} == 'true'",
+        run_tests_linux.name, CLIPPY_FAILED_OUTPUT
+    );
+    let (authenticate, _token) = steps::authenticate_as_zippy();
+
+    let job = Job::default()
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new(format!(
+            "always() && ({} || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
+            style_failed_expr, clippy_failed_expr
+        )))
+        .needs(vec![check_style.name.clone(), run_tests_linux.name.clone()])
+        .add_step(authenticate)
+        .add_step(dispatch_autofix(&run_tests_linux.name));
+
+    named::job(job)
 }
 
 fn check_dependencies() -> NamedJob {
@@ -304,6 +355,8 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
+pub const CLIPPY_FAILED_OUTPUT: &str = "clippy_failed";
+
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
@@ -326,11 +379,23 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::record_clippy_failure())
+            })
+            .when(platform == Platform::Linux, |job| {
                 job.add_step(steps::cargo_install_nextest())
             })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
-            .add_step(steps::cleanup_cargo_config(platform)),
+            .add_step(steps::cleanup_cargo_config(platform))
+            .when(platform == Platform::Linux, |job| {
+                job.outputs([(
+                    CLIPPY_FAILED_OUTPUT.to_owned(),
+                    format!(
+                        "${{{{ steps.{}.outputs.failed == 'true' }}}}",
+                        steps::RECORD_CLIPPY_FAILURE_STEP_ID
+                    ),
+                )])
+            }),
     }
 }
 
@@ -353,7 +418,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     }
 
     fn bufbuild_setup_action() -> Step<Use> {
-        named::uses("bufbuild", "buf-setup-action", "v1").add_with(("version", "v1.29.0"))
+        named::uses("bufbuild", "buf-setup-action", "v1")
+            .add_with(("version", "v1.29.0"))
+            .add_with(("github_token", vars::GITHUB_TOKEN))
     }
 
     fn bufbuild_breaking_action() -> Step<Use> {
@@ -366,6 +433,8 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .runs_on(runners::LINUX_DEFAULT)
             .add_env(("GIT_AUTHOR_NAME", "Protobuf Action"))
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
+            .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
+            .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
             .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
             .add_step(remove_untracked_files())
             .add_step(ensure_fresh_merge())

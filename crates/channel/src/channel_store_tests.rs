@@ -1,7 +1,7 @@
 use super::*;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use gpui::{App, AppContext as _, Entity, SemanticVersion};
+use gpui::{App, AppContext as _, Entity};
 use http_client::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
@@ -236,7 +236,7 @@ fn test_dangling_channel_paths(cx: &mut App) {
 fn init_test(cx: &mut App) -> Entity<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    release_channel::init(SemanticVersion::default(), cx);
+    release_channel::init(semver::Version::new(0, 0, 0), cx);
 
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();

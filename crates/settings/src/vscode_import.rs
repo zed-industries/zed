@@ -215,6 +215,7 @@ impl VsCodeSettings {
             vim: None,
             vim_mode: None,
             workspace: self.workspace_settings_content(),
+            which_key: None,
         }
     }
 
@@ -490,6 +491,7 @@ impl VsCodeSettings {
                         .flat_map(|n| n.as_u64().map(|n| n as usize))
                         .collect()
                 }),
+            word_diff_enabled: None,
         }
     }
 
@@ -568,7 +570,7 @@ impl VsCodeSettings {
             .filter_map(|(k, v)| {
                 Some((
                     k.clone().into(),
-                    ContextServerSettingsContent::Custom {
+                    ContextServerSettingsContent::Stdio {
                         enabled: true,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
@@ -618,9 +620,13 @@ impl VsCodeSettings {
     fn preview_tabs_settings_content(&self) -> Option<PreviewTabsSettingsContent> {
         skip_default(PreviewTabsSettingsContent {
             enabled: self.read_bool("workbench.editor.enablePreview"),
+            enable_preview_from_project_panel: None,
             enable_preview_from_file_finder: self
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
-            enable_preview_from_code_navigation: self
+            enable_preview_from_multibuffer: None,
+            enable_preview_multibuffer_from_code_navigation: None,
+            enable_preview_file_from_code_navigation: None,
+            enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
         })
     }
@@ -772,6 +778,8 @@ impl VsCodeSettings {
             working_directory: None,
             env,
             detect_venv: None,
+            path_hyperlink_regexes: None,
+            path_hyperlink_timeout_ms: None,
         }
     }
 
@@ -841,6 +849,7 @@ impl VsCodeSettings {
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
             restore_on_startup: None,
+            window_decorations: None,
             show_call_status_icon: None,
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
             use_system_prompts: None,

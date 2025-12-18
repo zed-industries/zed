@@ -64,8 +64,12 @@ pub struct ItemSettings {
 #[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
+    pub enable_preview_from_project_panel: bool,
     pub enable_preview_from_file_finder: bool,
-    pub enable_preview_from_code_navigation: bool,
+    pub enable_preview_from_multibuffer: bool,
+    pub enable_preview_multibuffer_from_code_navigation: bool,
+    pub enable_preview_file_from_code_navigation: bool,
+    pub enable_keep_preview_on_code_navigation: bool,
 }
 
 impl Settings for ItemSettings {
@@ -87,9 +91,19 @@ impl Settings for PreviewTabsSettings {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_project_panel: preview_tabs
+                .enable_preview_from_project_panel
+                .unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
-            enable_preview_from_code_navigation: preview_tabs
-                .enable_preview_from_code_navigation
+            enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
+            enable_preview_multibuffer_from_code_navigation: preview_tabs
+                .enable_preview_multibuffer_from_code_navigation
+                .unwrap(),
+            enable_preview_file_from_code_navigation: preview_tabs
+                .enable_preview_file_from_code_navigation
+                .unwrap(),
+            enable_keep_preview_on_code_navigation: preview_tabs
+                .enable_keep_preview_on_code_navigation
                 .unwrap(),
         }
     }
@@ -287,7 +301,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -869,8 +883,18 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        // Only trigger autosave if focus has truly left the item.
+                        // If focus is still within the item's hierarchy (e.g., moved to a context menu),
+                        // don't trigger autosave to avoid unwanted formatting and cursor jumps.
+                        // Also skip autosave if focus moved to a modal (e.g., command palette),
+                        // since the user is still interacting with the workspace.
+                        let focus_handle = item.item_focus_handle(cx);
+                        if !focus_handle.contains_focused(window, cx)
+                            && !workspace.has_active_modal(window, cx)
+                        {
+                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                                .detach_and_log_err(cx);
+                        }
                     }
                 },
             )
@@ -981,7 +1005,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
+        self.read(cx).as_searchable(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
@@ -1022,7 +1046,7 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| {
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
         })
     }

@@ -24,4 +24,9 @@ rewrap_prefixes = [
 auto_indent_on_paste = false
 auto_indent_using_last_non_empty_line = false
 tab_size = 2
+decrease_indent_patterns = [
+  { pattern = "^\\s*-",    valid_after = ["list_item"] },
+  { pattern = "^\\s*\\d",    valid_after = ["list_item"] },
+  { pattern = "^\\s*",    valid_after = ["list_item"] },
+]
 prettier_parser_name = "markdown"

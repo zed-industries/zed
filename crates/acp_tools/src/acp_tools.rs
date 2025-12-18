@@ -371,13 +371,13 @@ impl AcpTools {
                                     syntax: cx.theme().syntax().clone(),
                                     code_block_overflow_x_scroll: true,
                                     code_block: StyleRefinement {
-                                        text: Some(TextStyleRefinement {
+                                        text: TextStyleRefinement {
                                             font_family: Some(
                                                 theme_settings.buffer_font.family.clone(),
                                             ),
                                             font_size: Some((base_size * 0.8).into()),
                                             ..Default::default()
-                                        }),
+                                        },
                                         ..Default::default()
                                     },
                                     ..Default::default()
@@ -528,7 +528,7 @@ impl Render for AcpTools {
                                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                                 .size_full(),
                             )
-                            .vertical_scrollbar_for(connection.list_state.clone(), window, cx)
+                            .vertical_scrollbar_for(&connection.list_state, window, cx)
                             .into_any()
                     }
                 }

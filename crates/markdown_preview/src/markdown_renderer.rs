@@ -9,7 +9,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
     ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
     Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle,
-    WeakEntity, Window, div, img, rems,
+    WeakEntity, Window, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -75,8 +75,10 @@ impl RenderContext {
 
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
+        let buffer_font_features = settings.buffer_font.features.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
+        buffer_text_style.font_features = buffer_font_features;
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
 
         RenderContext {
@@ -519,8 +521,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .children(render_markdown_text(&cell.children, cx))
                 .px_2()
                 .py_1()
-                .border_1()
-                .size_full()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
                 .border_color(cx.border_color)
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
@@ -550,8 +552,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
             }
 
             let empty_cell = div()
-                .border_1()
-                .size_full()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
                 .border_color(cx.border_color)
                 .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
@@ -560,7 +562,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         }
     }
 
-    cx.with_common_p(div())
+    cx.with_common_p(v_flex().items_start())
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
@@ -568,8 +570,10 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
             div()
                 .grid()
                 .grid_cols(max_column_count as u16)
-                .border_1()
+                .border(px(1.5))
                 .border_color(cx.border_color)
+                .rounded_sm()
+                .overflow_hidden()
                 .children(cells),
         )
         .into_any()
@@ -633,8 +637,14 @@ fn render_markdown_code_block(
         .tooltip(Tooltip::text("Copy code block"))
         .visible_on_hover("markdown-block");
 
+    let font = gpui::Font {
+        family: cx.buffer_font_family.clone(),
+        features: cx.buffer_text_style.font_features.clone(),
+        ..Default::default()
+    };
+
     cx.with_common_p(div())
-        .font_family(cx.buffer_font_family.clone())
+        .font(font)
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
