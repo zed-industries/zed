@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
 };
+use strum::{EnumIter, IntoEnumIterator as _};
 use text::LineEnding;
 use util::ResultExt;
 use uuid::Uuid;
@@ -52,17 +53,12 @@ pub struct PromptMetadata {
 }
 
 /// Built-in prompts that have default content and can be customized by users.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
 pub enum BuiltInPrompt {
     CommitMessage,
 }
 
 impl BuiltInPrompt {
-    /// Returns all built-in prompt variants.
-    pub fn all() -> &'static [BuiltInPrompt] {
-        &[BuiltInPrompt::CommitMessage]
-    }
-
     pub fn title(&self) -> &'static str {
         match self {
             Self::CommitMessage => "Commit message",
@@ -186,8 +182,8 @@ impl MetadataCache {
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
 
-        for builtin in BuiltInPrompt::all() {
-            let builtin_id = PromptId::BuiltIn(*builtin);
+        for builtin in BuiltInPrompt::iter() {
+            let builtin_id = PromptId::BuiltIn(builtin);
             let metadata = PromptMetadata {
                 id: builtin_id,
                 title: Some(builtin.title().into()),

@@ -12635,6 +12635,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "strum 0.27.2",
  "tempfile",
  "text",
  "util",
