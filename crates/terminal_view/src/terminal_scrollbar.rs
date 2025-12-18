@@ -60,10 +60,7 @@ impl ScrollableHandle for TerminalScrollHandle {
             .total_lines
             .saturating_sub(state.viewport_lines)
             .saturating_sub(state.display_offset);
-        Point::new(
-            Pixels::ZERO,
-            -(scroll_offset as f32 * state.line_height),
-        )
+        Point::new(Pixels::ZERO, -(scroll_offset as f32 * state.line_height))
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
