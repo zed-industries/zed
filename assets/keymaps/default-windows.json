@@ -296,6 +296,7 @@
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -308,6 +309,7 @@
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {

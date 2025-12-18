@@ -34,7 +34,7 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::Chat;
+use zed_actions::agent::{Chat, PasteRaw};
 
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
@@ -687,6 +687,13 @@ impl MessageEditor {
         }
     }
 
+    fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.clone();
+        window.defer(cx, move |window, cx| {
+            editor.update(cx, |editor, cx| editor.paste(&Paste, window, cx));
+        });
+    }
+
     pub fn insert_dragged_files(
         &mut self,
         paths: Vec<project::ProjectPath>,
@@ -964,6 +971,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
             .child({
