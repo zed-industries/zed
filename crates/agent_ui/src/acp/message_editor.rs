@@ -952,6 +952,12 @@ impl MessageEditor {
             editor.set_text(text, window, cx);
         });
     }
+
+    pub fn copy(&self, cx: &mut Context<Self>, window: &mut Window) {
+        let _ = self.editor.update(cx, move |editor, cx| {
+            editor.copy(&editor::actions::Copy, window, cx);
+        });
+    }
 }
 
 impl Focusable for MessageEditor {

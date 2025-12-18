@@ -2034,7 +2034,25 @@ impl AcpThreadView {
                                         }
                                     })
                                     .text_xs()
-                                    .child(editor.clone().into_any_element()),
+                                    .child({
+                                        let editor_weak = editor.downgrade();
+                                        right_click_menu(format!("message_context_menu-{}", entry_ix))
+                                            .trigger({
+                                                let editor_weak = editor_weak.clone();
+                                                move |_, _, _| editor_weak.upgrade().map_or(Empty.into_any_element(), |ed| ed.into_any_element())
+                                            })
+                                            .menu(move |window, cx| {
+                                                let ed = editor_weak.upgrade().unwrap();
+                                                ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                                    menu.entry("Copy", None, move |win, cx| {
+                                                        ed.update(cx, |editor, _cx|{
+                                                            editor.copy(_cx, win);
+                                                        });
+                                                    })
+                                                })
+                                            })
+                                            .into_any_element()
+                                    })
                             )
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
@@ -4266,7 +4284,32 @@ impl AcpThreadView {
                     .size_full()
                     .pt_1()
                     .pr_2p5()
-                    .child(self.message_editor.clone())
+                    .child({
+                        let editor_weak = self.message_editor.downgrade();
+                        right_click_menu("message_editor_context_menu")
+                            .trigger({
+                                let editor_weak = editor_weak.clone();
+                                move |_, _, _| {
+                                    editor_weak
+                                        .upgrade()
+                                        .map_or(Empty.into_any_element(), |e| e.into_any_element())
+                                }
+                            })
+                            .menu({
+                                let editor_weak = editor_weak.clone();
+                                move |window, cx| {
+                                    let ed = editor_weak.upgrade().unwrap();
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.entry("Copy", None, move |win, cx| {
+                                            ed.update(cx, |editor, _cx| {
+                                                editor.copy(_cx, win);
+                                            });
+                                        })
+                                    })
+                                }
+                            })
+                            .into_any_element()
+                    })
                     .child(
                         h_flex()
                             .absolute()
