@@ -6,49 +6,48 @@
 - [Installation](./installation.md)
   - [Update](./update.md)
   - [Uninstall](./uninstall.md)
-- [Authenticate](./authentication.md)
-- [Telemetry](./telemetry.md)
 - [Troubleshooting](./troubleshooting.md)
 
-# Configuration
+# Customization
 
-- [Configuring Zed](./configuring-zed.md)
-- [Configuring Languages](./configuring-languages.md)
-  - [Toolchains](./toolchains.md)
-- [Key bindings](./key-bindings.md)
-  - [All Actions](./all-actions.md)
+- [Appearance](./themes.md)
+  - [Themes](./themes.md)
+  - [Icon Themes](./icon-themes.md)
+  - [Fonts & Visual Tweaks](./visual-customization.md)
+- [Keybindings](./key-bindings.md)
+  - [Custom Key Bindings](./key-bindings.md)
+  - [Vim Mode](./vim.md)
+  - [Helix Mode](./helix.md)
 - [Snippets](./snippets.md)
-- [Themes](./themes.md)
-- [Icon Themes](./icon-themes.md)
-- [Visual Customization](./visual-customization.md)
-- [Vim Mode](./vim.md)
-- [Helix Mode](./helix.md)
-- [Privacy and Security](./ai/privacy-and-security.md)
-  - [Worktree Trust](./worktree-trust.md)
-  - [AI Improvement](./ai/ai-improvement.md)
 
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
 
-# Using Zed
+# Working with Code
 
-- [Multibuffers](./multibuffers.md)
-- [Command Palette](./command-palette.md)
-- [Command-line Interface](./command-line-interface.md)
-- [Outline Panel](./outline-panel.md)
-- [Code Completions](./completions.md)
-- [Collaboration](./collaboration/overview.md)
+- [Editing Code](./completions.md)
+  - [Code Completions](./completions.md)
+  - [Diagnostics & Quick Fixes](./diagnostics.md)
+  - [Multibuffers](./multibuffers.md)
+- [Finding & Navigating](./command-palette.md)
+  - [Command Palette](./command-palette.md)
+  - [Outline Panel](./outline-panel.md)
+  - [Tab Switcher](./tab-switcher.md)
+- [Running & Testing](./tasks.md)
+  - [Tasks](./tasks.md)
+  - [Debugger](./debugger.md)
+  - [REPL](./repl.md)
+- [Git](./git.md)
+
+# Collaboration
+
+- [Overview](./collaboration/overview.md)
   - [Channels](./collaboration/channels.md)
   - [Contacts and Private Calls](./collaboration/contacts-and-private-calls.md)
-- [Git](./git.md)
-- [Debugger](./debugger.md)
-- [Diagnostics](./diagnostics.md)
-- [Tasks](./tasks.md)
-- [Tab Switcher](./tab-switcher.md)
+
+# Remote Development
+
 - [Remote Development](./remote-development.md)
-- [Dev Containers](./dev-containers.md)
-- [Environment Variables](./environment.md)
-- [REPL](./repl.md)
 
 # Platform Support
 
@@ -99,6 +98,8 @@
 # Language Support
 
 - [All Languages](./languages.md)
+- [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
@@ -169,6 +170,23 @@
 - [Yara](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
+
+# Reference
+
+- [All Settings](./reference/all-settings.md)
+- [All Actions](./reference/all-actions.md)
+- [Default Key Bindings](./reference/default-key-bindings.md)
+- [CLI Reference](./reference/cli.md)
+- [Environment Variables](./reference/environment-variables.md)
+- [Glob Patterns](./reference/glob-patterns.md)
+
+# Account & Privacy
+
+- [Sign In](./authentication.md)
+- [Privacy and Security](./ai/privacy-and-security.md)
+  - [Worktree Trust](./worktree-trust.md)
+  - [AI Improvement](./ai/ai-improvement.md)
+- [Telemetry](./telemetry.md)
 
 # Developing Zed
 
