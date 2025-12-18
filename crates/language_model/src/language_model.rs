@@ -797,7 +797,7 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
-/// An icon, either a built-in icon name or a path to an external SVG.
+/// Either a built-in icon name or a path to an external SVG.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IconOrSvg {
     /// A built-in icon from Zed's icon set.
