@@ -4098,6 +4098,27 @@ impl Window {
         self.pending_input.take();
     }
 
+    /// Removes the last pending keystroke from the pending input sequence.
+    /// Returns true if a keystroke was removed, false if there were no pending keystrokes.
+    pub fn pop_pending_keystroke(&mut self, cx: &mut App) -> bool {
+        let Some(pending) = self.pending_input.as_mut() else {
+            return false;
+        };
+
+        if pending.keystrokes.is_empty() {
+            return false;
+        }
+
+        pending.keystrokes.pop();
+
+        if pending.keystrokes.is_empty() {
+            self.pending_input.take();
+        }
+
+        self.pending_input_changed(cx);
+        true
+    }
+
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
         self.pending_input

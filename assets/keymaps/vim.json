@@ -1097,4 +1097,10 @@
       "ctrl-e": "markdown::ScrollDown",
     },
   },
+  {
+    "context": "pending",
+    "bindings": {
+      "backspace": "zed::PopKey"
+    }
+  },
 ]

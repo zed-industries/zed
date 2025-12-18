@@ -449,11 +449,18 @@ impl DispatchTree {
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        has_pending_keystrokes: bool,
     ) -> (SmallVec<[KeyBinding; 1]>, bool, Vec<KeyContext>) {
-        let context_stack: Vec<KeyContext> = dispatch_path
+        let mut context_stack: Vec<KeyContext> = dispatch_path
             .iter()
             .filter_map(|node_id| self.node(*node_id).context.clone())
             .collect();
+
+        if has_pending_keystrokes {
+            let mut pending_context = KeyContext::default();
+            pending_context.add("pending");
+            context_stack.push(pending_context);
+        }
 
         let (bindings, partial) = self
             .keymap
@@ -486,8 +493,10 @@ impl DispatchTree {
         keystroke: Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> DispatchResult {
+        let has_pending_keystrokes = !input.is_empty();
         input.push(keystroke.clone());
-        let (bindings, pending, context_stack) = self.bindings_for_input(&input, dispatch_path);
+        let (bindings, pending, context_stack) =
+            self.bindings_for_input(&input, dispatch_path, has_pending_keystrokes);
 
         if pending {
             return DispatchResult {
@@ -542,7 +551,7 @@ impl DispatchTree {
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
         for last in (0..input.len()).rev() {
-            let (bindings, _, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
+            let (bindings, _, _) = self.bindings_for_input(&input[0..=last], dispatch_path, false);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
                     keystroke: input.drain(0..=last).next_back().unwrap(),

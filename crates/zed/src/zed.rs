@@ -130,6 +130,8 @@ actions!(
         TestPanic,
         /// Triggers a hard crash for debugging.
         TestCrash,
+        /// Removes the latest pending keystroke.
+        PopKey,
     ]
 );
 
@@ -815,6 +817,9 @@ fn register_actions(
         })
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
+        })
+        .register_action(|_, _: &PopKey, window, cx| {
+            window.pop_pending_keystroke(cx);
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
