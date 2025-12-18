@@ -2115,6 +2115,7 @@ impl AcpThreadView {
                 chunks,
                 indented: _,
             }) => {
+                let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -2124,36 +2125,55 @@ impl AcpThreadView {
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
-                                block.markdown().map(|md| {
-                                    self.render_markdown(md.clone(), style.clone())
-                                        .into_any_element()
+                                block.markdown().and_then(|md| {
+                                    let this_is_blank = md.read(cx).source().trim().is_empty();
+                                    is_blank = is_blank && this_is_blank;
+                                    if this_is_blank {
+                                        return None;
+                                    }
+
+                                    Some(
+                                        self.render_markdown(md.clone(), style.clone())
+                                            .into_any_element(),
+                                    )
                                 })
                             }
                             AssistantMessageChunk::Thought { block } => {
-                                block.markdown().map(|md| {
-                                    self.render_thinking_block(
-                                        entry_ix,
-                                        chunk_ix,
-                                        md.clone(),
-                                        window,
-                                        cx,
+                                block.markdown().and_then(|md| {
+                                    let this_is_blank = md.read(cx).source().trim().is_empty();
+                                    is_blank = is_blank && this_is_blank;
+                                    if this_is_blank {
+                                        return None;
+                                    }
+
+                                    Some(
+                                        self.render_thinking_block(
+                                            entry_ix,
+                                            chunk_ix,
+                                            md.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .into_any_element(),
                                     )
-                                    .into_any_element()
                                 })
                             }
                         },
                     ))
                     .into_any();
 
-                v_flex()
-                    .px_5()
-                    .py_1p5()
-                    .when(is_first_indented, |this| this.pt_0p5())
-                    .when(is_last, |this| this.pb_4())
-                    .w_full()
-                    .text_ui(cx)
-                    .child(message_body)
-                    .into_any()
+                if is_blank {
+                    Empty.into_any()
+                } else {
+                    v_flex()
+                        .px_5()
+                        .py_1p5()
+                        .when(is_last, |this| this.pb_4())
+                        .w_full()
+                        .text_ui(cx)
+                        .child(message_body)
+                        .into_any()
+                }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
