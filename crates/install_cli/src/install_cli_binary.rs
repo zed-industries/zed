@@ -16,17 +16,6 @@ actions!(
     ]
 );
 
-async fn is_user_admin() -> bool {
-    let output = smol::process::Command::new("groups").output().await.ok();
-    if let Some(output) = output {
-        if output.status.success() {
-            let groups = String::from_utf8_lossy(&output.stdout);
-            return groups.split_whitespace().any(|g| g == "admin");
-        }
-    }
-    false
-}
-
 async fn install_to_local_bin(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let home_dir = std::env::var("HOME").context("Failed to get HOME environment variable")?;
@@ -101,12 +90,7 @@ async fn install_to_system_bin(cx: &AsyncApp) -> Result<PathBuf> {
 }
 
 async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
-    let has_admin = is_user_admin().await;
-
-    if !has_admin {
-        return install_to_local_bin(cx).await;
-    }
-
+    // First, try to install to system bin
     match install_to_system_bin(cx).await {
         Ok(path) => Ok(path),
         Err(err) => {
@@ -114,6 +98,7 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
                 "Failed to install to system bin: {}. Falling back to local bin.",
                 err
             );
+            // If system install fails, fallback to local bin
             install_to_local_bin(cx).await
         }
     }
@@ -137,10 +122,12 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
             .await
             .context("error creating CLI symlink")?;
 
+        let is_local_install = !path.starts_with("/usr/local/bin");
+
         workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledZedCli;
 
-            let message = if path.starts_with("/usr/local/bin") {
+            let message = if !is_local_install {
                 format!(
                     "Installed `zed` to {}. You can launch {} from your terminal.",
                     path.to_string_lossy(),
@@ -148,12 +135,11 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
                 )
             } else {
                 format!(
-                    "Installed `zed` to {}. Make sure {} is in your PATH to launch from your terminal.",
+                    "Installed `zed` to {}. Remember to add {} to your PATH.",
                     path.to_string_lossy(),
                     path.parent().unwrap().to_string_lossy()
                 )
             };
-
 
             workspace.show_toast(
                 Toast::new(
@@ -163,6 +149,24 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
                 cx,
             )
         })?;
+
+        // Show dialog box for local installation to remind user about PATH
+        if is_local_install {
+            let local_bin_path = path.parent().unwrap().to_string_lossy().to_string();
+            let detail = format!(
+                "The CLI has been installed to {}.\n\nTo use it from your terminal, please add the following to your shell configuration file (e.g., ~/.zshrc, ~/.bashrc):\n\nexport PATH=\"{}:$PATH\"\n\nThen restart your terminal or run `source ~/.zshrc` (or your shell's config file).",
+                path.to_string_lossy(),
+                local_bin_path
+            );
+            let prompt = cx.prompt(
+                PromptLevel::Info,
+                "CLI installed to local bin",
+                Some(&detail),
+                &["Ok"],
+            );
+            cx.background_spawn(prompt).detach();
+        }
+
         register_zed_scheme(cx).await.log_err();
         Ok(())
     })
