@@ -163,7 +163,7 @@ impl EditPredictionDelegate for OllamaEditPredictionDelegate {
             .ollama
             .model
             .clone()
-            .unwrap_or_else(|| "qwen2.5-coder:1.5b".to_string());
+            .unwrap_or_else(|| "qwen2.5-coder:3b-base".to_string());
         let api_url = settings
             .edit_predictions
             .ollama
