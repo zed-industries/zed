@@ -47,8 +47,7 @@ pub(crate) fn run_tests() -> Workflow {
 
     let check_style = check_style();
     let run_tests_linux = run_platform_tests(Platform::Linux);
-    let check_workspace_binaries = check_workspace_binaries();
-    let call_autofix = call_autofix(&check_style, &run_tests_linux, &check_workspace_binaries);
+    let call_autofix = call_autofix(&check_style, &run_tests_linux);
 
     let mut jobs = vec![
         orchestrate,
@@ -57,7 +56,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_tests_linux),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
-        should_run_tests.guard(check_workspace_binaries),
+        should_run_tests.guard(check_workspace_binaries()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
@@ -260,26 +259,15 @@ fn check_style() -> NamedJob {
     )
 }
 
-fn call_autofix(
-    check_style: &NamedJob,
-    run_tests_linux: &NamedJob,
-    check_workspace_binaries: &NamedJob,
-) -> NamedJob {
-    fn dispatch_autofix(
-        run_tests_linux_name: &str,
-        check_workspace_binaries_name: &str,
-    ) -> Step<Run> {
+fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob {
+    fn dispatch_autofix(run_tests_linux_name: &str) -> Step<Run> {
         let clippy_failed_expr = format!(
             "needs.{}.outputs.{} == 'true'",
             run_tests_linux_name, CLIPPY_FAILED_OUTPUT
         );
-        let generate_action_metadata_failed_expr = format!(
-            "needs.{}.outputs.{} == 'true'",
-            check_workspace_binaries_name, GENERATE_ACTION_METADATA_FAILED_OUTPUT
-        );
         named::bash(format!(
-            "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy=${{{{ {} }}}} -f run_generate_action_metadata=${{{{ {} }}}}",
-            clippy_failed_expr, generate_action_metadata_failed_expr
+            "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy=${{{{ {} }}}}",
+            clippy_failed_expr
         ))
         .add_env(("GITHUB_TOKEN", "${{ steps.get-app-token.outputs.token }}"))
     }
@@ -292,28 +280,20 @@ fn call_autofix(
         "needs.{}.outputs.{} == 'true'",
         run_tests_linux.name, CLIPPY_FAILED_OUTPUT
     );
-    let generate_action_metadata_failed_expr = format!(
-        "needs.{}.outputs.{} == 'true'",
-        check_workspace_binaries.name, GENERATE_ACTION_METADATA_FAILED_OUTPUT
-    );
     let (authenticate, _token) = steps::authenticate_as_zippy();
 
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .cond(Expression::new(format!(
-            "always() && ({} || {} || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
-            style_failed_expr, clippy_failed_expr, generate_action_metadata_failed_expr
+            "always() && ({} || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
+            style_failed_expr, clippy_failed_expr
         )))
         .needs(vec![
             check_style.name.clone(),
             run_tests_linux.name.clone(),
-            check_workspace_binaries.name.clone(),
         ])
         .add_step(authenticate)
-        .add_step(dispatch_autofix(
-            &run_tests_linux.name,
-            &check_workspace_binaries.name,
-        ));
+        .add_step(dispatch_autofix(&run_tests_linux.name));
 
     named::job(job)
 }
@@ -364,8 +344,6 @@ fn check_dependencies() -> NamedJob {
     )
 }
 
-pub const GENERATE_ACTION_METADATA_FAILED_OUTPUT: &str = "generate_action_metadata_failed";
-
 fn check_workspace_binaries() -> NamedJob {
     named::job(
         release_job(&[])
@@ -374,19 +352,9 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/generate-action-metadata"))
-            .add_step(steps::ensure_actions_asset_is_up_to_date())
-            .add_step(steps::record_generate_action_metadata_failure())
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
-            .add_step(steps::cleanup_cargo_config(Platform::Linux))
-            .outputs([(
-                GENERATE_ACTION_METADATA_FAILED_OUTPUT.to_owned(),
-                format!(
-                    "${{{{ steps.{}.outputs.failed == 'true' }}}}",
-                    steps::RECORD_GENERATE_ACTION_METADATA_FAILURE_STEP_ID
-                ),
-            )]),
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
@@ -548,6 +516,7 @@ fn check_docs() -> NamedJob {
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )
             .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(

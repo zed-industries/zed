@@ -13,10 +13,6 @@ on:
         description: run_clippy
         type: boolean
         default: 'true'
-      run_generate_action_metadata:
-        description: run_generate_action_metadata
-        type: boolean
-        default: 'true'
 jobs:
   run_autofix:
     runs-on: namespace-profile-16x32-ubuntu-2204
@@ -61,10 +57,6 @@ jobs:
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}
       run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
-      shell: bash -euxo pipefail {0}
-    - name: ./script/generate-action-metadata
-      if: ${{ inputs.run_generate_action_metadata }}
-      run: ./script/generate-action-metadata
       shell: bash -euxo pipefail {0}
     - id: create-patch
       name: autofix_pr::run_autofix::create_patch
