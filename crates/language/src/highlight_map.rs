@@ -11,7 +11,11 @@ pub struct HighlightId(pub u32);
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub(crate) fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
+    pub(crate) fn new(
+        capture_names: &[&str],
+        grammar_name: Option<&str>,
+        theme: &SyntaxTheme,
+    ) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
@@ -25,9 +29,12 @@ impl HighlightMap {
                         .enumerate()
                         .filter_map(|(i, (key, _))| {
                             let mut len = 0;
-                            let capture_parts = capture_name.split('.');
+                            // the final component may match the TS language name, for per-lang customization
+                            let capture_parts = capture_name.split('.').chain(grammar_name);
                             for key_part in key.split('.') {
-                                if capture_parts.clone().any(|part| part == key_part) {
+                                // hmm, is this logic correct? Seems like it should be a zip_longest kinda thing
+                                if capture_parts.clone().any(|part| part == key_part)
+                                {
                                     len += 1;
                                 } else {
                                     return None;
@@ -102,11 +109,11 @@ mod tests {
 
         let capture_names = &[
             "function.special",
-            "function.async.rust",
+            "function.async",
             "variable.builtin.self",
         ];
 
-        let map = HighlightMap::new(capture_names, &theme);
+        let map = HighlightMap::new(capture_names, Some("rust"), &theme);
         assert_eq!(map.get(0).name(&theme), Some("function"));
         assert_eq!(map.get(1).name(&theme), Some("function.async"));
         assert_eq!(map.get(2).name(&theme), Some("variable.builtin"));

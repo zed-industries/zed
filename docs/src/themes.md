@@ -50,6 +50,9 @@ For example, add the following to your `settings.json` if you wish to override t
         },
         "comment.doc": {
           "font_style": "italic"
+        },
+        "comment.doc.rust": {
+          "font_style": "normal"
         }
       },
       "accents": [
@@ -66,6 +69,8 @@ For example, add the following to your `settings.json` if you wish to override t
 ```
 
 To see a comprehensive list of list of captures (like `comment` and `comment.doc`) see [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
+
+Note that a final dot-separated component may be used to match the [grammar name](./extensions/languages.md#grammar), e.g. `comment.doc.javascript`, to customize highlighting for a specific language only.
 
 To see a list of available theme attributes look at the JSON file for your theme.
 For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.
