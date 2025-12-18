@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::any::TypeId;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -17,6 +18,7 @@ use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
+use zed_actions::outline::ToggleOutline;
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
@@ -501,6 +503,18 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn toggle_outline(
+        &mut self,
+        _: &ToggleOutline,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor_state) = &self.active_editor {
+            let editor = editor_state.editor.clone();
+            outline::toggle(editor, &ToggleOutline, window, &mut *cx);
+        }
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -538,6 +552,22 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            self.active_editor.as_ref().map(|e| e.editor.clone().into())
+        } else {
+            None
+        }
+    }
+
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
 }
 
@@ -557,6 +587,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::toggle_outline))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
