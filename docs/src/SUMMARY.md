@@ -174,9 +174,7 @@
 
 - [All Settings](./reference/all-settings.md)
 - [All Actions](./all-actions.md)
-- [CLI Reference](./command-line-interface.md)
-- [Environment Variables](./environment.md)
-- [Glob Patterns](./globs.md)
+- [CLI Reference](./reference/cli.md)
 
 # Account & Privacy
 

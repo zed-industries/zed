@@ -113,6 +113,6 @@ If Zed uses more resources than expected:
 
 1. Check for runaway language servers in the terminal output (`zed: open log`)
 2. Try disabling extensions one by one to identify conflicts
-3. For large projects, consider using [project settings](./configuring-zed.md) to exclude unnecessary folders from indexing
+3. For large projects, consider using [project settings](./reference/all-settings.md#file-scan-exclusions) to exclude unnecessary folders from indexing
 
 For additional help, see the [Troubleshooting guide](./troubleshooting.md) or visit the [Zed Discord](https://discord.gg/zed-community).
