@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, SharedString, Task,
+    App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
@@ -300,14 +300,19 @@ pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
 pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
-pub static MERCURY_API_KEY: std::sync::OnceLock<Entity<ApiKeyState>> = std::sync::OnceLock::new();
+
+struct GlobalMercuryApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalMercuryApiKey {}
 
 pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
-    MERCURY_API_KEY
-        .get_or_init(|| {
-            cx.new(|_| ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone()))
-        })
-        .clone()
+    if let Some(global) = cx.try_global::<GlobalMercuryApiKey>() {
+        return global.0.clone();
+    }
+    let entity =
+        cx.new(|_| ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone()));
+    cx.set_global(GlobalMercuryApiKey(entity.clone()));
+    entity
 }
 
 pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
