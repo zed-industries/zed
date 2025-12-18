@@ -39,14 +39,14 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 
 ## Quick Reference
 
-| Task | Keybinding |
-|------|------------|
-| Command Palette | {#kb command_palette::Toggle} |
-| Open file | {#kb file_finder::Toggle} |
-| Project search | {#kb pane::DeploySearch} |
-| Go to definition | {#kb editor::GoToDefinition} |
-| Find references | {#kb editor::FindAllReferences} |
-| Symbol in file | {#kb outline::Toggle} |
-| Symbol in project | {#kb project_symbols::Toggle} |
-| Outline Panel | {#kb outline_panel::ToggleFocus} |
-| Tab Switcher | {#kb tab_switcher::Toggle} |
+| Task              | Keybinding                       |
+| ----------------- | -------------------------------- |
+| Command Palette   | {#kb command_palette::Toggle}    |
+| Open file         | {#kb file_finder::Toggle}        |
+| Project search    | {#kb pane::DeploySearch}         |
+| Go to definition  | {#kb editor::GoToDefinition}     |
+| Find references   | {#kb editor::FindAllReferences}  |
+| Symbol in file    | {#kb outline::Toggle}            |
+| Symbol in project | {#kb project_symbols::Toggle}    |
+| Outline Panel     | {#kb outline_panel::ToggleFocus} |
+| Tab Switcher      | {#kb tab_switcher::Toggle}       |
