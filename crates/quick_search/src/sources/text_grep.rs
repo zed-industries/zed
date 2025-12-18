@@ -1249,22 +1249,24 @@ fn elide_path(segments: &[Arc<str>]) -> Arc<str> {
     Arc::<str>::from(parts.join("/"))
 }
 
-fn clip_snippet(text: &str) -> (String, usize) {
+fn clip_snippet_into(text: &str, out: &mut String) -> usize {
+    out.clear();
     if text.len() <= crate::MAX_SNIPPET_BYTES {
-        return (text.to_string(), text.len());
+        out.push_str(text);
+        return text.len();
     }
 
-    let suffix = "…";
+    let suffix = ".";
     let max_content_bytes = crate::MAX_SNIPPET_BYTES.saturating_sub(suffix.len());
     let mut end = max_content_bytes.min(text.len());
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
 
-    let mut out = String::with_capacity(end + suffix.len());
+    out.reserve(end + suffix.len());
     out.push_str(&text[..end]);
     out.push_str(suffix);
-    (out, end)
+    end
 }
 
 fn coalesce_syntax_runs(runs: &mut Vec<(Range<usize>, HighlightId)>) {
@@ -1553,6 +1555,10 @@ fn build_matches_for_buffer(
 
     let mut matches = Vec::with_capacity(line_order.len());
     let mut pending_syntax: Vec<SyntaxEnrichItem> = Vec::new();
+    let mut line_buf = String::new();
+    let mut snippet_buf = String::new();
+    let mut snippet_match_positions: Vec<Range<usize>> = Vec::new();
+    let mut snippet_syntax_highlights: Vec<(Range<usize>, HighlightId)> = Vec::new();
     for row in line_order {
         let mut items = match per_line.remove(&row) {
             Some(v) => v,
@@ -1578,16 +1584,18 @@ fn build_matches_for_buffer(
         let line_end = Point::new(row, snapshot.text.line_len(row));
         let line_start_offset = snapshot.text.point_to_offset(line_start);
         let line_end_offset = snapshot.text.point_to_offset(line_end);
-        let line_text: String = snapshot
-            .text_for_range(line_start_offset..line_end_offset)
-            .collect();
-        let line_trimmed_end = line_text.trim_end();
+
+        line_buf.clear();
+        line_buf.extend(snapshot.text_for_range(line_start_offset..line_end_offset));
+
+        let line_trimmed_end = line_buf.trim_end();
         let trim_start = line_trimmed_end.len() - line_trimmed_end.trim_start().len();
         let line_trimmed = &line_trimmed_end[trim_start..];
-        let (snippet_string, snippet_content_len) = clip_snippet(line_trimmed);
-        let snippet: Arc<str> = Arc::<str>::from(snippet_string);
 
-        let mut snippet_match_positions: Vec<Range<usize>> = Vec::new();
+        let snippet_content_len = clip_snippet_into(line_trimmed, &mut snippet_buf);
+        let snippet: Arc<str> = Arc::<str>::from(snippet_buf.as_str());
+
+        snippet_match_positions.clear();
         for r in &ranges_for_line {
             let match_start_offset = r.start.to_offset(&snapshot.text);
             let match_end_offset = r.end.to_offset(&snapshot.text);
@@ -1625,7 +1633,7 @@ fn build_matches_for_buffer(
         snippet_match_positions.sort_by_key(|r| (r.start, r.end));
         snippet_match_positions.dedup();
 
-        let mut snippet_syntax_highlights: Vec<(Range<usize>, HighlightId)> = Vec::new();
+        snippet_syntax_highlights.clear();
         if snippet_content_len > 0 && snapshot.language().is_some() {
             let mut rel_offset = 0usize;
             let mut chunks = snapshot.chunks(line_start_offset..line_end_offset, true);
@@ -1668,10 +1676,10 @@ fn build_matches_for_buffer(
             position: Some((row, start_point.column)),
         };
         let snippet_for_match = snippet.clone();
-        let snippet_match_positions = (!snippet_match_positions.is_empty())
-            .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions));
-        let snippet_syntax_highlights = (!snippet_syntax_highlights.is_empty())
-            .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights));
+        let snippet_match_positions_arc = (!snippet_match_positions.is_empty())
+            .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions.as_slice()));
+        let snippet_syntax_highlights_arc = (!snippet_syntax_highlights.is_empty())
+            .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights.as_slice()));
 
         let mut match_item = QuickMatchBuilder::new(source_id.clone(), kind)
             .action(match project_path.clone() {
@@ -1689,8 +1697,8 @@ fn build_matches_for_buffer(
             .location_label(location_label)
             .snippet(Some(snippet_for_match))
             .first_line_snippet(Some(snippet))
-            .snippet_match_positions(snippet_match_positions)
-            .snippet_syntax_highlights(snippet_syntax_highlights)
+            .snippet_match_positions(snippet_match_positions_arc)
+            .snippet_syntax_highlights(snippet_syntax_highlights_arc)
             .build();
         match_item.key = crate::types::compute_match_key(&match_item);
         if match_item.snippet_syntax_highlights.is_none() && snippet_content_len > 0 {
