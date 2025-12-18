@@ -2046,11 +2046,26 @@ impl AcpThreadView {
                                                 match ed {
                                                     Some(ed) => {
                                                         ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                                            let ed2 = ed.clone();
                                                             menu.entry("Copy", None, move |win, cx| {
                                                                 ed.update(cx, |editor, _cx|{
-                                                                    editor.copy(_cx, win);
+                                                                    editor.copy_to_clipboard(_cx, win);
                                                                 });
                                                             })
+                                                            .entry(
+                                                                "Paste",
+                                                                None,
+                                                                move |win, cx| {
+                                                                    let ed2 = ed2.clone();
+
+                                                                    win.defer(cx, move |window, cx| {
+                                                                        ed2.update(cx, |editor, _cx| {
+                                                                            editor
+                                                                                .paste_from_clipboard(_cx, window);
+                                                                        });
+                                                                    });
+                                                                },
+                                                            )
                                                         })
                                                     },
                                                     None => ContextMenu::build(window, cx, move |menu,_,_| menu )
@@ -4302,14 +4317,33 @@ impl AcpThreadView {
                             })
                             .menu({
                                 let editor_weak = editor_weak.clone();
+
                                 move |window, cx| {
-                                    let ed = editor_weak.upgrade().unwrap();
+                                    let ed = editor_weak.upgrade();
                                     ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        menu.entry("Copy", None, move |win, cx| {
-                                            ed.update(cx, |editor, _cx| {
-                                                editor.copy(_cx, win);
-                                            });
-                                        })
+                                        if let Some(ed) = ed {
+                                            let ed2 = ed.clone();
+                                            menu.entry("Copy", None, move |win, cx| {
+                                                ed.update(cx, |editor, _cx| {
+                                                    editor.copy_to_clipboard(_cx, win);
+                                                });
+                                            })
+                                            .entry(
+                                                "Paste",
+                                                None,
+                                                move |win, cx| {
+                                                    let ed2 = ed2.clone();
+                                                    win.defer(cx, move |window, cx| {
+                                                        ed2.update(cx, |editor, _cx| {
+                                                            editor
+                                                                .paste_from_clipboard(_cx, window);
+                                                        });
+                                                    });
+                                                },
+                                            )
+                                        } else {
+                                            menu
+                                        }
                                     })
                                 }
                             })

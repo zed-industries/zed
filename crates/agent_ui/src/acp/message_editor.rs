@@ -953,9 +953,19 @@ impl MessageEditor {
         });
     }
 
-    pub fn copy(&self, cx: &mut Context<Self>, window: &mut Window) {
+    pub fn copy_to_clipboard(&self, cx: &mut Context<Self>, window: &mut Window) {
         let _ = self.editor.update(cx, move |editor, cx| {
             editor.copy(&editor::actions::Copy, window, cx);
+        });
+    }
+
+    pub fn paste_from_clipboard(&self, cx: &mut Context<Self>, window: &mut Window) {
+        let editor = self.editor.downgrade();
+        window.defer(cx, move |window, cx| {
+            let editor = editor.upgrade().unwrap();
+            let _ = editor.update(cx, move |editor, cx| {
+                editor.paste(&editor::actions::Paste, window, cx);
+            });
         });
     }
 }
