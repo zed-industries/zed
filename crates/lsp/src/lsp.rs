@@ -90,6 +90,7 @@ pub struct LanguageServer {
     notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     process_name: Arc<str>,
+    server_info: Option<ServerInfo>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
@@ -506,6 +507,7 @@ impl LanguageServer {
                 .file_name()
                 .map(|name| Arc::from(name.to_string_lossy()))
                 .unwrap_or_default(),
+            server_info: None,
             binary,
             capabilities: Default::default(),
             configuration,
@@ -923,7 +925,8 @@ impl LanguageServer {
                     )
                 })?;
             if let Some(info) = response.server_info {
-                self.process_name = info.name.into();
+                self.process_name = info.name.clone().into();
+                self.server_info = Some(info);
             }
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
@@ -1155,6 +1158,10 @@ impl LanguageServer {
 
     pub fn process_name(&self) -> &str {
         &self.process_name
+    }
+
+    pub fn server_info(&self) -> Option<ServerInfo> {
+        self.server_info.clone()
     }
 
     /// Get the reported capabilities of the running language server.
