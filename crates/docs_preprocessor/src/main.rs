@@ -242,10 +242,9 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
                     if actions_available() {
-                        
                         errors.insert(PreprocessorError::new_for_not_found_action(
                             name.to_string(),
-                            ));
+                        ));
                     }
                     return format!("<code class=\"hljs\">{}</code>", name);
                 };
