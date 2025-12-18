@@ -4,7 +4,7 @@ use std::{
     path,
     path::Path,
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use file_icons::FileIcons;
@@ -1152,6 +1152,10 @@ impl QuickSearchSource for TextGrepSource {
             let mut batcher = MatchBatcher::new();
             let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
                 HashMap::new();
+            const YIELD_MAX_ITEMS: usize = 128;
+            const YIELD_MAX_INTERVAL: Duration = Duration::from_millis(4);
+            let mut since_yield = 0usize;
+            let mut last_yield = Instant::now();
             loop {
                 let result = match receiver.recv().await {
                     Ok(r) => r,
@@ -1209,7 +1213,12 @@ impl QuickSearchSource for TextGrepSource {
                     }
                 }
 
-                yield_now().await;
+                since_yield = since_yield.saturating_add(1);
+                if since_yield >= YIELD_MAX_ITEMS || last_yield.elapsed() >= YIELD_MAX_INTERVAL {
+                    yield_now().await;
+                    since_yield = 0;
+                    last_yield = Instant::now();
+                }
             }
 
                 drop(syntax_workers);
