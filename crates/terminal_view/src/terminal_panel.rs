@@ -790,8 +790,7 @@ impl TerminalPanel {
                 }
 
                 pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(window, cx)
-                        || matches!(reveal_strategy, RevealStrategy::Always);
+                    let focus = matches!(reveal_strategy, RevealStrategy::Always);
                     pane.add_item(terminal_view, true, focus, None, window, cx);
                 });
 
@@ -853,8 +852,7 @@ impl TerminalPanel {
                         }
 
                         pane.update(cx, |pane, cx| {
-                            let focus = pane.has_focus(window, cx)
-                                || matches!(reveal_strategy, RevealStrategy::Always);
+                            let focus = matches!(reveal_strategy, RevealStrategy::Always);
                             pane.add_item(terminal_view, true, focus, None, window, cx);
                         });
 

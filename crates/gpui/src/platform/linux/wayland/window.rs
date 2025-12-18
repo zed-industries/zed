@@ -1025,13 +1025,26 @@ impl PlatformWindow for WaylandWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let state = self.borrow();
         let state_ptr = self.0.clone();
-        let dp_size = size.to_device_pixels(self.scale_factor());
+
+        // Keep window geometry consistent with configure handling. On Wayland, window geometry is
+        // surface-local: resizing should not attempt to translate the window; the compositor
+        // controls placement. We also account for client-side decoration insets and tiling.
+        let window_geometry = inset_by_tiling(
+            Bounds {
+                origin: Point::default(),
+                size,
+            },
+            state.inset(),
+            state.tiling,
+        )
+        .map(|v| v.0 as i32)
+        .map_size(|v| if v <= 0 { 1 } else { v });
 
         state.surface_state.set_geometry(
-            state.bounds.origin.x.0 as i32,
-            state.bounds.origin.y.0 as i32,
-            dp_size.width.0,
-            dp_size.height.0,
+            window_geometry.origin.x,
+            window_geometry.origin.y,
+            window_geometry.size.width,
+            window_geometry.size.height,
         );
 
         state

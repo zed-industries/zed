@@ -460,7 +460,7 @@ impl AgentServerStore {
                     .gemini
                     .as_ref()
                     .and_then(|settings| settings.ignore_system_version)
-                    .unwrap_or(false),
+                    .unwrap_or(true),
             }),
         );
         self.external_agents.insert(

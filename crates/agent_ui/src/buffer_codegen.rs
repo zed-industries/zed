@@ -75,6 +75,9 @@ pub struct BufferCodegen {
     session_id: Uuid,
 }
 
+pub const REWRITE_SECTION_TOOL_NAME: &str = "rewrite_section";
+pub const FAILURE_MESSAGE_TOOL_NAME: &str = "failure_message";
+
 impl BufferCodegen {
     pub fn new(
         buffer: Entity<MultiBuffer>,
@@ -522,12 +525,12 @@ impl CodegenAlternative {
 
             let tools = vec![
                 LanguageModelRequestTool {
-                    name: "rewrite_section".to_string(),
+                    name: REWRITE_SECTION_TOOL_NAME.to_string(),
                     description: "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
                     input_schema: language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
                 },
                 LanguageModelRequestTool {
-                    name: "failure_message".to_string(),
+                    name: FAILURE_MESSAGE_TOOL_NAME.to_string(),
                     description: "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
                     input_schema: language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
                 },
@@ -1167,7 +1170,7 @@ impl CodegenAlternative {
             let process_tool_use = move |tool_use: LanguageModelToolUse| -> Option<ToolUseOutput> {
                 let mut chars_read_so_far = chars_read_so_far.lock();
                 match tool_use.name.as_ref() {
-                    "rewrite_section" => {
+                    REWRITE_SECTION_TOOL_NAME => {
                         let Ok(input) =
                             serde_json::from_value::<RewriteSectionInput>(tool_use.input)
                         else {
@@ -1180,7 +1183,7 @@ impl CodegenAlternative {
                             description: None,
                         })
                     }
-                    "failure_message" => {
+                    FAILURE_MESSAGE_TOOL_NAME => {
                         let Ok(mut input) =
                             serde_json::from_value::<FailureMessageInput>(tool_use.input)
                         else {
@@ -1493,7 +1496,10 @@ mod tests {
     use indoc::indoc;
     use language::{Buffer, Point};
     use language_model::fake_provider::FakeLanguageModel;
-    use language_model::{LanguageModelRegistry, TokenUsage};
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRegistry,
+        LanguageModelToolUse, StopReason, TokenUsage,
+    };
     use languages::rust_lang;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1805,6 +1811,51 @@ mod tests {
         );
     }
 
+    // When not streaming tool calls, we strip backticks as part of parsing the model's
+    // plain text response. This is a regression test for a bug where we stripped
+    // backticks incorrectly.
+    #[gpui::test]
+    async fn test_allows_model_to_output_backticks(cx: &mut TestAppContext) {
+        init_test(cx);
+        let text = "- Improved; `cmd+click` behavior. Now requires `cmd` to be pressed before the click starts or it doesn't run. ([#44579](https://github.com/zed-industries/zed/pull/44579); thanks [Zachiah](https://github.com/Zachiah))";
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let range = buffer.read_with(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(0, 0))
+        });
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let codegen = cx.new(|cx| {
+            CodegenAlternative::new(
+                buffer.clone(),
+                range.clone(),
+                true,
+                prompt_builder,
+                Uuid::new_v4(),
+                cx,
+            )
+        });
+
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+        let chunk_len = text.find('`').unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", &text[..chunk_len], false))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_2", &text, true))
+            .unwrap();
+        events_tx
+            .unbounded_send(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            text
+        );
+    }
+
     #[gpui::test]
     async fn test_strip_invalid_spans_from_codeblock() {
         assert_chunks("Lorem ipsum dolor", "Lorem ipsum dolor").await;
@@ -1869,5 +1920,40 @@ mod tests {
             );
         });
         chunks_tx
+    }
+
+    fn simulate_tool_based_completion(
+        codegen: &Entity<CodegenAlternative>,
+        cx: &mut TestAppContext,
+    ) -> mpsc::UnboundedSender<LanguageModelCompletionEvent> {
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let model = Arc::new(FakeLanguageModel::default());
+        codegen.update(cx, |codegen, cx| {
+            let completion_stream = Task::ready(Ok(events_rx.map(Ok).boxed()
+                as BoxStream<
+                    'static,
+                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >));
+            codegen.generation = codegen.handle_completion(model, completion_stream, cx);
+        });
+        events_tx
+    }
+
+    fn rewrite_tool_use(
+        id: &str,
+        replacement_text: &str,
+        is_complete: bool,
+    ) -> LanguageModelCompletionEvent {
+        let input = RewriteSectionInput {
+            replacement_text: replacement_text.into(),
+        };
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: id.into(),
+            name: REWRITE_SECTION_TOOL_NAME.into(),
+            raw_input: serde_json::to_string(&input).unwrap(),
+            input: serde_json::to_value(&input).unwrap(),
+            is_input_complete: is_complete,
+            thought_signature: None,
+        })
     }
 }

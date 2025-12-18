@@ -54,8 +54,25 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub const PRETTIER_STEP_ID: &str = "prettier";
+pub const CARGO_FMT_STEP_ID: &str = "cargo_fmt";
+pub const RECORD_STYLE_FAILURE_STEP_ID: &str = "record_style_failure";
+
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier").id(PRETTIER_STEP_ID)
+}
+
 pub fn cargo_fmt() -> Step<Run> {
-    named::bash("cargo fmt --all -- --check")
+    named::bash("cargo fmt --all -- --check").id(CARGO_FMT_STEP_ID)
+}
+
+pub fn record_style_failure() -> Step<Run> {
+    named::bash(format!(
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' || steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
+        PRETTIER_STEP_ID, CARGO_FMT_STEP_ID
+    ))
+    .id(RECORD_STYLE_FAILURE_STEP_ID)
+    .if_condition(Expression::new("always()"))
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
@@ -101,11 +118,23 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
+pub const CLIPPY_STEP_ID: &str = "clippy";
+pub const RECORD_CLIPPY_FAILURE_STEP_ID: &str = "record_clippy_failure";
+
 pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        Platform::Windows => named::pwsh("./script/clippy.ps1").id(CLIPPY_STEP_ID),
+        _ => named::bash("./script/clippy").id(CLIPPY_STEP_ID),
     }
+}
+
+pub fn record_clippy_failure() -> Step<Run> {
+    named::bash(format!(
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
+        CLIPPY_STEP_ID
+    ))
+    .id(RECORD_CLIPPY_FAILURE_STEP_ID)
+    .if_condition(Expression::new("always()"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
@@ -345,12 +374,15 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     ))
 }
 
-pub fn trigger_autofix(run_clippy: bool) -> Step<Run> {
-    named::bash(format!(
-        "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy={run_clippy}"
-    ))
-    .if_condition(Expression::new(
-        "failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
-    ))
-    .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
 }

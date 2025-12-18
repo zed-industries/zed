@@ -125,7 +125,7 @@ pub fn init(on_headless_host: bool, cx: &mut App) {
                     let server_id = server.server_id();
                     let weak_lsp_store = cx.weak_entity();
                     log_store.copilot_log_subscription =
-                        Some(server.on_notification::<copilot::request::LogMessage, _>(
+                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
                             move |params, cx| {
                                 weak_lsp_store
                                     .update(cx, |lsp_store, cx| {
