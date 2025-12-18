@@ -8,13 +8,10 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
-    div,
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity,
+    Window, actions, anchored, deferred, div,
 };
 use menu::{Cancel, Confirm};
 use persistence::TERMINAL_DB;
@@ -459,7 +456,7 @@ impl TerminalView {
             cx.new(|cx| TerminalRenameEditor::new(editor, terminal_view, window, cx));
 
         let focus_handle = rename_editor.focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         self.rename_editor = Some(rename_editor);
         cx.emit(ItemEvent::UpdateTab);
@@ -486,7 +483,7 @@ impl TerminalView {
                 });
             }
 
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.emit(ItemEvent::UpdateTab);
             cx.notify();
         }
@@ -1151,7 +1148,7 @@ impl TerminalView {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(rename_editor) = &self.rename_editor {
-            window.focus(&rename_editor.focus_handle(cx));
+            window.focus(&rename_editor.focus_handle(cx), cx);
             return;
         }
 
