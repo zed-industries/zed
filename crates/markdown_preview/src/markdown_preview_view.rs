@@ -506,13 +506,12 @@ impl MarkdownPreviewView {
 
     fn toggle_outline(
         &mut self,
-        _: &ToggleOutline,
+        action: &ToggleOutline,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(editor_state) = &self.active_editor {
-            let editor = editor_state.editor.clone();
-            outline::toggle(editor, &ToggleOutline, window, &mut *cx);
+            outline::toggle(editor_state.editor.clone(), action, window, cx);
         }
     }
 }
