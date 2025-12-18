@@ -218,7 +218,7 @@ macro_rules! split_structs {
             #[action(namespace = pane)]
             #[serde(deny_unknown_fields, default)]
             pub struct $name {
-                pub operation: SplitMode,
+                pub mode: SplitMode,
             }
         )*
     };
@@ -303,7 +303,7 @@ pub enum Event {
     },
     Split {
         direction: SplitDirection,
-        operation: SplitMode,
+        mode: SplitMode,
     },
     ItemPinned,
     ItemUnpinned,
@@ -337,11 +337,11 @@ impl fmt::Debug for Event {
                 .finish(),
             Event::Split {
                 direction,
-                operation,
+                mode,
             } => f
                 .debug_struct("Split")
                 .field("direction", direction)
-                .field("operation", operation)
+                .field("mode", mode)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -2353,16 +2353,16 @@ impl Pane {
     pub fn split(
         &mut self,
         direction: SplitDirection,
-        operation: SplitMode,
+        mode: SplitMode,
         cx: &mut Context<Self>,
     ) {
-        if self.items.len() <= 1 && operation == SplitMode::MovePane {
+        if self.items.len() <= 1 && mode == SplitMode::MovePane {
             return;
         }
 
         cx.emit(Event::Split {
             direction,
-            operation: operation.to_owned(),
+            mode: mode.to_owned(),
         });
     }
 
@@ -3789,12 +3789,12 @@ fn default_render_tab_bar_buttons(
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        let operation = SplitMode::MovePane;
+                        let mode = SplitMode::MovePane;
                         if can_split_move {
-                            menu.action("Split Right", SplitRight { operation }.boxed_clone())
-                                .action("Split Left", SplitLeft { operation }.boxed_clone())
-                                .action("Split Up", SplitUp { operation }.boxed_clone())
-                                .action("Split Down", SplitDown { operation }.boxed_clone())
+                            menu.action("Split Right", SplitRight { mode }.boxed_clone())
+                                .action("Split Left", SplitLeft { mode }.boxed_clone())
+                                .action("Split Up", SplitUp { mode }.boxed_clone())
+                                .action("Split Down", SplitDown { mode }.boxed_clone())
                         } else {
                             menu.action("Split Right", SplitRight::default().boxed_clone())
                                 .action("Split Left", SplitLeft::default().boxed_clone())
@@ -3859,22 +3859,22 @@ impl Render for Pane {
             .flex_none()
             .overflow_hidden()
             .on_action(cx.listener(|pane, split: &SplitLeft, _, cx| {
-                pane.split(SplitDirection::Left, split.operation, cx)
+                pane.split(SplitDirection::Left, split.mode, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitUp, _, cx| {
-                pane.split(SplitDirection::Up, split.operation, cx)
+                pane.split(SplitDirection::Up, split.mode, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), split.operation, cx)
+                pane.split(SplitDirection::horizontal(cx), split.mode, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), split.operation, cx)
+                pane.split(SplitDirection::vertical(cx), split.mode, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitRight, _, cx| {
-                pane.split(SplitDirection::Right, split.operation, cx)
+                pane.split(SplitDirection::Right, split.mode, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
-                pane.split(SplitDirection::Down, split.operation, cx)
+                pane.split(SplitDirection::Down, split.mode, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
                 pane.split(SplitDirection::Up, SplitMode::MovePane, cx)

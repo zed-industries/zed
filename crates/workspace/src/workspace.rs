@@ -4139,9 +4139,9 @@ impl Workspace {
             }
             pane::Event::Split {
                 direction,
-                operation,
+                mode,
             } => {
-                match operation {
+                match mode {
                     SplitMode::ClonePane => {
                         self.split_and_clone(pane.clone(), *direction, window, cx)
                             .detach();

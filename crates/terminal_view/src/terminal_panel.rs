@@ -382,11 +382,11 @@ impl TerminalPanel {
             }
             &pane::Event::Split {
                 direction,
-                operation,
+                mode,
             } => {
-                match operation {
+                match mode {
                     SplitMode::ClonePane | SplitMode::EmptyPane => {
-                        let clone = matches!(operation, SplitMode::ClonePane);
+                        let clone = matches!(mode, SplitMode::ClonePane);
                         let new_pane = self.new_pane_with_active_terminal(clone, window, cx);
                         let pane = pane.clone();
                         cx.spawn_in(window, async move |panel, cx| {
