@@ -10,9 +10,9 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, IconOrSvg, RateLimiter, Role,
+    LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{ModelType, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
