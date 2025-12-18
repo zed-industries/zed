@@ -2394,8 +2394,7 @@ impl Workspace {
     }
 
     fn can_close_folder(&self, cx: &App) -> bool {
-        let project = self.project.read(cx);
-        !project.is_via_collab() && project.visible_worktrees(cx).next().is_some()
+        !self.project.read(cx).is_via_collab()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2970,9 +2969,12 @@ impl Workspace {
     }
 
     fn close_folder(&mut self, _: &CloseFolder, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_close_folder(cx) {
+            return;
+        }
+
         let project = self.project.read(cx);
         if project.is_via_collab() {
-            drop(project);
             self.show_error(
                 &anyhow!("You cannot close folders in someone else's project"),
                 cx,
@@ -2984,7 +2986,6 @@ impl Workspace {
             .visible_worktrees(cx)
             .map(|worktree| worktree.read(cx).id())
             .collect();
-        drop(project);
 
         if worktree_ids.is_empty() {
             return;
@@ -2994,6 +2995,7 @@ impl Workspace {
             self.project
                 .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         }
+        cx.notify();
     }
 
     pub fn project_path_for_path(
@@ -5940,9 +5942,7 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
-            .when(self.can_close_folder(cx), |div| {
-                div.on_action(cx.listener(Self::close_folder))
-            })
+            .on_action(cx.listener(Self::close_folder))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
