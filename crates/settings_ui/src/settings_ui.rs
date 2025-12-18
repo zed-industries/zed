@@ -2016,7 +2016,7 @@ impl SettingsWindow {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
-        let mut all_files = dbg!(settings_store.get_all_files());
+        let mut all_files = settings_store.get_all_files();
         if !all_files.contains(&settings::SettingsFile::User) {
             all_files.push(settings::SettingsFile::User);
         }
@@ -2029,12 +2029,9 @@ impl SettingsWindow {
             }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
-                let directory_name = dbg!(
-                    all_projects(Some(window), cx)
-                        .find_map(|project| dbg!(project.read(cx).worktree_for_id(worktree_id, cx)))
-                        .map(|worktree| dbg!(worktree.read(cx).root_name()))
-                );
-                // .and_then(|root_dir| dbg!(dbg!(root_dir).file_name()));
+                let directory_name = all_projects(self.original_window.as_ref(), cx)
+                    .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
+                    .map(|worktree| worktree.read(cx).root_name());
 
                 let Some(directory_name) = directory_name else {
                     log::error!(
@@ -2061,7 +2058,7 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(Some(window), cx)
+        for worktree in all_projects(self.original_window.as_ref(), cx)
             .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
@@ -2091,7 +2088,6 @@ impl SettingsWindow {
 
         self.worktree_root_dirs.extend(missing_worktrees);
 
-        dbg!(&ui_files);
         self.files = ui_files;
         let current_file_still_exists = self
             .files
@@ -3546,7 +3542,7 @@ impl Render for SettingsWindow {
 }
 
 fn all_projects(
-    window: Option<&Window>,
+    window: Option<&WindowHandle<Workspace>>,
     cx: &App,
 ) -> impl Iterator<Item = Entity<project::Project>> {
     workspace::AppState::global(cx)
@@ -3557,14 +3553,9 @@ fn all_projects(
                 .read(cx)
                 .workspaces()
                 .iter()
-                .inspect(|_| {
-                    dbg!("workspace");
-                })
                 .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
                 .chain(
-                    dbg!(window.and_then(|window| dbg!(window.root::<Workspace>())))
-                        .flatten()
-                        .map(|workspace| workspace.read(cx).project().clone()),
+                    window.and_then(|workspace| Some(workspace.read(cx).ok()?.project().clone())),
                 )
         })
         .into_iter()
