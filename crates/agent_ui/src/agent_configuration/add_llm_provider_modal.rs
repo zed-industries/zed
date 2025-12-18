@@ -102,6 +102,7 @@ struct ModelCapabilityToggles {
     pub supports_images: ToggleState,
     pub supports_parallel_tool_calls: ToggleState,
     pub supports_prompt_cache_key: ToggleState,
+    pub supports_chat_completions: ToggleState,
 }
 
 struct ModelInput {
@@ -154,6 +155,7 @@ impl ModelInput {
             images,
             parallel_tool_calls,
             prompt_cache_key,
+            chat_completions,
         } = ModelCapabilities::default();
 
         Self {
@@ -166,6 +168,7 @@ impl ModelInput {
                 supports_images: images.into(),
                 supports_parallel_tool_calls: parallel_tool_calls.into(),
                 supports_prompt_cache_key: prompt_cache_key.into(),
+                supports_chat_completions: chat_completions.into(),
             },
         }
     }
@@ -203,6 +206,7 @@ impl ModelInput {
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
+                chat_completions: self.capabilities.supports_chat_completions.selected(),
             },
         })
     }
@@ -422,6 +426,20 @@ impl AddLlmProviderModal {
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
                                 this.input.models[ix].capabilities.supports_prompt_cache_key =
+                                    *checked;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("supports-chat-completions", ix),
+                            model.capabilities.supports_chat_completions,
+                        )
+                        .label("Supports /chat/completions")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.supports_chat_completions =
                                     *checked;
                                 cx.notify();
                             },
@@ -724,12 +742,17 @@ mod tests {
                 model_input.capabilities.supports_prompt_cache_key,
                 ToggleState::Unselected
             );
+            assert_eq!(
+                model_input.capabilities.supports_chat_completions,
+                ToggleState::Selected
+            );
 
             let parsed_model = model_input.parse(cx).unwrap();
             assert!(parsed_model.capabilities.tools);
             assert!(!parsed_model.capabilities.images);
             assert!(!parsed_model.capabilities.parallel_tool_calls);
             assert!(!parsed_model.capabilities.prompt_cache_key);
+            assert!(parsed_model.capabilities.chat_completions);
         });
     }
 
@@ -749,12 +772,14 @@ mod tests {
             model_input.capabilities.supports_images = ToggleState::Unselected;
             model_input.capabilities.supports_parallel_tool_calls = ToggleState::Unselected;
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
+            model_input.capabilities.supports_chat_completions = ToggleState::Unselected;
 
             let parsed_model = model_input.parse(cx).unwrap();
             assert!(!parsed_model.capabilities.tools);
             assert!(!parsed_model.capabilities.images);
             assert!(!parsed_model.capabilities.parallel_tool_calls);
             assert!(!parsed_model.capabilities.prompt_cache_key);
+            assert!(!parsed_model.capabilities.chat_completions);
         });
     }
 
@@ -774,6 +799,7 @@ mod tests {
             model_input.capabilities.supports_images = ToggleState::Unselected;
             model_input.capabilities.supports_parallel_tool_calls = ToggleState::Selected;
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
+            model_input.capabilities.supports_chat_completions = ToggleState::Selected;
 
             let parsed_model = model_input.parse(cx).unwrap();
             assert_eq!(parsed_model.name, "somemodel");
@@ -781,6 +807,7 @@ mod tests {
             assert!(!parsed_model.capabilities.images);
             assert!(parsed_model.capabilities.parallel_tool_calls);
             assert!(!parsed_model.capabilities.prompt_cache_key);
+            assert!(parsed_model.capabilities.chat_completions);
         });
     }
 
