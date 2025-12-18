@@ -137,6 +137,30 @@ pub fn record_clippy_failure() -> Step<Run> {
     .if_condition(Expression::new("always()"))
 }
 
+pub const ENSURE_ACTIONS_ASSET_STEP_ID: &str = "ensure_actions_asset";
+pub const RECORD_GENERATE_ACTION_METADATA_FAILURE_STEP_ID: &str =
+    "record_generate_action_metadata_failure";
+
+pub fn ensure_actions_asset_is_up_to_date() -> Step<Run> {
+    named::bash(indoc::indoc! {r#"
+        if ! git diff --exit-code -- assets/generated/actions.json; then
+          echo "Error: assets/generated/actions.json is out of date after running ./script/generate-action-metadata"
+          echo "Please run './script/generate-action-metadata' locally and commit the changes"
+          exit 1
+        fi
+    "#})
+    .id(ENSURE_ACTIONS_ASSET_STEP_ID)
+}
+
+pub fn record_generate_action_metadata_failure() -> Step<Run> {
+    named::bash(format!(
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
+        ENSURE_ACTIONS_ASSET_STEP_ID
+    ))
+    .id(RECORD_GENERATE_ACTION_METADATA_FAILURE_STEP_ID)
+    .if_condition(Expression::new("always()"))
+}
+
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }

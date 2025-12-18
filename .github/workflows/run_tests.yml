@@ -297,13 +297,19 @@ jobs:
     - name: ./script/generate-action-metadata
       run: ./script/generate-action-metadata
       shell: bash -euxo pipefail {0}
-    - name: run_tests::check_workspace_binaries::ensure_actions_asset_is_up_to_date
+    - id: ensure_actions_asset
+      name: steps::ensure_actions_asset_is_up_to_date
       run: |
         if ! git diff --exit-code -- assets/generated/actions.json; then
           echo "Error: assets/generated/actions.json is out of date after running ./script/generate-action-metadata"
           echo "Please run './script/generate-action-metadata' locally and commit the changes"
           exit 1
         fi
+      shell: bash -euxo pipefail {0}
+    - id: record_generate_action_metadata_failure
+      name: steps::record_generate_action_metadata_failure
+      if: always()
+      run: echo "failed=${{ steps.ensure_actions_asset.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: cargo build -p collab
       run: cargo build -p collab
@@ -316,6 +322,8 @@ jobs:
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
+    outputs:
+      generate_action_metadata_failed: ${{ steps.record_generate_action_metadata_failure.outputs.failed == 'true' }}
     timeout-minutes: 60
   check_dependencies:
     needs:
@@ -607,7 +615,8 @@ jobs:
     needs:
     - check_style
     - run_tests_linux
-    if: always() && (needs.check_style.outputs.style_failed == 'true' || needs.run_tests_linux.outputs.clippy_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
+    - check_workspace_binaries
+    if: always() && (needs.check_style.outputs.style_failed == 'true' || needs.run_tests_linux.outputs.clippy_failed == 'true' || needs.check_workspace_binaries.outputs.generate_action_metadata_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-app-token
@@ -617,7 +626,7 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: run_tests::call_autofix::dispatch_autofix
-      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=${{ needs.run_tests_linux.outputs.clippy_failed == 'true' }}
+      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=${{ needs.run_tests_linux.outputs.clippy_failed == 'true' }} -f run_generate_action_metadata=${{ needs.check_workspace_binaries.outputs.generate_action_metadata_failed == 'true' }}
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
