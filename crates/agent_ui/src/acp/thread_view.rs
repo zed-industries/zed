@@ -2042,14 +2042,19 @@ impl AcpThreadView {
                                                 move |_, _, _| editor_weak.upgrade().map_or(Empty.into_any_element(), |ed| ed.into_any_element())
                                             })
                                             .menu(move |window, cx| {
-                                                let ed = editor_weak.upgrade().unwrap();
-                                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                                    menu.entry("Copy", None, move |win, cx| {
-                                                        ed.update(cx, |editor, _cx|{
-                                                            editor.copy(_cx, win);
-                                                        });
-                                                    })
-                                                })
+                                                let ed = editor_weak.upgrade();
+                                                match ed {
+                                                    Some(ed) => {
+                                                        ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                                            menu.entry("Copy", None, move |win, cx| {
+                                                                ed.update(cx, |editor, _cx|{
+                                                                    editor.copy(_cx, win);
+                                                                });
+                                                            })
+                                                        })
+                                                    },
+                                                    None => ContextMenu::build(window, cx, move |menu,_,_| menu )
+                                                }
                                             })
                                             .into_any_element()
                                     })
