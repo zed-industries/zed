@@ -63,6 +63,12 @@ impl BuiltInPrompt {
         &[BuiltInPrompt::CommitMessage]
     }
 
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::CommitMessage => "Commit message",
+        }
+    }
+
     /// Returns the default content for this built-in prompt.
     pub fn default_content(&self) -> &'static str {
         match self {
@@ -184,7 +190,7 @@ impl MetadataCache {
             let builtin_id = PromptId::BuiltIn(*builtin);
             let metadata = PromptMetadata {
                 id: builtin_id,
-                title: Some(builtin.default_title().into()),
+                title: Some(builtin.title().into()),
                 default: false,
                 saved_at: DateTime::default(),
             };
@@ -475,7 +481,7 @@ impl PromptStore {
             if let Some(builtin) = id.as_built_in() {
                 let default_metadata = PromptMetadata {
                     id,
-                    title: Some(builtin.default_title().into()),
+                    title: Some(builtin.title().into()),
                     default: false,
                     saved_at: DateTime::default(),
                 };
