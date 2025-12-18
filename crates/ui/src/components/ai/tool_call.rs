@@ -6,8 +6,8 @@ pub struct ToolCall {
     icon: IconName,
     title: SharedString,
     actions_slot: Option<AnyElement>,
-    use_card_layout: bool,
     content: Option<AnyElement>,
+    use_card_layout: bool,
 }
 
 impl ToolCall {
@@ -26,11 +26,6 @@ impl ToolCall {
         self
     }
 
-    pub fn use_card_layout(mut self, use_card_layout: bool) -> Self {
-        self.use_card_layout = use_card_layout;
-        self
-    }
-
     pub fn actions_slot(mut self, action: impl IntoElement) -> Self {
         self.actions_slot = Some(action.into_any_element());
         self
@@ -38,6 +33,11 @@ impl ToolCall {
 
     pub fn content(mut self, content: impl IntoElement) -> Self {
         self.content = Some(content.into_any_element());
+        self
+    }
+
+    pub fn use_card_layout(mut self, use_card_layout: bool) -> Self {
+        self.use_card_layout = use_card_layout;
         self
     }
 }
@@ -56,12 +56,15 @@ impl RenderOnce for ToolCall {
                     .gap_1()
                     .justify_between()
                     .when(self.use_card_layout, |this| {
-                        this.p_1()
+                        this.px_2()
+                            .py_1()
                             .bg(cx.theme().colors().element_background.opacity(0.2))
                     })
                     .child(
                         h_flex()
+                            .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
                             .gap_1p5()
+                            .rounded_xs()
                             .child(
                                 Icon::new(self.icon)
                                     .size(IconSize::Small)
@@ -79,7 +82,8 @@ impl RenderOnce for ToolCall {
                 this.child(
                     div()
                         .when(self.use_card_layout, |this| {
-                            this.border_t_1()
+                            this.p_2()
+                                .border_t_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
                         })
