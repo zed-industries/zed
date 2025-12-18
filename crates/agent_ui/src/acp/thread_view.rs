@@ -1663,44 +1663,6 @@ impl AcpThreadView {
                 });
                 return;
             }
-        } else if method.0.as_ref() == "anthropic-api-key" {
-            let registry = LanguageModelRegistry::global(cx);
-            let provider = registry
-                .read(cx)
-                .provider(&language_model::ANTHROPIC_PROVIDER_ID)
-                .unwrap();
-            let this = cx.weak_entity();
-            let agent = self.agent.clone();
-            let connection = connection.clone();
-            window.defer(cx, move |window, cx| {
-                if !provider.is_authenticated(cx) {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: Some("ANTHROPIC_API_KEY must be set".to_owned()),
-                            provider_id: Some(language_model::ANTHROPIC_PROVIDER_ID),
-                        },
-                        agent,
-                        connection,
-                        window,
-                        cx,
-                    );
-                } else {
-                    this.update(cx, |this, cx| {
-                        this.thread_state = Self::initial_state(
-                            agent,
-                            None,
-                            this.workspace.clone(),
-                            this.project.clone(),
-                            true,
-                            window,
-                            cx,
-                        )
-                    })
-                    .ok();
-                }
-            });
-            return;
         } else if method.0.as_ref() == "vertex-ai"
             && std::env::var("GOOGLE_API_KEY").is_err()
             && (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()
