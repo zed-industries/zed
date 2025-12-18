@@ -193,6 +193,12 @@ impl Render for ModalLayer {
                 background.fade_out(0.2);
                 this.bg(background)
             })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.hide_modal(window, cx);
+                }),
+            )
             .child(
                 v_flex()
                     .h(px(0.0))
