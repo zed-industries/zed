@@ -30,7 +30,7 @@ use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
-    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitOperation, SplitRight, SplitUp,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp,
     SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
@@ -385,8 +385,8 @@ impl TerminalPanel {
                 operation,
             } => {
                 match operation {
-                    SplitOperation::Clone | SplitOperation::Clear => {
-                        let clone = matches!(operation, SplitOperation::Clone);
+                    SplitMode::ClonePane | SplitMode::EmptyPane => {
+                        let clone = matches!(operation, SplitMode::ClonePane);
                         let new_pane = self.new_pane_with_active_terminal(clone, window, cx);
                         let pane = pane.clone();
                         cx.spawn_in(window, async move |panel, cx| {
@@ -405,7 +405,7 @@ impl TerminalPanel {
                         })
                         .detach();
                     }
-                    SplitOperation::Move => {
+                    SplitMode::MovePane => {
                         let Some(item) =
                             pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
                         else {

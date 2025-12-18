@@ -4142,14 +4142,14 @@ impl Workspace {
                 operation,
             } => {
                 match operation {
-                    SplitOperation::Clone => {
+                    SplitMode::ClonePane => {
                         self.split_and_clone(pane.clone(), *direction, window, cx)
                             .detach();
                     }
-                    SplitOperation::Clear => {
+                    SplitMode::EmptyPane => {
                         self.split_pane(pane.clone(), *direction, window, cx);
                     }
-                    SplitOperation::Move => {
+                    SplitMode::MovePane => {
                         self.split_and_move(pane.clone(), *direction, window, cx);
                     }
                 };
