@@ -4,6 +4,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
@@ -323,8 +324,12 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
-            // Only use config_options if present, don't mix with legacy modes/models
-            let (modes, models, config_options) = if response.config_options.is_some() {
+            // Check feature flag at runtime to decide whether to use config_options
+            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>())?;
+
+            // Only use config_options if feature flag is enabled AND present
+            // Config options take precedence over legacy modes/models
+            let (modes, models, config_options) = if use_config_options && response.config_options.is_some() {
                 // Config options take precedence - don't use modes/models
                 (
                     None,
