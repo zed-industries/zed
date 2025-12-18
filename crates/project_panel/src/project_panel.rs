@@ -60,6 +60,7 @@ use ui::{
     v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -1092,12 +1093,11 @@ impl ProjectPanel {
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
         for visible in &self.state.visible_entries {
             if let Some(git_entry) = visible.entries.iter().find(|e| e.id == entry_id) {
-                return git_entry.git_summary.index.modified
-                    + git_entry.git_summary.worktree.modified
-                    > 0
-                    || git_entry.git_summary.index.deleted
-                        + git_entry.git_summary.worktree.deleted
-                        > 0;
+                let total_modified = git_entry.git_summary.index.modified
+                    + git_entry.git_summary.worktree.modified;
+                let total_deleted = git_entry.git_summary.index.deleted
+                    + git_entry.git_summary.worktree.deleted;
+                return total_modified > 0 || total_deleted > 0;
             }
         }
         false
@@ -1983,7 +1983,23 @@ impl ProjectPanel {
                     })
                 })?;
 
-                task.await.log_err();
+                if let Err(e) = task.await {
+                    panel
+                        .update(cx, |panel, cx| {
+                            let message = format!("Failed to restore {}: {}", file_name, e);
+                            let toast = StatusToast::new(message, cx, |this, _| {
+                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            panel
+                                .workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(toast, cx);
+                                })
+                                .ok();
+                        })
+                        .ok();
+                }
 
                 panel
                     .update(cx, |panel, cx| {
