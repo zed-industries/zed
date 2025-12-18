@@ -305,7 +305,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiZed)
+        IconOrSvg::Icon(IconName::AiZed)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

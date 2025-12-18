@@ -154,8 +154,8 @@ impl LanguageModels {
             name: model.name().0,
             description: None,
             icon: Some(match provider.icon() {
-                IconOrSvg::Path(path) => acp_thread::AgentModelIcon::Path(path),
-                IconOrSvg::Name(name) => acp_thread::AgentModelIcon::Named(name),
+                IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
+                IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
         }
     }

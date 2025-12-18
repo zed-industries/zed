@@ -33,7 +33,7 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, IconOrSvg,
+    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
     Role,
 };
 use multi_buffer::MultiBufferRow;
@@ -2209,7 +2209,7 @@ impl TextThreadEditor {
         let provider_icon = active_provider
             .as_ref()
             .map(|p| p.icon())
-            .unwrap_or(IconOrSvg::Name(IconName::Ai));
+            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2220,8 +2220,8 @@ impl TextThreadEditor {
         };
 
         let provider_icon_element = match provider_icon {
-            IconOrSvg::Path(path) => Icon::from_external_svg(path),
-            IconOrSvg::Name(name) => Icon::new(name),
+            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+            IconOrSvg::Icon(name) => Icon::new(name),
         }
         .color(color)
         .size(IconSize::XSmall);

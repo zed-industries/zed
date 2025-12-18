@@ -165,7 +165,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiGoogle)
+        IconOrSvg::Icon(IconName::AiGoogle)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

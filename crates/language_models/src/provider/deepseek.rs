@@ -129,7 +129,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiDeepSeek)
+        IconOrSvg::Icon(IconName::AiDeepSeek)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

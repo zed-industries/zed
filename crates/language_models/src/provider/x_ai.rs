@@ -119,7 +119,7 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiXAi)
+        IconOrSvg::Icon(IconName::AiXAi)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

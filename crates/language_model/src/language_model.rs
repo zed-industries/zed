@@ -801,14 +801,14 @@ pub enum AuthenticateError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IconOrSvg {
     /// A built-in icon from Zed's icon set.
-    Name(IconName),
+    Icon(IconName),
     /// Path to a custom SVG icon file.
-    Path(SharedString),
+    Svg(SharedString),
 }
 
 impl Default for IconOrSvg {
     fn default() -> Self {
-        Self::Name(IconName::ZedAssistant)
+        Self::Icon(IconName::ZedAssistant)
     }
 }
 

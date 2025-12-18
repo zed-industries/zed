@@ -5,12 +5,11 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, IconOrSvg, RateLimiter, Role, StopReason, TokenUsage,
-    env_var,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::{
@@ -124,7 +123,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiOpenAi)
+        IconOrSvg::Icon(IconName::AiOpenAi)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

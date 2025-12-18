@@ -223,7 +223,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiOllama)
+        IconOrSvg::Icon(IconName::AiOllama)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {

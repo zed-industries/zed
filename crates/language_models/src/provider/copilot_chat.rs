@@ -105,7 +105,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::Copilot)
+        IconOrSvg::Icon(IconName::Copilot)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

@@ -8,12 +8,12 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::B
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModel,
+    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    IconOrSvg, RateLimiter, Role, StopReason, env_var,
+    RateLimiter, Role, StopReason, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -126,7 +126,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiAnthropic)
+        IconOrSvg::Icon(IconName::AiAnthropic)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

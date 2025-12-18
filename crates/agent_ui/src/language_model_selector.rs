@@ -7,8 +7,8 @@ use gpui::{
     Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
 };
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry, IconOrSvg,
+    AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -567,8 +567,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 Some(
                     ModelSelectorListItem::new(ix, model_info.model.name().0)
                         .map(|this| match &model_info.icon {
-                            IconOrSvg::Name(icon_name) => this.icon(*icon_name),
-                            IconOrSvg::Path(icon_path) => this.icon_path(icon_path.clone()),
+                            IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
+                            IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),
                         })
                         .is_selected(is_selected)
                         .is_focused(selected)
@@ -705,7 +705,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: IconOrSvg::Name(IconName::Ai),
+                    icon: IconOrSvg::Icon(IconName::Ai),
                     is_favorite,
                 }
             })

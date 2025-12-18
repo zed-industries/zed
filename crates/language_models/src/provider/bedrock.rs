@@ -427,7 +427,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiBedrock)
+        IconOrSvg::Icon(IconName::AiBedrock)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

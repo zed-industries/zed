@@ -118,7 +118,7 @@ impl LanguageModelProvider for VercelLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiVZero)
+        IconOrSvg::Icon(IconName::AiVZero)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

@@ -178,7 +178,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiMistral)
+        IconOrSvg::Icon(IconName::AiMistral)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

@@ -176,7 +176,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiLmStudio)
+        IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {

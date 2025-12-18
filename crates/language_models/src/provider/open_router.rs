@@ -181,7 +181,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Name(IconName::AiOpenRouter)
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

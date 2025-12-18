@@ -1,5 +1,5 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
-use language_model::{LanguageModelRegistry, IconOrSvg, ZED_CLOUD_PROVIDER_ID};
+use language_model::{IconOrSvg, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
 
 pub struct ApiKeysWithProviders {
@@ -50,8 +50,8 @@ impl Render for ApiKeysWithProviders {
                         .gap_1p5()
                         .child(
                             match icon {
-                                IconOrSvg::Name(icon_name) => Icon::new(icon_name),
-                                IconOrSvg::Path(icon_path) => Icon::from_external_svg(icon_path),
+                                IconOrSvg::Icon(icon_name) => Icon::new(icon_name),
+                                IconOrSvg::Svg(icon_path) => Icon::from_external_svg(icon_path),
                             }
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
