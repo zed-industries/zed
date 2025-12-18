@@ -22,6 +22,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use task::{Shell, SpawnInTerminal};
@@ -137,6 +138,7 @@ pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
     agent_icons: HashMap<ExternalAgentServerName, SharedString>,
+    agent_display_names: HashMap<ExternalAgentServerName, SharedString>,
 }
 
 pub struct AgentServersUpdated;
@@ -155,6 +157,7 @@ mod ext_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -258,6 +261,7 @@ impl AgentServerStore {
         self.external_agents.retain(|name, agent| {
             if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
                 self.agent_icons.remove(name);
+                self.agent_display_names.remove(name);
                 false
             } else {
                 // Keep the hardcoded external agents that don't come from extensions
@@ -275,6 +279,12 @@ impl AgentServerStore {
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
@@ -310,6 +320,12 @@ impl AgentServerStore {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
@@ -367,6 +383,10 @@ impl AgentServerStore {
 
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
+    }
+
+    pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+        self.agent_display_names.get(name).cloned()
     }
 
     pub fn init_remote(session: &AnyProtoClient) {
@@ -440,7 +460,7 @@ impl AgentServerStore {
                     .gemini
                     .as_ref()
                     .and_then(|settings| settings.ignore_system_version)
-                    .unwrap_or(false),
+                    .unwrap_or(true),
             }),
         );
         self.external_agents.insert(
@@ -559,6 +579,7 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -609,6 +630,7 @@ impl AgentServerStore {
             },
             external_agents: external_agents.into_iter().collect(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -617,6 +639,7 @@ impl AgentServerStore {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         }
     }
 
@@ -952,11 +975,10 @@ fn get_or_npm_install_builtin_agent(
         }
 
         versions.sort();
-        let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+        let newest_version = if let Some((version, _)) = versions.last().cloned()
             && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
         {
-            versions.pop();
-            Some(file_name)
+            versions.pop()
         } else {
             None
         };
@@ -982,9 +1004,8 @@ fn get_or_npm_install_builtin_agent(
         })
         .detach();
 
-        let version = if let Some(file_name) = newest_version {
+        let version = if let Some((version, file_name)) = newest_version {
             cx.background_spawn({
-                let file_name = file_name.clone();
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
@@ -993,7 +1014,7 @@ fn get_or_npm_install_builtin_agent(
                         .await
                         .ok();
                     if let Some(latest_version) = latest_version
-                        && &latest_version != &file_name.to_string_lossy()
+                        && latest_version != version
                     {
                         let download_result = download_latest_version(
                             fs,
@@ -1006,7 +1027,9 @@ fn get_or_npm_install_builtin_agent(
                         if let Some(mut new_version_available) = new_version_available
                             && download_result.is_some()
                         {
-                            new_version_available.send(Some(latest_version)).ok();
+                            new_version_available
+                                .send(Some(latest_version.to_string()))
+                                .ok();
                         }
                     }
                 }
@@ -1025,6 +1048,7 @@ fn get_or_npm_install_builtin_agent(
                 package_name.clone(),
             ))
             .await?
+            .to_string()
             .into()
         };
 
@@ -1071,7 +1095,7 @@ async fn download_latest_version(
     dir: PathBuf,
     node_runtime: NodeRuntime,
     package_name: SharedString,
-) -> Result<String> {
+) -> Result<Version> {
     log::debug!("downloading latest version of {package_name}");
 
     let tmp_dir = tempfile::tempdir_in(&dir)?;
@@ -1087,7 +1111,7 @@ async fn download_latest_version(
 
     fs.rename(
         &tmp_dir.keep(),
-        &dir.join(&version),
+        &dir.join(version.to_string()),
         RenameOptions {
             ignore_if_exists: true,
             overwrite: true,
@@ -2040,6 +2064,7 @@ mod extension_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         };
 
         // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")

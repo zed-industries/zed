@@ -146,14 +146,19 @@ impl PlatformDispatcher for WindowsDispatcher {
         current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>) {
+    fn dispatch(
+        &self,
+        runnable: RunnableVariant,
+        label: Option<TaskLabel>,
+        _priority: gpui::Priority,
+    ) {
         self.dispatch_on_threadpool(runnable);
         if let Some(label) = label {
             log::debug!("TaskLabel: {label:?}");
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: gpui::Priority) {
         match self.main_sender.send(runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
@@ -184,5 +189,10 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
+    }
+
+    fn spawn_realtime(&self, _priority: crate::RealtimePriority, _f: Box<dyn FnOnce() + Send>) {
+        // disabled on windows for now.
+        unimplemented!();
     }
 }

@@ -2,7 +2,7 @@ use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{DataCollectionState, Direction, EditPredictionDelegate};
+use edit_prediction_types::{DataCollectionState, EditPredictionDelegate};
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
@@ -100,7 +100,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     ) -> bool {
         let store = self.store.read(cx);
         if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token()
+            store.has_sweep_api_token(cx)
         } else {
             true
         }
@@ -125,26 +125,18 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             return;
         }
 
-        if let Some(current) = store.current_prediction_for_buffer(&buffer, &self.project, cx)
-            && let BufferEditPrediction::Local { prediction } = current
-            && prediction.interpolate(buffer.read(cx)).is_some()
-        {
-            return;
-        }
-
         self.store.update(cx, |store, cx| {
+            if let Some(current) =
+                store.prediction_at(&buffer, Some(cursor_position), &self.project, cx)
+                && let BufferEditPrediction::Local { prediction } = current
+                && prediction.interpolate(buffer.read(cx)).is_some()
+            {
+                return;
+            }
+
             store.refresh_context(&self.project, &buffer, cursor_position, cx);
             store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
         });
-    }
-
-    fn cycle(
-        &mut self,
-        _buffer: Entity<language::Buffer>,
-        _cursor_position: language::Anchor,
-        _direction: Direction,
-        _cx: &mut Context<Self>,
-    ) {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
@@ -171,69 +163,68 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<edit_prediction_types::EditPrediction> {
-        let prediction =
-            self.store
-                .read(cx)
-                .current_prediction_for_buffer(buffer, &self.project, cx)?;
+        self.store.update(cx, |store, cx| {
+            let prediction =
+                store.prediction_at(buffer, Some(cursor_position), &self.project, cx)?;
 
-        let prediction = match prediction {
-            BufferEditPrediction::Local { prediction } => prediction,
-            BufferEditPrediction::Jump { prediction } => {
-                return Some(edit_prediction_types::EditPrediction::Jump {
-                    id: Some(prediction.id.to_string().into()),
-                    snapshot: prediction.snapshot.clone(),
-                    target: prediction.edits.first().unwrap().0.start,
-                });
-            }
-        };
+            let prediction = match prediction {
+                BufferEditPrediction::Local { prediction } => prediction,
+                BufferEditPrediction::Jump { prediction } => {
+                    return Some(edit_prediction_types::EditPrediction::Jump {
+                        id: Some(prediction.id.to_string().into()),
+                        snapshot: prediction.snapshot.clone(),
+                        target: prediction.edits.first().unwrap().0.start,
+                    });
+                }
+            };
 
-        let buffer = buffer.read(cx);
-        let snapshot = buffer.snapshot();
+            let buffer = buffer.read(cx);
+            let snapshot = buffer.snapshot();
 
-        let Some(edits) = prediction.interpolate(&snapshot) else {
-            self.store.update(cx, |store, _cx| {
+            let Some(edits) = prediction.interpolate(&snapshot) else {
                 store.reject_current_prediction(
                     EditPredictionRejectReason::InterpolatedEmpty,
                     &self.project,
                 );
-            });
-            return None;
-        };
+                return None;
+            };
 
-        let cursor_row = cursor_position.to_point(&snapshot).row;
-        let (closest_edit_ix, (closest_edit_range, _)) =
-            edits.iter().enumerate().min_by_key(|(_, (range, _))| {
-                let distance_from_start = cursor_row.abs_diff(range.start.to_point(&snapshot).row);
-                let distance_from_end = cursor_row.abs_diff(range.end.to_point(&snapshot).row);
-                cmp::min(distance_from_start, distance_from_end)
-            })?;
+            let cursor_row = cursor_position.to_point(&snapshot).row;
+            let (closest_edit_ix, (closest_edit_range, _)) =
+                edits.iter().enumerate().min_by_key(|(_, (range, _))| {
+                    let distance_from_start =
+                        cursor_row.abs_diff(range.start.to_point(&snapshot).row);
+                    let distance_from_end = cursor_row.abs_diff(range.end.to_point(&snapshot).row);
+                    cmp::min(distance_from_start, distance_from_end)
+                })?;
 
-        let mut edit_start_ix = closest_edit_ix;
-        for (range, _) in edits[..edit_start_ix].iter().rev() {
-            let distance_from_closest_edit = closest_edit_range.start.to_point(&snapshot).row
-                - range.end.to_point(&snapshot).row;
-            if distance_from_closest_edit <= 1 {
-                edit_start_ix -= 1;
-            } else {
-                break;
+            let mut edit_start_ix = closest_edit_ix;
+            for (range, _) in edits[..edit_start_ix].iter().rev() {
+                let distance_from_closest_edit = closest_edit_range.start.to_point(&snapshot).row
+                    - range.end.to_point(&snapshot).row;
+                if distance_from_closest_edit <= 1 {
+                    edit_start_ix -= 1;
+                } else {
+                    break;
+                }
             }
-        }
 
-        let mut edit_end_ix = closest_edit_ix + 1;
-        for (range, _) in &edits[edit_end_ix..] {
-            let distance_from_closest_edit =
-                range.start.to_point(buffer).row - closest_edit_range.end.to_point(&snapshot).row;
-            if distance_from_closest_edit <= 1 {
-                edit_end_ix += 1;
-            } else {
-                break;
+            let mut edit_end_ix = closest_edit_ix + 1;
+            for (range, _) in &edits[edit_end_ix..] {
+                let distance_from_closest_edit = range.start.to_point(buffer).row
+                    - closest_edit_range.end.to_point(&snapshot).row;
+                if distance_from_closest_edit <= 1 {
+                    edit_end_ix += 1;
+                } else {
+                    break;
+                }
             }
-        }
 
-        Some(edit_prediction_types::EditPrediction::Local {
-            id: Some(prediction.id.to_string().into()),
-            edits: edits[edit_start_ix..edit_end_ix].to_vec(),
-            edit_preview: Some(prediction.edit_preview.clone()),
+            Some(edit_prediction_types::EditPrediction::Local {
+                id: Some(prediction.id.to_string().into()),
+                edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+                edit_preview: Some(prediction.edit_preview.clone()),
+            })
         })
     }
 }

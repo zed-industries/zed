@@ -155,8 +155,8 @@ enum InternalEvent {
     ScrollToAlacPoint(AlacPoint),
     SetSelection(Option<(Selection, AlacPoint)>),
     UpdateSelection(Point<Pixels>),
-    // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
+    ProcessHyperlink((String, bool, Match), bool),
     // Whether keep selection when copy
     Copy(Option<bool>),
     // Vi mode events
@@ -369,6 +369,7 @@ impl TerminalBuilder {
             last_content: Default::default(),
             last_mouse: None,
             matches: Vec::new(),
+
             selection_head: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
@@ -379,6 +380,7 @@ impl TerminalBuilder {
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
+            mouse_down_hyperlink: None,
             #[cfg(windows)]
             shell_program: None,
             activation_script: Vec::new(),
@@ -420,6 +422,10 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let fut = async move {
+            // Remove SHLVL so the spawned shell initializes it to 1, matching
+            // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
+            env.remove("SHLVL");
+
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
@@ -591,6 +597,7 @@ impl TerminalBuilder {
                 last_content: Default::default(),
                 last_mouse: None,
                 matches: Vec::new(),
+
                 selection_head: None,
                 breadcrumb_text: String::new(),
                 scroll_px: px(0.),
@@ -604,6 +611,7 @@ impl TerminalBuilder {
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
+                mouse_down_hyperlink: None,
                 #[cfg(windows)]
                 shell_program,
                 activation_script: activation_script.clone(),
@@ -822,6 +830,7 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
+
     pub breadcrumb_text: String,
     title_override: Option<String>,
     scroll_px: Pixels,
@@ -833,6 +842,7 @@ pub struct Terminal {
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
+    mouse_down_hyperlink: Option<(String, bool, Match)>,
     #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
@@ -885,6 +895,8 @@ impl TaskStatus {
     }
 }
 
+const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
+
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
@@ -935,7 +947,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(None, cx),
+            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -1143,7 +1155,6 @@ impl Terminal {
             }
             InternalEvent::FindHyperlink(position, open) => {
                 trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
-                let prev_hovered_word = self.last_content.last_hovered_word.take();
 
                 let point = grid_point(
                     *position,
@@ -1157,47 +1168,53 @@ impl Terminal {
                     point,
                     &mut self.hyperlink_regex_searches,
                 ) {
-                    Some((maybe_url_or_path, is_url, url_match)) => {
-                        let target = if is_url {
-                            // Treat "file://" URLs like file paths to ensure
-                            // that line numbers at the end of the path are
-                            // handled correctly.
-                            // file://{path} should be urldecoded, returning a urldecoded {path}
-                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
-                                let decoded_path = urlencoding::decode(path)
-                                    .map(|decoded| decoded.into_owned())
-                                    .unwrap_or(path.to_owned());
-
-                                MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: decoded_path,
-                                    terminal_dir: self.working_directory(),
-                                })
-                            } else {
-                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
-                            }
-                        } else {
-                            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                maybe_path: maybe_url_or_path.clone(),
-                                terminal_dir: self.working_directory(),
-                            })
-                        };
-                        if *open {
-                            cx.emit(Event::Open(target));
-                        } else {
-                            self.update_selected_word(
-                                prev_hovered_word,
-                                url_match,
-                                maybe_url_or_path,
-                                target,
-                                cx,
-                            );
-                        }
+                    Some(hyperlink) => {
+                        self.process_hyperlink(hyperlink, *open, cx);
                     }
                     None => {
                         cx.emit(Event::NewNavigationTarget(None));
                     }
                 }
             }
+            InternalEvent::ProcessHyperlink(hyperlink, open) => {
+                self.process_hyperlink(hyperlink.clone(), *open, cx);
+            }
+        }
+    }
+
+    fn process_hyperlink(
+        &mut self,
+        hyperlink: (String, bool, Match),
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (maybe_url_or_path, is_url, url_match) = hyperlink;
+        let prev_hovered_word = self.last_content.last_hovered_word.take();
+
+        let target = if is_url {
+            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
+                let decoded_path = urlencoding::decode(path)
+                    .map(|decoded| decoded.into_owned())
+                    .unwrap_or(path.to_owned());
+
+                MaybeNavigationTarget::PathLike(PathLikeTarget {
+                    maybe_path: decoded_path,
+                    terminal_dir: self.working_directory(),
+                })
+            } else {
+                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+            }
+        } else {
+            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                maybe_path: maybe_url_or_path.clone(),
+                terminal_dir: self.working_directory(),
+            })
+        };
+
+        if open {
+            cx.emit(Event::Open(target));
+        } else {
+            self.update_selected_word(prev_hovered_word, url_match, maybe_url_or_path, target, cx);
         }
     }
 
@@ -1711,38 +1728,40 @@ impl Terminal {
             {
                 self.write_to_pty(bytes);
             }
-        } else if e.modifiers.secondary() {
-            self.word_from_position(e.position);
+        } else {
+            self.schedule_find_hyperlink(e.modifiers, e.position);
         }
         cx.notify();
     }
 
-    fn word_from_position(&mut self, position: Point<Pixels>) {
-        if self.selection_phase == SelectionPhase::Selecting {
+    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) {
+        if self.selection_phase == SelectionPhase::Selecting
+            || !modifiers.secondary()
+            || !self.last_content.terminal_bounds.bounds.contains(&position)
+        {
             self.last_content.last_hovered_word = None;
-        } else if self.last_content.terminal_bounds.bounds.contains(&position) {
-            // Throttle hyperlink searches to avoid excessive processing
-            let now = Instant::now();
-            let should_search = if let Some(last_pos) = self.last_hyperlink_search_position {
+            return;
+        }
+
+        // Throttle hyperlink searches to avoid excessive processing
+        let now = Instant::now();
+        if self
+            .last_hyperlink_search_position
+            .map_or(true, |last_pos| {
                 // Only search if mouse moved significantly or enough time passed
-                let distance_moved =
-                    ((position.x - last_pos.x).abs() + (position.y - last_pos.y).abs()) > px(5.0);
+                let distance_moved = ((position.x - last_pos.x).abs()
+                    + (position.y - last_pos.y).abs())
+                    > FIND_HYPERLINK_THROTTLE_PX;
                 let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
                 distance_moved || time_elapsed
-            } else {
-                true
-            };
-
-            if should_search {
-                self.last_mouse_move_time = now;
-                self.last_hyperlink_search_position = Some(position);
-                self.events.push_back(InternalEvent::FindHyperlink(
-                    position - self.last_content.terminal_bounds.bounds.origin,
-                    false,
-                ));
-            }
-        } else {
-            self.last_content.last_hovered_word = None;
+            })
+        {
+            self.last_mouse_move_time = now;
+            self.last_hyperlink_search_position = Some(position);
+            self.events.push_back(InternalEvent::FindHyperlink(
+                position - self.last_content.terminal_bounds.bounds.origin,
+                false,
+            ));
         }
     }
 
@@ -1766,6 +1785,20 @@ impl Terminal {
     ) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if !self.mouse_mode(e.modifiers.shift) {
+            if let Some((.., hyperlink_range)) = &self.mouse_down_hyperlink {
+                let point = grid_point(
+                    position,
+                    self.last_content.terminal_bounds,
+                    self.last_content.display_offset,
+                );
+
+                if !hyperlink_range.contains(&point) {
+                    self.mouse_down_hyperlink = None;
+                } else {
+                    return;
+                }
+            }
+
             self.selection_phase = SelectionPhase::Selecting;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
@@ -1811,6 +1844,23 @@ impl Terminal {
             self.last_content.terminal_bounds,
             self.last_content.display_offset,
         );
+
+        if e.button == MouseButton::Left
+            && e.modifiers.secondary()
+            && !self.mouse_mode(e.modifiers.shift)
+        {
+            let term_lock = self.term.lock();
+            self.mouse_down_hyperlink = terminal_hyperlinks::find_from_grid_point(
+                &term_lock,
+                point,
+                &mut self.hyperlink_regex_searches,
+            );
+            drop(term_lock);
+
+            if self.mouse_down_hyperlink.is_some() {
+                return;
+            }
+        }
 
         if self.mouse_mode(e.modifiers.shift) {
             if let Some(bytes) =
@@ -1882,6 +1932,31 @@ impl Terminal {
                 self.copy(Some(true));
             }
 
+            if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
+                let point = grid_point(
+                    position,
+                    self.last_content.terminal_bounds,
+                    self.last_content.display_offset,
+                );
+
+                if let Some(mouse_up_hyperlink) = {
+                    let term_lock = self.term.lock();
+                    terminal_hyperlinks::find_from_grid_point(
+                        &term_lock,
+                        point,
+                        &mut self.hyperlink_regex_searches,
+                    )
+                } {
+                    if mouse_down_hyperlink == mouse_up_hyperlink {
+                        self.events
+                            .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
+                        self.selection_phase = SelectionPhase::Ended;
+                        self.last_mouse = None;
+                        return;
+                    }
+                }
+            }
+
             //Hyperlinks
             if self.selection_phase == SelectionPhase::Ended {
                 let mouse_cell_index =
@@ -1934,7 +2009,7 @@ impl Terminal {
     }
 
     fn refresh_hovered_word(&mut self, window: &Window) {
-        self.word_from_position(window.mouse_position());
+        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position());
     }
 
     fn determine_scroll_lines(
@@ -2398,9 +2473,90 @@ mod tests {
         term::cell::Cell,
     };
     use collections::HashMap;
-    use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
+    use gpui::{
+        Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+        Point, TestAppContext, bounds, point, size, smol_timeout,
+    };
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
+
+    fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(output, cx);
+        });
+
+        cx.run_until_parked();
+
+        terminal.update(cx, |terminal, _cx| {
+            let term_lock = terminal.term.lock();
+            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            drop(term_lock);
+
+            let terminal_bounds = TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            );
+            terminal.last_content.terminal_bounds = terminal_bounds;
+            terminal.events.clear();
+        });
+
+        terminal
+    }
+
+    fn ctrl_mouse_down_at(
+        terminal: &mut Terminal,
+        position: Point<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let mouse_down = MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::secondary_key(),
+            click_count: 1,
+            first_mouse: true,
+        };
+        terminal.mouse_down(&mouse_down, cx);
+    }
+
+    fn ctrl_mouse_move_to(
+        terminal: &mut Terminal,
+        position: Point<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
+        let drag_event = MouseMoveEvent {
+            position,
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::secondary_key(),
+        };
+        terminal.mouse_drag(&drag_event, terminal_bounds, cx);
+    }
+
+    fn ctrl_mouse_up_at(
+        terminal: &mut Terminal,
+        position: Point<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let mouse_up = MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::secondary_key(),
+            click_count: 1,
+        };
+        terminal.mouse_up(&mouse_up, cx);
+    }
 
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
@@ -2850,5 +3006,169 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_same_position(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            let click_position = point(px(80.0), px(10.0));
+            ctrl_mouse_down_at(terminal, click_position, cx);
+            ctrl_mouse_up_at(terminal, click_position, cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(
+            cx,
+            b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
+        );
+
+        terminal.update(cx, |terminal, cx| {
+            let down_position = point(px(80.0), px(10.0));
+            let up_position = point(px(10.0), px(50.0));
+
+            ctrl_mouse_down_at(terminal, down_position, cx);
+            ctrl_mouse_move_to(terminal, up_position, cx);
+            ctrl_mouse_up_at(terminal, up_position, cx);
+
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, _))),
+                "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_drag_within_bounds(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            let down_position = point(px(70.0), px(10.0));
+            let up_position = point(px(130.0), px(10.0));
+
+            ctrl_mouse_down_at(terminal, down_position, cx);
+            ctrl_mouse_move_to(terminal, up_position, cx);
+            ctrl_mouse_up_at(terminal, up_position, cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when dragging within hyperlink bounds"
+            );
+        });
+    }
+
+    mod perf {
+        use super::super::*;
+        use gpui::{
+            Entity, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext,
+            VisualTestContext, point,
+        };
+        use util::default;
+        use util_macros::perf;
+
+        async fn init_scroll_perf_test(
+            cx: &mut TestAppContext,
+        ) -> (Entity<Terminal>, &mut VisualTestContext) {
+            cx.update(|cx| {
+                let settings_store = settings::SettingsStore::test(cx);
+                cx.set_global(settings_store);
+            });
+
+            cx.executor().allow_parking();
+
+            let window = cx.add_empty_window();
+            let builder = window
+                .update(|window, cx| {
+                    let settings = TerminalSettings::get_global(cx);
+                    let test_path_hyperlink_timeout_ms = 100;
+                    TerminalBuilder::new(
+                        None,
+                        None,
+                        task::Shell::System,
+                        HashMap::default(),
+                        CursorShape::default(),
+                        AlternateScroll::On,
+                        None,
+                        settings.path_hyperlink_regexes.clone(),
+                        test_path_hyperlink_timeout_ms,
+                        false,
+                        window.window_handle().window_id().as_u64(),
+                        None,
+                        cx,
+                        vec![],
+                    )
+                })
+                .await
+                .unwrap();
+            let terminal = window.new(|cx| builder.subscribe(cx));
+
+            terminal.update(window, |term, cx| {
+                term.write_output("long line ".repeat(1000).as_bytes(), cx);
+            });
+
+            (terminal, window)
+        }
+
+        #[perf]
+        #[gpui::test]
+        async fn scroll_long_line_benchmark(cx: &mut TestAppContext) {
+            let (terminal, window) = init_scroll_perf_test(cx).await;
+            let wobble = point(FIND_HYPERLINK_THROTTLE_PX, px(0.0));
+            let mut scroll_by = |lines: i32| {
+                window.update_window_entity(&terminal, |terminal, window, cx| {
+                    let bounds = terminal.last_content.terminal_bounds.bounds;
+                    let center = bounds.origin + bounds.center();
+                    let position = center + wobble * lines as f32;
+
+                    terminal.mouse_move(
+                        &MouseMoveEvent {
+                            position,
+                            ..default()
+                        },
+                        cx,
+                    );
+
+                    terminal.scroll_wheel(
+                        &ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(Point::new(0.0, lines as f32)),
+                            ..default()
+                        },
+                        1.0,
+                    );
+
+                    assert!(
+                        terminal
+                            .events
+                            .iter()
+                            .any(|event| matches!(event, InternalEvent::Scroll(_))),
+                        "Should have Scroll event when scrolling within terminal bounds"
+                    );
+                    terminal.sync(window, cx);
+                });
+            };
+
+            for _ in 0..20000 {
+                scroll_by(1);
+                scroll_by(-1);
+            }
+        }
     }
 }

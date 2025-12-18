@@ -130,7 +130,12 @@ impl AgentDiffPane {
             .action_log()
             .read(cx)
             .changed_buffers(cx);
-        let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+        let mut paths_to_delete = self
+            .multibuffer
+            .read(cx)
+            .paths()
+            .cloned()
+            .collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
             if buffer.read(cx).file().is_none() {
@@ -207,10 +212,10 @@ impl AgentDiffPane {
                 .focus_handle(cx)
                 .contains_focused(window, cx)
         {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.update(cx, |editor, cx| {
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
             });
         }
     }
@@ -869,12 +874,12 @@ impl AgentDiffToolbar {
         match active_item {
             AgentDiffToolbarItem::Pane(agent_diff) => {
                 if let Some(agent_diff) = agent_diff.upgrade() {
-                    agent_diff.focus_handle(cx).focus(window);
+                    agent_diff.focus_handle(cx).focus(window, cx);
                 }
             }
             AgentDiffToolbarItem::Editor { editor, .. } => {
                 if let Some(editor) = editor.upgrade() {
-                    editor.read(cx).focus_handle(cx).focus(window);
+                    editor.read(cx).focus_handle(cx).focus(window, cx);
                 }
             }
         }

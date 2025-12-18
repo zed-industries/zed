@@ -1,83 +1,70 @@
-use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
-use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
+use anyhow::Result;
+use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, Task,
+    App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
+use language::{Point, ToOffset as _};
+use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
-use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
     fmt::{self, Write as _},
-    ops::Range,
     path::Path,
     sync::Arc,
     time::Instant,
 };
 
-use crate::{EditPredictionId, EditPredictionInputs, prediction::EditPredictionResult};
+use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
 pub struct SweepAi {
-    pub api_token: Shared<Task<Option<String>>>,
+    pub api_token: Entity<ApiKeyState>,
     pub debug_info: Arc<str>,
 }
 
 impl SweepAi {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         SweepAi {
-            api_token: load_api_token(cx).shared(),
+            api_token: sweep_api_token(cx),
             debug_info: debug_info(cx),
         }
     }
 
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
-    }
-
     pub fn request_prediction_with_sweep(
         &self,
-        project: &Entity<Project>,
-        active_buffer: &Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        position: language::Anchor,
-        events: Vec<Arc<Event>>,
-        recent_paths: &VecDeque<ProjectPath>,
-        related_files: Vec<RelatedFile>,
-        diagnostic_search_range: Range<Point>,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
-        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
-        let full_path: Arc<Path> = snapshot
+        let full_path: Arc<Path> = inputs
+            .snapshot
             .file()
             .map(|file| file.full_path(cx))
             .unwrap_or_else(|| "untitled".into())
             .into();
 
-        let project_file = project::File::from_dyn(snapshot.file());
+        let project_file = project::File::from_dyn(inputs.snapshot.file());
         let repo_name = project_file
             .map(|file| file.worktree.read(cx).root_name_str())
             .unwrap_or("untitled")
             .into();
-        let offset = position.to_offset(&snapshot);
+        let offset = inputs.position.to_offset(&inputs.snapshot);
 
-        let recent_buffers = recent_paths.iter().cloned();
+        let recent_buffers = inputs.recent_paths.iter().cloned();
         let http_client = cx.http_client();
 
         let recent_buffer_snapshots = recent_buffers
             .filter_map(|project_path| {
-                let buffer = project.read(cx).get_open_buffer(&project_path, cx)?;
-                if active_buffer == &buffer {
+                let buffer = inputs.project.read(cx).get_open_buffer(&project_path, cx)?;
+                if inputs.buffer == buffer {
                     None
                 } else {
                     Some(buffer.read(cx).snapshot())
@@ -86,14 +73,13 @@ impl SweepAi {
             .take(3)
             .collect::<Vec<_>>();
 
-        let cursor_point = position.to_point(&snapshot);
         let buffer_snapshotted_at = Instant::now();
 
         let result = cx.background_spawn(async move {
-            let text = snapshot.text();
+            let text = inputs.snapshot.text();
 
             let mut recent_changes = String::new();
-            for event in &events {
+            for event in &inputs.events {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
             }
 
@@ -122,20 +108,23 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = related_files
+            let retrieval_chunks = inputs
+                .related_files
                 .iter()
                 .flat_map(|related_file| {
                     related_file.excerpts.iter().map(|excerpt| FileChunk {
-                        file_path: related_file.path.path.as_unix_str().to_string(),
-                        start_line: excerpt.point_range.start.row as usize,
-                        end_line: excerpt.point_range.end.row as usize,
+                        file_path: related_file.path.to_string_lossy().to_string(),
+                        start_line: excerpt.row_range.start as usize,
+                        end_line: excerpt.row_range.end as usize,
                         content: excerpt.text.to_string(),
                         timestamp: None,
                     })
                 })
                 .collect();
 
-            let diagnostic_entries = snapshot.diagnostics_in_range(diagnostic_search_range, false);
+            let diagnostic_entries = inputs
+                .snapshot
+                .diagnostics_in_range(inputs.diagnostic_search_range, false);
             let mut diagnostic_content = String::new();
             let mut diagnostic_count = 0;
 
@@ -195,21 +184,14 @@ impl SweepAi {
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
-            let inputs = EditPredictionInputs {
-                events,
-                included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
-                    path: full_path.clone(),
-                    max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
-                    excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
-                        start_line: cloud_llm_client::predict_edits_v3::Line(0),
-                        text: request_body.file_contents.into(),
-                    }],
-                }],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    column: cursor_point.column,
-                    line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
-                },
+            let ep_inputs = zeta_prompt::ZetaPromptInput {
+                events: inputs.events,
+                related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
+                cursor_excerpt: request_body.file_contents.into(),
+                // we actually don't know
+                editable_range_in_excerpt: 0..inputs.snapshot.len(),
+                cursor_offset_in_excerpt: request_body.cursor_position,
             };
 
             let request = http_client::Request::builder()
@@ -237,15 +219,20 @@ impl SweepAi {
 
             let response: AutocompleteResponse = serde_json::from_slice(&body)?;
 
-            let old_text = snapshot
+            let old_text = inputs
+                .snapshot
                 .text_for_range(response.start_index..response.end_index)
                 .collect::<String>();
             let edits = language::text_diff(&old_text, &response.completion)
                 .into_iter()
                 .map(|(range, text)| {
                     (
-                        snapshot.anchor_after(response.start_index + range.start)
-                            ..snapshot.anchor_before(response.start_index + range.end),
+                        inputs
+                            .snapshot
+                            .anchor_after(response.start_index + range.start)
+                            ..inputs
+                                .snapshot
+                                .anchor_before(response.start_index + range.end),
                         text,
                     )
                 })
@@ -254,13 +241,13 @@ impl SweepAi {
             anyhow::Ok((
                 response.autocomplete_id,
                 edits,
-                snapshot,
+                inputs.snapshot,
                 response_received_at,
-                inputs,
+                ep_inputs,
             ))
         });
 
-        let buffer = active_buffer.clone();
+        let buffer = inputs.buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
@@ -281,46 +268,28 @@ impl SweepAi {
     }
 }
 
-pub const SWEEP_CREDENTIALS_URL: &str = "https://autocomplete.sweep.dev";
+pub const SWEEP_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://autocomplete.sweep.dev");
 pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
+pub static SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP_AI_TOKEN");
 
-pub fn load_api_token(cx: &App) -> Task<Option<String>> {
-    if let Some(api_token) = std::env::var("SWEEP_AI_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Task::ready(Some(api_token));
+struct GlobalSweepApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalSweepApiKey {}
+
+pub fn sweep_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    if let Some(global) = cx.try_global::<GlobalSweepApiKey>() {
+        return global.0.clone();
     }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-    cx.spawn(async move |cx| {
-        let (_, credentials) = credentials_provider
-            .read_credentials(SWEEP_CREDENTIALS_URL, &cx)
-            .await
-            .ok()??;
-        String::from_utf8(credentials).ok()
-    })
+    let entity =
+        cx.new(|_| ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone()));
+    cx.set_global(GlobalSweepApiKey(entity.clone()));
+    entity
 }
 
-fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-
-    cx.spawn(async move |cx| {
-        if let Some(api_token) = api_token {
-            credentials_provider
-                .write_credentials(
-                    SWEEP_CREDENTIALS_URL,
-                    SWEEP_CREDENTIALS_USERNAME,
-                    api_token.as_bytes(),
-                    cx,
-                )
-                .await
-                .context("Failed to save Sweep API token to system keychain")
-        } else {
-            credentials_provider
-                .delete_credentials(SWEEP_CREDENTIALS_URL, cx)
-                .await
-                .context("Failed to delete Sweep API token from system keychain")
-        }
+pub fn load_sweep_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    sweep_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx)
     })
 }
 
@@ -403,12 +372,9 @@ struct AdditionalCompletion {
     pub finish_reason: Option<String>,
 }
 
-fn write_event(
-    event: &cloud_llm_client::predict_edits_v3::Event,
-    f: &mut impl fmt::Write,
-) -> fmt::Result {
+fn write_event(event: &zeta_prompt::Event, f: &mut impl fmt::Write) -> fmt::Result {
     match event {
-        cloud_llm_client::predict_edits_v3::Event::BufferChange {
+        zeta_prompt::Event::BufferChange {
             old_path,
             path,
             diff,

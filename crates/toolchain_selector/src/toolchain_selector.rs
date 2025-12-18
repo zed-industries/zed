@@ -128,67 +128,61 @@ impl AddToolchainState {
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
-        let path_style = project.read(cx).path_style(cx);
-        let lister =
-            OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, path_style)
-                .show_hidden()
-                .with_footer(Arc::new(move |_, cx| {
-                    let error = weak
-                        .read_with(cx, |this, _| {
-                            if let AddState::Path { error, .. } = &this.state {
-                                error.clone()
-                            } else {
-                                None
+        let lister = OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, cx)
+            .show_hidden()
+            .with_footer(Arc::new(move |_, cx| {
+                let error = weak
+                    .read_with(cx, |this, _| {
+                        if let AddState::Path { error, .. } = &this.state {
+                            error.clone()
+                        } else {
+                            None
+                        }
+                    })
+                    .ok()
+                    .flatten();
+                let is_loading = weak
+                    .read_with(cx, |this, _| {
+                        matches!(
+                            this.state,
+                            AddState::Path {
+                                input_state: PathInputState::Resolving(_),
+                                ..
                             }
-                        })
-                        .ok()
-                        .flatten();
-                    let is_loading = weak
-                        .read_with(cx, |this, _| {
-                            matches!(
-                                this.state,
-                                AddState::Path {
-                                    input_state: PathInputState::Resolving(_),
-                                    ..
-                                }
-                            )
-                        })
-                        .unwrap_or_default();
-                    Some(
-                        v_flex()
-                            .child(Divider::horizontal())
-                            .child(
-                                h_flex()
-                                    .p_1()
-                                    .justify_between()
-                                    .gap_2()
-                                    .child(
-                                        Label::new("Select Toolchain Path")
-                                            .color(Color::Muted)
-                                            .map(|this| {
-                                                if is_loading {
-                                                    this.with_animation(
-                                                        "select-toolchain-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.4, 0.8,
-                                                            )),
-                                                        |label, delta| label.alpha(delta),
-                                                    )
-                                                    .into_any()
-                                                } else {
-                                                    this.into_any_element()
-                                                }
-                                            }),
-                                    )
-                                    .when_some(error, |this, error| {
-                                        this.child(Label::new(error).color(Color::Error))
-                                    }),
-                            )
-                            .into_any(),
-                    )
-                }));
+                        )
+                    })
+                    .unwrap_or_default();
+                Some(
+                    v_flex()
+                        .child(Divider::horizontal())
+                        .child(
+                            h_flex()
+                                .p_1()
+                                .justify_between()
+                                .gap_2()
+                                .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
+                                    |this| {
+                                        if is_loading {
+                                            this.with_animation(
+                                                "select-toolchain-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any()
+                                        } else {
+                                            this.into_any_element()
+                                        }
+                                    },
+                                ))
+                                .when_some(error, |this, error| {
+                                    this.child(Label::new(error).color(Color::Error))
+                                }),
+                        )
+                        .into_any(),
+                )
+            }));
 
         (lister, rx)
     }
@@ -231,7 +225,7 @@ impl AddToolchainState {
                                 );
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
-                            this.focus_handle(cx).focus(window);
+                            this.focus_handle(cx).focus(window, cx);
                         }
                     });
                     return Err(anyhow::anyhow!("Failed to resolve toolchain"));
@@ -266,7 +260,7 @@ impl AddToolchainState {
                         toolchain,
                         scope_picker,
                     };
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                 });
 
                 Result::<_, anyhow::Error>::Ok(())
@@ -339,7 +333,7 @@ impl AddToolchainState {
         });
         _ = self.weak.update(cx, |this, cx| {
             this.state = State::Search((this.create_search_state)(window, cx));
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             cx.notify();
         });
     }
@@ -389,7 +383,7 @@ impl Render for AddToolchainState {
                     &weak,
                     |this: &mut ToolchainSelector, _: &menu::Cancel, window, cx| {
                         this.state = State::Search((this.create_search_state)(window, cx));
-                        this.state.focus_handle(cx).focus(window);
+                        this.state.focus_handle(cx).focus(window, cx);
                         cx.notify();
                     },
                 ))
@@ -709,7 +703,7 @@ impl ToolchainSelector {
                 window,
                 cx,
             ));
-            self.state.focus_handle(cx).focus(window);
+            self.state.focus_handle(cx).focus(window, cx);
             cx.notify();
         }
     }

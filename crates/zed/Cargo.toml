@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.217.0"
+version = "0.219.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -26,6 +26,7 @@ acp_tools.workspace = true
 activity_indicator.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
+agent_ui_v2.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -162,6 +163,7 @@ vim_mode_setting.workspace = true
 watch.workspace = true
 web_search.workspace = true
 web_search_providers.workspace = true
+which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
@@ -194,6 +196,10 @@ terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+agent_ui = { workspace = true, features = ["test-support"] }
+agent_ui_v2 = { workspace = true, features = ["test-support"] }
+search = { workspace = true, features = ["test-support"] }
+
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]

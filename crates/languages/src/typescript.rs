@@ -12,6 +12,7 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
+use semver::Version;
 use serde_json::{Value, json};
 use smol::lock::RwLock;
 use std::{
@@ -111,8 +112,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     VariableName::File.template_value(),
                 ],
                 cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
@@ -130,8 +130,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
@@ -637,8 +636,8 @@ impl TypeScriptLspAdapter {
 }
 
 pub struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
+    typescript_version: Version,
+    server_version: Version,
 }
 
 impl LspInstaller for TypeScriptLspAdapter {
@@ -649,7 +648,7 @@ impl LspInstaller for TypeScriptLspAdapter {
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<TypeScriptVersions> {
+    ) -> Result<Self::BinaryVersion> {
         Ok(TypeScriptVersions {
             typescript_version: self
                 .node
@@ -664,7 +663,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &TypeScriptVersions,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -676,7 +675,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                 Self::PACKAGE_NAME,
                 &server_path,
                 container_dir,
-                VersionStrategy::Latest(version.typescript_version.as_str()),
+                VersionStrategy::Latest(&version.typescript_version),
             )
             .await
         {
@@ -689,7 +688,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                 Self::SERVER_PACKAGE_NAME,
                 &server_path,
                 container_dir,
-                VersionStrategy::Latest(version.server_version.as_str()),
+                VersionStrategy::Latest(&version.server_version),
             )
             .await
         {
@@ -705,7 +704,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: TypeScriptVersions,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -717,11 +716,11 @@ impl LspInstaller for TypeScriptLspAdapter {
                 &[
                     (
                         Self::PACKAGE_NAME,
-                        latest_version.typescript_version.as_str(),
+                        &latest_version.typescript_version.to_string(),
                     ),
                     (
                         Self::SERVER_PACKAGE_NAME,
-                        latest_version.server_version.as_str(),
+                        &latest_version.server_version.to_string(),
                     ),
                 ],
             )

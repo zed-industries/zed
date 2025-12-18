@@ -151,7 +151,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, cx);
+            return;
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -623,7 +623,10 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     });
     MarkdownStyle {
         base_text_style,
-        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        code_block: StyleRefinement::default()
+            .my(rems(1.))
+            .font_buffer(cx)
+            .font_features(buffer_font_features.clone()),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
@@ -653,6 +656,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .text_base()
             .mt(rems(1.))
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -706,6 +710,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }

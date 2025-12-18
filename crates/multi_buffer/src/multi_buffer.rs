@@ -1202,6 +1202,7 @@ impl MultiBuffer {
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
+    #[ztracing::instrument(skip_all)]
     pub fn snapshot(&self, cx: &App) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
@@ -1927,6 +1928,7 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn excerpts_for_buffer(
         &self,
         buffer_id: BufferId,
@@ -2608,9 +2610,8 @@ impl MultiBuffer {
         for range in ranges {
             let range = range.to_point(&snapshot);
             let start = snapshot.point_to_offset(Point::new(range.start.row, 0));
-            let end = snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-            let start = start.saturating_sub_usize(1);
-            let end = snapshot.len().min(end + 1usize);
+            let end = (snapshot.point_to_offset(Point::new(range.end.row + 1, 0)) + 1usize)
+                .min(snapshot.len());
             cursor.seek(&start, Bias::Right);
             while let Some(item) = cursor.item() {
                 if *cursor.start() >= end {
@@ -2887,6 +2888,7 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    #[ztracing::instrument(skip_all)]
     fn sync(&self, cx: &App) {
         let changed = self.buffer_changed_since_sync.replace(false);
         if !changed {
@@ -5627,6 +5629,7 @@ impl MultiBufferSnapshot {
     /// excerpt
     ///
     /// Can optionally pass a range_filter to filter the ranges of brackets to consider
+    #[ztracing::instrument(skip_all)]
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,

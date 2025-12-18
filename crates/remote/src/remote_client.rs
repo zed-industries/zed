@@ -3,6 +3,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        docker::{DockerConnectionOptions, DockerExecConnection},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -48,10 +49,58 @@ use util::{
     paths::{PathStyle, RemotePathBuf},
 };
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteOs {
+    Linux,
+    MacOs,
+    Windows,
+}
+
+impl RemoteOs {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "linux",
+            RemoteOs::MacOs => "macos",
+            RemoteOs::Windows => "windows",
+        }
+    }
+
+    pub fn is_windows(&self) -> bool {
+        matches!(self, RemoteOs::Windows)
+    }
+}
+
+impl std::fmt::Display for RemoteOs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RemoteArch {
+    X86_64,
+    Aarch64,
+}
+
+impl RemoteArch {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteArch::X86_64 => "x86_64",
+            RemoteArch::Aarch64 => "aarch64",
+        }
+    }
+}
+
+impl std::fmt::Display for RemoteArch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct RemotePlatform {
-    pub os: &'static str,
-    pub arch: &'static str,
+    pub os: RemoteOs,
+    pub arch: RemoteArch,
 }
 
 #[derive(Clone, Debug)]
@@ -88,7 +137,8 @@ pub trait RemoteClientDelegate: Send + Sync {
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-const INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+const INITIAL_CONNECTION_TIMEOUT: Duration =
+    Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
 const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
@@ -920,10 +970,12 @@ impl RemoteClient {
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
     ) -> (RemoteConnectionOptions, AnyProtoClient) {
+        use crate::transport::ssh::SshConnectionHost;
+
         let port = client_cx
             .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
         let opts = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "<fake>".to_string(),
+            host: SshConnectionHost::from("<fake>".to_string()),
             port: Some(port),
             ..Default::default()
         });
@@ -1042,6 +1094,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::Docker(opts) => {
+                            DockerExecConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1077,13 +1134,15 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Docker(DockerConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
+            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
         }
     }
 }

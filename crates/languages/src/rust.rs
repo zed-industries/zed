@@ -355,7 +355,7 @@ impl LspAdapter for RustLspAdapter {
                         | lsp::CompletionTextEdit::Edit(lsp::TextEdit { new_text, .. }),
                     ) = completion.text_edit.as_ref()
                     && let Ok(mut snippet) = snippet::Snippet::parse(new_text)
-                    && !snippet.tabstops.is_empty()
+                    && snippet.tabstops.len() > 1
                 {
                     label = String::new();
 
@@ -375,16 +375,20 @@ impl LspAdapter for RustLspAdapter {
                         let start_pos = range.start as usize;
                         let end_pos = range.end as usize;
 
-                        label.push_str(&snippet.text[text_pos..end_pos]);
-                        text_pos = end_pos;
+                        label.push_str(&snippet.text[text_pos..start_pos]);
 
                         if start_pos == end_pos {
                             let caret_start = label.len();
                             label.push('…');
                             runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
                         } else {
-                            runs.push((start_pos..end_pos, HighlightId::TABSTOP_REPLACE_ID));
+                            let label_start = label.len();
+                            label.push_str(&snippet.text[start_pos..end_pos]);
+                            let label_end = label.len();
+                            runs.push((label_start..label_end, HighlightId::TABSTOP_REPLACE_ID));
                         }
+
+                        text_pos = end_pos;
                     }
 
                     label.push_str(&snippet.text[text_pos..]);
@@ -417,7 +421,9 @@ impl LspAdapter for RustLspAdapter {
                             0..label.rfind('(').unwrap_or(completion.label.len()),
                             highlight_id,
                         ));
-                    } else if detail_left.is_none() {
+                    } else if detail_left.is_none()
+                        && kind != Some(lsp::CompletionItemKind::SNIPPET)
+                    {
                         return None;
                     }
                 }
@@ -882,7 +888,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.template_value(),
                     RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.template_value(),
                 ],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -904,14 +910,14 @@ impl ContextProvider for RustContextProvider {
                 label: "Run".into(),
                 command: "cargo".into(),
                 args: run_task_args,
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "Clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
         ];
@@ -1126,9 +1132,11 @@ fn package_name_from_pkgid(pkgid: &str) -> Option<&str> {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    maybe!(async {
+    let binary_result = maybe!(async {
         let mut last = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
+        let mut entries = fs::read_dir(&container_dir)
+            .await
+            .with_context(|| format!("listing {container_dir:?}"))?;
         while let Some(entry) = entries.next().await {
             let path = entry?.path();
             if path.extension().is_some_and(|ext| ext == "metadata") {
@@ -1137,20 +1145,34 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
-        let path = last.context("no cached binary")?;
+        let path = match last {
+            Some(last) => last,
+            None => return Ok(None),
+        };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
             AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
         };
 
-        anyhow::Ok(LanguageServerBinary {
+        anyhow::Ok(Some(LanguageServerBinary {
             path,
             env: None,
-            arguments: Default::default(),
-        })
+            arguments: Vec::new(),
+        }))
     })
-    .await
-    .log_err()
+    .await;
+
+    match binary_result {
+        Ok(Some(binary)) => Some(binary),
+        Ok(None) => {
+            log::info!("No cached rust-analyzer binary found");
+            None
+        }
+        Err(e) => {
+            log::error!("Failed to look up cached rust-analyzer binary: {e:#}");
+            None
+        }
+    }
 }
 
 fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
@@ -1575,6 +1597,78 @@ mod tests {
                     (9..11, HighlightId(1)),
                 ],
             ))
+        );
+
+        // Postfix completion without actual tabstops (only implicit final $0)
+        // The label should use completion.label so it can be filtered by "ref"
+        let ref_completion = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::SNIPPET),
+                    label: "ref".to_string(),
+                    filter_text: Some("ref".to_string()),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("&expr".to_string()),
+                    }),
+                    detail: Some("&expr".to_string()),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::default(),
+                        new_text: "&String::new()".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+        assert!(
+            ref_completion.is_some(),
+            "ref postfix completion should have a label"
+        );
+        let ref_label = ref_completion.unwrap();
+        let filter_text = &ref_label.text[ref_label.filter_range.clone()];
+        assert!(
+            filter_text.contains("ref"),
+            "filter range text '{filter_text}' should contain 'ref' for filtering to work",
+        );
+
+        // Test for correct range calculation with mixed empty and non-empty tabstops.(See https://github.com/zed-industries/zed/issues/44825)
+        let res = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::STRUCT),
+                    label: "Particles".to_string(),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::default(),
+                        new_text: "Particles { pos_x: $1, pos_y: $2, vel_x: $3, vel_y: $4, acc_x: ${5:()}, acc_y: ${6:()}, mass: $7 }$0".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            res,
+            CodeLabel::new(
+                "Particles { pos_x: …, pos_y: …, vel_x: …, vel_y: …, acc_x: (), acc_y: (), mass: … }".to_string(),
+                0..9,
+                vec![
+                    (19..22, HighlightId::TABSTOP_INSERT_ID),
+                    (31..34, HighlightId::TABSTOP_INSERT_ID),
+                    (43..46, HighlightId::TABSTOP_INSERT_ID),
+                    (55..58, HighlightId::TABSTOP_INSERT_ID),
+                    (67..69, HighlightId::TABSTOP_REPLACE_ID),
+                    (78..80, HighlightId::TABSTOP_REPLACE_ID),
+                    (88..91, HighlightId::TABSTOP_INSERT_ID),
+                    (0..9, highlight_type),
+                    (60..65, highlight_field),
+                    (71..76, highlight_field),
+                ],
+            )
         );
     }
 

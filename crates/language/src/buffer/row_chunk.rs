@@ -3,7 +3,6 @@
 
 use std::{ops::Range, sync::Arc};
 
-use clock::Global;
 use text::{Anchor, OffsetRangeExt as _, Point};
 use util::RangeExt;
 
@@ -19,14 +18,13 @@ use crate::BufferRow;
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
 #[derive(Clone)]
 pub struct RowChunks {
-    pub(crate) snapshot: text::BufferSnapshot,
     chunks: Arc<[RowChunk]>,
+    version: clock::Global,
 }
 
 impl std::fmt::Debug for RowChunks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RowChunks")
-            .field("version", self.snapshot.version())
             .field("chunks", &self.chunks)
             .finish()
     }
@@ -38,34 +36,45 @@ impl RowChunks {
         let last_row = buffer_point_range.end.row;
         let chunks = (buffer_point_range.start.row..=last_row)
             .step_by(max_rows_per_chunk as usize)
+            .collect::<Vec<_>>();
+        let last_chunk_id = chunks.len() - 1;
+        let chunks = chunks
+            .into_iter()
             .enumerate()
-            .map(|(id, chunk_start)| RowChunk {
-                id,
-                start: chunk_start,
-                end_exclusive: (chunk_start + max_rows_per_chunk).min(last_row),
+            .map(|(id, chunk_start)| {
+                let start = Point::new(chunk_start, 0);
+                let end_exclusive = (chunk_start + max_rows_per_chunk).min(last_row);
+                let end = if id == last_chunk_id {
+                    Point::new(end_exclusive, snapshot.line_len(end_exclusive))
+                } else {
+                    Point::new(end_exclusive, 0)
+                };
+                RowChunk {
+                    id,
+                    start: chunk_start,
+                    end_exclusive,
+                    start_anchor: snapshot.anchor_before(start),
+                    end_anchor: snapshot.anchor_after(end),
+                }
             })
             .collect::<Vec<_>>();
         Self {
-            snapshot,
             chunks: Arc::from(chunks),
+            version: snapshot.version().clone(),
         }
     }
 
-    pub fn version(&self) -> &Global {
-        self.snapshot.version()
+    pub fn version(&self) -> &clock::Global {
+        &self.version
     }
 
     pub fn len(&self) -> usize {
         self.chunks.len()
     }
 
-    pub fn applicable_chunks(
-        &self,
-        ranges: &[Range<text::Anchor>],
-    ) -> impl Iterator<Item = RowChunk> {
+    pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
         let row_ranges = ranges
             .iter()
-            .map(|range| range.to_point(&self.snapshot))
             // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
             // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
             .map(|point_range| point_range.start.row..point_range.end.row + 1)
@@ -79,23 +88,6 @@ impl RowChunks {
                     .any(|row_range| chunk_range.overlaps(&row_range))
             })
             .copied()
-    }
-
-    pub fn chunk_range(&self, chunk: RowChunk) -> Option<Range<Anchor>> {
-        if !self.chunks.contains(&chunk) {
-            return None;
-        }
-
-        let start = Point::new(chunk.start, 0);
-        let end = if self.chunks.last() == Some(&chunk) {
-            Point::new(
-                chunk.end_exclusive,
-                self.snapshot.line_len(chunk.end_exclusive),
-            )
-        } else {
-            Point::new(chunk.end_exclusive, 0)
-        };
-        Some(self.snapshot.anchor_before(start)..self.snapshot.anchor_after(end))
     }
 
     pub fn previous_chunk(&self, chunk: RowChunk) -> Option<RowChunk> {
@@ -112,10 +104,16 @@ pub struct RowChunk {
     pub id: usize,
     pub start: BufferRow,
     pub end_exclusive: BufferRow,
+    pub start_anchor: Anchor,
+    pub end_anchor: Anchor,
 }
 
 impl RowChunk {
     pub fn row_range(&self) -> Range<BufferRow> {
         self.start..self.end_exclusive
+    }
+
+    pub fn anchor_range(&self) -> Range<Anchor> {
+        self.start_anchor..self.end_anchor
     }
 }
