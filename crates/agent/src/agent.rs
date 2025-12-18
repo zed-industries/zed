@@ -426,7 +426,7 @@ impl NativeAgent {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
-                        uuid: prompt_metadata.id.user_id()?,
+                        uuid: prompt_metadata.id.as_user()?,
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
