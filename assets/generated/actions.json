@@ -224,6 +224,12 @@
     "documentation": "Opens the agent settings panel."
   },
   {
+    "name": "agent::PasteRaw",
+    "human_name": "agent: paste raw",
+    "deprecated_aliases": [],
+    "documentation": "Pastes clipboard content without any formatting."
+  },
+  {
     "name": "agent::ReauthenticateAgent",
     "human_name": "agent: reauthenticate agent",
     "deprecated_aliases": [],
@@ -3121,6 +3127,12 @@
     "documentation": "Expands the selected entry to show its children."
   },
   {
+    "name": "git_panel::FirstEntry",
+    "human_name": "git panel: first entry",
+    "deprecated_aliases": [],
+    "documentation": "Select first git panel menu item, and show it in the diff view"
+  },
+  {
     "name": "git_panel::FocusChanges",
     "human_name": "git panel: focus changes",
     "deprecated_aliases": [],
@@ -3133,10 +3145,28 @@
     "documentation": "Focuses on the commit message editor."
   },
   {
+    "name": "git_panel::LastEntry",
+    "human_name": "git panel: last entry",
+    "deprecated_aliases": [],
+    "documentation": "Select last git panel menu item, and show it in the diff view"
+  },
+  {
+    "name": "git_panel::NextEntry",
+    "human_name": "git panel: next entry",
+    "deprecated_aliases": [],
+    "documentation": "Select next git panel menu item, and show it in the diff view"
+  },
+  {
     "name": "git_panel::OpenMenu",
     "human_name": "git panel: open menu",
     "deprecated_aliases": [],
     "documentation": "Opens the git panel menu."
+  },
+  {
+    "name": "git_panel::PreviousEntry",
+    "human_name": "git panel: previous entry",
+    "deprecated_aliases": [],
+    "documentation": "Select previous git panel menu item, and show it in the diff view"
   },
   {
     "name": "git_panel::ToggleFillCoAuthors",
