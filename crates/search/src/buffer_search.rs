@@ -15,9 +15,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
-    IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    Window, actions, div,
+    Action, App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, Focusable,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -107,6 +107,9 @@ pub struct BufferSearchBar {
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
+    #[cfg(target_os = "macos")]
+    active_searchable_item_subscriptions: Option<[Subscription; 3]>,
+    #[cfg(not(target_os = "macos"))]
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
@@ -473,7 +476,7 @@ impl ToolbarItemView for BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.active_searchable_item_subscription.take();
+        self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
 
         self.pending_search.take();
@@ -483,18 +486,48 @@ impl ToolbarItemView for BufferSearchBar {
         {
             let this = cx.entity().downgrade();
 
-            self.active_searchable_item_subscription =
-                Some(searchable_item_handle.subscribe_to_search_events(
-                    window,
-                    cx,
-                    Box::new(move |search_event, window, cx| {
-                        if let Some(this) = this.upgrade() {
-                            this.update(cx, |this, cx| {
-                                this.on_active_searchable_item_event(search_event, window, cx)
-                            });
-                        }
+            let item_focus_handle = searchable_item_handle.item_focus_handle(cx);
+
+            let search_event_subscription = searchable_item_handle.subscribe_to_search_events(
+                window,
+                cx,
+                Box::new(move |search_event, window, cx| {
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.on_active_searchable_item_event(search_event, window, cx)
+                        });
+                    }
+                }),
+            );
+
+            #[cfg(target_os = "macos")]
+            {
+                self.active_searchable_item_subscriptions = Some([
+                    search_event_subscription,
+                    cx.on_focus(&item_focus_handle, window, |_this, window, cx| {
+                        cx.defer_in(window, |this, window, cx| {
+                            if let Some(text) =
+                                cx.read_from_find_pasteboard().and_then(|p| p.text())
+                            {
+                                drop(this.search(
+                                    &text,
+                                    Some(this.default_options),
+                                    true,
+                                    window,
+                                    cx,
+                                ));
+                            }
+                        });
                     }),
-                ));
+                    cx.on_focus_out(&item_focus_handle, window, |this, _, _window, cx| {
+                        this.update_find_pasteboard(cx);
+                    }),
+                ]);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                self.active_searchable_item_subscription = Some(search_event_subscription);
+            }
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
@@ -660,7 +693,7 @@ impl BufferSearchBar {
             replacement_editor,
             replacement_editor_focused: false,
             active_searchable_item: None,
-            active_searchable_item_subscription: None,
+            active_searchable_item_subscriptions: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
@@ -792,6 +825,14 @@ impl BufferSearchBar {
             ToolbarItemLocation::Secondary,
         ));
         true
+    }
+
+    #[cfg(target_os = "macos")]
+    fn update_find_pasteboard(&self, cx: &mut Context<Self>) {
+        let query = self.query(cx);
+        if !query.is_empty() {
+            cx.write_to_find_pasteboard(ClipboardItem::new_string(query));
+        }
     }
 
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
@@ -1076,7 +1117,11 @@ impl BufferSearchBar {
     ) {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
-            editor::EditorEvent::Blurred => self.query_editor_focused = false,
+            editor::EditorEvent::Blurred => {
+                #[cfg(target_os = "macos")]
+                self.update_find_pasteboard(cx);
+                self.query_editor_focused = false
+            }
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
