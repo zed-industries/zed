@@ -332,6 +332,10 @@ impl GoToDiagnosticSeverityFilter {
 
 #[derive(Copy, Clone, Debug)]
 pub struct GitSettings {
+    /// Whether or not git integration is enabled.
+    ///
+    /// Default: true
+    pub enabled: GitEnabledSettings,
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
@@ -359,6 +363,18 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GitEnabledSettings {
+    /// Whether git integration is enabled for showing git status.
+    ///
+    /// Default: true
+    pub status: bool,
+    /// Whether git integration is enabled for showing diffs.
+    ///
+    /// Default: true
+    pub diff: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -502,7 +518,14 @@ impl Settings for ProjectSettings {
         let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
 
         let git = content.git.as_ref().unwrap();
+        let git_enabled = {
+            GitEnabledSettings {
+                status: git.enabled.as_ref().unwrap().is_git_status_enabled(),
+                diff: git.enabled.as_ref().unwrap().is_git_diff_enabled(),
+            }
+        };
         let git_settings = GitSettings {
+            enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
