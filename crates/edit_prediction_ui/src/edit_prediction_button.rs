@@ -22,6 +22,8 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use ollama::OllamaEditPredictionDelegate;
+use project::DisableAiSettings;
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
@@ -1340,7 +1342,7 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
     });
 }
 
-fn get_available_providers(&self, cx: &mut App) -> Vec<EditPredictionProvider> {
+fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
     providers.push(EditPredictionProvider::Zed);
@@ -1369,8 +1371,9 @@ fn get_available_providers(&self, cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    // Ollama is always available as it runs locally
-    providers.push(EditPredictionProvider::Ollama);
+    if OllamaEditPredictionDelegate::is_available(cx) {
+        providers.push(EditPredictionProvider::Ollama);
+    }
 
     if cx.has_flag::<SweepFeatureFlag>()
         && edit_prediction::sweep_ai::sweep_api_token(cx)
