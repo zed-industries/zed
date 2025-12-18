@@ -247,8 +247,6 @@ impl<'a> MarkdownParser<'a> {
         let mut image: Option<Image> = None;
         let mut regions: Vec<(Range<usize>, ParsedRegion)> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
-        let mut link_urls: Vec<String> = vec![];
-        let mut link_ranges: Vec<Range<usize>> = vec![];
 
         loop {
             if self.eof() {
@@ -289,7 +287,7 @@ impl<'a> MarkdownParser<'a> {
                         style.strikethrough = true;
                     }
 
-                    let last_run_len = if let Some(link) = link.clone() {
+                    if let Some(link) = link.clone() {
                         regions.push((
                             prev_len..text.len(),
                             ParsedRegion {
@@ -298,53 +296,12 @@ impl<'a> MarkdownParser<'a> {
                             },
                         ));
                         style.link = true;
-                        prev_len
-                    } else {
-                        // Manually scan for links
-                        let mut finder = linkify::LinkFinder::new();
-                        finder.kinds(&[linkify::LinkKind::Url]);
-                        let mut last_link_len = prev_len;
-                        for link in finder.links(t) {
-                            let start = prev_len + link.start();
-                            let end = prev_len + link.end();
-                            let range = start..end;
-                            link_ranges.push(range.clone());
-                            link_urls.push(link.as_str().to_string());
+                    }
 
-                            // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != MarkdownHighlightStyle::default() && last_link_len < start {
-                                highlights.push((
-                                    last_link_len..start,
-                                    MarkdownHighlight::Style(style.clone()),
-                                ));
-                            }
-
-                            highlights.push((
-                                range.clone(),
-                                MarkdownHighlight::Style(MarkdownHighlightStyle {
-                                    underline: true,
-                                    ..style
-                                }),
-                            ));
-
-                            regions.push((
-                                range.clone(),
-                                ParsedRegion {
-                                    code: false,
-                                    link: Some(Link::Web {
-                                        url: link.as_str().to_string(),
-                                    }),
-                                },
-                            ));
-                            last_link_len = end;
-                        }
-                        last_link_len
-                    };
-
-                    if style != MarkdownHighlightStyle::default() && last_run_len < text.len() {
+                    if style != MarkdownHighlightStyle::default() {
                         let mut new_highlight = true;
                         if let Some((last_range, last_style)) = highlights.last_mut()
-                            && last_range.end == last_run_len
+                            && last_range.end == prev_len
                             && last_style == &MarkdownHighlight::Style(style.clone())
                         {
                             last_range.end = text.len();
@@ -352,7 +309,7 @@ impl<'a> MarkdownParser<'a> {
                         }
                         if new_highlight {
                             highlights.push((
-                                last_run_len..text.len(),
+                                prev_len..text.len(),
                                 MarkdownHighlight::Style(style.clone()),
                             ));
                         }
@@ -443,6 +400,43 @@ impl<'a> MarkdownParser<'a> {
             self.cursor += 1;
         }
         if !text.is_empty() {
+            // Scan for URLs in the full accumulated text (not inside explicit links)
+            // This handles URLs that span multiple text fragments due to pulldown_cmark
+            // splitting text around special characters like underscores
+            let mut finder = linkify::LinkFinder::new();
+            finder.kinds(&[linkify::LinkKind::Url]);
+
+            for found_link in finder.links(&text) {
+                let start = found_link.start();
+                let end = found_link.end();
+                let range = start..end;
+
+                // Check if this range is already covered by an explicit link
+                let already_has_link = regions
+                    .iter()
+                    .any(|(r, region)| region.link.is_some() && r.start <= start && r.end >= end);
+
+                if !already_has_link {
+                    highlights.push((
+                        range.clone(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            underline: true,
+                            ..Default::default()
+                        }),
+                    ));
+
+                    regions.push((
+                        range,
+                        ParsedRegion {
+                            code: false,
+                            link: Some(Link::Web {
+                                url: found_link.as_str().to_string(),
+                            }),
+                        },
+                    ));
+                }
+            }
+
             markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
                 source_range,
                 contents: text.into(),
@@ -1729,6 +1723,48 @@ mod tests {
             parsed.children,
             vec![p("Checkout this https://zed.dev link", 0..34)]
         );
+    }
+
+    #[gpui::test]
+    async fn test_url_with_underscores() {
+        // URLs with underscores should be detected as a single link
+        // pulldown_cmark splits text around underscores, so we need to detect links
+        // in the accumulated text rather than individual fragments
+        let parsed = parse("https://en.wikipedia.org/wiki/Rust_(programming_language)").await;
+
+        if let Some(ParsedMarkdownElement::Paragraph(text)) = parsed.children.first() {
+            if let Some(MarkdownParagraphChunk::Text(t)) = text.first() {
+                let link_regions: Vec<_> =
+                    t.regions.iter().filter(|(_, r)| r.link.is_some()).collect();
+                assert_eq!(
+                    link_regions.len(),
+                    1,
+                    "Expected exactly one link region, got {:?}",
+                    t.regions
+                );
+
+                if let Some((range, region)) = link_regions.first() {
+                    assert_eq!(range.start, 0, "Link should start at position 0");
+                    assert_eq!(
+                        range.end,
+                        t.contents.len(),
+                        "Link should cover the entire URL"
+                    );
+                    if let Some(Link::Web { url }) = &region.link {
+                        assert_eq!(
+                            url,
+                            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+                        );
+                    } else {
+                        panic!("Expected a web link");
+                    }
+                }
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
     }
 
     #[gpui::test]
