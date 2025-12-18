@@ -1735,6 +1735,7 @@
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
   "auto_install_extensions": {
+    "html": true,
     "google-ai": true,
   },
   // The capabilities granted to extensions.
