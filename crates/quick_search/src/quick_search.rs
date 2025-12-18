@@ -1,8 +1,8 @@
+pub(crate) mod core;
 mod grouped_list;
 pub(crate) mod match_list;
-pub(crate) mod types;
-pub(crate) mod core;
 pub(crate) mod sources;
+pub(crate) mod types;
 
 #[path = "quick_search_preview.rs"]
 mod preview;
@@ -41,20 +41,20 @@ use search::{
     SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleWholeWord,
     search_bar::{input_base_styles, render_text_input},
 };
-use settings::{Settings, SettingsStore};
 use serde::Deserialize;
+use settings::{Settings, SettingsStore};
+use text::Point;
+use theme::ThemeSettings;
 use ui::{
     Button, ButtonStyle, Chip, Color, DiffStat, Divider, DividerColor, HighlightedLabel, Icon,
     IconButton, IconButtonShape, IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon,
     LabelLike, LabelSize, ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*,
     rems_from_px,
 };
-use text::Point;
-use theme::ThemeSettings;
 use workspace::{ActivatePane, ModalView, Workspace, item::PreviewTabsSettings, pane};
 
 pub(crate) const MIN_QUERY_LEN: usize = 2;
-const RESULTS_BATCH_SIZE: usize = 1024;
+const RESULTS_BATCH_SIZE: usize = 4096;
 
 const MODAL_SIZE_FRAC: f32 = 0.75;
 
@@ -224,13 +224,17 @@ impl QuickSearch {
                 cx.propagate();
             }
         });
-        workspace.register_action(move |workspace, action: &pane::ActivateNextItem, window, cx| {
-            if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
-                active.update(cx, |qs, cx| qs.handle_activate_next_item(action, window, cx));
-            } else {
-                cx.propagate();
-            }
-        });
+        workspace.register_action(
+            move |workspace, action: &pane::ActivateNextItem, window, cx| {
+                if let Some(active) = workspace.active_modal::<QuickSearch>(cx) {
+                    active.update(cx, |qs, cx| {
+                        qs.handle_activate_next_item(action, window, cx)
+                    });
+                } else {
+                    cx.propagate();
+                }
+            },
+        );
 
         workspace.register_action(
             move |workspace, action: &pane::ActivatePreviousItem, window, cx| {
@@ -354,8 +358,13 @@ impl QuickSearch {
     ) {
         let owner = cx.entity().downgrade();
         let session_cancellation = self.picker.read(cx).delegate.search_engine.cancellation();
-        self.preview
-            .request_preview(PreviewRequest::Empty, session_cancellation, &owner, window, cx);
+        self.preview.request_preview(
+            PreviewRequest::Empty,
+            session_cancellation,
+            &owner,
+            window,
+            cx,
+        );
         self.preview_footer
             .set_active_source(source_id.clone(), window, cx);
         self.picker.update(cx, |picker, cx| {
@@ -388,7 +397,13 @@ impl QuickSearch {
             return;
         }
 
-        let active_source = self.picker.read(cx).delegate.search_engine.active_source.clone();
+        let active_source = self
+            .picker
+            .read(cx)
+            .delegate
+            .search_engine
+            .active_source
+            .clone();
         let len = sources.len() as isize;
         let active_ix = sources
             .iter()
@@ -660,22 +675,22 @@ impl PreviewFooterState {
                 project,
                 query,
                 selected: selected.or_else(|| {
-                    self.last_selected_by_source.get(&self.active_source).cloned()
+                    self.last_selected_by_source
+                        .get(&self.active_source)
+                        .cloned()
                 }),
                 preview_buffer,
-                cancellation: core::FooterCancellation::new(session_cancellation, local_cancellation),
+                cancellation: core::FooterCancellation::new(
+                    session_cancellation,
+                    local_cancellation,
+                ),
             }),
             window,
             cx,
         );
     }
 
-    fn toggle_active_open(
-        &mut self,
-        has_selected: bool,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn toggle_active_open(&mut self, has_selected: bool, window: &mut Window, cx: &mut App) {
         let Some(instance) = self.instances.get(&self.active_source) else {
             return;
         };
@@ -817,7 +832,8 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) {
         let has_selected = self.picker.read(cx).delegate.selected_match().is_some();
-        self.preview_footer.toggle_active_open(has_selected, window, cx);
+        self.preview_footer
+            .toggle_active_open(has_selected, window, cx);
         self.preview.needs_preview_scroll = true;
         let owner = cx.entity().downgrade();
         window.defer(cx, move |window, cx| {
@@ -910,7 +926,13 @@ impl QuickSearch {
             Self::render_placeholder("Preview hidden (window too small)")
         };
 
-        let active_source = self.picker.read(cx).delegate.search_engine.active_source.clone();
+        let active_source = self
+            .picker
+            .read(cx)
+            .delegate
+            .search_engine
+            .active_source
+            .clone();
         let footer = if layout.show_preview {
             let preview_height = if layout.is_horizontal {
                 layout.content_height
@@ -1478,7 +1500,10 @@ impl QuickSearchDelegate {
         }
     }
 
-    fn weak_preview_ranges_for_selected(&self, selected: &QuickMatch) -> Vec<std::ops::Range<Point>> {
+    fn weak_preview_ranges_for_selected(
+        &self,
+        selected: &QuickMatch,
+    ) -> Vec<std::ops::Range<Point>> {
         if self.current_query.len() < 3 {
             return Vec::new();
         }
@@ -1551,11 +1576,11 @@ impl QuickSearchDelegate {
             return;
         }
         let selected_id = self.selection.and_then(|k| self.match_list.id_by_key(k));
-            let selected_row =
-                self.grouped_list
-                    .rebuild(&mut self.match_list, selected_id, &self.project, cx);
-            if selected_row.is_none() {
-                self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
+        let selected_row =
+            self.grouped_list
+                .rebuild(&mut self.match_list, selected_id, &self.project, cx);
+        if selected_row.is_none() {
+            self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
                 GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
                 _ => None,
             });
@@ -1807,9 +1832,13 @@ impl PickerDelegate for QuickSearchDelegate {
 
             quick_search.update(cx, move |quick_search, cx| {
                 let owner = cx.entity().downgrade();
-                quick_search
-                    .preview
-                    .request_preview(request.clone(), session_cancellation.clone(), &owner, window, cx);
+                quick_search.preview.request_preview(
+                    request.clone(),
+                    session_cancellation.clone(),
+                    &owner,
+                    window,
+                    cx,
+                );
                 quick_search.preview_footer.update_active_context(
                     footer_selected.clone(),
                     footer_query.clone(),
@@ -2002,8 +2031,13 @@ impl PickerDelegate for QuickSearchDelegate {
                 };
                 qs.update(cx, |qs, cx| {
                     let owner = cx.entity().downgrade();
-                    qs.preview
-                        .request_preview(PreviewRequest::Empty, session_cancellation, &owner, window, cx);
+                    qs.preview.request_preview(
+                        PreviewRequest::Empty,
+                        session_cancellation,
+                        &owner,
+                        window,
+                        cx,
+                    );
                 });
             });
         }
@@ -2286,10 +2320,11 @@ impl PickerDelegate for QuickSearchDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let footer_toggle = self
-            .quick_search
-            .upgrade()
-            .and_then(|qs| qs.read(cx).preview_footer.active_toggle_button(self.selected_match(), cx));
+        let footer_toggle = self.quick_search.upgrade().and_then(|qs| {
+            qs.read(cx)
+                .preview_footer
+                .active_toggle_button(self.selected_match(), cx)
+        });
 
         Some(
             h_flex()
@@ -2397,7 +2432,7 @@ pub struct SearchEngine {
 }
 
 pub(crate) enum SourceEvent {
-    AppendMatches(Vec<QuickMatch>),
+    AppendMatchIds(Vec<MatchId>, Arc<core::MatchArena>),
     ApplyPatches(Vec<(MatchId, types::QuickMatchPatch)>),
     ApplyPatchesByKey(Vec<(MatchKey, types::QuickMatchPatch)>),
     Error(String),
@@ -2466,14 +2501,19 @@ pub(crate) fn apply_source_event(
                 picker.delegate.reset_notify_throttle();
                 cx.notify();
             }
-            SourceEvent::AppendMatches(mut matches) => {
+            SourceEvent::AppendMatchIds(ids, arena) => {
+                if picker.delegate.stream_finished {
+                    return;
+                }
+
                 let previous_render_rows = picker.delegate.match_count();
                 let previous_total = picker.delegate.total_results;
 
-                for m in &mut matches {
-                    m.key = types::compute_match_key(m);
-                    m.id = picker.delegate.next_match_id;
-                    picker.delegate.next_match_id = picker.delegate.next_match_id.saturating_add(1);
+                let mut matches: Vec<QuickMatch> = Vec::with_capacity(ids.len());
+                for id in ids {
+                    if let Some(m) = arena.get_cloned(id) {
+                        matches.push(m);
+                    }
                 }
 
                 let reached_cap = picker.delegate.match_list.extend(matches);
@@ -2786,6 +2826,7 @@ impl QuickSearchDelegate {
         };
         let path_style = self.project.read(cx).path_style(cx);
         let language_registry = self.project.read(cx).languages().clone();
+        let match_arena = Arc::new(core::MatchArena::new());
         let search_context = core::SearchContext::new(
             self.project.clone(),
             Arc::<str>::from(trimmed),
@@ -2794,6 +2835,7 @@ impl QuickSearchDelegate {
             language_registry,
             cancellation.clone(),
             cx.background_executor().clone(),
+            match_arena,
         );
         let sink = core::SearchSink::new(picker, generation, cancellation);
         source.start_search(search_context, sink, cx);
@@ -2817,17 +2859,23 @@ pub(crate) fn finish_stream(
     apply_source_event(picker, generation, SourceEvent::FinishStream, app);
 }
 
-pub(crate) fn flush_batch(
+pub(crate) fn flush_batch_ids(
     picker: WeakEntity<PickerHandle>,
     generation: usize,
-    batch: &mut Vec<QuickMatch>,
+    batch_ids: &mut Vec<MatchId>,
+    arena: Arc<core::MatchArena>,
     app: &mut AsyncApp,
 ) {
-    if batch.is_empty() {
+    if batch_ids.is_empty() {
         return;
     }
-    let drained = std::mem::take(batch);
-    apply_source_event(picker, generation, SourceEvent::AppendMatches(drained), app);
+    let drained_ids = std::mem::take(batch_ids);
+    apply_source_event(
+        picker,
+        generation,
+        SourceEvent::AppendMatchIds(drained_ids, arena),
+        app,
+    );
 }
 
 async fn enrich_blame(

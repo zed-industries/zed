@@ -7,10 +7,10 @@ use editor::{
 };
 use gpui::Entity;
 use gpui::{AppContext, Context, IntoElement, Subscription, WeakEntity, Window};
+use language::language_settings::SoftWrap;
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
 };
-use language::language_settings::SoftWrap;
 use log::debug;
 use multi_buffer::{ExcerptRange, PathKey};
 use project::Project;

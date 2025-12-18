@@ -11,19 +11,19 @@ use search::SearchOptions;
 use settings::Settings;
 use smol::fs;
 use smol::io::AsyncReadExt as _;
-use ui::{Color, Icon, IconSize, Label, LabelSize, div, h_flex, v_flex};
 use ui::IconName;
 use ui::prelude::*;
+use ui::{Color, Icon, IconSize, Label, LabelSize, div, h_flex, v_flex};
 
-use crate::types::{QuickMatchBuilder, QuickMatchKind};
 use crate::types::QuickMatch;
+use crate::types::{QuickMatchBuilder, QuickMatchKind};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use util::rel_path::RelPath;
 use util::size::format_file_size;
 
 use crate::core::{
-    ListPresentation, QuickSearchSource, SearchContext, SearchSink, SearchUiContext, SortPolicy,
-    MatchBatcher, SourceId, SourceSpec, SourceSpecCore, SourceSpecUi,
+    ListPresentation, MatchBatcher, QuickSearchSource, SearchContext, SearchSink, SearchUiContext,
+    SortPolicy, SourceId, SourceSpec, SourceSpecCore, SourceSpecUi,
 };
 use log::debug;
 use theme::ThemeSettings;
@@ -97,34 +97,30 @@ impl Render for FilesDetailsFooter {
             h_flex()
                 .gap_3()
                 .items_baseline()
-                .child(div().w(label_width).child(
-                    Label::new(label)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
-                ))
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            Label::new(value)
-                                .size(LabelSize::Small)
-                                .color(Color::Default)
-                                .truncate()
-                                .buffer_font(cx),
-                        ),
+                    div().w(label_width).child(
+                        Label::new(label)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    ),
+                )
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Label::new(value)
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .truncate()
+                            .buffer_font(cx),
+                    ),
                 )
         };
 
-        let icon_path = self
-            .abs_path_buf
-            .as_deref()
-            .or_else(|| {
-                self.project_path
-                    .as_ref()
-                    .map(|project_path| project_path.path.as_std_path())
-            });
+        let icon_path = self.abs_path_buf.as_deref().or_else(|| {
+            self.project_path
+                .as_ref()
+                .map(|project_path| project_path.path.as_std_path())
+        });
         let file_icon = icon_path
             .and_then(|path| FileIcons::get_icon(path, cx))
             .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted))
@@ -149,29 +145,28 @@ impl Render for FilesDetailsFooter {
                                         h_flex()
                                             .gap_3()
                                             .items_baseline()
-                                            .child(div().w(label_width).child(
-                                                Label::new("Type")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .buffer_font(cx),
-                                            ))
                                             .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_2()
-                                                            .items_center()
-                                                            .child(file_icon.size(IconSize::Small))
-                                                            .child(
-                                                                Label::new(self.file_type.clone())
-                                                                    .size(LabelSize::Small)
-                                                                    .color(Color::Default)
-                                                                    .truncate()
-                                                                    .buffer_font(cx),
-                                                            ),
-                                                    ),
+                                                div().w(label_width).child(
+                                                    Label::new("Type")
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .buffer_font(cx),
+                                                ),
+                                            )
+                                            .child(
+                                                div().flex_1().min_w_0().child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .items_center()
+                                                        .child(file_icon.size(IconSize::Small))
+                                                        .child(
+                                                            Label::new(self.file_type.clone())
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Default)
+                                                                .truncate()
+                                                                .buffer_font(cx),
+                                                        ),
+                                                ),
                                             ),
                                     )
                                     .child(kv_row("Encoding", self.encoding.clone()))
@@ -554,12 +549,17 @@ impl QuickSearchSource for FilesSource {
                     }) {
                         Ok(params) => params,
                         Err(err) => {
-                            debug!("quick_search: failed to update files footer state: {:?}", err);
+                            debug!(
+                                "quick_search: failed to update files footer state: {:?}",
+                                err
+                            );
                             None
                         }
                     };
 
-                    let Some((project, project_path, abs_path, cancellation, selected_key)) = params else {
+                    let Some((project, project_path, abs_path, cancellation, selected_key)) =
+                        params
+                    else {
                         return;
                     };
                     if cancellation.is_cancelled() {
@@ -646,7 +646,9 @@ impl QuickSearchSource for FilesSource {
                         }
                     };
 
-                    let Some((project, project_path, abs_path, cancellation, selected_key)) = params else {
+                    let Some((project, project_path, abs_path, cancellation, selected_key)) =
+                        params
+                    else {
                         return;
                     };
                     if cancellation.is_cancelled() {
@@ -669,13 +671,10 @@ impl QuickSearchSource for FilesSource {
         })
     }
 
-    fn start_search(
-        &self,
-        ctx: SearchContext,
-        sink: SearchSink,
-        cx: &mut SearchUiContext<'_>,
-    ) {
-        let include_ignored = ctx.search_options().contains(SearchOptions::INCLUDE_IGNORED);
+    fn start_search(&self, ctx: SearchContext, sink: SearchSink, cx: &mut SearchUiContext<'_>) {
+        let include_ignored = ctx
+            .search_options()
+            .contains(SearchOptions::INCLUDE_IGNORED);
         let path_style = ctx.path_style();
         let worktrees = ctx
             .project()
@@ -707,6 +706,7 @@ impl QuickSearchSource for FilesSource {
         let query = ctx.query().clone();
         let cancellation = ctx.cancellation().clone();
         let cancel_flag = cancellation.flag();
+        let match_arena = ctx.match_arena().clone();
         crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
                 if cancellation.is_cancelled() {
@@ -729,7 +729,7 @@ impl QuickSearchSource for FilesSource {
                     return;
                 }
 
-                let mut batcher = MatchBatcher::new();
+                let mut batcher = MatchBatcher::new(match_arena.clone());
                 for pm in path_matches {
                     let Some(worktree_id) = set_id_to_worktree_id.get(&pm.worktree_id).copied()
                     else {
@@ -771,14 +771,17 @@ impl QuickSearchSource for FilesSource {
                     };
 
                     batcher.push(
-                        QuickMatchBuilder::new(source_id.clone(), QuickMatchKind::ProjectPath { project_path })
-                            .path_label(path_label)
-                            .display_path(display_path)
-                            .display_path_positions(Some(Arc::<[usize]>::from(dir_positions)))
-                            .path_segments_from_label()
-                            .file_name(file_name)
-                            .file_name_positions(Some(Arc::<[usize]>::from(file_name_positions)))
-                            .build(),
+                        QuickMatchBuilder::new(
+                            source_id.clone(),
+                            QuickMatchKind::ProjectPath { project_path },
+                        )
+                        .path_label(path_label)
+                        .display_path(display_path)
+                        .display_path_positions(Some(Arc::<[usize]>::from(dir_positions)))
+                        .path_segments_from_label()
+                        .file_name(file_name)
+                        .file_name_positions(Some(Arc::<[usize]>::from(file_name_positions)))
+                        .build(),
                         &sink,
                         app,
                     );

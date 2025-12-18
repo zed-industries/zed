@@ -1,16 +1,14 @@
-use std::{
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 use gpui::AppContext;
 use search::SearchOptions;
 use ui::IconName;
 
-use crate::types::QuickMatchKind;
 use crate::types::QuickMatchBuilder;
+use crate::types::QuickMatchKind;
 use anyhow::{Context as AnyhowContext, Result};
-use fuzzy::StringMatchCandidate;
 use futures::FutureExt as _;
+use fuzzy::StringMatchCandidate;
 use git2::Sort;
 use log::debug;
 
@@ -38,13 +36,10 @@ pub fn list_commits_local(
     let repo = git2::Repository::open(repo_workdir.as_ref()).context("opening git repository")?;
 
     let branch: Option<Arc<str>> = match repo.head() {
-        Ok(head) => head
-            .shorthand()
-            .map(|s| s.to_string())
-            .and_then(|name| {
-                let name = name.trim();
-                (!name.is_empty() && name != "HEAD").then(|| Arc::<str>::from(name.to_string()))
-            }),
+        Ok(head) => head.shorthand().map(|s| s.to_string()).and_then(|name| {
+            let name = name.trim();
+            (!name.is_empty() && name != "HEAD").then(|| Arc::<str>::from(name.to_string()))
+        }),
         Err(err) => {
             debug!("quick_search: failed to read git HEAD: {:?}", err);
             None
@@ -120,12 +115,7 @@ impl QuickSearchSource for CommitsSource {
         Self::spec_static()
     }
 
-    fn start_search(
-        &self,
-        ctx: SearchContext,
-        sink: SearchSink,
-        cx: &mut SearchUiContext<'_>,
-    ) {
+    fn start_search(&self, ctx: SearchContext, sink: SearchSink, cx: &mut SearchUiContext<'_>) {
         let repos = ctx
             .project()
             .read(cx)
@@ -160,6 +150,7 @@ impl QuickSearchSource for CommitsSource {
         let source_id = self.spec().id.0.clone();
         let cancellation = ctx.cancellation().clone();
         let cancel_flag = cancellation.flag();
+        let match_arena = ctx.match_arena().clone();
         crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
                 if cancellation.is_cancelled() {
@@ -323,7 +314,7 @@ impl QuickSearchSource for CommitsSource {
                         })
                 });
 
-                let mut batcher = MatchBatcher::new();
+                let mut batcher = MatchBatcher::new(match_arena.clone());
                 for m in matches {
                     let Some(commit) = commits.get(m.candidate_id) else {
                         continue;
@@ -374,5 +365,4 @@ impl QuickSearchSource for CommitsSource {
             .boxed_local()
         });
     }
-
 }

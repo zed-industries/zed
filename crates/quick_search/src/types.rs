@@ -9,9 +9,9 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use text::Point;
 use text::ToOffset;
 use text::{Anchor as TextAnchor, BufferId};
-use text::Point;
 use ui::IconName;
 
 pub type MatchId = u64;

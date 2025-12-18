@@ -7,6 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use collections::FxHashMap;
+
 use file_icons::FileIcons;
 use futures::FutureExt as _;
 use gpui::{AnyView, App, AppContext, AsyncApp, Context, Entity, IntoElement, Render, Window, div};
@@ -16,13 +18,13 @@ use search::SearchOptions;
 use settings::Settings;
 use text::{Anchor as TextAnchor, BufferId, Point, ToOffset, ToPoint};
 use theme::ThemeSettings;
-use ui::{Color, IconName, LabelSize, SpinnerLabel};
 use ui::prelude::*;
+use ui::{Color, IconName, LabelSize, SpinnerLabel};
 
 use crate::types::{GroupHeader, GroupInfo, MatchKey, QuickMatch, QuickMatchBuilder};
 use log::debug;
-use project::{HoverBlock, HoverBlockKind, ProjectPath};
 use project::search::{SearchQuery, SearchResult};
+use project::{HoverBlock, HoverBlockKind, ProjectPath};
 use smol::future::yield_now;
 use util::paths::{PathMatcher, PathStyle};
 
@@ -102,22 +104,29 @@ impl Render for GrepHoverFooter {
                 )
                 .p_2()
             })
-            .when(!host_state.loading && self.markdown.is_none() && self.message.is_none(), |this| {
-                this.child(
-                    div()
-                        .text_size(buffer_font_size)
-                        .text_color(Color::Muted.color(cx))
-                        .child("No details available"),
-                )
-                .p_2()
-            })
+            .when(
+                !host_state.loading && self.markdown.is_none() && self.message.is_none(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_size(buffer_font_size)
+                            .text_color(Color::Muted.color(cx))
+                            .child("No details available"),
+                    )
+                    .p_2()
+                },
+            )
             .when(show_overlay, |this| {
                 this.child(
                     div()
                         .absolute()
                         .top(rems_from_px(8.))
                         .right(rems_from_px(8.))
-                        .child(SpinnerLabel::new().size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            SpinnerLabel::new()
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
             })
     }
@@ -231,7 +240,11 @@ impl QuickSearchSource for TextGrepSource {
         Self::spec_static()
     }
 
-    fn create_preview_footer(&self, _window: &mut Window, cx: &mut App) -> Option<crate::core::FooterInstance> {
+    fn create_preview_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<crate::core::FooterInstance> {
         let host = crate::core::PreviewFooterHost::new(cx);
         let host_state = host.state_entity().clone();
         let footer = cx.new(|cx| {
@@ -322,10 +335,8 @@ impl QuickSearchSource for TextGrepSource {
                         }
                         return;
                     };
-                    let Some(match_range) = selected
-                        .ranges()
-                        .and_then(|ranges| ranges.first())
-                        .cloned()
+                    let Some(match_range) =
+                        selected.ranges().and_then(|ranges| ranges.first()).cloned()
                     else {
                         host_for_events.set_has_content(false, cx);
                         if let Err(err) = footer_weak.update(cx, |footer, cx| {
@@ -342,7 +353,10 @@ impl QuickSearchSource for TextGrepSource {
                         footer.selected_key = Some(selected.key);
                         cx.notify();
                     }) {
-                        debug!("quick_search: failed to update grep footer selection key: {:?}", err);
+                        debug!(
+                            "quick_search: failed to update grep footer selection key: {:?}",
+                            err
+                        );
                     }
                     let selected_key = selected.key;
                     let project_path = selected.project_path().cloned();
@@ -1084,18 +1098,14 @@ impl QuickSearchSource for TextGrepSource {
         })
     }
 
-    fn start_search(
-        &self,
-        ctx: SearchContext,
-        sink: SearchSink,
-        cx: &mut SearchUiContext<'_>,
-    ) {
+    fn start_search(&self, ctx: SearchContext, sink: SearchSink, cx: &mut SearchUiContext<'_>) {
         let project = ctx.project().clone();
         let search_options = ctx.search_options();
         let source_id = self.spec().id.0.clone();
         let path_style = ctx.path_style();
         let language_registry = ctx.language_registry().clone();
         let query = ctx.query().clone();
+        let match_arena = ctx.match_arena().clone();
 
         crate::core::spawn_source_task(cx, sink, move |app, sink| {
             async move {
@@ -1149,7 +1159,7 @@ impl QuickSearchSource for TextGrepSource {
 
             sink.set_inflight_results(receiver.clone(), app);
 
-            let mut batcher = MatchBatcher::new();
+            let mut batcher = MatchBatcher::new(match_arena.clone());
             let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
                 HashMap::new();
             const YIELD_MAX_ITEMS: usize = 128;
@@ -1413,19 +1423,25 @@ fn ensure_syntax_worker(
                 let line_start_offset = snapshot.text.point_to_offset(line_start);
                 let line_end_offset = snapshot.text.point_to_offset(line_end);
 
-                let line_text: String = snapshot
-                    .text_for_range(line_start_offset..line_end_offset)
+                // Limit work to the snippet window to avoid scanning long lines.
+                let snippet_abs_start = line_start_offset;
+                let snippet_abs_end =
+                    (line_start_offset + snippet_len + 512).min(line_end_offset);
+
+                let snippet_text: String = snapshot
+                    .text_for_range(snippet_abs_start..snippet_abs_end)
                     .collect();
-                let line_trimmed_end = line_text.trim_end();
-                let trim_start = line_trimmed_end.len() - line_trimmed_end.trim_start().len();
-                let snippet_end_abs = (trim_start + snippet_len).min(line_trimmed_end.len());
+                let snippet_trimmed_end = snippet_text.trim_end();
+                let trim_start = snippet_trimmed_end.len() - snippet_trimmed_end.trim_start().len();
+                let snippet_end_abs = (trim_start + snippet_len).min(snippet_trimmed_end.len());
                 if trim_start >= snippet_end_abs {
                     continue;
                 }
 
                 let mut highlight_ids: Vec<(Range<usize>, HighlightId)> = Vec::new();
                 let mut current_offset = 0usize;
-                for chunk in snapshot.chunks(line_start_offset..line_end_offset, true) {
+                let mut chunks = snapshot.chunks(snippet_abs_start..snippet_abs_end, true);
+                for chunk in chunks.by_ref() {
                     let chunk_len = chunk.text.len();
 
                     if let Some(highlight_id) = chunk.syntax_highlight_id {
@@ -1443,6 +1459,9 @@ fn ensure_syntax_worker(
                     }
 
                     current_offset += chunk_len;
+                    if current_offset >= snippet_len + trim_start {
+                        break;
+                    }
                 }
 
                 if highlight_ids.is_empty() {
@@ -1476,6 +1495,14 @@ fn build_matches_for_buffer(
     path_style: &PathStyle,
     source_id: &Arc<str>,
 ) -> Option<BuildMatchesOutput> {
+    struct PreparedRange {
+        start_col: u32,
+        start_point: Point,
+        end_point: Point,
+        start_offset: usize,
+        end_offset: usize,
+    }
+
     let snapshot = match app.read_entity(buffer, |b, _| b.snapshot()) {
         Ok(s) => s,
         Err(_) => return None,
@@ -1541,16 +1568,28 @@ fn build_matches_for_buffer(
         })
     });
 
-    let mut per_line: std::collections::HashMap<u32, Vec<(u32, Range<TextAnchor>)>> =
-        std::collections::HashMap::new();
+    let mut per_line: FxHashMap<u32, Vec<PreparedRange>> = FxHashMap::default();
     let mut line_order: Vec<u32> = Vec::new();
     for range in ranges {
-        let start = range.start.to_point(&snapshot.text);
-        let row = start.row;
+        let start_point = range.start.to_point(&snapshot.text);
+        let end_point = range.end.to_point(&snapshot.text);
+        let start_offset = range.start.to_offset(&snapshot.text);
+        let end_offset = range.end.to_offset(&snapshot.text);
+        let row = start_point.row;
+
         if !per_line.contains_key(&row) {
             line_order.push(row);
         }
-        per_line.entry(row).or_default().push((start.column, range));
+        per_line
+            .entry(row)
+            .or_insert_with(Vec::new)
+            .push(PreparedRange {
+                start_col: start_point.column,
+                start_point,
+                end_point,
+                start_offset,
+                end_offset,
+            });
     }
 
     let mut matches = Vec::with_capacity(line_order.len());
@@ -1564,17 +1603,20 @@ fn build_matches_for_buffer(
             Some(v) => v,
             None => continue,
         };
-        items.sort_by_key(|(col, _)| *col);
-
-        let mut ranges_for_line = Vec::with_capacity(items.len());
-        for (_, r) in &items {
-            ranges_for_line.push(r.clone());
+        if items.len() > 1 {
+            items.sort_by_key(|item| item.start_col);
         }
 
-        let Some((first_col, first_range)) = items.first() else {
+        let mut ranges_for_line = Vec::with_capacity(items.len());
+        for item in &items {
+            ranges_for_line.push(item.start_point..item.end_point);
+        }
+
+        let Some(first_range) = items.first() else {
             continue;
         };
-        let start_point = first_range.start.to_point(&snapshot.text);
+        let first_col = first_range.start_col;
+        let start_point = first_range.start_point;
         let location_label: Option<Arc<str>> =
             Some(format!(":{}:{}", row + 1, first_col + 1).into());
 
@@ -1584,9 +1626,11 @@ fn build_matches_for_buffer(
         let line_end = Point::new(row, snapshot.text.line_len(row));
         let line_start_offset = snapshot.text.point_to_offset(line_start);
         let line_end_offset = snapshot.text.point_to_offset(line_end);
+        let line_read_end =
+            (line_start_offset + crate::MAX_SNIPPET_BYTES + 512).min(line_end_offset);
 
         line_buf.clear();
-        line_buf.extend(snapshot.text_for_range(line_start_offset..line_end_offset));
+        line_buf.extend(snapshot.text_for_range(line_start_offset..line_read_end));
 
         let line_trimmed_end = line_buf.trim_end();
         let trim_start = line_trimmed_end.len() - line_trimmed_end.trim_start().len();
@@ -1596,9 +1640,9 @@ fn build_matches_for_buffer(
         let snippet: Arc<str> = Arc::<str>::from(snippet_buf.as_str());
 
         snippet_match_positions.clear();
-        for r in &ranges_for_line {
-            let match_start_offset = r.start.to_offset(&snapshot.text);
-            let match_end_offset = r.end.to_offset(&snapshot.text);
+        for r in &items {
+            let match_start_offset = r.start_offset;
+            let match_end_offset = r.end_offset;
 
             let start_in_line = match_start_offset.saturating_sub(line_start_offset);
             let end_in_line = match_end_offset.saturating_sub(line_start_offset);
@@ -1630,21 +1674,25 @@ fn build_matches_for_buffer(
                 snippet_match_positions.push(safe_start..safe_end);
             }
         }
-        snippet_match_positions.sort_by_key(|r| (r.start, r.end));
-        snippet_match_positions.dedup();
+        if snippet_match_positions.len() > 1 {
+            snippet_match_positions.sort_by_key(|r| (r.start, r.end));
+            snippet_match_positions.dedup();
+        }
 
         snippet_syntax_highlights.clear();
         if snippet_content_len > 0 && snapshot.language().is_some() {
             let mut rel_offset = 0usize;
-            let mut chunks = snapshot.chunks(line_start_offset..line_end_offset, true);
+            let snippet_abs_start = line_start_offset + trim_start;
+            let snippet_abs_end = snippet_abs_start + snippet_content_len;
+            let mut chunks = snapshot.chunks(snippet_abs_start..snippet_abs_end, true);
             for chunk in chunks.by_ref() {
                 let chunk_len = chunk.text.len();
                 let chunk_start = rel_offset;
                 let chunk_end = rel_offset + chunk_len;
                 rel_offset = chunk_end;
 
-                let chunk_start = chunk_start.min(line_trimmed_end.len());
-                let chunk_end = chunk_end.min(line_trimmed_end.len());
+                let chunk_start = chunk_start.min(snippet_content_len + trim_start);
+                let chunk_end = chunk_end.min(snippet_content_len + trim_start);
                 let start_abs = chunk_start.max(trim_start);
                 let end_abs = chunk_end.min(trim_start + snippet_content_len);
                 if start_abs >= end_abs {
@@ -1659,17 +1707,13 @@ fn build_matches_for_buffer(
                     }
                 }
             }
-            coalesce_syntax_runs(&mut snippet_syntax_highlights);
+            if snippet_syntax_highlights.len() > 1 {
+                coalesce_syntax_runs(&mut snippet_syntax_highlights);
+            }
         }
 
-        let ranges_for_line_points = ranges_for_line
-            .iter()
-            .map(|range| {
-                let start = range.start.to_point(&snapshot.text);
-                let end = range.end.to_point(&snapshot.text);
-                start..end
-            })
-            .collect::<Vec<_>>();
+        let ranges_for_line_points = ranges_for_line;
+        let first_point_range = ranges_for_line_points.first().cloned();
         let kind = crate::types::QuickMatchKind::Buffer {
             buffer_id,
             ranges: ranges_for_line_points.clone(),
@@ -1678,14 +1722,15 @@ fn build_matches_for_buffer(
         let snippet_for_match = snippet.clone();
         let snippet_match_positions_arc = (!snippet_match_positions.is_empty())
             .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions.as_slice()));
-        let snippet_syntax_highlights_arc = (!snippet_syntax_highlights.is_empty())
-            .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights.as_slice()));
+        let snippet_syntax_highlights_arc = (!snippet_syntax_highlights.is_empty()).then(|| {
+            Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights.as_slice())
+        });
 
         let mut match_item = QuickMatchBuilder::new(source_id.clone(), kind)
             .action(match project_path.clone() {
                 Some(project_path) => crate::types::MatchAction::OpenProjectPath {
                     project_path,
-                    point_range: ranges_for_line_points.first().cloned(),
+                    point_range: first_point_range,
                 },
                 None => crate::types::MatchAction::Dismiss,
             })
@@ -1701,7 +1746,10 @@ fn build_matches_for_buffer(
             .snippet_syntax_highlights(snippet_syntax_highlights_arc)
             .build();
         match_item.key = crate::types::compute_match_key(&match_item);
-        if match_item.snippet_syntax_highlights.is_none() && snippet_content_len > 0 {
+        if match_item.snippet_syntax_highlights.is_none()
+            && snippet_content_len > 0
+            && snapshot.language().is_none()
+        {
             pending_syntax.push(SyntaxEnrichItem {
                 key: match_item.key,
                 row,

@@ -2,9 +2,13 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     ops::Range,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64},
+    },
 };
 
+use futures::future::LocalBoxFuture;
 use gpui::{AnyView, App, AppContext, AsyncApp, Context, Entity, WeakEntity, Window};
 use language::Buffer;
 use log::debug;
@@ -14,13 +18,12 @@ use search::SearchOptions;
 use text::Point;
 use ui::IconName;
 use util::paths::PathStyle;
-use futures::future::LocalBoxFuture;
 
 use crate::PickerHandle;
 use crate::preview::{PreviewKey, PreviewRequest};
 use crate::types::QuickMatch;
-use crate::types::{MatchKey, QuickMatchPatch};
 use crate::types::{MatchAction, QuickMatchKind};
+use crate::types::{MatchKey, QuickMatchPatch};
 
 pub type SearchUiContext<'a> = Context<'a, PickerHandle>;
 
@@ -202,6 +205,7 @@ pub struct SearchContext {
     language_registry: Arc<language::LanguageRegistry>,
     background_executor: gpui::BackgroundExecutor,
     cancellation: SearchCancellation,
+    match_arena: Arc<MatchArena>,
 }
 
 impl SearchContext {
@@ -213,6 +217,7 @@ impl SearchContext {
         language_registry: Arc<language::LanguageRegistry>,
         cancellation: SearchCancellation,
         background_executor: gpui::BackgroundExecutor,
+        match_arena: Arc<MatchArena>,
     ) -> Self {
         Self {
             project,
@@ -222,6 +227,7 @@ impl SearchContext {
             language_registry,
             background_executor,
             cancellation,
+            match_arena,
         }
     }
 
@@ -251,6 +257,10 @@ impl SearchContext {
 
     pub fn background_executor(&self) -> &gpui::BackgroundExecutor {
         &self.background_executor
+    }
+
+    pub fn match_arena(&self) -> &Arc<MatchArena> {
+        &self.match_arena
     }
 }
 
@@ -285,7 +295,8 @@ impl SearchSink {
     }
 
     fn mark_finished(&self) {
-        self.finished.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.finished
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn record_error(&self, message: String, app: &mut AsyncApp) {
@@ -304,14 +315,29 @@ impl SearchSink {
         crate::finish_stream(self.picker.clone(), self.generation, app);
     }
 
-    pub fn flush_batch(&self, batch: &mut Vec<QuickMatch>, app: &mut AsyncApp) {
+    pub fn flush_batch_ids(
+        &self,
+        batch: &mut Vec<crate::types::MatchId>,
+        arena: &Arc<MatchArena>,
+        app: &mut AsyncApp,
+    ) {
         if self.is_cancelled() {
             return;
         }
-        crate::flush_batch(self.picker.clone(), self.generation, batch, app);
+        crate::flush_batch_ids(
+            self.picker.clone(),
+            self.generation,
+            batch,
+            arena.clone(),
+            app,
+        );
     }
 
-    pub fn apply_patches_by_key(&self, patches: Vec<(MatchKey, QuickMatchPatch)>, app: &mut AsyncApp) {
+    pub fn apply_patches_by_key(
+        &self,
+        patches: Vec<(MatchKey, QuickMatchPatch)>,
+        app: &mut AsyncApp,
+    ) {
         if self.is_cancelled() {
             return;
         }
@@ -337,7 +363,11 @@ impl SearchSink {
         }
     }
 
-    pub fn set_inflight_results(&self, rx: async_channel::Receiver<SearchResult>, app: &mut AsyncApp) {
+    pub fn set_inflight_results(
+        &self,
+        rx: async_channel::Receiver<SearchResult>,
+        app: &mut AsyncApp,
+    ) {
         if self.is_cancelled() {
             return;
         }
@@ -349,7 +379,10 @@ impl SearchSink {
             if picker.delegate.search_engine.generation() != self.generation {
                 return;
             }
-            picker.delegate.search_engine.set_inflight_results(rx.clone());
+            picker
+                .delegate
+                .search_engine
+                .set_inflight_results(rx.clone());
         }) {
             debug!("quick_search: failed to store inflight results: {:?}", err);
         }
@@ -392,12 +425,7 @@ pub trait QuickSearchSource {
         None
     }
 
-    fn start_search(
-        &self,
-        ctx: SearchContext,
-        sink: SearchSink,
-        cx: &mut SearchUiContext<'_>,
-    );
+    fn start_search(&self, ctx: SearchContext, sink: SearchSink, cx: &mut SearchUiContext<'_>);
 }
 
 #[derive(Clone)]
@@ -412,7 +440,9 @@ pub struct SourceRegistryBuilder {
 
 impl SourceRegistryBuilder {
     pub fn new() -> Self {
-        Self { sources: Vec::new() }
+        Self {
+            sources: Vec::new(),
+        }
     }
 
     pub fn with_source<T: QuickSearchSource + 'static>(mut self, source: T) -> Self {
@@ -433,30 +463,72 @@ impl SourceRegistryBuilder {
 }
 
 pub struct MatchBatcher {
-    batch: Vec<QuickMatch>,
+    batch_ids: Vec<crate::types::MatchId>,
+    arena: Arc<MatchArena>,
 }
 
 impl MatchBatcher {
-    pub fn new() -> Self {
+    pub fn new(arena: Arc<MatchArena>) -> Self {
         Self {
-            batch: Vec::with_capacity(crate::RESULTS_BATCH_SIZE),
+            batch_ids: Vec::with_capacity(crate::RESULTS_BATCH_SIZE),
+            arena,
         }
     }
 
     pub fn push(&mut self, match_item: QuickMatch, sink: &SearchSink, app: &mut AsyncApp) {
-        self.batch.push(match_item);
-        if self.batch.len() >= crate::RESULTS_BATCH_SIZE {
-            sink.flush_batch(&mut self.batch, app);
+        let id = self.arena.insert(match_item);
+        self.batch_ids.push(id);
+        if self.batch_ids.len() >= crate::RESULTS_BATCH_SIZE {
+            sink.flush_batch_ids(&mut self.batch_ids, &self.arena, app);
         }
     }
 
     pub fn flush(&mut self, sink: &SearchSink, app: &mut AsyncApp) {
-        sink.flush_batch(&mut self.batch, app);
+        sink.flush_batch_ids(&mut self.batch_ids, &self.arena, app);
     }
 
     pub fn finish(mut self, sink: &SearchSink, app: &mut AsyncApp) {
         self.flush(sink, app);
         sink.finish_stream(app);
+    }
+}
+
+pub struct MatchArena {
+    next_id: AtomicU64,
+    matches: Mutex<Vec<QuickMatch>>,
+}
+
+impl MatchArena {
+    pub fn new() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            matches: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn insert(&self, mut match_item: QuickMatch) -> crate::types::MatchId {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match_item.id = id;
+        if match_item.key.0 == 0 {
+            match_item.key = crate::types::compute_match_key(&match_item);
+        }
+        let mut lock = match self.matches.lock() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        lock.push(match_item);
+        id
+    }
+
+    pub fn get_cloned(&self, id: crate::types::MatchId) -> Option<QuickMatch> {
+        let lock = match self.matches.lock() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        let idx = id.checked_sub(1)? as usize;
+        lock.get(idx).cloned()
     }
 }
 
@@ -532,14 +604,10 @@ impl SourceRegistry {
         project: &Entity<Project>,
         cx: &App,
     ) -> PreviewRequest {
-        let key = PreviewKey(
-            ((search_generation as u64) << 32) | (selected.id & 0xFFFF_FFFF),
-        );
+        let key = PreviewKey(((search_generation as u64) << 32) | (selected.id & 0xFFFF_FFFF));
         match &selected.kind {
             QuickMatchKind::Buffer {
-                buffer_id,
-                ranges,
-                ..
+                buffer_id, ranges, ..
             } => {
                 let buffer = project.read(cx).buffer_for_id(*buffer_id, cx);
                 let Some(buffer) = buffer else {
