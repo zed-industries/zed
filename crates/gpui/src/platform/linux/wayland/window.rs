@@ -194,7 +194,7 @@ impl WaylandSurfaceState {
             });
 
             if let Some(parent) = parent.as_ref() {
-                parent.add_children(surface.id());
+                parent.add_child(surface.id());
             }
 
             dialog
@@ -282,13 +282,15 @@ impl WaylandSurfaceState {
                 decoration: _decoration,
                 dialog,
             }) => {
+                // drop the dialog before toplevel so compositor can explicitly unapply it's effects
+                if let Some(dialog) = dialog {
+                    dialog.destroy();
+                }
+
                 // The role object (toplevel) must always be destroyed before the xdg_surface.
                 // See https://wayland.app/protocols/xdg-shell#xdg_surface:request:destroy
                 toplevel.destroy();
                 xdg_surface.destroy();
-                if let Some(dialog) = dialog {
-                    dialog.destroy();
-                }
             }
             WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface }) => {
                 layer_surface.destroy();
@@ -535,7 +537,7 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    pub fn add_children(&self, child: ObjectId) {
+    pub fn add_child(&self, child: ObjectId) {
         let mut state = self.state.borrow_mut();
         state.children.insert(child);
     }

@@ -583,7 +583,7 @@ impl X11WindowState {
                 // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
                 // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
                 check_reply(
-                    || "X11 ChangeProperty32 setting window type for floating window failed.",
+                    || "X11 ChangeProperty32 setting window type for dialog window failed.",
                     xcb.change_property32(
                         xproto::PropMode::REPLACE,
                         x_window,
@@ -597,7 +597,7 @@ impl X11WindowState {
                 // can handle it appropriately (e.g., prevent interaction with the parent window
                 // while the dialog is open).
                 check_reply(
-                    || "X11 ChangeProperty32 setting modal state for floating window failed.",
+                    || "X11 ChangeProperty32 setting modal state for dialog window failed.",
                     xcb.change_property32(
                         xproto::PropMode::REPLACE,
                         x_window,
