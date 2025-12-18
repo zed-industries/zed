@@ -1748,26 +1748,18 @@ impl Workspace {
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
-                let is_empty_workspace = project_paths.is_empty();
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
-                } else if let Some(workspace) = serialized_workspace.as_ref() {
+                } else if let Some(workspace) = serialized_workspace.as_ref()
+                    && let Some(display) = workspace.display
+                    && let Some(bounds) = workspace.window_bounds.as_ref()
+                {
                     // Reopening an existing workspace - restore its saved bounds
-                    if let (Some(display), Some(bounds)) =
-                        (workspace.display, workspace.window_bounds.as_ref())
-                    {
-                        (Some(bounds.0), Some(display))
-                    } else {
-                        (None, None)
-                    }
-                } else if is_empty_workspace {
-                    // Empty workspace - try to restore the last known no-project window bounds
-                    if let Some((display, bounds)) = persistence::read_default_window_bounds() {
-                        (Some(bounds), Some(display))
-                    } else {
-                        (None, None)
-                    }
+                    (Some(bounds.0), Some(display))
+                } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+                    // New or empty workspace - use the last known window bounds
+                    (Some(bounds), Some(display))
                 } else {
                     // New window - let GPUI's default_bounds() handle cascading
                     (None, None)
