@@ -40,7 +40,7 @@ pub struct BufferStore {
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
     project_search_chunks: HashMap<u64, smol::channel::Sender<BufferId>>,
-    pub(crate) next_project_search_id: u64,
+    pub next_project_search_id: u64,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
