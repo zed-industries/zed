@@ -903,10 +903,12 @@ impl ContextMenu {
                 div()
                     .id(("context-menu-child", ix))
                     .when_some(documentation_aside.clone(), |this, documentation_aside| {
-                        this.occlude().on_hover(cx.listener(move |menu, hovered, _, cx| {
+                        this.occlude()
+                            .on_hover(cx.listener(move |menu, hovered, _, cx| {
                             if *hovered {
                                 menu.documentation_aside = Some((ix, documentation_aside.clone()));
-                            } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix) {
+                            } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix)
+                            {
                                 menu.documentation_aside = None;
                             }
                             cx.notify();
