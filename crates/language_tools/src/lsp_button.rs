@@ -384,7 +384,7 @@ impl LanguageServerState {
                 tooltip_text.map(|tooltip_text| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
-                        DocumentationEdge::Bottom,
+                        DocumentationEdge::Top,
                         Rc::new(move |_| Label::new(tooltip_text.clone()).into_any_element()),
                     )
                 }),
