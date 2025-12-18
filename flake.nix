@@ -67,6 +67,15 @@
                     rm -rf $lib/lib/webrtc-sys.out/cxxbridge
                   '';
                 };
+                prompt_store = attrs: {
+                  postPatch = (attrs.postPatch or "") + ''
+                    substituteInPlace \
+                      src/prompt_store.rs \
+                      --replace-fail \
+                      "../../git_ui" \
+                      "${./crates/git_ui}"
+                  '';
+                };
                 release_channel = attrs: {
                   postPatch = (attrs.postPatch or "") + ''
                     substituteInPlace \
@@ -155,6 +164,7 @@
                           "v0_4_0"
                           "v0_5_0"
                           "v0_6_0"
+                          "v0_8_0"
                         ])
                       )
                     }
