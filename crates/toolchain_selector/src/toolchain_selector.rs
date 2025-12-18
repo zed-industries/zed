@@ -225,7 +225,7 @@ impl AddToolchainState {
                                 );
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
-                            this.focus_handle(cx).focus(window);
+                            this.focus_handle(cx).focus(window, cx);
                         }
                     });
                     return Err(anyhow::anyhow!("Failed to resolve toolchain"));
@@ -260,7 +260,7 @@ impl AddToolchainState {
                         toolchain,
                         scope_picker,
                     };
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                 });
 
                 Result::<_, anyhow::Error>::Ok(())
@@ -333,7 +333,7 @@ impl AddToolchainState {
         });
         _ = self.weak.update(cx, |this, cx| {
             this.state = State::Search((this.create_search_state)(window, cx));
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             cx.notify();
         });
     }
@@ -383,7 +383,7 @@ impl Render for AddToolchainState {
                     &weak,
                     |this: &mut ToolchainSelector, _: &menu::Cancel, window, cx| {
                         this.state = State::Search((this.create_search_state)(window, cx));
-                        this.state.focus_handle(cx).focus(window);
+                        this.state.focus_handle(cx).focus(window, cx);
                         cx.notify();
                     },
                 ))
@@ -703,7 +703,7 @@ impl ToolchainSelector {
                 window,
                 cx,
             ));
-            self.state.focus_handle(cx).focus(window);
+            self.state.focus_handle(cx).focus(window, cx);
             cx.notify();
         }
     }

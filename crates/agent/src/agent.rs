@@ -426,7 +426,7 @@ impl NativeAgent {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
-                        uuid: prompt_metadata.id.user_id()?,
+                        uuid: prompt_metadata.id.as_user()?,
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
@@ -1162,6 +1162,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     }
 
     fn should_render_footer(&self) -> bool {
+        true
+    }
+
+    fn supports_favorites(&self) -> bool {
         true
     }
 }

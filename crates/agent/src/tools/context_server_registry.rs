@@ -2,7 +2,7 @@ use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
-use context_server::ContextServerId;
+use context_server::{ContextServerId, client::NotificationSubscription};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -31,17 +31,7 @@ struct RegisteredContextServer {
     prompts: BTreeMap<SharedString, ContextServerPrompt>,
     load_tools: Task<Result<()>>,
     load_prompts: Task<Result<()>>,
-}
-
-impl RegisteredContextServer {
-    fn new() -> Self {
-        Self {
-            tools: BTreeMap::default(),
-            prompts: BTreeMap::default(),
-            load_tools: Task::ready(Ok(())),
-            load_prompts: Task::ready(Ok(())),
-        }
-    }
+    _tools_updated_subscription: Option<NotificationSubscription>,
 }
 
 impl ContextServerRegistry {
@@ -111,10 +101,57 @@ impl ContextServerRegistry {
     fn get_or_register_server(
         &mut self,
         server_id: &ContextServerId,
+        cx: &mut Context<Self>,
     ) -> &mut RegisteredContextServer {
         self.registered_servers
             .entry(server_id.clone())
-            .or_insert_with(RegisteredContextServer::new)
+            .or_insert_with(|| Self::init_registered_server(server_id, &self.server_store, cx))
+    }
+
+    fn init_registered_server(
+        server_id: &ContextServerId,
+        server_store: &Entity<ContextServerStore>,
+        cx: &mut Context<Self>,
+    ) -> RegisteredContextServer {
+        let tools_updated_subscription = server_store
+            .read(cx)
+            .get_running_server(server_id)
+            .and_then(|server| {
+                let client = server.client()?;
+
+                if !client.capable(context_server::protocol::ServerCapability::Tools) {
+                    return None;
+                }
+
+                let server_id = server.id();
+                let this = cx.entity().downgrade();
+
+                Some(client.on_notification(
+                    "notifications/tools/list_changed",
+                    Box::new(move |_params, cx: AsyncApp| {
+                        let server_id = server_id.clone();
+                        let this = this.clone();
+                        cx.spawn(async move |cx| {
+                            this.update(cx, |this, cx| {
+                                log::info!(
+                                    "Received tools/list_changed notification for server {}",
+                                    server_id
+                                );
+                                this.reload_tools_for_server(server_id, cx);
+                            })
+                        })
+                        .detach();
+                    }),
+                ))
+            });
+
+        RegisteredContextServer {
+            tools: BTreeMap::default(),
+            prompts: BTreeMap::default(),
+            load_tools: Task::ready(Ok(())),
+            load_prompts: Task::ready(Ok(())),
+            _tools_updated_subscription: tools_updated_subscription,
+        }
     }
 
     fn reload_tools_for_server(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
@@ -124,11 +161,12 @@ impl ContextServerRegistry {
         let Some(client) = server.client() else {
             return;
         };
+
         if !client.capable(context_server::protocol::ServerCapability::Tools) {
             return;
         }
 
-        let registered_server = self.get_or_register_server(&server_id);
+        let registered_server = self.get_or_register_server(&server_id, cx);
         registered_server.load_tools = cx.spawn(async move |this, cx| {
             let response = client
                 .request::<context_server::types::requests::ListTools>(())
@@ -167,7 +205,7 @@ impl ContextServerRegistry {
             return;
         }
 
-        let registered_server = self.get_or_register_server(&server_id);
+        let registered_server = self.get_or_register_server(&server_id, cx);
 
         registered_server.load_prompts = cx.spawn(async move |this, cx| {
             let response = client

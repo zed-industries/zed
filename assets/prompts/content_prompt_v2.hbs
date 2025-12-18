@@ -14,7 +14,6 @@ The section you'll need to rewrite is marked with <rewrite_this></rewrite_this> 
 The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.
 {{/if}}
 
-{{#if rewrite_section}}
 And here's the section to rewrite based on that prompt again for reference:
 
 <rewrite_this>
@@ -31,8 +30,6 @@ Below are the diagnostic errors visible to the user.  If the user requests probl
     <code_content>{{code_content}}</code_content>
 </diagnostic_error>
 {{/each}}
-{{/if}}
-
 {{/if}}
 
 Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {{content_type}} will be preserved.

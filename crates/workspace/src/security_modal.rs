@@ -23,7 +23,7 @@ use ui::{
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
+    restricted_paths: HashMap<WorktreeId, RestrictedPath>,
     home_dir: Option<PathBuf>,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
@@ -34,7 +34,7 @@ pub struct SecurityModal {
 
 #[derive(Debug, PartialEq, Eq)]
 struct RestrictedPath {
-    abs_path: Option<Arc<Path>>,
+    abs_path: Arc<Path>,
     is_file: bool,
     host: Option<RemoteHostLocation>,
 }
@@ -102,48 +102,31 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Label::new(header_label)),
                     )
-                    .children(self.restricted_paths.values().map(|restricted_path| {
-                        let abs_path = restricted_path.abs_path.as_ref().and_then(|abs_path| {
-                            if restricted_path.is_file {
-                                abs_path.parent()
-                            } else {
-                                Some(abs_path.as_ref())
-                            }
-                        });
-
-                        let label = match abs_path {
-                            Some(abs_path) => match &restricted_path.host {
-                                Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => format!(
-                                        "{} ({}@{})",
-                                        self.shorten_path(abs_path).display(),
-                                        user_name,
-                                        remote_host.host_identifier
-                                    ),
-                                    None => format!(
-                                        "{} ({})",
-                                        self.shorten_path(abs_path).display(),
-                                        remote_host.host_identifier
-                                    ),
-                                },
-                                None => self.shorten_path(abs_path).display().to_string(),
+                    .children(self.restricted_paths.values().filter_map(|restricted_path| {
+                        let abs_path = if restricted_path.is_file {
+                            restricted_path.abs_path.parent()
+                        } else {
+                            Some(restricted_path.abs_path.as_ref())
+                        }?;
+                        let label = match &restricted_path.host {
+                            Some(remote_host) => match &remote_host.user_name {
+                                Some(user_name) => format!(
+                                    "{} ({}@{})",
+                                    self.shorten_path(abs_path).display(),
+                                    user_name,
+                                    remote_host.host_identifier
+                                ),
+                                None => format!(
+                                    "{} ({})",
+                                    self.shorten_path(abs_path).display(),
+                                    remote_host.host_identifier
+                                ),
                             },
-                            None => match &restricted_path.host {
-                                Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => format!(
-                                        "Empty project ({}@{})",
-                                        user_name, remote_host.host_identifier
-                                    ),
-                                    None => {
-                                        format!("Empty project ({})", remote_host.host_identifier)
-                                    }
-                                },
-                                None => "Empty project".to_string(),
-                            },
+                            None => self.shorten_path(abs_path).display().to_string(),
                         };
-                        h_flex()
+                        Some(h_flex()
                             .pl(IconSize::default().rems() + rems(0.5))
-                            .child(Label::new(label).color(Color::Muted))
+                            .child(Label::new(label).color(Color::Muted)))
                     })),
             )
             .child(
@@ -254,7 +237,7 @@ impl SecurityModal {
                 has_restricted_files |= restricted_path.is_file;
                 !restricted_path.is_file
             })
-            .filter_map(|restricted_path| restricted_path.abs_path.as_ref()?.parent())
+            .filter_map(|restricted_path| restricted_path.abs_path.parent())
             .collect::<SmallVec<[_; 2]>>();
         match available_parents.len() {
             0 => {
@@ -265,8 +248,8 @@ impl SecurityModal {
                 }
             }
             1 => Some(Cow::Owned(format!(
-                "Trust all projects in the {:?} folder",
-                self.shorten_path(available_parents[0])
+                "Trust all projects in the {:} folder",
+                self.shorten_path(available_parents[0]).display()
             ))),
             _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
@@ -289,19 +272,17 @@ impl SecurityModal {
                 let mut paths_to_trust = self
                     .restricted_paths
                     .keys()
-                    .map(|worktree_id| match worktree_id {
-                        Some(worktree_id) => PathTrust::Worktree(*worktree_id),
-                        None => PathTrust::Workspace,
-                    })
+                    .copied()
+                    .map(PathTrust::Worktree)
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
                     paths_to_trust.extend(self.restricted_paths.values().filter_map(
                         |restricted_paths| {
                             if restricted_paths.is_file {
-                                Some(PathTrust::Workspace)
+                                None
                             } else {
                                 let parent_abs_path =
-                                    restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
+                                    restricted_paths.abs_path.parent()?.to_owned();
                                 Some(PathTrust::AbsPath(parent_abs_path))
                             }
                         },
@@ -322,42 +303,22 @@ impl SecurityModal {
     pub fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
-                let mut new_restricted_worktrees = trusted_worktrees
+                let new_restricted_worktrees = trusted_worktrees
                     .read(cx)
-                    .restricted_worktrees(worktree_store.read(cx), self.remote_host.clone(), cx)
+                    .restricted_worktrees(worktree_store.read(cx), cx)
                     .into_iter()
-                    .filter_map(|restricted_path| {
-                        let restricted_path = match restricted_path {
-                            Some((worktree_id, abs_path)) => {
-                                let worktree =
-                                    worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
-                                (
-                                    Some(worktree_id),
-                                    RestrictedPath {
-                                        abs_path: Some(abs_path),
-                                        is_file: worktree.read(cx).is_single_file(),
-                                        host: self.remote_host.clone(),
-                                    },
-                                )
-                            }
-                            None => (
-                                None,
-                                RestrictedPath {
-                                    abs_path: None,
-                                    is_file: false,
-                                    host: self.remote_host.clone(),
-                                },
-                            ),
-                        };
-                        Some(restricted_path)
+                    .filter_map(|(worktree_id, abs_path)| {
+                        let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
+                        Some((
+                            worktree_id,
+                            RestrictedPath {
+                                abs_path,
+                                is_file: worktree.read(cx).is_single_file(),
+                                host: self.remote_host.clone(),
+                            },
+                        ))
                     })
                     .collect::<HashMap<_, _>>();
-                // Do not clutter the UI:
-                // * trusting regular local worktrees assumes the workspace is trusted either, on the same host.
-                // * trusting a workspace trusts all single-file worktrees on the same host.
-                if new_restricted_worktrees.len() > 1 {
-                    new_restricted_worktrees.remove(&None);
-                }
 
                 if self.restricted_paths != new_restricted_worktrees {
                     self.trust_parents = false;

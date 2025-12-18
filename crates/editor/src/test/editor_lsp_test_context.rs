@@ -126,7 +126,7 @@ impl EditorLspTestContext {
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
             editor.set_nav_history(Some(nav_history));
-            window.focus(&editor.focus_handle(cx))
+            window.focus(&editor.focus_handle(cx), cx)
         });
 
         let lsp = fake_servers.next().await.unwrap();

@@ -21,6 +21,8 @@ use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
+pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
+
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
@@ -1096,12 +1098,15 @@ impl<'a> SyntaxMapCaptures<'a> {
 
 #[derive(Default)]
 pub struct TreeSitterOptions {
-    max_start_depth: Option<u32>,
+    pub max_start_depth: Option<u32>,
+    pub max_bytes_to_query: Option<usize>,
 }
+
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
+            max_bytes_to_query: None,
         }
     }
 }
@@ -1134,6 +1139,14 @@ impl<'a> SyntaxMapMatches<'a> {
                 )
             };
             cursor.set_max_start_depth(options.max_start_depth);
+
+            if let Some(max_bytes_to_query) = options.max_bytes_to_query {
+                let midpoint = (range.start + range.end) / 2;
+                let containing_range_start = midpoint.saturating_sub(max_bytes_to_query / 2);
+                let containing_range_end =
+                    containing_range_start.saturating_add(max_bytes_to_query);
+                cursor.set_containing_byte_range(containing_range_start..containing_range_end);
+            }
 
             cursor.set_byte_range(range.clone());
             let matches = cursor.matches(query, layer.node(), TextProvider(text));
@@ -1642,6 +1655,10 @@ impl<'a> SyntaxLayer<'a> {
 
         let mut query_cursor = QueryCursorHandle::new();
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
+        query_cursor.set_containing_byte_range(
+            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
+                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
+        );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);
@@ -1928,6 +1945,8 @@ impl Drop for QueryCursorHandle {
         let mut cursor = self.0.take().unwrap();
         cursor.set_byte_range(0..usize::MAX);
         cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        cursor.set_containing_byte_range(0..usize::MAX);
+        cursor.set_containing_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         QUERY_CURSORS.lock().push(cursor)
     }
 }

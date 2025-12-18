@@ -2155,7 +2155,7 @@ mod tests {
         let range = diff_1.inner.compare(&empty_diff.inner, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
-        // Edit does not affect the diff.
+        // Edit does affects the diff because it recalculates word diffs.
         buffer.edit_via_marked_text(
             &"
                 one
@@ -2170,7 +2170,14 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer));
+        assert_eq!(
+            Point::new(4, 0)..Point::new(5, 0),
+            diff_2
+                .inner
+                .compare(&diff_1.inner, &buffer)
+                .unwrap()
+                .to_point(&buffer)
+        );
 
         // Edit turns a deletion hunk into a modification.
         buffer.edit_via_marked_text(

@@ -10,7 +10,6 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
-mod persistence;
 pub mod prettier_store;
 mod project_search;
 pub mod project_settings;
@@ -66,6 +65,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
+use encoding_rs;
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -351,6 +351,7 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
 }
 
@@ -2484,13 +2485,11 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            self.worktree_store.update(cx, |worktree_store, cx| {
-                for worktree in worktree_store.worktrees() {
-                    store
-                        .clear_local_settings(worktree.read(cx).id(), cx)
-                        .log_err();
-                }
-            });
+            for worktree_metadata in &message.worktrees {
+                store
+                    .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                    .log_err();
+            }
         });
 
         self.join_project_response_message_id = message_id;
@@ -3251,6 +3250,9 @@ impl Project {
                 if most_recent_edit.replica_id == self.replica_id() {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
+            }
+            LspStoreEvent::WorkspaceEditApplied(transaction) => {
+                cx.emit(Event::WorkspaceEditApplied(transaction.clone()))
             }
         }
     }
@@ -4730,6 +4732,14 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    for worktree_metadata in &envelope.payload.worktrees {
+                        store
+                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                            .log_err();
+                    }
+                });
+
                 this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
             }
             Ok(())
@@ -4886,16 +4896,13 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let mut restricted_paths = envelope
+            let restricted_paths = envelope
                 .payload
                 .worktree_ids
                 .into_iter()
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if envelope.payload.restrict_workspace {
-                restricted_paths.insert(PathTrust::Workspace);
-            }
             let remote_host = this
                 .read(cx)
                 .remote_connection_options(cx)
@@ -5455,13 +5462,22 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
+            let has_bom = file.has_bom;
+
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        new_text.into(),
+                        line_ending,
+                        encoding_rs::UTF_8,
+                        has_bom,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;
