@@ -659,7 +659,7 @@ impl Platform for WindowsPlatform {
             if let Err(err) = result {
                 // ERROR_NOT_FOUND means the credential doesn't exist.
                 // Return Ok(None) to match macOS and Linux behavior.
-                if err.code().0 == ERROR_NOT_FOUND.0 as i32 {
+                if err.code() == ERROR_NOT_FOUND.to_hresult() {
                     return Ok(None);
                 }
                 return Err(err.into());

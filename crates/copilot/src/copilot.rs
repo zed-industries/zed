@@ -4,6 +4,7 @@ pub mod copilot_responses;
 pub mod request;
 mod sign_in;
 
+use crate::request::NextEditSuggestions;
 use crate::sign_in::initiate_sign_out;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
@@ -18,7 +19,7 @@ use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
-    language_settings::{EditPredictionProvider, all_language_settings, language_settings},
+    language_settings::{EditPredictionProvider, all_language_settings},
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
@@ -40,7 +41,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
-use util::{ResultExt, fs::remove_matching, rel_path::RelPath};
+use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
@@ -314,6 +315,15 @@ impl EventEmitter<Event> for Copilot {}
 struct GlobalCopilot(Entity<Copilot>);
 
 impl Global for GlobalCopilot {}
+
+/// Copilot's NextEditSuggestion response, with coordinates converted to Anchors.
+struct CopilotEditPrediction {
+    buffer: Entity<Buffer>,
+    range: Range<Anchor>,
+    text: String,
+    command: Option<lsp::Command>,
+    snapshot: BufferSnapshot,
+}
 
 impl Copilot {
     pub fn global(cx: &App) -> Option<Entity<Self>> {
@@ -873,101 +883,19 @@ impl Copilot {
         }
     }
 
-    pub fn completions<T>(
+    pub(crate) fn completions(
         &mut self,
         buffer: &Entity<Buffer>,
-        position: T,
+        position: Anchor,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>>
-    where
-        T: ToPointUtf16,
-    {
-        self.request_completions::<request::GetCompletions, _>(buffer, position, cx)
-    }
-
-    pub fn completions_cycling<T>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>>
-    where
-        T: ToPointUtf16,
-    {
-        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
-    }
-
-    pub fn accept_completion(
-        &mut self,
-        completion: &Completion,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let server = match self.server.as_authenticated() {
-            Ok(server) => server,
-            Err(error) => return Task::ready(Err(error)),
-        };
-        let request =
-            server
-                .lsp
-                .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
-                    uuid: completion.uuid.clone(),
-                });
-        cx.background_spawn(async move {
-            request
-                .await
-                .into_response()
-                .context("copilot: notify accepted")?;
-            Ok(())
-        })
-    }
-
-    pub fn discard_completions(
-        &mut self,
-        completions: &[Completion],
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let server = match self.server.as_authenticated() {
-            Ok(server) => server,
-            Err(_) => return Task::ready(Ok(())),
-        };
-        let request =
-            server
-                .lsp
-                .request::<request::NotifyRejected>(request::NotifyRejectedParams {
-                    uuids: completions
-                        .iter()
-                        .map(|completion| completion.uuid.clone())
-                        .collect(),
-                });
-        cx.background_spawn(async move {
-            request
-                .await
-                .into_response()
-                .context("copilot: notify rejected")?;
-            Ok(())
-        })
-    }
-
-    fn request_completions<R, T>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>>
-    where
-        R: 'static
-            + lsp::request::Request<
-                Params = request::GetCompletionsParams,
-                Result = request::GetCompletionsResult,
-            >,
-        T: ToPointUtf16,
-    {
+    ) -> Task<Result<Vec<CopilotEditPrediction>>> {
         self.register_buffer(buffer, cx);
 
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
+        let buffer_entity = buffer.clone();
         let lsp = server.lsp.clone();
         let registered_buffer = server
             .registered_buffers
@@ -977,51 +905,65 @@ impl Copilot {
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
-        let settings = language_settings(
-            buffer.language_at(position).map(|l| l.name()),
-            buffer.file(),
-            cx,
-        );
-        let tab_size = settings.tab_size;
-        let hard_tabs = settings.hard_tabs;
-        let relative_path = buffer
-            .file()
-            .map_or(RelPath::empty().into(), |file| file.path().clone());
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
-                .request::<R>(request::GetCompletionsParams {
-                    doc: request::GetCompletionsDocument {
-                        uri,
-                        tab_size: tab_size.into(),
-                        indent_size: 1,
-                        insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_proto(),
-                        position: point_to_lsp(position),
-                        version: version.try_into().unwrap(),
-                    },
+                .request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
+                    text_document: lsp::VersionedTextDocumentIdentifier { uri, version },
+                    position: point_to_lsp(position),
                 })
                 .await
                 .into_response()
                 .context("copilot: get completions")?;
             let completions = result
-                .completions
+                .edits
                 .into_iter()
                 .map(|completion| {
                     let start = snapshot
                         .clip_point_utf16(point_from_lsp(completion.range.start), Bias::Left);
                     let end =
                         snapshot.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
-                    Completion {
-                        uuid: completion.uuid,
+                    CopilotEditPrediction {
+                        buffer: buffer_entity.clone(),
                         range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
                         text: completion.text,
+                        command: completion.command,
+                        snapshot: snapshot.clone(),
                     }
                 })
                 .collect();
             anyhow::Ok(completions)
         })
+    }
+
+    pub(crate) fn accept_completion(
+        &mut self,
+        completion: &CopilotEditPrediction,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let server = match self.server.as_authenticated() {
+            Ok(server) => server,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        if let Some(command) = &completion.command {
+            let request = server
+                .lsp
+                .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
+                    command: command.command.clone(),
+                    arguments: command.arguments.clone().unwrap_or_default(),
+                    ..Default::default()
+                });
+            cx.background_spawn(async move {
+                request
+                    .await
+                    .into_response()
+                    .context("copilot: notify accepted")?;
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     pub fn status(&self) -> Status {
@@ -1260,7 +1202,11 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::{path, paths::PathStyle, rel_path::rel_path};
+    use util::{
+        path,
+        paths::PathStyle,
+        rel_path::{RelPath, rel_path},
+    };
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {

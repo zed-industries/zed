@@ -4450,6 +4450,13 @@ impl Window {
         dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
     }
 
+    /// Find the bindings that can follow the current input sequence for the current context stack.
+    pub fn possible_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .possible_next_bindings_for_input(input, &self.context_stack())
+    }
+
     fn context_stack_for_focus_handle(
         &self,
         focus_handle: &FocusHandle,
@@ -4959,7 +4966,7 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 }
 
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,

@@ -135,7 +135,9 @@ pub use workspace_settings::{
 use zed_actions::{Spawn, feedback::FileBugReport};
 
 use crate::{
-    item::ItemBufferKind, notifications::NotificationId, utility_pane::UTILITY_PANE_MIN_WIDTH,
+    item::ItemBufferKind,
+    notifications::NotificationId,
+    utility_pane::{UTILITY_PANE_MIN_WIDTH, utility_slot_for_dock_position},
 };
 use crate::{
     persistence::{
@@ -986,6 +988,7 @@ impl AppState {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Arc<Self> {
+        use fs::Fs;
         use node_runtime::NodeRuntime;
         use session::Session;
         use settings::SettingsStore;
@@ -996,6 +999,7 @@ impl AppState {
         }
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
+        <dyn Fs>::set_global(fs.clone(), cx);
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -1744,26 +1748,18 @@ impl Workspace {
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
-                let is_empty_workspace = project_paths.is_empty();
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
-                } else if let Some(workspace) = serialized_workspace.as_ref() {
+                } else if let Some(workspace) = serialized_workspace.as_ref()
+                    && let Some(display) = workspace.display
+                    && let Some(bounds) = workspace.window_bounds.as_ref()
+                {
                     // Reopening an existing workspace - restore its saved bounds
-                    if let (Some(display), Some(bounds)) =
-                        (workspace.display, workspace.window_bounds.as_ref())
-                    {
-                        (Some(bounds.0), Some(display))
-                    } else {
-                        (None, None)
-                    }
-                } else if is_empty_workspace {
-                    // Empty workspace - try to restore the last known no-project window bounds
-                    if let Some((display, bounds)) = persistence::read_default_window_bounds() {
-                        (Some(bounds), Some(display))
-                    } else {
-                        (None, None)
-                    }
+                    (Some(bounds.0), Some(display))
+                } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+                    // New or empty workspace - use the last known window bounds
+                    (Some(bounds), Some(display))
                 } else {
                     // New window - let GPUI's default_bounds() handle cascading
                     (None, None)
@@ -1890,10 +1886,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut found_in_dock = None;
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-            dock.update(cx, |dock, cx| {
-                dock.remove_panel(panel, window, cx);
-            })
+            let found = dock.update(cx, |dock, cx| dock.remove_panel(panel, window, cx));
+
+            if found {
+                found_in_dock = Some(dock.clone());
+            }
+        }
+        if let Some(found_in_dock) = found_in_dock {
+            let position = found_in_dock.read(cx).position();
+            let slot = utility_slot_for_dock_position(position);
+            self.clear_utility_pane_if_provider(slot, Entity::entity_id(panel), cx);
         }
     }
 
@@ -5661,12 +5665,24 @@ impl Workspace {
                     persistence::DB.save_workspace(serialized_workspace).await;
                 })
             }
-            WorkspaceLocation::DetachFromSession => window.spawn(cx, async move |_| {
-                persistence::DB
-                    .set_session_id(database_id, None)
-                    .await
-                    .log_err();
-            }),
+            WorkspaceLocation::DetachFromSession => {
+                let window_bounds = SerializedWindowBounds(window.window_bounds());
+                let display = window.display(cx).and_then(|d| d.uuid().ok());
+                window.spawn(cx, async move |_| {
+                    persistence::DB
+                        .set_window_open_status(
+                            database_id,
+                            window_bounds,
+                            display.unwrap_or_default(),
+                        )
+                        .await
+                        .log_err();
+                    persistence::DB
+                        .set_session_id(database_id, None)
+                        .await
+                        .log_err();
+                })
+            }
             WorkspaceLocation::None => Task::ready(()),
         }
     }

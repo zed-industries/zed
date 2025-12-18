@@ -18,6 +18,12 @@ pub fn autofix_pr() -> Workflow {
                 .add_input(pr_number.name, pr_number.input())
                 .add_input(run_clippy.name, run_clippy.input()),
         ))
+        .concurrency(
+            Concurrency::new(Expression::new(format!(
+                "${{{{ github.workflow }}}}-{pr_number}"
+            )))
+            .cancel_in_progress(true),
+        )
         .add_job(run_autofix.name.clone(), run_autofix.job)
         .add_job(commit_changes.name, commit_changes.job)
 }
@@ -104,19 +110,6 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
 }
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
-    fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-        let step = named::uses(
-            "actions",
-            "create-github-app-token",
-            "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
-        )
-        .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
-        .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-        .id("get-app-token");
-        let output = StepOutput::new(&step, "token");
-        (step, output)
-    }
-
     fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
         named::bash(&format!("gh pr checkout {pr_number}")).add_env(("GITHUB_TOKEN", token))
     }
@@ -143,7 +136,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy();
 
     named::job(
         Job::default()
