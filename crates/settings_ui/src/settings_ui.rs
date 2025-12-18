@@ -2,7 +2,7 @@ mod components;
 mod page_data;
 mod pages;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -11,7 +11,9 @@ use gpui::{
     Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
-use project::{Project, WorktreeId};
+
+use language::Buffer;
+use project::{Project, ProjectPath, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -686,6 +688,8 @@ pub struct SettingsWindow {
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    /// Cached settings file buffers to avoid repeated disk I/O on each settings change
+    project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
     navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
@@ -1527,6 +1531,7 @@ impl SettingsWindow {
             files: vec![],
 
             current_file: current_file,
+            project_setting_file_buffers: HashMap::default(),
             pages: vec![],
             navbar_entries: vec![],
             navbar_entry: 0,
@@ -3577,56 +3582,14 @@ fn update_settings_file(
 ) -> Result<()> {
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
-    let original_workspace_window =
-        window
-            .root::<SettingsWindow>()
-            .flatten()
-            .and_then(|settings_window| {
-                settings_window.read_with(cx, |settings_window, _cx| {
-                    settings_window.original_window.clone()
-                })
-            });
-
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some((worktree, project)) = all_projects(original_workspace_window.as_ref(), cx)
-                .find_map(|project| {
-                    project
-                        .read(cx)
-                        .worktree_for_id(worktree_id, cx)
-                        .zip(Some(project))
-                })
-            else {
-                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+            let Some(settings_window) = window.root::<SettingsWindow>().flatten() else {
+                anyhow::bail!("No settings window found");
             };
 
-            project.update(cx, |project, cx| {
-                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
-                    None
-                } else {
-                    Some(worktree.update(cx, |worktree, cx| {
-                        worktree.create_entry(rel_path.clone(), false, None, cx)
-                    }))
-                };
-
-                cx.spawn(async move |project, cx| {
-                    if let Some(task) = task
-                        && task.await.is_err()
-                    {
-                        return;
-                    };
-
-                    project
-                        .update(cx, |project, cx| {
-                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
-                        })
-                        .ok();
-                })
-                .detach();
-            });
-
-            return Ok(());
+            update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
         }
         SettingsUiFile::User => {
             // todo(settings_ui) error?
@@ -3635,6 +3598,86 @@ fn update_settings_file(
         }
         SettingsUiFile::Server(_) => unimplemented!(),
     }
+}
+
+fn update_project_setting_file(
+    worktree_id: WorktreeId,
+    rel_path: Arc<RelPath>,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+    settings_window: Entity<SettingsWindow>,
+    cx: &mut App,
+) -> Result<()> {
+    let Some((worktree, project)) =
+        all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
+            project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .zip(Some(project))
+        })
+    else {
+        anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+    };
+
+    let project_path = ProjectPath {
+        worktree_id,
+        path: rel_path.clone(),
+    };
+
+    let needs_creation = !project
+        .read(cx)
+        .contains_local_settings_file(worktree_id, &rel_path, cx);
+
+    let create_task = needs_creation.then(|| {
+        worktree.update(cx, |worktree, cx| {
+            worktree.create_entry(rel_path.clone(), false, None, cx)
+        })
+    });
+    let buffer_store = project.read(cx).buffer_store().clone();
+
+    cx.spawn(async move |cx| {
+        if let Some(create_task) = create_task {
+            create_task.await?;
+        }
+        let cached_buffer = settings_window.read_with(cx, |settings_window, _| {
+            settings_window
+                .project_setting_file_buffers
+                .get(&project_path)
+                .cloned()
+        });
+        let buffer = if let Some(cached_buffer) = cached_buffer {
+            cached_buffer
+        } else {
+            let buffer = buffer_store
+                .update(cx, |store, cx| store.open_buffer(project_path.clone(), cx))
+                .await
+                .context("Failed to open settings file")?;
+
+            settings_window.update(cx, |this, _cx| {
+                this.project_setting_file_buffers
+                    .insert(project_path, buffer.clone());
+            });
+
+            buffer
+        };
+
+        buffer.update(cx, |buffer, cx| {
+            let current_text = buffer.text();
+            let new_text = cx
+                .global::<SettingsStore>()
+                .new_text_for_update(current_text, |settings| update(settings, cx));
+            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+        });
+
+        buffer_store
+            .update(cx, |store, cx| store.save_buffer(buffer, cx))
+            .await
+            .context("Failed to save settings file")?;
+
+        anyhow::Ok(())
+    })
+    .detach();
+
+    return anyhow::Ok(());
 }
 
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
@@ -4087,6 +4130,7 @@ pub mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
+            project_setting_file_buffers: HashMap::default(),
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),

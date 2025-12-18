@@ -5588,43 +5588,6 @@ impl Project {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
     }
-
-    pub fn update_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: Arc<RelPath>,
-        cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
-    ) {
-        let project_path = ProjectPath {
-            worktree_id,
-            path: rel_path,
-        };
-        let buffer_store = self.buffer_store.clone();
-
-        cx.spawn(async move |cx| {
-            let buffer = buffer_store
-                .update(cx, |store, cx| store.open_buffer(project_path, cx))
-                .await
-                .context("Failed to open settings file")?;
-
-            buffer.update(cx, |buffer, cx| {
-                let current_text = buffer.text();
-                let new_text = cx
-                    .global::<SettingsStore>()
-                    .new_text_for_update(current_text, |settings| update(settings, cx));
-                buffer.edit([(0..buffer.len(), new_text)], None, cx);
-            });
-
-            buffer_store
-                .update(cx, |store, cx| store.save_buffer(buffer, cx))
-                .await
-                .context("Failed to save settings file")?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
 }
 
 pub struct PathMatchCandidateSet {
