@@ -266,6 +266,7 @@
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-k l": "agent::OpenRulesLibrary",
+      "cmd-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -333,6 +334,7 @@
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll",
+      "cmd-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -345,6 +347,7 @@
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll",
+      "cmd-shift-v": "agent::PasteRaw",
     },
   },
   {
