@@ -18,7 +18,7 @@ pub use templates::*;
 pub use thread::*;
 pub use tools::*;
 
-use acp_thread::{AcpThread, AgentModelIcon, AgentModelSelector, UserMessageId};
+use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -149,16 +149,11 @@ impl LanguageModels {
         model: &Arc<dyn LanguageModel>,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
-        let icon = if let Some(path) = provider.icon_path() {
-            Some(AgentModelIcon::Path(path))
-        } else {
-            Some(AgentModelIcon::Named(provider.icon()))
-        };
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon,
+            icon: Some(provider.icon()),
         }
     }
 
@@ -1635,7 +1630,7 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    icon: Some(language_model::IconOrSvg::Icon(ui::IconName::ZedAssistant)),
                 }]
             )])
         );
