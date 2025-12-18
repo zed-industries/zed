@@ -62,7 +62,8 @@ impl RenderOnce for ToolCall {
                     })
                     .child(
                         h_flex()
-                            .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.5)))
+                            .w_full()
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .gap_1p5()
                             .rounded_xs()
                             .child(
@@ -81,11 +82,18 @@ impl RenderOnce for ToolCall {
             .when_some(self.content, |this, content| {
                 this.child(
                     div()
-                        .when(self.use_card_layout, |this| {
-                            this.p_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
+                        .map(|this| {
+                            if self.use_card_layout {
+                                this.p_2()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().editor_background)
+                            } else {
+                                this.pl_2()
+                                    .ml_2()
+                                    .border_l_1()
+                                    .border_color(cx.theme().colors().border)
+                            }
                         })
                         .child(content),
                 )
