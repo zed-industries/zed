@@ -145,6 +145,56 @@ fn hover_blocks_to_markdown(blocks: &[HoverBlock]) -> String {
     out
 }
 
+fn rightmost_token_probe_offset(line: &str, start: usize, end: usize) -> Option<usize> {
+    fn is_token_char(ch: char) -> bool {
+        ch == '_' || ch.is_alphanumeric()
+    }
+
+    let mut start = start.min(line.len());
+    let mut end = end.min(line.len());
+    while start > 0 && !line.is_char_boundary(start) {
+        start = start.saturating_sub(1);
+    }
+    while end > 0 && !line.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    if start >= end {
+        return None;
+    }
+
+    let slice = &line[start..end];
+    let mut index = slice.len();
+    while index > 0 {
+        let Some(ch) = slice[..index].chars().next_back() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+        let ch_start = index.saturating_sub(ch_len);
+        if is_token_char(ch) {
+            let mut run_start = ch_start;
+            while run_start > 0 {
+                let Some(prev) = slice[..run_start].chars().next_back() else {
+                    break;
+                };
+                if is_token_char(prev) {
+                    run_start = run_start.saturating_sub(prev.len_utf8());
+                } else {
+                    break;
+                }
+            }
+
+            let mut probe = run_start + (index - run_start) / 2;
+            while probe > run_start && !slice.is_char_boundary(probe) {
+                probe = probe.saturating_sub(1);
+            }
+            return Some(start + probe);
+        }
+        index = ch_start;
+    }
+
+    None
+}
+
 #[derive(Clone)]
 struct SyntaxEnrichItem {
     key: crate::types::MatchKey,
@@ -295,20 +345,6 @@ impl QuickSearchSource for TextGrepSource {
                         debug!("quick_search: failed to update grep footer selection key: {:?}", err);
                     }
                     let selected_key = selected.key;
-                    let point = match_range.start;
-                    let end_point = if match_range.end.column > 0 {
-                        Point::new(
-                            match_range.end.row,
-                            match_range.end.column.saturating_sub(1),
-                        )
-                    } else {
-                        match_range.end
-                    };
-                    let mut hover_points = Vec::with_capacity(2);
-                    hover_points.push(point);
-                    if end_point != point {
-                        hover_points.push(end_point);
-                    }
                     let project_path = selected.project_path().cloned();
                     let worktree_id = project_path.as_ref().map(|path| path.worktree_id);
 
@@ -449,6 +485,69 @@ impl QuickSearchSource for TextGrepSource {
                                 set_loading_label(None, cx);
                                 return;
                             }
+
+                            let hover_points = cx
+                                .read_entity(&buffer, |buffer, _| {
+                                    let snapshot = buffer.snapshot();
+                                    let max_row = snapshot.text.max_point().row;
+                                    let row = match_range.start.row.min(max_row);
+                                    let line_start = Point::new(row, 0);
+                                    let line_end = Point::new(row, snapshot.text.line_len(row));
+
+                                    let line_start_offset = snapshot.text.point_to_offset(line_start);
+                                    let line_end_offset = snapshot.text.point_to_offset(line_end);
+
+                                    let match_start_offset =
+                                        snapshot.text.point_to_offset(match_range.start);
+                                    let match_end_offset = snapshot.text.point_to_offset(match_range.end);
+
+                                    let line_text: String = snapshot
+                                        .text
+                                        .text_for_range(line_start_offset..line_end_offset)
+                                        .collect();
+
+                                    let rel_start = match_start_offset
+                                        .saturating_sub(line_start_offset)
+                                        .min(line_text.len());
+                                    let rel_end = match_end_offset
+                                        .min(line_end_offset)
+                                        .saturating_sub(line_start_offset)
+                                        .min(line_text.len());
+
+                                    let mut points = Vec::with_capacity(3);
+                                    if let Some(probe) =
+                                        rightmost_token_probe_offset(&line_text, rel_start, rel_end)
+                                    {
+                                        points.push(
+                                            snapshot
+                                                .text
+                                                .offset_to_point(line_start_offset.saturating_add(probe)),
+                                        );
+                                    }
+
+                                    let end_point = if match_range.end.column > 0 {
+                                        Point::new(
+                                            match_range.end.row,
+                                            match_range.end.column.saturating_sub(1),
+                                        )
+                                    } else {
+                                        match_range.end
+                                    };
+                                    points.push(end_point);
+                                    points.push(match_range.start);
+
+                                    let mut unique = Vec::with_capacity(points.len());
+                                    for point in points {
+                                        if !unique.iter().any(|p| p == &point) {
+                                            unique.push(point);
+                                        }
+                                    }
+                                    unique
+                                })
+                                .unwrap_or_else(|err| {
+                                    debug!("quick_search: failed to compute hover probe points: {:?}", err);
+                                    vec![match_range.start]
+                                });
 
                             let (language_name, has_relevant_adapters) =
                                 cx.read_entity(&project, |project, cx| {

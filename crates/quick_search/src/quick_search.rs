@@ -1,5 +1,4 @@
 mod grouped_list;
-pub(crate) mod history;
 pub(crate) mod match_list;
 pub(crate) mod types;
 pub(crate) mod core;
@@ -272,14 +271,7 @@ impl QuickSearch {
         let preview = PreviewState::new(preview_project, initial_buffer, window, cx);
         let source_registry = core::SourceRegistry::default();
         let mut preview_footer = PreviewFooterState::new(&source_registry, window, cx);
-        let initial_source_id = history::last_source_id();
-        let initial_source = source_registry
-            .available_sources()
-            .iter()
-            .map(|source| source.spec())
-            .find(|spec| spec.id.0 == initial_source_id)
-            .map(|spec| spec.id.clone())
-            .unwrap_or_else(core::default_source_id);
+        let initial_source = core::default_source_id();
         let mut delegate = QuickSearchDelegate::new(
             cx.entity().downgrade(),
             workspace,
@@ -360,7 +352,6 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        history::set_last_source_id(source_id.0.clone());
         let owner = cx.entity().downgrade();
         let session_cancellation = self.picker.read(cx).delegate.search_engine.cancellation();
         self.preview
@@ -382,10 +373,6 @@ impl QuickSearch {
             picker.delegate.rebuild_rows_after_match_list_changed(cx);
             picker.refresh_placeholder(window, cx);
             let query = picker.query(cx);
-            picker
-                .delegate
-                .history_nav
-                .on_query_changed(&picker.delegate.active_source_id());
             let _scheduled = picker.delegate.search_engine.schedule_search_with_delay(
                 query,
                 Duration::from_millis(0),
@@ -1347,7 +1334,6 @@ struct QuickSearchDelegate {
     notify_interval_ms: u64,
     next_match_id: MatchId,
     stream_finished: bool,
-    history_nav: history::HistoryNavState,
     grouped_list: GroupedListState,
 }
 
@@ -1381,13 +1367,8 @@ impl QuickSearchDelegate {
             notify_interval_ms: 32,
             next_match_id: 0,
             stream_finished: false,
-            history_nav: Default::default(),
             grouped_list: Default::default(),
         }
-    }
-
-    fn active_source_id(&self) -> Arc<str> {
-        self.search_engine.active_source.0.clone()
     }
 
     fn reset_notify_throttle(&mut self) {
@@ -1977,68 +1958,6 @@ impl PickerDelegate for QuickSearchDelegate {
             })
     }
 
-    fn select_history(
-        &mut self,
-        direction: picker::Direction,
-        query: &str,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Option<String> {
-        let source_id = self.active_source_id();
-
-        match direction {
-            picker::Direction::Up => {
-                let should_use_history =
-                    self.selected_index() == 0 || self.history_nav.index(&source_id).is_some();
-                if !should_use_history {
-                    return None;
-                }
-
-                let history = history::history_list_for_source_id(&source_id);
-                if history.is_empty() {
-                    return None;
-                }
-
-                if self.history_nav.prefix(&source_id).is_none() {
-                    self.history_nav.set_prefix(&source_id, query.to_string());
-                }
-
-                let next_index = match self.history_nav.index(&source_id) {
-                    None => 0,
-                    Some(ix) => (ix + 1).min(history.len().saturating_sub(1)),
-                };
-                self.history_nav.set_index(&source_id, Some(next_index));
-                self.history_nav.suppress_reset_once(&source_id);
-                Some(history[next_index].clone())
-            }
-            picker::Direction::Down => {
-                let Some(ix) = self.history_nav.index(&source_id) else {
-                    return None;
-                };
-
-                let history = history::history_list_for_source_id(&source_id);
-                if history.is_empty() {
-                    let restored = self.history_nav.take_prefix(&source_id).unwrap_or_default();
-                    self.history_nav.reset(&source_id);
-                    self.history_nav.suppress_reset_once(&source_id);
-                    return Some(restored);
-                }
-
-                if ix == 0 {
-                    let restored = self.history_nav.take_prefix(&source_id).unwrap_or_default();
-                    self.history_nav.reset(&source_id);
-                    self.history_nav.suppress_reset_once(&source_id);
-                    Some(restored)
-                } else {
-                    let new_ix = ix.saturating_sub(1).min(history.len().saturating_sub(1));
-                    self.history_nav.set_index(&source_id, Some(new_ix));
-                    self.history_nav.suppress_reset_once(&source_id);
-                    Some(history[new_ix].clone())
-                }
-            }
-        }
-    }
-
     fn update_matches(
         &mut self,
         query: String,
@@ -2060,7 +1979,6 @@ impl PickerDelegate for QuickSearchDelegate {
                 });
             });
         }
-        self.history_nav.on_query_changed(&self.active_source_id());
 
         let min_len = self
             .source_registry
@@ -2100,10 +2018,6 @@ impl PickerDelegate for QuickSearchDelegate {
         let outcome = self
             .source_registry
             .confirm_outcome_for_match(&selected, cx);
-
-        let source_id = self.active_source_id();
-        history::push_query_history(&source_id, &self.current_query);
-        self.history_nav.reset(&source_id);
 
         let Some(workspace) = self.workspace.upgrade() else {
             cx.emit(DismissEvent);

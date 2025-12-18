@@ -608,6 +608,13 @@ impl QuickSearchSource for FilesSource {
                             .map(|p| Arc::<str>::from(p.to_string_lossy().to_string()))
                             .unwrap_or_else(|| Arc::<str>::from("-"));
 
+                        footer.file_type = Arc::from("File");
+                        footer.encoding = Arc::from("-");
+                        footer.line_endings = Arc::from("-");
+                        footer.file_size = Arc::from("-");
+                        footer.lines = Arc::from("-");
+                        footer.shows_loc = false;
+
                         footer.set_context(
                             ctx.project.clone(),
                             project_path.clone(),
