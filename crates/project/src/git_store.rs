@@ -1672,59 +1672,6 @@ impl GitStore {
         }
     }
 
-    fn mark_entries_pending_by_project_paths(
-        &mut self,
-        project_paths: &[ProjectPath],
-        stage: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let buffer_store = &self.buffer_store;
-
-        for project_path in project_paths {
-            let Some(buffer) = buffer_store.read(cx).get_by_path(project_path) else {
-                continue;
-            };
-
-            let buffer_id = buffer.read(cx).remote_id();
-            let Some(diff_state) = self.diffs.get(&buffer_id) else {
-                continue;
-            };
-
-            diff_state.update(cx, |diff_state, cx| {
-                let Some(uncommitted_diff) = diff_state.uncommitted_diff() else {
-                    return;
-                };
-
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
-                let file_exists = buffer
-                    .read(cx)
-                    .file()
-                    .is_some_and(|file| file.disk_state().exists());
-
-                let all_hunks: Vec<_> = uncommitted_diff
-                    .read(cx)
-                    .hunks_intersecting_range(
-                        text::Anchor::MIN..text::Anchor::MAX,
-                        &buffer_snapshot,
-                        cx,
-                    )
-                    .collect();
-
-                if !all_hunks.is_empty() {
-                    uncommitted_diff.update(cx, |diff, cx| {
-                        diff.stage_or_unstage_hunks(
-                            stage,
-                            &all_hunks,
-                            &buffer_snapshot,
-                            file_exists,
-                            cx,
-                        );
-                    });
-                }
-            });
-        }
-    }
-
     pub fn git_clone(
         &self,
         repo: String,
@@ -4253,28 +4200,6 @@ impl Repository {
         save_futures
     }
 
-    fn mark_entries_pending_for_stage(
-        &self,
-        entries: &[RepoPath],
-        stage: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(git_store) = self.git_store() else {
-            return;
-        };
-
-        let mut project_paths = Vec::new();
-        for repo_path in entries {
-            if let Some(project_path) = self.repo_path_to_project_path(repo_path, cx) {
-                project_paths.push(project_path);
-            }
-        }
-
-        git_store.update(cx, move |git_store, cx| {
-            git_store.mark_entries_pending_by_project_paths(&project_paths, stage, cx);
-        });
-    }
-
     pub fn stage_entries(
         &mut self,
         entries: Vec<RepoPath>,
@@ -4283,9 +4208,6 @@ impl Repository {
         if entries.is_empty() {
             return Task::ready(Ok(()));
         }
-
-        self.mark_entries_pending_for_stage(&entries, true, cx);
-
         let id = self.id;
         let save_tasks = self.save_buffers(&entries, cx);
         let paths = entries
@@ -4351,9 +4273,6 @@ impl Repository {
         if entries.is_empty() {
             return Task::ready(Ok(()));
         }
-
-        self.mark_entries_pending_for_stage(&entries, false, cx);
-
         let id = self.id;
         let save_tasks = self.save_buffers(&entries, cx);
         let paths = entries
