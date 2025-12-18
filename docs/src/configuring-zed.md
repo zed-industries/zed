@@ -9,6 +9,7 @@ For visual customization (themes, fonts, icons), see [Appearance](./appearance.m
 The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Zed. It provides a searchable interface where you can browse available settings, see their current values, and make changes.
 
 To open it:
+
 - Press {#kb zed::OpenSettings}
 - Or run `zed: open settings` from the command palette
 
@@ -23,6 +24,7 @@ As you type in the search box, matching settings appear with descriptions and co
 Your user settings apply globally across all projects. Open the file with {#kb zed::OpenSettingsFile} or run `zed: open settings file` from the command palette.
 
 The file is located at:
+
 - macOS: `~/.config/zed/settings.json`
 - Linux: `~/.config/zed/settings.json` (or `$XDG_CONFIG_HOME/zed/settings.json`)
 - Windows: `%APPDATA%\Zed\settings.json`
@@ -81,6 +83,7 @@ Use different settings for Stable, Preview, or Nightly builds by adding top-leve
 ```
 
 With this configuration:
+
 - **Stable** uses One Dark with vim mode off
 - **Preview** uses Catppuccin Mocha with vim mode off
 - **Nightly** uses Rosé Pine with vim mode on

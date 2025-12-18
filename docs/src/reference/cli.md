@@ -183,9 +183,9 @@ On Windows, the CLI supports opening paths from WSL distributions. This is handl
 
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | Error (details printed to stderr) |
+| Code | Meaning                           |
+| ---- | --------------------------------- |
+| `0`  | Success                           |
+| `1`  | Error (details printed to stderr) |
 
 When using `--wait`, the exit code reflects whether the files were saved before closing.
