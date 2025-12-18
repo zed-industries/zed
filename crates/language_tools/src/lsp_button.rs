@@ -268,7 +268,7 @@ impl LanguageServerState {
                 .get(&server_info.id)
                 .and_then(|version| version.clone());
 
-            let aside_text = match (&server_version, &message) {
+            let tooltip_text = match (&server_version, &message) {
                 (None, None) => None,
                 (Some(version), None) => {
                     Some(SharedString::from(format!("Version: {}", version.as_ref())))
@@ -381,11 +381,11 @@ impl LanguageServerState {
                         }
                     }
                 },
-                aside_text.map(|aside_text| {
+                tooltip_text.map(|tooltip_text| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
                         DocumentationEdge::Bottom,
-                        Rc::new(move |_| Label::new(aside_text.clone()).into_any_element()),
+                        Rc::new(move |_| Label::new(tooltip_text.clone()).into_any_element()),
                     )
                 }),
             ));
