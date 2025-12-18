@@ -543,6 +543,9 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let editor_clipboard_selections = cx
             .read_from_clipboard()
             .and_then(|item| item.entries().first().cloned())
@@ -553,37 +556,39 @@ impl MessageEditor {
                 _ => None,
             });
 
-        let has_file_context = editor_clipboard_selections
-            .as_ref()
-            .is_some_and(|selections| {
-                selections
-                    .iter()
-                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
-            });
+        // Insert creases for pasted clipboard selections that:
+        // 1. Contain exactly one selection
+        // 2. Have an associated file path
+        // 3. Span multiple lines (not single-line selections)
+        // 4. Belong to a file that exists in the current project
+        let should_insert_creases = util::maybe!({
+            let selections = editor_clipboard_selections.as_ref()?;
+            if selections.len() > 1 {
+                return Some(false);
+            }
+            let selection = selections.first()?;
+            let file_path = selection.file_path.as_ref()?;
+            let line_range = selection.line_range.as_ref()?;
 
-        if has_file_context {
+            if line_range.start() == line_range.end() {
+                return Some(false);
+            }
+
+            Some(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(file_path, cx)
+                    .is_some(),
+            )
+        })
+        .unwrap_or(false);
+
+        if should_insert_creases {
             if let Some((workspace, selections)) =
                 self.workspace.upgrade().zip(editor_clipboard_selections)
             {
-                let Some(first_selection) = selections.first() else {
-                    return;
-                };
-                if let Some(file_path) = &first_selection.file_path {
-                    // In case someone pastes selections from another window
-                    // with a different project, we don't want to insert the
-                    // crease (containing the absolute path) since the agent
-                    // cannot access files outside the project.
-                    let is_in_project = workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .project_path_for_absolute_path(file_path, cx)
-                        .is_some();
-                    if !is_in_project {
-                        return;
-                    }
-                }
-
                 cx.stop_propagation();
                 let insertion_target = self
                     .editor
