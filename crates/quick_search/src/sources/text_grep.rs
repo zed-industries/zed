@@ -1691,20 +1691,16 @@ fn build_matches_for_buffer(
                 let chunk_end = rel_offset + chunk_len;
                 rel_offset = chunk_end;
 
-                let chunk_start = chunk_start.min(snippet_content_len + trim_start);
-                let chunk_end = chunk_end.min(snippet_content_len + trim_start);
-                let start_abs = chunk_start.max(trim_start);
-                let end_abs = chunk_end.min(trim_start + snippet_content_len);
-                if start_abs >= end_abs {
-                    continue;
-                }
-
                 if let Some(id) = chunk.syntax_highlight_id {
-                    let start_rel = start_abs - trim_start;
-                    let end_rel = end_abs - trim_start;
+                    let start_rel = chunk_start.min(snippet_content_len);
+                    let end_rel = chunk_end.min(snippet_content_len);
                     if start_rel < end_rel {
                         snippet_syntax_highlights.push((start_rel..end_rel, id));
                     }
+                }
+
+                if rel_offset >= snippet_content_len {
+                    break;
                 }
             }
             if snippet_syntax_highlights.len() > 1 {
@@ -1746,10 +1742,7 @@ fn build_matches_for_buffer(
             .snippet_syntax_highlights(snippet_syntax_highlights_arc)
             .build();
         match_item.key = crate::types::compute_match_key(&match_item);
-        if match_item.snippet_syntax_highlights.is_none()
-            && snippet_content_len > 0
-            && snapshot.language().is_none()
-        {
+        if match_item.snippet_syntax_highlights.is_none() && snippet_content_len > 0 {
             pending_syntax.push(SyntaxEnrichItem {
                 key: match_item.key,
                 row,
