@@ -173,12 +173,11 @@
 
 # Reference
 
-- [All Settings](./reference/all-settings.md)
-- [All Actions](./reference/all-actions.md)
-- [Default Key Bindings](./reference/default-key-bindings.md)
-- [CLI Reference](./reference/cli.md)
-- [Environment Variables](./reference/environment-variables.md)
-- [Glob Patterns](./reference/glob-patterns.md)
+- [All Settings](./configuring-zed.md)
+- [All Actions](./all-actions.md)
+- [CLI Reference](./command-line-interface.md)
+- [Environment Variables](./environment.md)
+- [Glob Patterns](./globs.md)
 
 # Account & Privacy
 
