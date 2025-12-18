@@ -9,7 +9,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderIcon, RateLimiter, Role, StopReason, TokenUsage,
+    env_var,
 };
 pub use mistral::{CODESTRAL_API_URL, MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -176,8 +177,8 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiMistral
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiMistral)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

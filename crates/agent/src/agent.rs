@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry, ProviderIcon};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -153,10 +153,9 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(if let Some(path) = provider.icon_path() {
-                acp_thread::AgentModelIcon::Path(path)
-            } else {
-                acp_thread::AgentModelIcon::Named(provider.icon())
+            icon: Some(match provider.icon() {
+                ProviderIcon::Path(path) => acp_thread::AgentModelIcon::Path(path),
+                ProviderIcon::Name(name) => acp_thread::AgentModelIcon::Named(name),
             }),
         }
     }

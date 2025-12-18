@@ -7,8 +7,8 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
-    Role, env_var,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderIcon,
+    RateLimiter, Role, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -118,8 +118,8 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiXAi
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiXAi)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

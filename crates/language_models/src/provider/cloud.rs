@@ -24,7 +24,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolSchemaFormat, LlmApiToken, ModelRequestLimitReachedError,
-    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    PaymentRequiredError, ProviderIcon, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -304,8 +304,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiZed
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiZed)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

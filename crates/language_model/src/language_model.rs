@@ -797,16 +797,26 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
+/// Icon for a language model provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderIcon {
+    /// A built-in icon from Zed's icon set.
+    Name(IconName),
+    /// Path to a custom SVG icon file.
+    Path(SharedString),
+}
+
+impl Default for ProviderIcon {
+    fn default() -> Self {
+        Self::Name(IconName::ZedAssistant)
+    }
+}
+
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
-    fn icon(&self) -> IconName {
-        IconName::ZedAssistant
-    }
-    /// Returns the path to an external SVG icon for this provider, if any.
-    /// When present, this takes precedence over `icon()`.
-    fn icon_path(&self) -> Option<SharedString> {
-        None
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::default()
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;

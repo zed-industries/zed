@@ -33,7 +33,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
+    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, ProviderIcon,
+    Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -2205,11 +2206,10 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon_path = active_provider.as_ref().and_then(|p| p.icon_path());
-        let provider_icon_name = match &active_provider {
-            Some(provider) => provider.icon(),
-            None => IconName::Ai,
-        };
+        let provider_icon = active_provider
+            .as_ref()
+            .map(|p| p.icon())
+            .unwrap_or(ProviderIcon::Name(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2219,10 +2219,9 @@ impl TextThreadEditor {
             (Color::Muted, IconName::ChevronDown)
         };
 
-        let provider_icon_element = if let Some(icon_path) = provider_icon_path {
-            Icon::from_external_svg(icon_path)
-        } else {
-            Icon::new(provider_icon_name)
+        let provider_icon_element = match provider_icon {
+            ProviderIcon::Path(path) => Icon::from_external_svg(path),
+            ProviderIcon::Name(name) => Icon::new(name),
         }
         .color(color)
         .size(IconSize::XSmall);

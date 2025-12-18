@@ -16,7 +16,7 @@ use language_model::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelRequest, ProviderIcon, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -164,8 +164,8 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiGoogle
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiGoogle)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

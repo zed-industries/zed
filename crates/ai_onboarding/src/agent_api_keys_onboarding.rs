@@ -1,22 +1,6 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
-use language_model::{LanguageModelProvider, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use language_model::{LanguageModelRegistry, ProviderIcon, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
-
-#[derive(Clone)]
-enum ProviderIcon {
-    Name(IconName),
-    Path(SharedString),
-}
-
-impl ProviderIcon {
-    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
-        if let Some(path) = provider.icon_path() {
-            Self::Path(path)
-        } else {
-            Self::Name(provider.icon())
-        }
-    }
-}
 
 pub struct ApiKeysWithProviders {
     configured_providers: Vec<(ProviderIcon, SharedString)>,
@@ -50,12 +34,7 @@ impl ApiKeysWithProviders {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| {
-                (
-                    ProviderIcon::from_provider(provider.as_ref()),
-                    provider.name().0,
-                )
-            })
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
     }
 }

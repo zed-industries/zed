@@ -7,7 +7,8 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderIcon,
+    RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -133,8 +134,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.name.clone()
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenAiCompat
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiOpenAiCompat)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

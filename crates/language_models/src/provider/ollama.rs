@@ -9,7 +9,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUseId, MessageContent, ProviderIcon, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 use menu;
 use ollama::{
@@ -221,8 +222,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOllama
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::AiOllama)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {

@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ProviderIcon,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -261,10 +262,11 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        if let Some(icon_path) = provider.icon_path() {
-                                            Icon::from_external_svg(icon_path)
-                                        } else {
-                                            Icon::new(provider.icon())
+                                        match provider.icon() {
+                                            ProviderIcon::Path(path) => {
+                                                Icon::from_external_svg(path)
+                                            }
+                                            ProviderIcon::Name(name) => Icon::new(name),
                                         }
                                         .size(IconSize::Small)
                                         .color(Color::Muted),

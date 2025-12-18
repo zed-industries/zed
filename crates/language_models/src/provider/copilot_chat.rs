@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderIcon, RateLimiter,
+    Role, StopReason, TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -104,8 +104,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::Copilot
+    fn icon(&self) -> ProviderIcon {
+        ProviderIcon::Name(IconName::Copilot)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

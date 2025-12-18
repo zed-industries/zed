@@ -8,7 +8,7 @@ use gpui::{
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelProviderId, LanguageModelRegistry, ProviderIcon,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -92,22 +92,6 @@ fn all_models(cx: &App) -> GroupedModels {
 type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 
 #[derive(Clone)]
-enum ProviderIcon {
-    Name(IconName),
-    Path(SharedString),
-}
-
-impl ProviderIcon {
-    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
-        if let Some(path) = provider.icon_path() {
-            Self::Path(path)
-        } else {
-            Self::Name(provider.icon())
-        }
-    }
-}
-
-#[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
     icon: ProviderIcon,
@@ -126,7 +110,7 @@ impl ModelInfo {
 
         Self {
             model,
-            icon: ProviderIcon::from_provider(provider),
+            icon: provider.icon(),
             is_favorite,
         }
     }
