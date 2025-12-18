@@ -654,7 +654,7 @@ pub trait InteractiveElement: Sized {
     /// Set whether this element is a tab stop.
     ///
     /// When false, the element remains in tab-index order but cannot be reached via keyboard navigation.
-    /// Useful for container elements: focus the container, then call `window.focus_next()` to focus
+    /// Useful for container elements: focus the container, then call `window.focus_next(cx)` to focus
     /// the first tab stop inside it while having the container element itself be unreachable via the keyboard.
     /// Should only be used with `tab_index`.
     fn tab_stop(mut self, tab_stop: bool) -> Self {
@@ -2096,12 +2096,12 @@ impl Interactivity {
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _| {
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && hitbox.is_hovered(window)
                     && !window.default_prevented()
                 {
-                    window.focus(&focus_handle);
+                    window.focus(&focus_handle, cx);
                     // If there is a parent that is also focusable, prevent it
                     // from transferring focus because we already did so.
                     window.prevent_default();

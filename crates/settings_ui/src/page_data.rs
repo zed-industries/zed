@@ -1,12 +1,12 @@
-use gpui::App;
+use gpui::{Action as _, App};
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use strum::IntoDiscriminant as _;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
-    SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
+    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
+    SettingsPage, SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -135,6 +135,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }
                         .unimplemented(),
                     ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Security"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Trust All Projects By Default",
+                    description: "When opening Zed, avoid Restricted Mode by auto-trusting all projects, enabling use of all features without having to give permission to each new project.",
+                    field: Box::new(SettingField {
+                        json_path: Some("session.trust_all_projects"),
+                        pick: |settings_content| {
+                            settings_content
+                                .session
+                                .as_ref()
+                                .and_then(|session| session.trust_all_worktrees.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .session
+                                .get_or_insert_default()
+                                .trust_all_worktrees = value;
+                        },
+                    }),
                     metadata: None,
                     files: USER,
                 }),
@@ -1054,6 +1076,25 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         SettingsPage {
             title: "Keymap",
             items: vec![
+                SettingsPageItem::SectionHeader("Keybindings"),
+                SettingsPageItem::ActionLink(ActionLink {
+                    title: "Edit Keybindings".into(),
+                    description: Some("Customize keybindings in the keymap editor.".into()),
+                    button_text: "Open Keymap".into(),
+                    on_click: Arc::new(|settings_window, window, cx| {
+                        let Some(original_window) = settings_window.original_window else {
+                            return;
+                        };
+                        original_window
+                            .update(cx, |_workspace, original_window, cx| {
+                                original_window
+                                    .dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                original_window.activate_window();
+                            })
+                            .ok();
+                        window.remove_window();
+                    }),
+                }),
                 SettingsPageItem::SectionHeader("Base Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Base Keymap",
@@ -1191,6 +1232,49 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
                             }
                         }).collect(),
+                    }),
+                    SettingsPageItem::SectionHeader("Which-key Menu"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Which-key Menu",
+                        description: "Display the which-key menu with matching bindings while a multi-stroke binding is pending.",
+                        field: Box::new(SettingField {
+                            json_path: Some("which_key.enabled"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .which_key
+                                    .as_ref()
+                                    .and_then(|settings| settings.enabled.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .which_key
+                                    .get_or_insert_default()
+                                    .enabled = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Menu Delay",
+                        description: "Delay in milliseconds before the which-key menu appears.",
+                        field: Box::new(SettingField {
+                            json_path: Some("which_key.delay_ms"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .which_key
+                                    .as_ref()
+                                    .and_then(|settings| settings.delay_ms.as_ref())
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .which_key
+                                    .get_or_insert_default()
+                                    .delay_ms = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {

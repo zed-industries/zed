@@ -20,7 +20,7 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, InlineCode, List, ListBulletItem, prelude::*};
+use ui::{ButtonLike, Indicator, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -691,7 +691,7 @@ impl Render for ConfigurationView {
                             .child(
                                 ListBulletItem::new("")
                                     .child(Label::new("To get your first model, try running"))
-                                    .child(InlineCode::new("lms get qwen2.5-coder-7b")),
+                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
                             ),
                     ),
                 )

@@ -6,6 +6,7 @@ use gpui::{
     Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
+use url::Url;
 use util::ResultExt as _;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
@@ -152,6 +153,7 @@ pub struct CopilotCodeVerification {
     focus_handle: FocusHandle,
     copilot: Entity<Copilot>,
     _subscription: Subscription,
+    sign_up_url: Option<String>,
 }
 
 impl Focusable for CopilotCodeVerification {
@@ -183,11 +185,22 @@ impl CopilotCodeVerification {
         .detach();
 
         let status = copilot.read(cx).status();
+        // Determine sign-up URL based on verification_uri domain if available
+        let sign_up_url = if let Status::SigningIn {
+            prompt: Some(ref prompt),
+        } = status
+        {
+            // Extract domain from verification_uri to construct sign-up URL
+            Self::get_sign_up_url_from_verification(&prompt.verification_uri)
+        } else {
+            None
+        };
         Self {
             status,
             connect_clicked: false,
             focus_handle: cx.focus_handle(),
             copilot: copilot.clone(),
+            sign_up_url,
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
@@ -201,8 +214,28 @@ impl CopilotCodeVerification {
     }
 
     pub fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
+        // Update sign-up URL if we have a new verification URI
+        if let Status::SigningIn {
+            prompt: Some(ref prompt),
+        } = status
+        {
+            self.sign_up_url = Self::get_sign_up_url_from_verification(&prompt.verification_uri);
+        }
         self.status = status;
         cx.notify();
+    }
+
+    fn get_sign_up_url_from_verification(verification_uri: &str) -> Option<String> {
+        // Extract domain from verification URI using url crate
+        if let Ok(url) = Url::parse(verification_uri)
+            && let Some(host) = url.host_str()
+            && !host.contains("github.com")
+        {
+            // For GHE, construct URL from domain
+            Some(format!("https://{}/features/copilot", host))
+        } else {
+            None
+        }
     }
 
     fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement {
@@ -302,7 +335,12 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_unauthorized_modal(cx: &mut Context<Self>) -> impl Element {
+    fn render_unauthorized_modal(&self, cx: &mut Context<Self>) -> impl Element {
+        let sign_up_url = self
+            .sign_up_url
+            .as_deref()
+            .unwrap_or(COPILOT_SIGN_UP_URL)
+            .to_owned();
         let description = "Enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.";
 
         v_flex()
@@ -319,7 +357,7 @@ impl CopilotCodeVerification {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .size(ButtonSize::Medium)
-                    .on_click(|_, _, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
+                    .on_click(move |_, _, cx| cx.open_url(&sign_up_url)),
             )
             .child(
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
@@ -374,7 +412,7 @@ impl Render for CopilotCodeVerification {
             } => Self::render_prompting_modal(self.connect_clicked, prompt, cx).into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
-                Self::render_unauthorized_modal(cx).into_any_element()
+                self.render_unauthorized_modal(cx).into_any_element()
             }
             Status::Authorized => {
                 self.connect_clicked = false;
@@ -397,8 +435,8 @@ impl Render for CopilotCodeVerification {
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _| {
-                window.focus(&this.focus_handle);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                window.focus(&this.focus_handle, cx);
             }))
             .child(
                 Vector::new(VectorName::ZedXCopilot, rems(8.), rems(4.))

@@ -1,7 +1,7 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
+    WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -47,10 +47,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
-    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
+    IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
+    Tooltip, prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
@@ -398,6 +397,7 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+    welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 
     pub in_center_group: bool,
     pub is_upper_left: bool,
@@ -546,6 +546,7 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            welcome_page: None,
             in_center_group: false,
             is_upper_left: false,
             is_upper_right: false,
@@ -624,16 +625,20 @@ impl Pane {
                     self.last_focus_handle_by_item.get(&active_item.item_id())
                     && let Some(focus_handle) = weak_last_focus_handle.upgrade()
                 {
-                    focus_handle.focus(window);
+                    focus_handle.focus(window, cx);
                     return;
                 }
 
-                active_item.item_focus_handle(cx).focus(window);
+                active_item.item_focus_handle(cx).focus(window, cx);
             } else if let Some(focused) = window.focused(cx)
                 && !self.context_menu_focused(window, cx)
             {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
+            }
+        } else if let Some(welcome_page) = self.welcome_page.as_ref() {
+            if self.focus_handle.is_focused(window) {
+                welcome_page.read(cx).focus_handle(cx).focus(window, cx);
             }
         }
     }
@@ -1306,6 +1311,25 @@ impl Pane {
         }
     }
 
+    pub fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if !self.zoomed && !self.items.is_empty() {
+            if !self.focus_handle.contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
+            cx.emit(Event::ZoomOut);
+        }
+    }
+
     pub fn activate_item(
         &mut self,
         index: usize,
@@ -1975,7 +1999,7 @@ impl Pane {
 
             let should_activate = activate_pane || self.has_focus(window, cx);
             if self.items.len() == 1 && should_activate {
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             } else {
                 self.activate_item(
                     index_to_activate,
@@ -2326,7 +2350,7 @@ impl Pane {
     pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_item) = self.active_item() {
             let focus_handle = active_item.item_focus_handle(cx);
-            window.focus(&focus_handle);
+            window.focus(&focus_handle, cx);
         }
     }
 
@@ -3900,6 +3924,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Pane::zoom_in))
+            .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(
@@ -4040,10 +4066,15 @@ impl Render for Pane {
                             if has_worktrees {
                                 placeholder
                             } else {
-                                placeholder.child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
+                                if self.welcome_page.is_none() {
+                                    let workspace = self.workspace.clone();
+                                    self.welcome_page = Some(cx.new(|cx| {
+                                        crate::welcome::WelcomePage::new(
+                                            workspace, true, window, cx,
+                                        )
+                                    }));
+                                }
+                                placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
                     })

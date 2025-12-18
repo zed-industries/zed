@@ -45,6 +45,34 @@ Prettier will also be used for TypeScript files by default. To disable this:
 }
 ```
 
+## Using the Tailwind CSS Language Server with TypeScript
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in vanilla TypeScript files (`.ts`), you can customize the `classRegex` field under it in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "experimental": {
+          "classRegex": [
+            "\\.className\\s*[+]?=\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttributeNS\\(.*,\\s*['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttribute\\(['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.add\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.remove\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.toggle\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.contains\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\(\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\([^,)]+,\\s*['\"]([^'\"]*)['\"]"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
 ## Large projects
 
 `vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
@@ -167,7 +195,7 @@ The following can be debugged without writing additional configuration:
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
->
+
 > **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.

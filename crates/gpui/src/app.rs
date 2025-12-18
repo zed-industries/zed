@@ -1900,8 +1900,11 @@ impl App {
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
-                .update(self, |_, window, _| {
-                    window.clear_pending_keystrokes();
+                .update(self, |_, window, cx| {
+                    if window.pending_input_keystrokes().is_some() {
+                        window.clear_pending_keystrokes();
+                        window.pending_input_changed(cx);
+                    }
                 })
                 .ok();
         }
