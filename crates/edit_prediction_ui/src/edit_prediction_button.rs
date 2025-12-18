@@ -303,8 +303,14 @@ impl Render for EditPredictionButton {
                 div().child(
                     PopoverMenu::new("ollama")
                         .menu(move |window, cx| {
-                            this.update(cx, |this, cx| this.build_ollama_context_menu(window, cx))
-                                .ok()
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::Ollama,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
@@ -1020,20 +1026,6 @@ impl EditPredictionButton {
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Codestral, cx);
-
-            menu
-        })
-    }
-
-    fn build_ollama_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let menu = self.build_language_settings_menu(menu, window, cx);
-            let menu =
-                self.add_provider_switching_section(menu, EditPredictionProvider::Ollama, cx);
 
             menu
         })
