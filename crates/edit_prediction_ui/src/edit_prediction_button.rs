@@ -22,6 +22,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use ollama::OllamaEditPredictionDelegate;
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{
@@ -581,8 +582,9 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
-        // Ollama is always available as it runs locally
-        providers.push(EditPredictionProvider::Ollama);
+        if OllamaEditPredictionDelegate::is_available(cx) {
+            providers.push(EditPredictionProvider::Ollama);
+        }
 
         if cx.has_flag::<SweepFeatureFlag>()
             && edit_prediction::sweep_ai::sweep_api_token(cx)

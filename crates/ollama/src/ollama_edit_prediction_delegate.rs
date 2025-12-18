@@ -7,6 +7,7 @@ use http_client::HttpClient;
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint, language_settings::all_language_settings,
 };
+use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::{Deserialize, Serialize};
 use std::{
     ops::Range,
@@ -51,6 +52,13 @@ impl OllamaEditPredictionDelegate {
             pending_request: None,
             current_completion: None,
         }
+    }
+
+    pub fn is_available(cx: &App) -> bool {
+        let ollama_provider_id = LanguageModelProviderId::new("ollama");
+        LanguageModelRegistry::read_global(cx)
+            .provider(&ollama_provider_id)
+            .is_some_and(|provider| provider.is_authenticated(cx))
     }
 
     async fn fetch_completion(
@@ -130,8 +138,8 @@ impl EditPredictionDelegate for OllamaEditPredictionDelegate {
         true
     }
 
-    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, _cx: &App) -> bool {
-        true
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
+        Self::is_available(cx)
     }
 
     fn is_refreshing(&self, _cx: &App) -> bool {
