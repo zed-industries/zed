@@ -2462,10 +2462,8 @@ impl MultiBuffer {
         for range in ranges {
             let range = range.to_point(&snapshot);
             let start = snapshot.point_to_offset(Point::new(range.start.row, 0));
-            let end = snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-            // why do we need to subtract 1 from the start offset?
-            // let start = start.saturating_sub_usize(1);
-            let end = snapshot.len().min(end + 1usize);
+            let end = (snapshot.point_to_offset(Point::new(range.end.row + 1, 0)) + 1usize)
+                .min(snapshot.len());
             cursor.seek(&start, Bias::Right);
             while let Some(item) = cursor.item() {
                 if *cursor.start() >= end {
