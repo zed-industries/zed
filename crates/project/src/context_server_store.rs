@@ -2,6 +2,7 @@ pub mod extension;
 pub mod registry;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -102,6 +103,7 @@ pub enum ContextServerConfiguration {
     Http {
         url: url::Url,
         headers: HashMap<String, String>,
+        timeout: Option<u64>,
     },
 }
 
@@ -151,9 +153,14 @@ impl ContextServerConfiguration {
                 enabled: _,
                 url,
                 headers: auth,
+                timeout,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Http { url, headers: auth })
+                Some(ContextServerConfiguration::Http {
+                    url,
+                    headers: auth,
+                    timeout,
+                })
             }
         }
     }
@@ -482,18 +489,31 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Result<Arc<ContextServer>> {
+        // Get global timeout from settings
+        let global_timeout = ProjectSettings::get_global(cx).context_server_timeout;
+
         if let Some(factory) = self.context_server_factory.as_ref() {
             return Ok(factory(id, configuration));
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
-                id,
+            ContextServerConfiguration::Http {
                 url,
-                headers.clone(),
-                cx.http_client(),
-                cx.background_executor().clone(),
-            )?)),
+                headers,
+                timeout,
+            } => {
+                // Apply timeout precedence for HTTP servers: per-server > global
+                let resolved_timeout = timeout.unwrap_or(global_timeout);
+
+                Ok(Arc::new(ContextServer::http(
+                    id,
+                    url,
+                    headers.clone(),
+                    cx.http_client(),
+                    cx.background_executor().clone(),
+                    Some(Duration::from_millis(resolved_timeout)),
+                )?))
+            }
             _ => {
                 let root_path = self
                     .project
@@ -511,9 +531,16 @@ impl ContextServerStore {
                             })
                         })
                     });
+
+                // Apply timeout precedence for stdio servers: per-server > global
+                let mut command_with_timeout = configuration.command().unwrap().clone();
+                if command_with_timeout.timeout.is_none() {
+                    command_with_timeout.timeout = Some(global_timeout);
+                }
+
                 Ok(Arc::new(ContextServer::stdio(
                     id,
-                    configuration.command().unwrap().clone(),
+                    command_with_timeout,
                     root_path,
                 )))
             }
@@ -1257,6 +1284,7 @@ mod tests {
                     enabled: true,
                     url: server_url.to_string(),
                     headers: Default::default(),
+                    timeout: None,
                 },
             )],
         )
