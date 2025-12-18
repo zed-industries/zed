@@ -995,7 +995,8 @@ fn apply_batch_to_picker(
         delegate
             .buffer_subscriptions
             .insert(project_path.clone(), subscription);
-        delegate.buffer_cache.insert(project_path, buffer);
+        delegate.buffer_cache.insert(project_path.clone(), buffer);
+        delegate.update_syntax_highlights_for_buffer(&project_path, cx);
     }
 
     delegate.update_visible_indices_from(prev_items_len);
