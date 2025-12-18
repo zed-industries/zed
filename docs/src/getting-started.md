@@ -4,7 +4,7 @@ Welcome to Zed! We are excited to have you. Zed is a powerful multiplayer code e
 
 ## Key Features
 
-- [Smooth Editing](./configuring-zed.md): Built in Rust, Zed is responsive and intuitive, with a minimalistic aesthetic and pixel-level editing controls.
+- [Smooth Editing](./editing-code.md): Built in Rust, Zed is responsive and intuitive, with a minimalistic aesthetic and pixel-level editing controls.
 - [Agentic Editing](./ai/overview.md): Use Zed's hosted models to collaborate with agents directly in an IDE. You can also plug into a third-party agent or bring your own keys.
 - [Debugger](./debugger.md): Debug your code in seconds, not hours, with minimal setup required.
 - [Remote Development](./remote-development.md): Offload the heavy lifting to the cloud, so you can focus on writing code.

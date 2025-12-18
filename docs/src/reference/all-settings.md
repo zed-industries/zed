@@ -1,6 +1,6 @@
 # All Settings
 
-This is the complete reference for all Zed settings. For an introduction to how settings work, see [Configuring Zed](../configuring-zed.md).
+This is the complete reference for all Zed settings.
 
 You may also want to change your [theme](../themes.md), configure your [key bindings](../key-bindings.md), set up [tasks](../tasks.md), or install [extensions](../extensions.md).
 

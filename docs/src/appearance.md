@@ -2,7 +2,7 @@
 
 Customize Zed's visual appearance to match your preferences. This guide covers themes, fonts, icons, and other visual settings.
 
-For information on how the settings system works, see [Configuring Zed](./configuring-zed.md).
+For information on how the settings system works, see [All Settings](./reference/all-settings.md).
 
 ## Customize Zed in 5 Minutes
 
@@ -116,7 +116,6 @@ Zed provides extensive control over UI elements including:
 
 ## What's Next
 
-- [Configuring Zed](./configuring-zed.md) — How the settings system works
+- [All Settings](./reference/all-settings.md) — Complete settings reference
 - [Key bindings](./key-bindings.md) — Customize keyboard shortcuts
 - [Vim Mode](./vim.md) — Enable modal editing
-- [All Settings](./reference/all-settings.md) — Complete settings reference
