@@ -20880,6 +20880,36 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         .to_string(),
     );
 
+    cx.update_editor(|editor, window, cx| {
+        editor.move_up(&MoveUp, window, cx);
+        editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.assert_state_with_diff(
+        indoc! { "
+        ˇone
+      - two
+        three
+        five
+    "}
+        .to_string(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.assert_state_with_diff(
+        indoc! { "
+        one
+      - two
+        ˇthree
+      - four
+        five
+    "}
+        .to_string(),
+    );
+
     cx.set_state(indoc! { "
         one
         ˇTWO
@@ -20916,6 +20946,66 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
             five
         "}
         .to_string(),
+    );
+}
+
+#[gpui::test]
+async fn test_toggling_adjacent_diff_hunks_2(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        lineA
+        lineB
+        lineC
+        lineD
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇlineA1
+        lineB
+        lineD
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - lineA
+        + ˇlineA1
+          lineB
+          lineD
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_right(&MoveRight, window, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - lineA
+        + lineA1
+          lˇineB
+        - lineC
+          lineD
+        "#
+        .unindent(),
     );
 }
 
