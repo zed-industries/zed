@@ -338,7 +338,13 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
-        let placeholder = placeholder_text(agent.name().as_ref(), false);
+        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let agent_display_name = agent_server_store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(agent.name()))
+            .unwrap_or_else(|| agent.name());
+
+        let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -377,7 +383,6 @@ impl AcpThreadView {
             )
         });
 
-        let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
@@ -1498,7 +1503,13 @@ impl AcpThreadView {
                 let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
 
-                let new_placeholder = placeholder_text(self.agent.name().as_ref(), has_commands);
+                let agent_display_name = self
+                    .agent_server_store
+                    .read(cx)
+                    .agent_display_name(&ExternalAgentServerName(self.agent.name()))
+                    .unwrap_or_else(|| self.agent.name());
+
+                let new_placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
 
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_placeholder_text(&new_placeholder, window, cx);
