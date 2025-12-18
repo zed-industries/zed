@@ -5,7 +5,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Generating action metadata..."
-mkdir assets/generated
-cargo run -p zed -- --dump-all-actions > assets/generated/actions.json
+cargo run -p zed -- --dump-all-actions > crates/docs_preprocessor/actions.json
 
-echo "Generated assets/generated/actions.json with $(grep -c '"name":' assets/generated/actions.json) actions"
+echo "Generated crates/docs_preprocessor/actions.json with $(grep -c '"name":' crates/docs_preprocessor/actions.json) actions"

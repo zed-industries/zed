@@ -503,10 +503,7 @@ struct ActionDef {
 }
 
 fn load_all_actions() -> Vec<ActionDef> {
-    let asset_path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../assets/generated/actions.json"
-    );
+    let asset_path = concat!(env!("CARGO_MANIFEST_DIR"), "/actions.json");
     match std::fs::read_to_string(asset_path) {
         Ok(content) => {
             let mut actions: Vec<ActionDef> =
