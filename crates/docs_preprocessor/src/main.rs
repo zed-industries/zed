@@ -211,7 +211,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
-                if find_action_by_name(action).is_none() {
+                if is_missing_action(action) {
                     errors.insert(PreprocessorError::new_for_not_found_action(
                         action.to_string(),
                     ));
@@ -241,10 +241,13 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
-                    errors.insert(PreprocessorError::new_for_not_found_action(
-                        name.to_string(),
-                    ));
-                    return String::new();
+                    if actions_available() {
+                        
+                        errors.insert(PreprocessorError::new_for_not_found_action(
+                            name.to_string(),
+                            ));
+                    }
+                    return format!("<code class=\"hljs\">{}</code>", name);
                 };
                 format!("<code class=\"hljs\">{}</code>", &action.human_name)
             })
@@ -257,6 +260,14 @@ fn find_action_by_name(name: &str) -> Option<&ActionDef> {
         .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
         .map(|index| &ALL_ACTIONS[index])
+}
+
+fn actions_available() -> bool {
+    !ALL_ACTIONS.is_empty()
+}
+
+fn is_missing_action(name: &str) -> bool {
+    actions_available() && find_action_by_name(name).is_none()
 }
 
 fn find_binding(os: &str, action: &str) -> Option<String> {
@@ -387,7 +398,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                             .context("Failed to parse action")?
                         {
                             anyhow::ensure!(
-                                find_action_by_name(action_name).is_some(),
+                                !is_missing_action(action_name),
                                 "Action not found: {}",
                                 action_name
                             );
@@ -493,11 +504,28 @@ struct ActionDef {
 }
 
 fn load_all_actions() -> Vec<ActionDef> {
-    const ACTIONS_JSON: &str = include_str!("../../../assets/generated/actions.json");
-    let mut actions: Vec<ActionDef> =
-        serde_json::from_str(ACTIONS_JSON).expect("Failed to parse actions.json");
-    actions.sort_by(|a, b| a.name.cmp(&b.name));
-    actions
+    let asset_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../assets/generated/actions.json"
+    );
+    match std::fs::read_to_string(asset_path) {
+        Ok(content) => {
+            let mut actions: Vec<ActionDef> =
+                serde_json::from_str(&content).expect("Failed to parse actions.json");
+            actions.sort_by(|a, b| a.name.cmp(&b.name));
+            actions
+        }
+        Err(err) => {
+            if std::env::var("CI").is_ok() {
+                panic!("actions.json not found at {}: {}", asset_path, err);
+            }
+            eprintln!(
+                "Warning: actions.json not found, action validation will be skipped: {}",
+                err
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn handle_postprocessing() -> Result<()> {
