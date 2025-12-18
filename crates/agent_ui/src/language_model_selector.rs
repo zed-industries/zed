@@ -55,7 +55,7 @@ pub fn language_model_selector(
 
 fn all_models(cx: &App) -> GroupedModels {
     let lm_registry = LanguageModelRegistry::global(cx).read(cx);
-    let providers = lm_registry.providers();
+    let providers = lm_registry.visible_providers();
 
     let mut favorites_index = FavoritesIndex::default();
 
@@ -219,7 +219,7 @@ impl LanguageModelPickerDelegate {
     fn authenticate_all_providers(cx: &mut App) -> Task<()> {
         let authenticate_all_providers = LanguageModelRegistry::global(cx)
             .read(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
@@ -490,7 +490,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let configured_providers = language_model_registry
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
