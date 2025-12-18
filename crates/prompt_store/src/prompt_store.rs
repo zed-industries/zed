@@ -182,28 +182,23 @@ impl MetadataCache {
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
 
-        for builtin in BuiltInPrompt::iter() {
-            let builtin_id = PromptId::BuiltIn(builtin);
-            let metadata = PromptMetadata {
-                id: builtin_id,
-                title: Some(builtin.title().into()),
-                default: false,
-                saved_at: DateTime::default(),
-            };
-            cache.metadata.push(metadata.clone());
-            cache.metadata_by_id.insert(builtin_id, metadata);
-        }
-
         for result in db.iter(txn)? {
             let (prompt_id, metadata) = result?;
-            if cache.metadata_by_id.contains_key(&prompt_id) {
-                if let Some(existing) = cache.metadata.iter_mut().find(|m| m.id == prompt_id) {
-                    *existing = metadata.clone();
-                }
-                cache.metadata_by_id.insert(prompt_id, metadata);
-            } else {
+            cache.metadata.push(metadata.clone());
+            cache.metadata_by_id.insert(prompt_id, metadata);
+        }
+
+        for builtin in BuiltInPrompt::iter() {
+            let builtin_id = PromptId::BuiltIn(builtin);
+            if !cache.metadata_by_id.contains_key(&builtin_id) {
+                let metadata = PromptMetadata {
+                    id: builtin_id,
+                    title: Some(builtin.title().into()),
+                    default: false,
+                    saved_at: DateTime::default(),
+                };
                 cache.metadata.push(metadata.clone());
-                cache.metadata_by_id.insert(prompt_id, metadata);
+                cache.metadata_by_id.insert(builtin_id, metadata);
             }
         }
         cache.sort();
