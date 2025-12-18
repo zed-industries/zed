@@ -57,12 +57,13 @@
 
 # Platform Support
 
+- [macOS](./macos.md)
 - [Windows](./windows.md)
 - [Linux](./linux.md)
 
 # Customization
 
-- [Appearance](./themes.md)
+- [Appearance](./appearance.md)
   - [Themes](./themes.md)
   - [Icon Themes](./icon-themes.md)
   - [Fonts & Visual Tweaks](./visual-customization.md)
@@ -171,7 +172,7 @@
 
 # Reference
 
-- [All Settings](./configuring-zed.md)
+- [All Settings](./reference/all-settings.md)
 - [All Actions](./all-actions.md)
 - [CLI Reference](./command-line-interface.md)
 - [Environment Variables](./environment.md)
