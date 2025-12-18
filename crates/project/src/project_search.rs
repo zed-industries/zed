@@ -681,7 +681,7 @@ impl RequestHandler<'_> {
     }
 
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
-        _ = (async move || -> anyhow::Result<()> {
+        _=maybe!(async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
 
             let file = self
@@ -713,10 +713,8 @@ impl RequestHandler<'_> {
                 entry.should_scan_tx.send(entry.path).await?;
             }
 
-            Ok(())
-        })()
-        .await
-        .log_err();
+            anyhow::Ok(())
+        }).await;
     }
 
     async fn handle_scan_path(&self, req: InputPath) {

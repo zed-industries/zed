@@ -328,7 +328,7 @@ impl SearchQuery {
 
     pub(crate) async fn detect(&self, mut reader: impl AsyncBufRead + Unpin) -> Result<bool> {
         let query_str = self.as_str();
-        let needle_len = query_str.as_bytes().len();
+        let needle_len = query_str.len();
         if needle_len == 0 {
             return Ok(false);
         }
