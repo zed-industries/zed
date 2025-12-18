@@ -314,7 +314,7 @@ impl Render for EditPredictionButton {
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
-                            IconButton::new("ollama-icon", IconName::ZedPredict)
+                            IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
                                 .when(!enabled, |this| {
                                     this.indicator(Indicator::dot().color(Color::Ignored))
