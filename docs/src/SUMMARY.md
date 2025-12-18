@@ -8,20 +8,24 @@
   - [Uninstall](./uninstall.md)
 - [Troubleshooting](./troubleshooting.md)
 
-# Customization
+# AI
 
-- [Appearance](./themes.md)
-  - [Themes](./themes.md)
-  - [Icon Themes](./icon-themes.md)
-  - [Fonts & Visual Tweaks](./visual-customization.md)
-- [Keybindings](./key-bindings.md)
-  - [Custom Key Bindings](./key-bindings.md)
-  - [Vim Mode](./vim.md)
-  - [Helix Mode](./helix.md)
-- [Snippets](./snippets.md)
-
-<!-- - [Globs](./globs.md) -->
-<!-- - [Fonts](./fonts.md) -->
+- [Overview](./ai/overview.md)
+- [Agent Panel](./ai/agent-panel.md)
+  - [Tools](./ai/tools.md)
+  - [External Agents](./ai/external-agents.md)
+- [Inline Assistant](./ai/inline-assistant.md)
+- [Edit Prediction](./ai/edit-prediction.md)
+- [Text Threads](./ai/text-threads.md)
+- [Rules](./ai/rules.md)
+- [Model Context Protocol](./ai/mcp.md)
+- [Configuration](./ai/configuration.md)
+  - [LLM Providers](./ai/llm-providers.md)
+  - [Agent Settings](./ai/agent-settings.md)
+- [Subscription](./ai/subscription.md)
+  - [Models](./ai/models.md)
+  - [Plans and Usage](./ai/plans-and-usage.md)
+  - [Billing](./ai/billing.md)
 
 # Working with Code
 
@@ -47,53 +51,26 @@
 
 # Remote Development
 
-- [Remote Development](./remote-development.md)
+- [Overview](./remote-development.md)
+- [Environment Variables](./environment.md)
+- [Dev Containers](./dev-containers.md)
 
 # Platform Support
 
 - [Windows](./windows.md)
 - [Linux](./linux.md)
 
-# AI
+# Customization
 
-- [Overview](./ai/overview.md)
-- [Agent Panel](./ai/agent-panel.md)
-  - [Tools](./ai/tools.md)
-  - [External Agents](./ai/external-agents.md)
-- [Inline Assistant](./ai/inline-assistant.md)
-- [Edit Prediction](./ai/edit-prediction.md)
-- [Text Threads](./ai/text-threads.md)
-- [Rules](./ai/rules.md)
-- [Model Context Protocol](./ai/mcp.md)
-- [Configuration](./ai/configuration.md)
-  - [LLM Providers](./ai/llm-providers.md)
-  - [Agent Settings](./ai/agent-settings.md)
-- [Subscription](./ai/subscription.md)
-  - [Models](./ai/models.md)
-  - [Plans and Usage](./ai/plans-and-usage.md)
-  - [Billing](./ai/billing.md)
-
-# Extensions
-
-- [Overview](./extensions.md)
-- [Installing Extensions](./extensions/installing-extensions.md)
-- [Developing Extensions](./extensions/developing-extensions.md)
-- [Extension Capabilities](./extensions/capabilities.md)
-- [Language Extensions](./extensions/languages.md)
-- [Debugger Extensions](./extensions/debugger-extensions.md)
-- [Theme Extensions](./extensions/themes.md)
-- [Icon Theme Extensions](./extensions/icon-themes.md)
-- [Slash Command Extensions](./extensions/slash-commands.md)
-- [Agent Server Extensions](./extensions/agent-servers.md)
-- [MCP Server Extensions](./extensions/mcp-extensions.md)
-
-# Coming From...
-
-- [VS Code](./migrate/vs-code.md)
-- [IntelliJ IDEA](./migrate/intellij.md)
-- [PyCharm](./migrate/pycharm.md)
-- [WebStorm](./migrate/webstorm.md)
-- [RustRover](./migrate/rustrover.md)
+- [Appearance](./themes.md)
+  - [Themes](./themes.md)
+  - [Icon Themes](./icon-themes.md)
+  - [Fonts & Visual Tweaks](./visual-customization.md)
+- [Keybindings](./key-bindings.md)
+  - [Custom Key Bindings](./key-bindings.md)
+  - [Vim Mode](./vim.md)
+  - [Helix Mode](./helix.md)
+- [Snippets](./snippets.md)
 
 # Language Support
 
@@ -170,6 +147,28 @@
 - [Yara](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
+
+# Extensions
+
+- [Overview](./extensions.md)
+- [Installing Extensions](./extensions/installing-extensions.md)
+- [Developing Extensions](./extensions/developing-extensions.md)
+- [Extension Capabilities](./extensions/capabilities.md)
+- [Language Extensions](./extensions/languages.md)
+- [Debugger Extensions](./extensions/debugger-extensions.md)
+- [Theme Extensions](./extensions/themes.md)
+- [Icon Theme Extensions](./extensions/icon-themes.md)
+- [Slash Command Extensions](./extensions/slash-commands.md)
+- [Agent Server Extensions](./extensions/agent-servers.md)
+- [MCP Server Extensions](./extensions/mcp-extensions.md)
+
+# Coming From...
+
+- [VS Code](./migrate/vs-code.md)
+- [IntelliJ IDEA](./migrate/intellij.md)
+- [PyCharm](./migrate/pycharm.md)
+- [WebStorm](./migrate/webstorm.md)
+- [RustRover](./migrate/rustrover.md)
 
 # Reference
 
