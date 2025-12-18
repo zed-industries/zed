@@ -29,15 +29,15 @@
 
 # Working with Code
 
-- [Editing Code](./completions.md)
+### Editing Code
   - [Code Completions](./completions.md)
   - [Diagnostics & Quick Fixes](./diagnostics.md)
   - [Multibuffers](./multibuffers.md)
-- [Finding & Navigating](./command-palette.md)
+### Finding & Navigating
   - [Command Palette](./command-palette.md)
   - [Outline Panel](./outline-panel.md)
   - [Tab Switcher](./tab-switcher.md)
-- [Running & Testing](./tasks.md)
+### Running & Testing
   - [Tasks](./tasks.md)
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)
@@ -67,7 +67,6 @@
   - [Icon Themes](./icon-themes.md)
   - [Fonts & Visual Tweaks](./visual-customization.md)
 - [Keybindings](./key-bindings.md)
-  - [Custom Key Bindings](./key-bindings.md)
   - [Vim Mode](./vim.md)
   - [Helix Mode](./helix.md)
 - [Snippets](./snippets.md)
