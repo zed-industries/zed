@@ -1919,7 +1919,6 @@ impl WorkspaceDb {
     pub(crate) async fn save_trusted_worktrees(
         &self,
         trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
-        trusted_workspaces: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -1936,7 +1935,6 @@ impl WorkspaceDb {
                     .into_iter()
                     .map(move |abs_path| (Some(abs_path), host.clone()))
             })
-            .chain(trusted_workspaces.into_iter().map(|host| (None, host)))
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
@@ -2001,7 +1999,7 @@ VALUES {placeholders};"#
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
-            .map(|(abs_path, user_name, host_name)| {
+            .filter_map(|(abs_path, user_name, host_name)| {
                 let db_host = match (user_name, host_name) {
                     (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
@@ -2014,21 +2012,17 @@ VALUES {placeholders};"#
                     }),
                 };
 
-                match abs_path {
-                    Some(abs_path) => {
-                        if db_host != host {
-                            (db_host, PathTrust::AbsPath(abs_path))
-                        } else if let Some(worktree_store) = &worktree_store {
-                            find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                                .map(PathTrust::Worktree)
-                                .map(|trusted_worktree| (host.clone(), trusted_worktree))
-                                .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
-                        } else {
-                            (db_host, PathTrust::AbsPath(abs_path))
-                        }
-                    }
-                    None => (db_host, PathTrust::Workspace),
-                }
+                let abs_path = abs_path?;
+                Some(if db_host != host {
+                    (db_host, PathTrust::AbsPath(abs_path))
+                } else if let Some(worktree_store) = &worktree_store {
+                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
+                        .map(PathTrust::Worktree)
+                        .map(|trusted_worktree| (host.clone(), trusted_worktree))
+                        .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
+                } else {
+                    (db_host, PathTrust::AbsPath(abs_path))
+                })
             })
             .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
                 acc.entry(remote_host)
@@ -3301,5 +3295,54 @@ mod tests {
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+
+    #[gpui::test]
+    async fn test_empty_workspace_window_bounds() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_empty_workspace_window_bounds").await;
+        let id = db.next_id().await.unwrap();
+
+        // Create a workspace with empty paths (empty workspace)
+        let empty_paths: &[&str] = &[];
+        let display_uuid = Uuid::new_v4();
+        let window_bounds = SerializedWindowBounds(WindowBounds::Windowed(Bounds {
+            origin: point(px(100.0), px(200.0)),
+            size: size(px(800.0), px(600.0)),
+        }));
+
+        let workspace = SerializedWorkspace {
+            id,
+            paths: PathList::new(empty_paths),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+
+        // Save the workspace (this creates the record with empty paths)
+        db.save_workspace(workspace.clone()).await;
+
+        // Save window bounds separately (as the actual code does via set_window_open_status)
+        db.set_window_open_status(id, window_bounds, display_uuid)
+            .await
+            .unwrap();
+
+        // Retrieve it using empty paths
+        let retrieved = db.workspace_for_roots(empty_paths).unwrap();
+
+        // Verify window bounds were persisted
+        assert_eq!(retrieved.id, id);
+        assert!(retrieved.window_bounds.is_some());
+        assert_eq!(retrieved.window_bounds.unwrap().0, window_bounds.0);
+        assert!(retrieved.display.is_some());
+        assert_eq!(retrieved.display.unwrap(), display_uuid);
     }
 }

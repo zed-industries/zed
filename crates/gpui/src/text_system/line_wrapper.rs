@@ -128,23 +128,21 @@ impl LineWrapper {
         })
     }
 
-    /// Truncate a line of text to the given width with this wrapper's font and font size.
-    /// Truncates from the end, e.g., "very long te…"
-    pub fn truncate_line<'a>(
+    /// Determines if a line should be truncated based on its width.
+    pub fn should_truncate_line(
         &mut self,
-        line: SharedString,
+        line: &str,
         truncate_width: Pixels,
         truncation_suffix: &str,
-        runs: &'a [TextRun],
-    ) -> (SharedString, Cow<'a, [TextRun]>) {
+    ) -> Option<usize> {
         let mut width = px(0.);
-        let mut suffix_width = truncation_suffix
+        let suffix_width = truncation_suffix
             .chars()
             .map(|c| self.width_for_char(c))
             .fold(px(0.0), |a, x| a + x);
-        let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
-        for (ix, c) in char_indices {
+
+        for (ix, c) in line.char_indices() {
             if width + suffix_width < truncate_width {
                 truncate_ix = ix;
             }
@@ -153,75 +151,32 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                let mut runs = runs.to_vec();
-                update_runs_after_truncation(&result, truncation_suffix, &mut runs);
-
-                return (result, Cow::Owned(runs));
+                return Some(truncate_ix);
             }
         }
 
-        (line, Cow::Borrowed(runs))
+        None
     }
 
-    /// Truncate a line of text from the start to the given width.
-    /// Truncates from the beginning, e.g., "…ong text here"
-    pub fn truncate_line_start<'a>(
+    /// Truncate a line of text to the given width with this wrapper's font and font size.
+    pub fn truncate_line<'a>(
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
-        truncation_prefix: &str,
+        truncation_suffix: &str,
         runs: &'a [TextRun],
     ) -> (SharedString, Cow<'a, [TextRun]>) {
-        // First, measure the full line width to see if truncation is needed
-        let full_width: Pixels = line.chars().map(|c| self.width_for_char(c)).sum();
-
-        if full_width <= truncate_width {
-            return (line, Cow::Borrowed(runs));
+        if let Some(truncate_ix) =
+            self.should_truncate_line(&line, truncate_width, truncation_suffix)
+        {
+            let result =
+                SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+            let mut runs = runs.to_vec();
+            update_runs_after_truncation(&result, truncation_suffix, &mut runs);
+            (result, Cow::Owned(runs))
+        } else {
+            (line, Cow::Borrowed(runs))
         }
-
-        let prefix_width: Pixels = truncation_prefix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .sum();
-
-        let available_width = truncate_width - prefix_width;
-
-        if available_width <= px(0.) {
-            return (
-                SharedString::from(truncation_prefix.to_string()),
-                Cow::Owned(vec![]),
-            );
-        }
-
-        // Work backwards from the end to find where to start the visible text
-        let char_indices: Vec<(usize, char)> = line.char_indices().collect();
-        let mut width_from_end = px(0.);
-        let mut start_byte_index = line.len();
-
-        for (byte_index, c) in char_indices.iter().rev() {
-            let char_width = self.width_for_char(*c);
-            if width_from_end + char_width > available_width {
-                break;
-            }
-            width_from_end += char_width;
-            start_byte_index = *byte_index;
-        }
-
-        if start_byte_index == 0 {
-            return (line, Cow::Borrowed(runs));
-        }
-
-        let result = SharedString::from(format!(
-            "{}{}",
-            truncation_prefix,
-            &line[start_byte_index..]
-        ));
-        let mut runs = runs.to_vec();
-        update_runs_after_start_truncation(&result, truncation_prefix, start_byte_index, &mut runs);
-
-        (result, Cow::Owned(runs))
     }
 
     /// Any character in this list should be treated as a word character,
@@ -242,6 +197,11 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
+
+        // Vietnamese (https://vietunicode.sourceforge.net/charset/)
+        matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
+        matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
@@ -294,52 +254,6 @@ fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<Tex
             run.len = truncate_at + ellipsis.len();
             runs.truncate(run_index + 1);
             break;
-        }
-    }
-}
-
-fn update_runs_after_start_truncation(
-    result: &str,
-    prefix: &str,
-    bytes_removed: usize,
-    runs: &mut Vec<TextRun>,
-) {
-    let prefix_len = prefix.len();
-
-    let mut bytes_to_skip = bytes_removed;
-    let mut first_relevant_run = 0;
-
-    for (index, run) in runs.iter().enumerate() {
-        if bytes_to_skip >= run.len {
-            bytes_to_skip -= run.len;
-            first_relevant_run = index + 1;
-        } else {
-            break;
-        }
-    }
-
-    if first_relevant_run > 0 {
-        runs.drain(0..first_relevant_run);
-    }
-
-    if !runs.is_empty() && bytes_to_skip > 0 {
-        runs[0].len -= bytes_to_skip;
-    }
-
-    if !runs.is_empty() {
-        runs[0].len += prefix_len;
-    } else {
-        runs.push(TextRun {
-            len: result.len(),
-            ..Default::default()
-        });
-    }
-
-    let total_run_len: usize = runs.iter().map(|r| r.len).sum();
-    if total_run_len != result.len() && !runs.is_empty() {
-        let diff = result.len() as isize - total_run_len as isize;
-        if let Some(last) = runs.last_mut() {
-            last.len = (last.len as isize + diff) as usize;
         }
     }
 }
@@ -724,7 +638,12 @@ mod tests {
         #[track_caller]
         fn assert_word(word: &str) {
             for c in word.chars() {
-                assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+                assert!(
+                    LineWrapper::is_word_char(c),
+                    "assertion failed for '{}' (unicode 0x{:x})",
+                    c,
+                    c as u32
+                );
             }
         }
 
@@ -767,6 +686,8 @@ mod tests {
         assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
         // Cyrillic
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
+        // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
+        assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
 
         // non-word characters
         assert_not_word("你好");

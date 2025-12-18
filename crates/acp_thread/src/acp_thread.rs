@@ -192,6 +192,7 @@ pub struct ToolCall {
     pub locations: Vec<acp::ToolCallLocation>,
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
+    pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
 }
 
@@ -222,6 +223,11 @@ impl ToolCall {
             }
         }
 
+        let raw_input_markdown = tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -232,6 +238,7 @@ impl ToolCall {
             resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
+            raw_input_markdown,
             raw_output: tool_call.raw_output,
         };
         Ok(result)
@@ -307,6 +314,7 @@ impl ToolCall {
         }
 
         if let Some(raw_input) = raw_input {
+            self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
             self.raw_input = Some(raw_input);
         }
 
@@ -1355,6 +1363,7 @@ impl AcpThread {
                     locations: Vec::new(),
                     resolved_locations: Vec::new(),
                     raw_input: None,
+                    raw_input_markdown: None,
                     raw_output: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);

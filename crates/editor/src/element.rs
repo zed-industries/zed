@@ -37,11 +37,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
-use git::{
-    Oid,
-    blame::{BlameEntry, ParsedCommitMessage},
-    status::FileStatus,
-};
+use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
@@ -594,8 +590,6 @@ impl EditorElement {
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::signature_help_prev);
         register_action(editor, window, Editor::signature_help_next);
-        register_action(editor, window, Editor::next_edit_prediction);
-        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_edit_prediction);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);

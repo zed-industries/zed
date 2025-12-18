@@ -65,6 +65,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
+use encoding_rs;
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -4895,16 +4896,13 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let mut restricted_paths = envelope
+            let restricted_paths = envelope
                 .payload
                 .worktree_ids
                 .into_iter()
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if envelope.payload.restrict_workspace {
-                restricted_paths.insert(PathTrust::Workspace);
-            }
             let remote_host = this
                 .read(cx)
                 .remote_connection_options(cx)
@@ -5464,13 +5462,22 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
+            let has_bom = file.has_bom;
+
             let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
                 store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        new_text.into(),
+                        line_ending,
+                        encoding_rs::UTF_8,
+                        has_bom,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;

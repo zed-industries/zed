@@ -156,7 +156,7 @@ impl ManageProfilesModal {
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 if matches!(this.mode, Mode::ChooseProfile(_)) {
                     this.mode = Mode::choose_profile(window, cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 }
             });
@@ -173,7 +173,7 @@ impl ManageProfilesModal {
 
     fn choose_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = Mode::choose_profile(window, cx);
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn new_profile(
@@ -191,7 +191,7 @@ impl ManageProfilesModal {
             name_editor,
             base_profile_id,
         });
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     pub fn view_profile(
@@ -209,7 +209,7 @@ impl ManageProfilesModal {
             delete_profile: NavigableEntry::focusable(cx),
             cancel_item: NavigableEntry::focusable(cx),
         });
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_default_model(
@@ -300,7 +300,7 @@ impl ManageProfilesModal {
             model_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_mcp_tools(
@@ -336,7 +336,7 @@ impl ManageProfilesModal {
             tool_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_builtin_tools(
@@ -377,7 +377,7 @@ impl ManageProfilesModal {
             tool_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -951,7 +951,7 @@ impl Render for ManageProfilesModal {
             .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| this.cancel(window, cx)))
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| this.confirm(window, cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(match &self.mode {

@@ -1298,17 +1298,17 @@ impl ConfigurationView {
         self.state.read(cx).is_authenticated()
     }
 
-    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
     }
 
     fn on_tab_prev(
         &mut self,
         _: &menu::SelectPrevious,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.focus_prev();
+        window.focus_prev(cx);
     }
 }
 

@@ -174,16 +174,6 @@ impl ExternalAgent {
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
-
-    pub fn is_mcp(&self) -> bool {
-        match self {
-            Self::Gemini => true,
-            Self::ClaudeCode => true,
-            Self::Codex => true,
-            Self::NativeAgent => false,
-            Self::Custom { .. } => false,
-        }
-    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.

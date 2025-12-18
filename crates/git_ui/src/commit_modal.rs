@@ -521,7 +521,7 @@ impl CommitModal {
 
     fn toggle_branch_selector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.branch_list_handle.is_focused(window, cx) {
-            self.focus_handle(cx).focus(window)
+            self.focus_handle(cx).focus(window, cx)
         } else {
             self.branch_list_handle.toggle(window, cx);
         }
@@ -587,8 +587,8 @@ impl Render for CommitModal {
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                        window.focus(&editor_focus_handle);
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                        window.focus(&editor_focus_handle, cx);
                     }))
                     .child(
                         div()

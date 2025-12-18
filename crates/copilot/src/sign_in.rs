@@ -435,8 +435,8 @@ impl Render for CopilotCodeVerification {
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _| {
-                window.focus(&this.focus_handle);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                window.focus(&this.focus_handle, cx);
             }))
             .child(
                 Vector::new(VectorName::ZedXCopilot, rems(8.), rems(4.))

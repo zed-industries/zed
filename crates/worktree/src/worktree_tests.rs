@@ -1,5 +1,6 @@
 use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use encoding_rs;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
@@ -19,6 +20,7 @@ use std::{
 };
 use util::{
     ResultExt, path,
+    paths::PathStyle,
     rel_path::{RelPath, rel_path},
     test::TempTree,
 };
@@ -723,6 +725,8 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 rel_path("tracked-dir/file.txt").into(),
                 "hello".into(),
                 Default::default(),
+                encoding_rs::UTF_8,
+                false,
                 cx,
             )
         })
@@ -734,6 +738,8 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 rel_path("ignored-dir/file.txt").into(),
                 "world".into(),
                 Default::default(),
+                encoding_rs::UTF_8,
+                false,
                 cx,
             )
         })
@@ -2035,8 +2041,14 @@ fn randomly_mutate_worktree(
                 })
             } else {
                 log::info!("overwriting file {:?} ({})", &entry.path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                let task = worktree.write_file(
+                    entry.path.clone(),
+                    "".into(),
+                    Default::default(),
+                    encoding_rs::UTF_8,
+                    false,
+                    cx,
+                );
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -2551,4 +2563,177 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
+}
+
+#[gpui::test]
+async fn test_load_file_encoding(cx: &mut TestAppContext) {
+    init_test(cx);
+    let test_cases: Vec<(&str, &[u8], &str)> = vec![
+        ("utf8.txt", "こんにちは".as_bytes(), "こんにちは"), // "こんにちは" is Japanese "Hello"
+        (
+            "sjis.txt",
+            &[0x82, 0xb1, 0x82, 0xf1, 0x82, 0xc9, 0x82, 0xbf, 0x82, 0xcd],
+            "こんにちは",
+        ),
+        (
+            "eucjp.txt",
+            &[0xa4, 0xb3, 0xa4, 0xf3, 0xa4, 0xcb, 0xa4, 0xc1, 0xa4, 0xcf],
+            "こんにちは",
+        ),
+        (
+            "iso2022jp.txt",
+            &[
+                0x1b, 0x24, 0x42, 0x24, 0x33, 0x24, 0x73, 0x24, 0x4b, 0x24, 0x41, 0x24, 0x4f, 0x1b,
+                0x28, 0x42,
+            ],
+            "こんにちは",
+        ),
+        // Western Europe (Windows-1252)
+        // "Café" -> 0xE9 is 'é' in Windows-1252 (it is typically 0xC3 0xA9 in UTF-8)
+        ("win1252.txt", &[0x43, 0x61, 0x66, 0xe9], "Café"),
+        // Chinese Simplified (GBK)
+        // Note: We use a slightly longer string here because short byte sequences can be ambiguous
+        // in multi-byte encodings. Providing more context helps the heuristic detector guess correctly.
+        // Text: "今天天气不错" (Today's weather is not bad / nice)
+        // Bytes:
+        //   今: BD F1
+        //   天: CC EC
+        //   天: CC EC
+        //   气: C6 F8
+        //   不: B2 BB
+        //   错: B4 ED
+        (
+            "gbk.txt",
+            &[
+                0xbd, 0xf1, 0xcc, 0xec, 0xcc, 0xec, 0xc6, 0xf8, 0xb2, 0xbb, 0xb4, 0xed,
+            ],
+            "今天天气不错",
+        ),
+        (
+            "utf16le_bom.txt",
+            &[
+                0xFF, 0xFE, // BOM
+                0x53, 0x30, // こ
+                0x93, 0x30, // ん
+                0x6B, 0x30, // に
+                0x61, 0x30, // ち
+                0x6F, 0x30, // は
+            ],
+            "こんにちは",
+        ),
+        (
+            "utf8_bom.txt",
+            &[
+                0xEF, 0xBB, 0xBF, // UTF-8 BOM
+                0xE3, 0x81, 0x93, // こ
+                0xE3, 0x82, 0x93, // ん
+                0xE3, 0x81, 0xAB, // に
+                0xE3, 0x81, 0xA1, // ち
+                0xE3, 0x81, 0xAF, // は
+            ],
+            "こんにちは",
+        ),
+    ];
+
+    let root_path = if cfg!(windows) {
+        Path::new("C:\\root")
+    } else {
+        Path::new("/root")
+    };
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    let mut files_json = serde_json::Map::new();
+    for (name, _, _) in &test_cases {
+        files_json.insert(name.to_string(), serde_json::Value::String("".to_string()));
+    }
+
+    for (name, bytes, _) in &test_cases {
+        let path = root_path.join(name);
+        fs.write(&path, bytes).await.unwrap();
+    }
+
+    let tree = Worktree::local(
+        root_path,
+        true,
+        fs,
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    for (name, _, expected) in test_cases {
+        let loaded = tree
+            .update(cx, |tree, cx| tree.load_file(rel_path(name), cx))
+            .await
+            .with_context(|| format!("Failed to load {}", name))
+            .unwrap();
+
+        assert_eq!(
+            loaded.text, expected,
+            "Encoding mismatch for file: {}",
+            name
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let root_path = if cfg!(windows) {
+        Path::new("C:\\root")
+    } else {
+        Path::new("/root")
+    };
+    fs.create_dir(root_path).await.unwrap();
+    let file_path = root_path.join("test.txt");
+
+    fs.insert_file(&file_path, "initial".into()).await;
+
+    let worktree = Worktree::local(
+        root_path,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    let path: Arc<Path> = Path::new("test.txt").into();
+    let rel_path = RelPath::new(&path, PathStyle::local()).unwrap().into_arc();
+
+    let text = text::Rope::from("こんにちは");
+
+    let task = worktree.update(cx, |wt, cx| {
+        wt.write_file(
+            rel_path,
+            text,
+            text::LineEnding::Unix,
+            encoding_rs::SHIFT_JIS,
+            false,
+            cx,
+        )
+    });
+
+    task.await.unwrap();
+
+    let bytes = fs.load_bytes(&file_path).await.unwrap();
+
+    let expected_bytes = vec![
+        0x82, 0xb1, // こ
+        0x82, 0xf1, // ん
+        0x82, 0xc9, // に
+        0x82, 0xbf, // ち
+        0x82, 0xcd, // は
+    ];
+
+    assert_eq!(bytes, expected_bytes, "Should be saved as Shift-JIS");
 }

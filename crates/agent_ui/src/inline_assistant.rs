@@ -1197,7 +1197,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
             .ok();
     }
 
@@ -1209,7 +1209,7 @@ impl InlineAssistant {
         if let Some(decorations) = assist.decorations.as_ref() {
             decorations.prompt_editor.update(cx, |prompt_editor, cx| {
                 prompt_editor.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 })
             });
@@ -2268,6 +2268,36 @@ pub mod evals {
                 }
             "},
             uncertain_output,
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_empty_buffer() {
+        run_eval(
+            20,
+            1.0,
+            "Write a Python hello, world program".to_string(),
+            "ˇ".to_string(),
+            |output| match output {
+                InlineAssistantOutput::Success {
+                    full_buffer_text, ..
+                } => {
+                    if full_buffer_text.is_empty() {
+                        EvalOutput::failed("expected some output".to_string())
+                    } else {
+                        EvalOutput::passed(format!("Produced {full_buffer_text}"))
+                    }
+                }
+                o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+                o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    o
+                )),
+            },
         );
     }
 

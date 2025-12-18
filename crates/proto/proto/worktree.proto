@@ -166,14 +166,16 @@ message TrustWorktrees {
 
 message PathTrust {
     oneof content {
-        uint64 workspace = 1;
         uint64 worktree_id = 2;
         string abs_path = 3;
     }
+
+    reserved 1;
 }
 
 message RestrictWorktrees {
     uint64 project_id = 1;
-    bool restrict_workspace = 2;
     repeated uint64 worktree_ids = 3;
+
+    reserved 2;
 }

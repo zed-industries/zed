@@ -1586,7 +1586,7 @@ pub(crate) fn search_rules(
                     None
                 } else {
                     Some(RulesContextEntry {
-                        prompt_id: metadata.id.user_id()?,
+                        prompt_id: metadata.id.as_user()?,
                         title: metadata.title?,
                     })
                 }

@@ -642,16 +642,13 @@ impl HeadlessProject {
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let mut restricted_paths = envelope
+            let restricted_paths = envelope
                 .payload
                 .worktree_ids
                 .into_iter()
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if envelope.payload.restrict_workspace {
-                restricted_paths.insert(PathTrust::Workspace);
-            }
             trusted_worktrees.restrict(restricted_paths, None, cx);
         })?;
         Ok(proto::Ack {})

@@ -36,7 +36,6 @@ use std::{
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
-    pin::Pin,
     process,
     sync::{Arc, OnceLock},
     time::Instant,
@@ -484,14 +483,7 @@ pub fn main() {
         })
         .detach();
 
-        let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
-            .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
-        let node_runtime = NodeRuntime::new(
-            client.http_client(),
-            Some(shell_env_loaded_rx),
-            rx,
-            trust_task,
-        );
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
@@ -664,6 +656,7 @@ pub fn main() {
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
+        which_key::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -819,7 +812,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window);
+                            panel.focus_handle(cx).focus(window, cx);
                         }
                     })
                 })
@@ -897,6 +890,44 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             cx,
                         ),
                     })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::GitCommit { sha } => {
+                cx.spawn(async move |cx| {
+                    let paths_with_position =
+                        derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+                    let (workspace, _results) = open_paths_with_positions(
+                        &paths_with_position,
+                        &[],
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                    .await?;
+
+                    workspace
+                        .update(cx, |workspace, window, cx| {
+                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                            else {
+                                log::error!("no active repository found for commit view");
+                                return Err(anyhow::anyhow!("no active repository found"));
+                            };
+
+                            git_ui::commit_view::CommitView::open(
+                                sha,
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                            Ok(())
+                        })
+                        .log_err();
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }

@@ -15,7 +15,6 @@ use util::{ResultExt as _, rel_path::RelPath};
 use crate::{
     Project,
     project_settings::{ContextServerSettings, ProjectSettings},
-    trusted_worktrees::wait_for_workspace_trust,
     worktree_store::WorktreeStore,
 };
 
@@ -333,15 +332,6 @@ impl ContextServerStore {
 
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let wait_task = this.update(cx, |context_server_store, cx| {
-                context_server_store.project.update(cx, |project, cx| {
-                    let remote_host = project.remote_connection_options(cx);
-                    wait_for_workspace_trust(remote_host, "context servers", cx)
-                })
-            })??;
-            if let Some(wait_task) = wait_task {
-                wait_task.await;
-            }
             let this = this.upgrade().context("Context server store dropped")?;
             let settings = this
                 .update(cx, |this, _| {
@@ -582,15 +572,6 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let wait_task = this.update(cx, |context_server_store, cx| {
-            context_server_store.project.update(cx, |project, cx| {
-                let remote_host = project.remote_connection_options(cx);
-                wait_for_workspace_trust(remote_host, "context servers", cx)
-            })
-        })??;
-        if let Some(wait_task) = wait_task {
-            wait_task.await;
-        }
         let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, _| {
             (
                 this.context_server_settings.clone(),
