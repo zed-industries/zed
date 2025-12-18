@@ -178,7 +178,7 @@
 
 # Account & Privacy
 
-- [Sign In](./authentication.md)
+- [Authenticate](./authentication.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [Worktree Trust](./worktree-trust.md)
   - [AI Improvement](./ai/ai-improvement.md)
