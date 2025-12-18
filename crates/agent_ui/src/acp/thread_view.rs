@@ -2440,6 +2440,12 @@ impl AcpThreadView {
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let input_output_header = |label: SharedString| {
+            Label::new(label)
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .buffer_font(cx)
+        };
 
         let tool_output_display =
             if is_open {
@@ -2481,7 +2487,25 @@ impl AcpThreadView {
                     | ToolCallStatus::Completed
                     | ToolCallStatus::Failed
                     | ToolCallStatus::Canceled => v_flex()
+                        .mt_1p5()
                         .w_full()
+                        .child(
+                            v_flex()
+                                .ml(rems(0.4))
+                                .px_3p5()
+                                .pb_1()
+                                .gap_1()
+                                .border_l_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .child(input_output_header("Raw Input".into()))
+                                .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                    self.render_markdown(
+                                        input,
+                                        default_markdown_style(false, false, window, cx),
+                                    )
+                                }))
+                                .child(input_output_header("Output:".into())),
+                        )
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
                                 div().child(self.render_tool_call_content(
@@ -2580,7 +2604,7 @@ impl AcpThreadView {
                                         .gap_px()
                                         .when(is_collapsible, |this| {
                                             this.child(
-                                            Disclosure::new(("expand", entry_ix), is_open)
+                                            Disclosure::new(("expand-output", entry_ix), is_open)
                                                 .opened_icon(IconName::ChevronUp)
                                                 .closed_icon(IconName::ChevronDown)
                                                 .visible_on_hover(&card_header_id)
@@ -2766,7 +2790,6 @@ impl AcpThreadView {
         let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id));
 
         v_flex()
-            .mt_1p5()
             .gap_2()
             .when(!card_layout, |this| {
                 this.ml(rems(0.4))
