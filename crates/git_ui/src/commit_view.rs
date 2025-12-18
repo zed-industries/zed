@@ -3,7 +3,10 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
-use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
+use git::{
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
+    parse_git_remote_url,
+};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
@@ -391,14 +394,18 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let github_url = self.remote.as_ref().map(|remote| {
-            format!(
-                "{}/{}/{}/commit/{}",
-                remote.host.base_url(),
-                remote.owner,
-                remote.repo,
-                commit.sha
-            )
+        let remote_info = self.remote.as_ref().map(|remote| {
+            let provider = remote.host.name();
+            let parsed_remote = ParsedGitRemote {
+                owner: remote.owner.as_ref().into(),
+                repo: remote.repo.as_ref().into(),
+            };
+            let params = BuildCommitPermalinkParams { sha: &commit.sha };
+            let url = remote
+                .host
+                .build_commit_permalink(&parsed_remote, params)
+                .to_string();
+            (provider, url)
         });
 
         let (additions, deletions) = self.calculate_changed_lines(cx);
@@ -472,9 +479,14 @@ impl CommitView {
                                     .children(commit_diff_stat),
                             ),
                     )
-                    .children(github_url.map(|url| {
-                        Button::new("view_on_github", "View on GitHub")
-                            .icon(IconName::Github)
+                    .children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
+
+                        Button::new("view_on_provider", format!("View on {}", provider_name))
+                            .icon(icon)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)

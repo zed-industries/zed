@@ -448,7 +448,10 @@ message Envelope {
         ExternalExtensionAgentsUpdated external_extension_agents_updated = 401;
 
         GitCreateRemote git_create_remote = 402;
-        GitRemoveRemote git_remove_remote = 403;// current max
+        GitRemoveRemote git_remove_remote = 403;
+
+        TrustWorktrees trust_worktrees = 404;
+        RestrictWorktrees restrict_worktrees = 405; // current max
     }
 
     reserved 87 to 88, 396;

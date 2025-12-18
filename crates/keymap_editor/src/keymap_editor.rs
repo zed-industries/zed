@@ -81,50 +81,61 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    fn common(filter: Option<String>, cx: &mut App) {
-        workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            workspace
-                .with_local_workspace(window, cx, move |workspace, window, cx| {
-                    let existing = workspace
-                        .active_pane()
-                        .read(cx)
-                        .items()
-                        .find_map(|item| item.downcast::<KeymapEditor>());
+    fn open_keymap_editor(
+        filter: Option<String>,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        workspace
+            .with_local_workspace(window, cx, |workspace, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<KeymapEditor>());
 
-                    let keymap_editor = if let Some(existing) = existing {
-                        workspace.activate_item(&existing, true, true, window, cx);
-                        existing
-                    } else {
-                        let keymap_editor =
-                            cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
-                        workspace.add_item_to_active_pane(
-                            Box::new(keymap_editor.clone()),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-                        keymap_editor
-                    };
+                let keymap_editor = if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                    existing
+                } else {
+                    let keymap_editor =
+                        cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
+                    workspace.add_item_to_active_pane(
+                        Box::new(keymap_editor.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    keymap_editor
+                };
 
-                    if let Some(filter) = filter {
-                        keymap_editor.update(cx, |editor, cx| {
-                            editor.filter_editor.update(cx, |editor, cx| {
-                                editor.clear(window, cx);
-                                editor.insert(&filter, window, cx);
-                            });
-                            if !editor.has_binding_for(&filter) {
-                                open_binding_modal_after_loading(cx)
-                            }
-                        })
-                    }
-                })
-                .detach();
-        })
+                if let Some(filter) = filter {
+                    keymap_editor.update(cx, |editor, cx| {
+                        editor.filter_editor.update(cx, |editor, cx| {
+                            editor.clear(window, cx);
+                            editor.insert(&filter, window, cx);
+                        });
+                        if !editor.has_binding_for(&filter) {
+                            open_binding_modal_after_loading(cx)
+                        }
+                    })
+                }
+            })
+            .detach_and_log_err(cx);
     }
 
-    cx.on_action(|_: &OpenKeymap, cx| common(None, cx));
-    cx.on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace
+            .register_action(|workspace, _: &OpenKeymap, window, cx| {
+                open_keymap_editor(None, workspace, window, cx);
+            })
+            .register_action(|workspace, action: &ChangeKeybinding, window, cx| {
+                open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
+            });
+    })
+    .detach();
 
     register_serializable_item::<KeymapEditor>(cx);
 }
@@ -900,7 +911,7 @@ impl KeymapEditor {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            window.focus(&self.filter_editor.focus_handle(cx));
+            window.focus(&self.filter_editor.focus_handle(cx), cx);
         } else {
             self.filter_editor.update(cx, |editor, cx| {
                 editor.select_all(&Default::default(), window, cx);
@@ -937,7 +948,7 @@ impl KeymapEditor {
             if let Some(scroll_strategy) = scroll {
                 self.scroll_to_item(index, scroll_strategy, cx);
             }
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.notify();
         }
     }
@@ -987,7 +998,7 @@ impl KeymapEditor {
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
-            window.defer(cx, move |window, _cx| window.focus(&context_menu_handle));
+            window.defer(cx, move |window, cx| window.focus(&context_menu_handle, cx));
             let subscription = cx.subscribe_in(
                 &context_menu,
                 window,
@@ -1003,7 +1014,7 @@ impl KeymapEditor {
 
     fn dismiss_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.context_menu.take();
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -1219,7 +1230,7 @@ impl KeymapEditor {
                         window,
                         cx,
                     );
-                    window.focus(&modal.focus_handle(cx));
+                    window.focus(&modal.focus_handle(cx), cx);
                     modal
                 });
             })
@@ -1327,7 +1338,7 @@ impl KeymapEditor {
                     editor.stop_recording(&StopRecording, window, cx);
                     editor.clear_keystrokes(&ClearKeystrokes, window, cx);
                 });
-                window.focus(&self.filter_editor.focus_handle(cx));
+                window.focus(&self.filter_editor.focus_handle(cx), cx);
             }
         }
     }
@@ -2687,32 +2698,32 @@ impl KeybindingEditorModalFocusState {
             .map(|i| i as i32)
     }
 
-    fn focus_index(&self, mut index: i32, window: &mut Window) {
+    fn focus_index(&self, mut index: i32, window: &mut Window, cx: &mut App) {
         if index < 0 {
             index = self.handles.len() as i32 - 1;
         }
         if index >= self.handles.len() as i32 {
             index = 0;
         }
-        window.focus(&self.handles[index as usize]);
+        window.focus(&self.handles[index as usize], cx);
     }
 
-    fn focus_next(&self, window: &mut Window, cx: &App) {
+    fn focus_next(&self, window: &mut Window, cx: &mut App) {
         let index_to_focus = if let Some(index) = self.focused_index(window, cx) {
             index + 1
         } else {
             0
         };
-        self.focus_index(index_to_focus, window);
+        self.focus_index(index_to_focus, window, cx);
     }
 
-    fn focus_previous(&self, window: &mut Window, cx: &App) {
+    fn focus_previous(&self, window: &mut Window, cx: &mut App) {
         let index_to_focus = if let Some(index) = self.focused_index(window, cx) {
             index - 1
         } else {
             self.handles.len() as i32 - 1
         };
-        self.focus_index(index_to_focus, window);
+        self.focus_index(index_to_focus, window, cx);
     }
 }
 
@@ -2746,7 +2757,7 @@ impl ActionArgumentsEditor {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, window, |this, window, cx| {
-            this.editor.focus_handle(cx).focus(window);
+            this.editor.focus_handle(cx).focus(window, cx);
         })
         .detach();
         let editor = cx.new(|cx| {
@@ -2799,7 +2810,7 @@ impl ActionArgumentsEditor {
 
                 this.update_in(cx, |this, window, cx| {
                     if this.editor.focus_handle(cx).is_focused(window) {
-                        editor.focus_handle(cx).focus(window);
+                        editor.focus_handle(cx).focus(window, cx);
                     }
                     this.editor = editor;
                     this.backup_temp_dir = backup_temp_dir;

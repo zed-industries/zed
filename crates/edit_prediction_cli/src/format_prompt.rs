@@ -23,14 +23,14 @@ pub async fn run_format_prompt(
 ) -> Result<()> {
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.name);
+    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
 
     match prompt_format {
         PromptFormat::Teacher => {
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: example.expected_patch.clone(), // TODO
+                expected_output: example.spec.expected_patch.clone(), // TODO
                 format: prompt_format,
             });
         }
@@ -54,7 +54,7 @@ pub async fn run_format_prompt(
                         .files
                         .clone(),
                     ep_store.edit_history_for_project(&project, cx),
-                    example.cursor_path.clone(),
+                    example.spec.cursor_path.clone(),
                     example
                         .buffer
                         .as_ref()
@@ -63,7 +63,8 @@ pub async fn run_format_prompt(
                 ))
             })??;
             let prompt = format_zeta_prompt(&input);
-            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone())?;
+            let expected_output =
+                zeta2_output_for_patch(&input, &example.spec.expected_patch.clone())?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
@@ -85,7 +86,7 @@ impl TeacherPrompt {
     const MAX_HISTORY_LINES: usize = 128;
 
     pub fn format_prompt(example: &Example) -> String {
-        let edit_history = Self::format_edit_history(&example.edit_history);
+        let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
         let editable_region = Self::format_editable_region(example);
 
@@ -131,7 +132,7 @@ impl TeacherPrompt {
             --- a/{path}
             +++ b/{path}
             {diff}",
-            path = example.cursor_path.to_string_lossy(),
+            path = example.spec.cursor_path.to_string_lossy(),
             diff = diff,
         };
 
@@ -170,13 +171,13 @@ impl TeacherPrompt {
     fn format_editable_region(example: &Example) -> String {
         let mut result = String::new();
 
-        let path_str = example.cursor_path.to_string_lossy();
+        let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````path=\"{path_str}\"\n"));
         result.push_str(Self::EDITABLE_REGION_START);
 
         // TODO: control number of lines around cursor
-        result.push_str(&example.cursor_position);
-        if !example.cursor_position.ends_with('\n') {
+        result.push_str(&example.spec.cursor_position);
+        if !example.spec.cursor_position.ends_with('\n') {
             result.push('\n');
         }
 

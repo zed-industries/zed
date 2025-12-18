@@ -23,8 +23,8 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, InlineCode, List, ListBulletItem,
-    Tooltip, prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
+    prelude::*,
 };
 use ui_input::InputField;
 
@@ -43,6 +43,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
+    pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -238,10 +239,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let settings = OllamaLanguageModelProvider::settings(cx);
 
         // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            models.insert(model.name.clone(), model.clone());
+        if settings.auto_discover {
+            for model in self.state.read(cx).fetched_models.iter() {
+                models.insert(model.name.clone(), model.clone());
+            }
         }
 
         // Override with available models from settings
@@ -720,7 +724,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_instructions() -> Div {
+    fn render_instructions(cx: &mut Context<Self>) -> Div {
         v_flex()
             .gap_2()
             .child(Label::new(
@@ -738,7 +742,7 @@ impl ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Start Ollama and download a model:"))
-                            .child(InlineCode::new("ollama run gpt-oss:20b")),
+                            .child(Label::new("ollama run gpt-oss:20b").inline_code(cx)),
                     )
                     .child(ListBulletItem::new(
                         "Click 'Connect' below to start using Ollama in Zed",
@@ -829,7 +833,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
-            .child(Self::render_instructions())
+            .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(

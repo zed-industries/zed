@@ -66,6 +66,7 @@ lsp = { workspace = true, features = ["test-support"] }
 markdown_preview.workspace = true
 parking_lot.workspace = true
 project_panel.workspace = true
+outline_panel.workspace = true
 release_channel.workspace = true
 semver.workspace = true
 settings_ui.workspace = true

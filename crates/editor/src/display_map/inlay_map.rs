@@ -1,3 +1,10 @@
+//! The inlay map. See the [`display_map`][super] docs for an overview of how the inlay map fits
+//! into the rest of the [`DisplayMap`][super::DisplayMap]. Much of the documentation for this
+//! module generalizes to other layers.
+//!
+//! The core of this module is the [`InlayMap`] struct, which maintains a vec of [`Inlay`]s, and
+//! [`InlaySnapshot`], which holds a sum tree of [`Transform`]s.
+
 use crate::{
     ChunkRenderer, HighlightStyles,
     inlays::{Inlay, InlayContent},
@@ -69,7 +76,9 @@ impl sum_tree::Item for Transform {
 
 #[derive(Clone, Debug, Default)]
 struct TransformSummary {
+    /// Summary of the text before inlays have been applied.
     input: MBTextSummary,
+    /// Summary of the text after inlays have been applied.
     output: MBTextSummary,
 }
 

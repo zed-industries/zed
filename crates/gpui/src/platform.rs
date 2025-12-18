@@ -1348,6 +1348,10 @@ pub enum WindowKind {
     /// docks, notifications or wallpapers.
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     LayerShell(layer_shell::LayerShellOptions),
+
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
+    Dialog,
 }
 
 /// The appearance of the window, as defined by the operating system.
