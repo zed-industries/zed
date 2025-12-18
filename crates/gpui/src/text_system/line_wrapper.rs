@@ -106,7 +106,7 @@ impl LineWrapper {
                 };
 
                 width += item_width;
-                if width.floor() > wrap_width && ix > last_wrap_ix {
+                if width > wrap_width && ix > last_wrap_ix {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
                         indent = Some(
