@@ -42,6 +42,7 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 // - Create a wrapping "Breadcrumb" struct for Vec<BreadcrumbText>
 // - Implement render for _that_ breadcrumb struct.
 // - Call that from here to eliminate much of the logic.
+// - This will change the Item interface, so do it only after you're happy with the features thus far
 impl Render for Breadcrumbs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;

@@ -1,9 +1,10 @@
 mod registrar;
 
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
-    SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ProjectSearchView, ReplaceAll,
+    ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch,
+    SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection,
+    ToggleWholeWord,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
@@ -27,7 +28,7 @@ use project::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
@@ -37,7 +38,7 @@ use ui::{
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    item::ItemHandle,
+    item::{ItemBufferKind, ItemHandle},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle,
     },
@@ -401,6 +402,38 @@ impl Render for BufferSearchBar {
                     )))
                     .w_full()
                 });
+
+        // let is_collapsed = self.is_multibuffer_collapsed;
+        // This shouldn't show on a singleton or on a project search
+        let button = if self.active_item_is_multibuffer(cx) {
+            let is_collapsed = false;
+
+            let (icon, tooltip_label) = if is_collapsed {
+                (IconName::ChevronUpDown, "Expand All Search Results")
+            } else {
+                (IconName::ChevronDownUp, "Collapse All Search Results")
+            };
+
+            let tooltip_focus_handle = focus_handle.clone();
+
+            // emit_action!(ToggleFoldAll, focus_handle.clone());
+
+            Some(
+                IconButton::new("multibuffer-collapse-expand", icon)
+                    .icon_size(IconSize::Small)
+                    // .tooltip(move |_, cx| {
+                    //     Tooltip::for_action_in(tooltip_label, &ToggleFoldAll, &tooltip_focus_handle, cx)
+                    // })
+                    // .on_click(cx.listener(|this, _, window, cx| {
+                    //     this.is_multibuffer_collapsed = !this.is_multibuffer_collapsed;
+                    //     this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                    // }))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
         v_flex()
             .id("buffer_search")
             .gap_2()
@@ -447,9 +480,15 @@ impl Render for BufferSearchBar {
             .when(selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
-            .child(search_line)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .when_some(button, |then, button| then.child(button))
+                    .child(search_line),
+            )
             .children(query_error_line)
             .children(replace_line)
+            .into_any_element()
     }
 }
 
@@ -503,7 +542,11 @@ impl ToolbarItemView for BufferSearchBar {
                 if is_project_search {
                     self.dismiss(&Default::default(), window, cx);
                 } else {
-                    return ToolbarItemLocation::Secondary;
+                    if self.active_item_is_multibuffer(cx) {
+                        return ToolbarItemLocation::PrimaryLeft;
+                    } else {
+                        return ToolbarItemLocation::Secondary;
+                    }
                 }
             }
         }
@@ -789,7 +832,11 @@ impl BufferSearchBar {
         cx.notify();
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
-            ToolbarItemLocation::Secondary,
+            if self.active_item_is_multibuffer(cx) {
+                ToolbarItemLocation::PrimaryLeft
+            } else {
+                ToolbarItemLocation::Secondary
+            },
         ));
         true
     }
@@ -799,6 +846,26 @@ impl BufferSearchBar {
             .as_ref()
             .map(|item| item.supported_options(cx))
             .unwrap_or_default()
+    }
+
+    fn active_item_is_multibuffer(&self, cx: &App) -> bool {
+        if let Some(item) = &self.active_searchable_item {
+            dbg!("Calling");
+            let buffer_kind = item.buffer_kind(cx);
+
+            if item
+                .act_as_type(TypeId::of::<ProjectSearchView>(), cx)
+                .is_some()
+            {
+                dbg!("Called success");
+                return false;
+            }
+            dbg!("Called fail");
+
+            buffer_kind == ItemBufferKind::Multibuffer
+        } else {
+            false
+        }
     }
 
     pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {

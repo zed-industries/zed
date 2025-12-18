@@ -119,12 +119,13 @@ impl Render for Toolbar {
             .when(has_left_items || has_right_items, |this| {
                 this.child(
                     h_flex()
-                        .min_h_6()
+                        .items_start()
                         .justify_between()
                         .gap(DynamicSpacing::Base08.rems(cx))
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
+                                    .min_h_6()
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()
@@ -134,7 +135,7 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
-                                    .h_full()
+                                    .h_6()
                                     .flex_row_reverse()
                                     .map(|el| {
                                         if has_left_items {

@@ -997,7 +997,9 @@ impl Item for Editor {
         if self.buffer.read(cx).is_singleton() {
             self.breadcrumbs_inner(variant, cx)
         } else {
-            Some(vec![])
+            // Should say: If you're searching, None, else, vec![] -> What that really means is if you're searching, don't render the chevron (search bar will do it for you), otherwise _do_ render the chevron (which is defined as a breadcrumb prefix)
+            // Some(vec![])
+            None
         }
     }
 
