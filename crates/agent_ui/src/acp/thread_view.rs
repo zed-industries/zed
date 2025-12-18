@@ -2753,18 +2753,19 @@ impl AcpThreadView {
 
         v_flex()
             .gap_2()
-            .when(!card_layout, |this| {
-                this.ml(rems(0.4))
-                    .px_3p5()
-                    .border_l_1()
-                    .border_color(self.tool_card_border_color(cx))
-            })
-            .when(card_layout, |this| {
-                this.px_2().pb_2().when(context_ix > 0, |this| {
-                    this.border_t_1()
-                        .pt_2()
+            .map(|this| {
+                if card_layout {
+                    this.when(context_ix > 0, |this| {
+                        this.pt_2()
+                            .border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                    })
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
-                })
+                }
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
