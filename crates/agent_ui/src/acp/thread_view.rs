@@ -34,7 +34,7 @@ use language::Buffer;
 
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
-use project::{Project, ProjectEntryId};
+use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
@@ -260,6 +260,7 @@ impl ThreadFeedbackState {
 
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
+    agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
@@ -311,9 +312,6 @@ enum ThreadState {
         description: Option<Entity<Markdown>>,
         configuration_view: Option<AnyView>,
         pending_auth_method: Option<acp::AuthMethodId>,
-        /// Whether the user needs to log in for the first time `false`,
-        /// or if they are choosing a different authentication method `true`
-        reauthenticating: bool,
         _subscription: Option<Subscription>,
     },
 }
@@ -409,6 +407,7 @@ impl AcpThreadView {
 
         Self {
             agent: agent.clone(),
+            agent_server_store,
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
@@ -568,14 +567,7 @@ impl AcpThreadView {
                 Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
                     Ok(err) => {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(
-                                this,
-                                Some(err),
-                                agent,
-                                connection,
-                                window,
-                                cx,
-                            )
+                            Self::handle_auth_required(this, err, agent, connection, window, cx)
                         })
                         .log_err();
                         return;
@@ -740,17 +732,14 @@ impl AcpThreadView {
 
     fn handle_auth_required(
         this: WeakEntity<Self>,
-        // In the case of choosing a different authentication method, this may not be due to an error
-        err: Option<AuthRequired>,
+        err: AuthRequired,
         agent: Rc<dyn AgentServer>,
         connection: Rc<dyn AgentConnection>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let agent_name = agent.name();
-        let (configuration_view, subscription) = if let Some(err) = err.as_ref()
-            && let Some(provider_id) = &err.provider_id
-        {
+        let (configuration_view, subscription) = if let Some(provider_id) = &err.provider_id {
             let registry = LanguageModelRegistry::global(cx);
 
             let sub = window.subscribe(&registry, cx, {
@@ -790,9 +779,8 @@ impl AcpThreadView {
                 pending_auth_method: None,
                 connection,
                 configuration_view,
-                reauthenticating: err.is_none(),
                 description: err
-                    .and_then(|err| err.description)
+                    .description
                     .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx))),
                 _subscription: subscription,
             };
@@ -1099,7 +1087,14 @@ impl AcpThreadView {
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
                 window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(this, None, agent, connection, window, cx);
+                    Self::handle_auth_required(
+                        this,
+                        AuthRequired::new(),
+                        agent,
+                        connection,
+                        window,
+                        cx,
+                    );
                 });
                 cx.notify();
                 return;
@@ -1654,10 +1649,10 @@ impl AcpThreadView {
                 window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
-                        Some(AuthRequired {
+                        AuthRequired {
                             description: Some("GEMINI_API_KEY must be set".to_owned()),
                             provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
-                        }),
+                        },
                         agent,
                         connection,
                         window,
@@ -1678,13 +1673,13 @@ impl AcpThreadView {
             window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
-                        Some(AuthRequired {
+                        AuthRequired {
                             description: Some(
                                 "GOOGLE_API_KEY must be set in the environment to use Vertex AI authentication for Gemini CLI. Please export it and restart Zed."
                                     .to_owned(),
                             ),
                             provider_id: None,
-                        }),
+                        },
                         agent,
                         connection,
                         window,
@@ -3488,164 +3483,119 @@ impl AcpThreadView {
         pending_auth_method: Option<&acp::AuthMethodId>,
         window: &mut Window,
         cx: &Context<Self>,
-    ) -> Div {
-        let show_description =
-            configuration_view.is_none() && description.is_none() && pending_auth_method.is_none();
-
+    ) -> impl IntoElement {
         let auth_methods = connection.auth_methods();
-        let reauthenticating = matches!(
-            self.thread_state,
-            ThreadState::Unauthenticated {
-                reauthenticating: true,
-                ..
-            }
-        );
 
-        v_flex().flex_1().size_full().justify_end().child(
-            v_flex()
-                .p_2()
-                .pr_3()
-                .w_full()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .when(!reauthenticating, |el| {
-                    el.bg(cx.theme().status().warning.opacity(0.04))
-                })
-                .child(
-                    h_flex()
-                        .gap_1p5()
-                        .when(!reauthenticating, |el| {
-                            el.child(
-                                Icon::new(IconName::Warning)
-                                    .color(Color::Warning)
-                                    .size(IconSize::Small),
-                            )
-                        })
-                        .child(
-                            Label::new(if reauthenticating {
-                                "Authenticate"
-                            } else {
-                                "Authentication Required"
+        let agent_display_name = self
+            .agent_server_store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(self.agent.name()))
+            .unwrap_or_else(|| self.agent.name());
+
+        let show_fallback_description = auth_methods.len() > 1
+            && configuration_view.is_none()
+            && description.is_none()
+            && pending_auth_method.is_none();
+
+        let auth_buttons = || {
+            h_flex().justify_end().flex_wrap().gap_1().children(
+                connection
+                    .auth_methods()
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(ix, method)| {
+                        let (method_id, name) = if self.project.read(cx).is_via_remote_server()
+                            && method.id.0.as_ref() == "oauth-personal"
+                            && method.name == "Log in with Google"
+                        {
+                            ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
+                        } else {
+                            (method.id.0.clone(), method.name.clone())
+                        };
+
+                        let agent_telemetry_id = connection.telemetry_id();
+
+                        Button::new(method_id.clone(), name)
+                            .label_size(LabelSize::Small)
+                            .map(|this| {
+                                if ix == 0 {
+                                    this.style(ButtonStyle::Tinted(TintColor::Accent))
+                                } else {
+                                    this.style(ButtonStyle::Outlined)
+                                }
                             })
-                            .size(LabelSize::Small),
-                        ),
+                            .when_some(method.description.clone(), |this, description| {
+                                this.tooltip(Tooltip::text(description))
+                            })
+                            .on_click({
+                                cx.listener(move |this, _, window, cx| {
+                                    telemetry::event!(
+                                        "Authenticate Agent Started",
+                                        agent = agent_telemetry_id,
+                                        method = method_id
+                                    );
+
+                                    this.authenticate(
+                                        acp::AuthMethodId::new(method_id.clone()),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })
+                    }),
+            )
+        };
+
+        if pending_auth_method.is_some() {
+            return Callout::new()
+                .icon(IconName::Info)
+                .title(format!("Authenticating to {}…", agent_display_name))
+                .actions_slot(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2)
+                        .into_any_element(),
                 )
-                .children(description.map(|desc| {
-                    div().text_ui(cx).child(self.render_markdown(
-                        desc.clone(),
-                        default_markdown_style(false, false, window, cx),
-                    ))
-                }))
-                .children(
-                    configuration_view
-                        .cloned()
-                        .map(|view| div().w_full().child(view)),
-                )
-                .when(show_description, |el| {
-                    el.child(
-                        Label::new(if auth_methods.len() > 1 {
-                            format!(
-                                "Choose one of the following options to authenticate with {}:",
-                                self.agent.name()
+                .into_any_element();
+        }
+
+        Callout::new()
+            .icon(IconName::Info)
+            .title(format!("Authenticate to {}", agent_display_name))
+            .when(auth_methods.len() == 1, |this| {
+                this.actions_slot(auth_buttons())
+            })
+            .description_slot(
+                v_flex()
+                    .text_ui(cx)
+                    .map(|this| {
+                        if show_fallback_description {
+                            this.child(
+                                Label::new("Choose one of the following authentication options:")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             )
                         } else {
-                            format!(
-                                "No available authentication methods for {}.",
-                                self.agent.name()
+                            this.children(
+                                configuration_view
+                                    .cloned()
+                                    .map(|view| div().w_full().child(view)),
                             )
-                        })
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .mb_1()
-                        .when(!reauthenticating, |el| el.ml_5()),
-                    )
-                })
-                .when_some(pending_auth_method, |el, _| {
-                    el.child(
-                        h_flex()
-                            .py_4()
-                            .w_full()
-                            .justify_center()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .with_rotate_animation(2),
-                            )
-                            .child(Label::new("Authenticating…").size(LabelSize::Small)),
-                    )
-                })
-                .when(!auth_methods.is_empty(), |this| {
-                    this.child(
-                        h_flex()
-                            .justify_end()
-                            .flex_wrap()
-                            .gap_1()
-                            .when(!show_description, |this| {
-                                this.border_t_1()
-                                    .mt_1()
-                                    .pt_2()
-                                    .border_color(cx.theme().colors().border.opacity(0.8))
-                            })
-                            .children(connection.auth_methods().iter().enumerate().rev().map(
-                                |(ix, method)| {
-                                    let (method_id, name) = if self
-                                        .project
-                                        .read(cx)
-                                        .is_via_remote_server()
-                                        && method.id.0.as_ref() == "oauth-personal"
-                                        && method.name == "Log in with Google"
-                                    {
-                                        ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
-                                    } else {
-                                        (method.id.0.clone(), method.name.clone())
-                                    };
-
-                                    let agent_telemetry_id = connection.telemetry_id();
-
-                                    Button::new(method_id.clone(), name)
-                                        .label_size(LabelSize::Small)
-                                        .map(|this| {
-                                            if ix == 0 {
-                                                this.style(ButtonStyle::Tinted(
-                                                    if reauthenticating {
-                                                        TintColor::Accent
-                                                    } else {
-                                                        TintColor::Warning
-                                                    },
-                                                ))
-                                            } else {
-                                                this.style(ButtonStyle::Outlined)
-                                            }
-                                        })
-                                        .when_some(
-                                            method.description.clone(),
-                                            |this, description| {
-                                                this.tooltip(Tooltip::text(description))
-                                            },
-                                        )
-                                        .on_click({
-                                            cx.listener(move |this, _, window, cx| {
-                                                telemetry::event!(
-                                                    "Authenticate Agent Started",
-                                                    agent = agent_telemetry_id,
-                                                    method = method_id
-                                                );
-
-                                                this.authenticate(
-                                                    acp::AuthMethodId::new(method_id.clone()),
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                        })
-                                },
-                            )),
-                    )
-                }),
-        )
+                            .children(description.map(|desc| {
+                                self.render_markdown(
+                                    desc.clone(),
+                                    default_markdown_style(false, false, window, cx),
+                                )
+                            }))
+                        }
+                    })
+                    .when(auth_methods.len() > 1, |this| {
+                        this.gap_1().child(auth_buttons())
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_load_error(
@@ -5902,7 +5852,14 @@ impl AcpThreadView {
                     }
                     let this = cx.weak_entity();
                     window.defer(cx, |window, cx| {
-                        Self::handle_auth_required(this, None, agent, connection, window, cx);
+                        Self::handle_auth_required(
+                            this,
+                            AuthRequired::new(),
+                            agent,
+                            connection,
+                            window,
+                            cx,
+                        );
                     })
                 }
             }))
@@ -5918,7 +5875,7 @@ impl AcpThreadView {
         self.clear_thread_error(cx);
         let this = cx.weak_entity();
         window.defer(cx, |window, cx| {
-            Self::handle_auth_required(this, None, agent, connection, window, cx);
+            Self::handle_auth_required(this, AuthRequired::new(), agent, connection, window, cx);
         })
     }
 
@@ -6021,16 +5978,19 @@ impl Render for AcpThreadView {
                     configuration_view,
                     pending_auth_method,
                     ..
-                } => self
-                    .render_auth_required_state(
+                } => v_flex()
+                    .flex_1()
+                    .size_full()
+                    .justify_end()
+                    .child(self.render_auth_required_state(
                         connection,
                         description.as_ref(),
                         configuration_view.as_ref(),
                         pending_auth_method.as_ref(),
                         window,
                         cx,
-                    )
-                    .into_any(),
+                    ))
+                    .into_any_element(),
                 ThreadState::Loading { .. } => v_flex()
                     .flex_1()
                     .child(self.render_recent_history(cx))
