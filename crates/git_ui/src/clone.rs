@@ -1,82 +1,88 @@
-use gpui::{App, Context, Window};
+use gpui::{App, Context, WeakEntity, Window};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use std::sync::Arc;
 use ui::{Color, IconName};
 use util::ResultExt;
-use workspace::{self, AppState};
+use workspace::{self, Workspace};
 
 pub fn clone_and_open(
     repo_url: String,
-    app_state: Arc<AppState>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
     cx: &mut App,
     on_success: Arc<
-        dyn Fn(&mut workspace::Workspace, &mut Window, &mut Context<workspace::Workspace>)
-            + Send
-            + Sync
-            + 'static,
+        dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + Sync + 'static,
     >,
 ) {
-    workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
-        let path_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Select directory for cloned repository".into()),
-        });
+    let destination_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: Some("Select as Repository Destination".into()),
+    });
 
-        cx.spawn_in(window, async move |workspace, cx| {
-            let mut paths = path_prompt.await.ok()?.ok()??;
-            let mut path = paths.pop()?;
+    window
+        .spawn(cx, async move |cx| {
+            let mut paths = destination_prompt.await.ok()?.ok()??;
+            let mut destination_dir = paths.pop()?;
 
             let repo_name = repo_url
                 .split('/')
                 .next_back()
-                .and_then(|name| name.strip_suffix(".git"))
+                .map(|name| name.strip_suffix(".git").unwrap_or(name))
                 .unwrap_or("repository")
                 .to_owned();
 
-            let fs = workspace
-                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+            let clone_task = workspace
+                .update(cx, |workspace, cx| {
+                    let fs = workspace.app_state().fs.clone();
+                    let destination_dir = destination_dir.clone();
+                    let repo_url = repo_url.clone();
+                    cx.spawn(async move |_workspace, _cx| {
+                        fs.git_clone(&repo_url, destination_dir.as_path()).await
+                    })
+                })
                 .ok()?;
 
-            let prompt_answer = match fs.git_clone(&repo_url, path.as_path()).await {
-                Ok(_) => cx.update(|window, cx| {
+            if let Err(error) = clone_task.await {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let toast = StatusToast::new(error.to_string(), cx, |this, _| {
+                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                .dismiss_button(true)
+                        });
+                        workspace.toggle_status_toast(toast, cx);
+                    })
+                    .log_err();
+                return None;
+            }
+
+            let prompt_answer = cx
+                .update(|window, cx| {
                     window.prompt(
                         gpui::PromptLevel::Info,
-                        &format!("Git Clone: \"{}\"", repo_name),
+                        &format!("Git Clone: {}", repo_name),
                         None,
-                        &["Add to current project", "Open in new window"],
+                        &["Add repo to project", "Open repo in new project"],
                         cx,
                     )
-                }),
-                Err(e) => {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            let toast = StatusToast::new(e.to_string(), cx, |this, _| {
-                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                    .dismiss_button(true)
-                            });
-                            workspace.toggle_status_toast(toast, cx);
-                        })
-                        .ok()?;
+                })
+                .ok()?;
 
-                    return None;
-                }
-            }
-            .ok()?;
-
-            path.push(&repo_name);
+            destination_dir.push(&repo_name);
 
             match prompt_answer.await.ok()? {
                 0 => {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            let worktree_task = workspace.project().update(cx, |project, cx| {
-                                project.create_worktree(path.as_path(), true, cx)
+                            let create_task = workspace.project().update(cx, |project, cx| {
+                                project.create_worktree(destination_dir.as_path(), true, cx)
                             });
+
                             let workspace_weak = cx.weak_entity();
+                            let on_success = on_success.clone();
                             cx.spawn_in(window, async move |_window, cx| {
-                                if worktree_task.await.log_err().is_some() {
+                                if create_task.await.log_err().is_some() {
                                     workspace_weak
                                         .update_in(cx, |workspace, window, cx| {
                                             (on_success)(workspace, window, cx);
@@ -90,20 +96,30 @@ pub fn clone_and_open(
                 }
                 1 => {
                     workspace
-                        .update(cx, move |_workspace, cx| {
+                        .update(cx, move |workspace, cx| {
+                            let app_state = workspace.app_state().clone();
+                            let destination_path = destination_dir.clone();
+                            let on_success = on_success.clone();
+
                             workspace::open_new(
                                 Default::default(),
                                 app_state,
                                 cx,
                                 move |workspace, window, cx| {
                                     cx.activate(true);
-                                    let worktree_task =
+
+                                    let create_task =
                                         workspace.project().update(cx, |project, cx| {
-                                            project.create_worktree(&path, true, cx)
+                                            project.create_worktree(
+                                                destination_path.as_path(),
+                                                true,
+                                                cx,
+                                            )
                                         });
+
                                     let workspace_weak = cx.weak_entity();
                                     cx.spawn_in(window, async move |_window, cx| {
-                                        if worktree_task.await.log_err().is_some() {
+                                        if create_task.await.log_err().is_some() {
                                             workspace_weak
                                                 .update_in(cx, |workspace, window, cx| {
                                                     (on_success)(workspace, window, cx);
@@ -124,5 +140,4 @@ pub fn clone_and_open(
             Some(())
         })
         .detach();
-    });
 }

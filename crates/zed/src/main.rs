@@ -896,15 +896,17 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 .detach_and_log_err(cx);
             }
             OpenRequestKind::GitClone { repo_url } => {
-                let app_state = app_state.clone();
-                clone_and_open(
-                    repo_url,
-                    app_state,
-                    cx,
-                    Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
-                        workspace.focus_panel::<ProjectPanel>(window, cx);
-                    }),
-                );
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    clone_and_open(
+                        repo_url,
+                        cx.entity().downgrade(),
+                        window,
+                        cx,
+                        Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                            workspace.focus_panel::<ProjectPanel>(window, cx);
+                        }),
+                    );
+                });
             }
             OpenRequestKind::GitCommit { sha } => {
                 cx.spawn(async move |cx| {
