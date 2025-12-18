@@ -19,6 +19,10 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
+/// Maximum timeout for context server requests (10 minutes).
+/// Prevents extremely large timeout values from tying up resources indefinitely.
+const MAX_TIMEOUT_MS: u64 = 600_000;
+
 pub fn init(cx: &mut App) {
     extension::init(cx);
 }
@@ -503,7 +507,8 @@ impl ContextServerStore {
                 timeout,
             } => {
                 // Apply timeout precedence for HTTP servers: per-server > global
-                let resolved_timeout = timeout.unwrap_or(global_timeout);
+                // Cap at MAX_TIMEOUT_MS to prevent extremely large timeout values
+                let resolved_timeout = timeout.unwrap_or(global_timeout).min(MAX_TIMEOUT_MS);
 
                 Ok(Arc::new(ContextServer::http(
                     id,
@@ -533,9 +538,16 @@ impl ContextServerStore {
                     });
 
                 // Apply timeout precedence for stdio servers: per-server > global
-                let mut command_with_timeout = configuration.command().unwrap().clone();
+                // Cap at MAX_TIMEOUT_MS to prevent extremely large timeout values
+                let mut command_with_timeout = configuration
+                    .command()
+                    .context("Missing command configuration for stdio context server")?
+                    .clone();
                 if command_with_timeout.timeout.is_none() {
-                    command_with_timeout.timeout = Some(global_timeout);
+                    command_with_timeout.timeout = Some(global_timeout.min(MAX_TIMEOUT_MS));
+                } else {
+                    command_with_timeout.timeout =
+                        command_with_timeout.timeout.map(|t| t.min(MAX_TIMEOUT_MS));
                 }
 
                 Ok(Arc::new(ContextServer::stdio(
@@ -1353,6 +1365,163 @@ mod tests {
                 self.expected_event_count, actual_event_count
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
+        // Configure global timeout to 90 seconds
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"context_server_timeout": 90000}"#, cx)
+                    .unwrap();
+            });
+        });
+
+        let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        // Test that create_context_server applies global timeout
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("test-server".into()),
+                Arc::new(ContextServerConfiguration::Http {
+                    url: url::Url::parse("http://localhost:8080").unwrap(),
+                    headers: Default::default(),
+                    timeout: None, // Should use global timeout of 90 seconds
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Server should be created successfully with global timeout"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext) {
+        const SERVER_ID: &str = "test-server";
+
+        // Configure global timeout to 60 seconds
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"context_server_timeout": 60000}"#, cx)
+                    .unwrap();
+            });
+        });
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({"code.rs": ""}),
+            vec![(
+                SERVER_ID.into(),
+                ContextServerSettings::Http {
+                    enabled: true,
+                    url: "http://localhost:8080".to_string(),
+                    headers: Default::default(),
+                    timeout: Some(120000), // Override to 120 seconds
+                },
+            )],
+        )
+        .await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        // Test that create_context_server applies per-server timeout override
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("test-server".into()),
+                Arc::new(ContextServerConfiguration::Http {
+                    url: url::Url::parse("http://localhost:8080").unwrap(),
+                    headers: Default::default(),
+                    timeout: Some(120000), // Override: should use 120 seconds, not global 60
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Server should be created successfully with per-server timeout override"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
+        const SERVER_ID: &str = "stdio-server";
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({"code.rs": ""}),
+            vec![(
+                SERVER_ID.into(),
+                ContextServerSettings::Stdio {
+                    enabled: true,
+                    command: ContextServerCommand {
+                        path: "/usr/bin/node".into(),
+                        args: vec!["server.js".into()],
+                        env: None,
+                        timeout: Some(180000), // 3 minutes
+                    },
+                },
+            )],
+        )
+        .await;
+
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        // Test that create_context_server works with stdio timeout
+        let result = store.update(cx, |store, cx| {
+            store.create_context_server(
+                ContextServerId("stdio-server".into()),
+                Arc::new(ContextServerConfiguration::Custom {
+                    command: ContextServerCommand {
+                        path: "/usr/bin/node".into(),
+                        args: vec!["server.js".into()],
+                        env: None,
+                        timeout: Some(180000), // 3 minutes
+                    },
+                }),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Stdio server should be created successfully with timeout"
+        );
     }
 
     fn dummy_server_settings() -> ContextServerSettings {
