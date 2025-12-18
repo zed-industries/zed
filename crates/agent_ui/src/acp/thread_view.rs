@@ -311,6 +311,9 @@ enum ThreadState {
         description: Option<Entity<Markdown>>,
         configuration_view: Option<AnyView>,
         pending_auth_method: Option<acp::AuthMethodId>,
+        /// Whether the user needs to log in for the first time `false`,
+        /// or if they are choosing a different authentication method `true`
+        reauthenticating: bool,
         _subscription: Option<Subscription>,
     },
 }
@@ -565,7 +568,14 @@ impl AcpThreadView {
                 Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
                     Ok(err) => {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(this, err, agent, connection, window, cx)
+                            Self::handle_auth_required(
+                                this,
+                                Some(err),
+                                agent,
+                                connection,
+                                window,
+                                cx,
+                            )
                         })
                         .log_err();
                         return;
@@ -730,14 +740,17 @@ impl AcpThreadView {
 
     fn handle_auth_required(
         this: WeakEntity<Self>,
-        err: AuthRequired,
+        // In the case of choosing a different authentication method, this may not be due to an error
+        err: Option<AuthRequired>,
         agent: Rc<dyn AgentServer>,
         connection: Rc<dyn AgentConnection>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let agent_name = agent.name();
-        let (configuration_view, subscription) = if let Some(provider_id) = err.provider_id {
+        let (configuration_view, subscription) = if let Some(err) = err.as_ref()
+            && let Some(provider_id) = &err.provider_id
+        {
             let registry = LanguageModelRegistry::global(cx);
 
             let sub = window.subscribe(&registry, cx, {
@@ -777,9 +790,9 @@ impl AcpThreadView {
                 pending_auth_method: None,
                 connection,
                 configuration_view,
+                reauthenticating: err.is_none(),
                 description: err
-                    .description
-                    .clone()
+                    .and_then(|err| err.description)
                     .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx))),
                 _subscription: subscription,
             };
@@ -1086,17 +1099,7 @@ impl AcpThreadView {
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
                 window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired {
-                            description: None,
-                            provider_id: None,
-                        },
-                        agent,
-                        connection,
-                        window,
-                        cx,
-                    );
+                    Self::handle_auth_required(this, None, agent, connection, window, cx);
                 });
                 cx.notify();
                 return;
@@ -1651,10 +1654,10 @@ impl AcpThreadView {
                 window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
-                        AuthRequired {
+                        Some(AuthRequired {
                             description: Some("GEMINI_API_KEY must be set".to_owned()),
                             provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
-                        },
+                        }),
                         agent,
                         connection,
                         window,
@@ -1675,13 +1678,13 @@ impl AcpThreadView {
             window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
-                        AuthRequired {
+                        Some(AuthRequired {
                             description: Some(
                                 "GOOGLE_API_KEY must be set in the environment to use Vertex AI authentication for Gemini CLI. Please export it and restart Zed."
                                     .to_owned(),
                             ),
                             provider_id: None,
-                        },
+                        }),
                         agent,
                         connection,
                         window,
@@ -3490,6 +3493,13 @@ impl AcpThreadView {
             configuration_view.is_none() && description.is_none() && pending_auth_method.is_none();
 
         let auth_methods = connection.auth_methods();
+        let reauthenticating = matches!(
+            self.thread_state,
+            ThreadState::Unauthenticated {
+                reauthenticating: true,
+                ..
+            }
+        );
 
         v_flex().flex_1().size_full().justify_end().child(
             v_flex()
@@ -3499,16 +3509,27 @@ impl AcpThreadView {
                 .gap_1()
                 .border_t_1()
                 .border_color(cx.theme().colors().border)
-                .bg(cx.theme().status().warning.opacity(0.04))
+                .when(!reauthenticating, |el| {
+                    el.bg(cx.theme().status().warning.opacity(0.04))
+                })
                 .child(
                     h_flex()
                         .gap_1p5()
+                        .when(!reauthenticating, |el| {
+                            el.child(
+                                Icon::new(IconName::Warning)
+                                    .color(Color::Warning)
+                                    .size(IconSize::Small),
+                            )
+                        })
                         .child(
-                            Icon::new(IconName::Warning)
-                                .color(Color::Warning)
-                                .size(IconSize::Small),
-                        )
-                        .child(Label::new("Authentication Required").size(LabelSize::Small)),
+                            Label::new(if reauthenticating {
+                                "Authenticate"
+                            } else {
+                                "Authentication Required"
+                            })
+                            .size(LabelSize::Small),
+                        ),
                 )
                 .children(description.map(|desc| {
                     div().text_ui(cx).child(self.render_markdown(
@@ -3523,19 +3544,21 @@ impl AcpThreadView {
                 )
                 .when(show_description, |el| {
                     el.child(
-                        Label::new(format!(
-                            "You are not currently authenticated with {}.{}",
-                            self.agent.name(),
-                            if auth_methods.len() > 1 {
-                                " Please choose one of the following options:"
-                            } else {
-                                ""
-                            }
-                        ))
+                        Label::new(if auth_methods.len() > 1 {
+                            format!(
+                                "Choose one of the following options to authenticate with {}:",
+                                self.agent.name()
+                            )
+                        } else {
+                            format!(
+                                "No available authentication methods for {}.",
+                                self.agent.name()
+                            )
+                        })
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .mb_1()
-                        .ml_5(),
+                        .when(!reauthenticating, |el| el.ml_5()),
                     )
                 })
                 .when_some(pending_auth_method, |el, _| {
@@ -3586,7 +3609,13 @@ impl AcpThreadView {
                                         .label_size(LabelSize::Small)
                                         .map(|this| {
                                             if ix == 0 {
-                                                this.style(ButtonStyle::Tinted(TintColor::Warning))
+                                                this.style(ButtonStyle::Tinted(
+                                                    if reauthenticating {
+                                                        TintColor::Accent
+                                                    } else {
+                                                        TintColor::Warning
+                                                    },
+                                                ))
                                             } else {
                                                 this.style(ButtonStyle::Outlined)
                                             }
@@ -5865,10 +5894,6 @@ impl AcpThreadView {
                     };
 
                     let connection = thread.read(cx).connection().clone();
-                    let err = AuthRequired {
-                        description: None,
-                        provider_id: None,
-                    };
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
                         this.message_editor.update(cx, |editor, cx| {
@@ -5877,7 +5902,7 @@ impl AcpThreadView {
                     }
                     let this = cx.weak_entity();
                     window.defer(cx, |window, cx| {
-                        Self::handle_auth_required(this, err, agent, connection, window, cx);
+                        Self::handle_auth_required(this, None, agent, connection, window, cx);
                     })
                 }
             }))
@@ -5890,14 +5915,10 @@ impl AcpThreadView {
         };
 
         let connection = thread.read(cx).connection().clone();
-        let err = AuthRequired {
-            description: None,
-            provider_id: None,
-        };
         self.clear_thread_error(cx);
         let this = cx.weak_entity();
         window.defer(cx, |window, cx| {
-            Self::handle_auth_required(this, err, agent, connection, window, cx);
+            Self::handle_auth_required(this, None, agent, connection, window, cx);
         })
     }
 
