@@ -915,7 +915,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let subscription = Rc::new(RefCell::new(None));
                     subscription.replace(Some(cx.observe_in(&cx.entity(), window, {
                         let subscription = subscription.clone();
-                        let repo_url = repo_url.clone();
+                        let repo_url = repo_url;
                         move |_, workspace_entity, window, cx| {
                             if window.is_window_active() && subscription.take().is_some() {
                                 clone_and_open(
