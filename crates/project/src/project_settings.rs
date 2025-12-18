@@ -875,7 +875,6 @@ impl SettingsObserver {
             None => proto::LocalSettingsKind::Settings,
         };
         let path = RelPath::from_proto(&envelope.payload.path)?;
-        dbg!("got update worktree settings", &path);
         this.update(&mut cx, |this, cx| {
             let is_via_collab = match &this.mode {
                 SettingsObserverMode::Local(..) => false,
