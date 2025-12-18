@@ -56,13 +56,13 @@ impl RenderOnce for ToolCall {
                     .gap_1()
                     .justify_between()
                     .when(self.use_card_layout, |this| {
-                        this.px_2()
-                            .py_1()
+                        this.p_1()
                             .bg(cx.theme().colors().element_background.opacity(0.2))
                     })
                     .child(
                         h_flex()
                             .w_full()
+                            .when(self.use_card_layout, |this| this.px_1p5())
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
                             .gap_1p5()
                             .rounded_xs()
@@ -89,8 +89,8 @@ impl RenderOnce for ToolCall {
                                     .border_color(cx.theme().colors().border)
                                     .bg(cx.theme().colors().editor_background)
                             } else {
-                                this.pl_2()
-                                    .ml_2()
+                                this.pl_1()
+                                    .ml_1()
                                     .border_l_1()
                                     .border_color(cx.theme().colors().border)
                             }
