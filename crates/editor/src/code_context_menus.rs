@@ -1,3 +1,6 @@
+use crate::CodeActionSource;
+use crate::actions::ConfirmCodeAction;
+use crate::fuzzy_popover::FuzzyPopover;
 use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -34,14 +37,12 @@ use ui::{
 };
 use util::ResultExt;
 
+use crate::EditorSettings;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
-    ResolvedTasks,
-    actions::{ConfirmCodeAction, ConfirmCompletion},
-    split_words, styled_runs_for_code_label,
+    ResolvedTasks, actions::ConfirmCompletion, split_words, styled_runs_for_code_label,
 };
-use crate::{CodeActionSource, EditorSettings};
 use collections::{HashSet, VecDeque};
 use settings::{Settings, SnippetSortOrder};
 
@@ -68,7 +69,7 @@ const RESOLVE_AFTER_ITEMS: usize = 4;
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
-    CodeActions(CodeActionsMenu),
+    CodeActions(FuzzyPopover<CodeActionsItem>),
 }
 
 impl CodeContextMenu {
@@ -81,7 +82,9 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_first(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
+                CodeContextMenu::CodeActions(menu) => {
+                    menu.select_first(cx);
+                }
             }
             true
         } else {
@@ -98,7 +101,9 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_prev(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
+                CodeContextMenu::CodeActions(menu) => {
+                    menu.select_prev(cx);
+                }
             }
             true
         } else {
@@ -115,7 +120,9 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
+                CodeContextMenu::CodeActions(menu) => {
+                    menu.select_next(cx);
+                }
             }
             true
         } else {
@@ -132,7 +139,9 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
+                CodeContextMenu::CodeActions(menu) => {
+                    menu.select_last(cx);
+                }
             }
             true
         } else {
@@ -143,7 +152,7 @@ impl CodeContextMenu {
     pub fn visible(&self) -> bool {
         match self {
             CodeContextMenu::Completions(menu) => menu.visible(),
-            CodeContextMenu::CodeActions(menu) => menu.visible(),
+            CodeContextMenu::CodeActions(menu) => menu.visible_len() > 0,
         }
     }
 
@@ -165,9 +174,7 @@ impl CodeContextMenu {
             CodeContextMenu::Completions(menu) => {
                 menu.render(style, max_height_in_lines, window, cx)
             }
-            CodeContextMenu::CodeActions(menu) => {
-                menu.render(style, max_height_in_lines, window, cx)
-            }
+            CodeContextMenu::CodeActions(menu) => menu.render(max_height_in_lines, window, cx),
         }
     }
 
@@ -215,6 +222,7 @@ impl CodeContextMenu {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
@@ -1324,7 +1332,6 @@ pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
-    pub(crate) context: TaskContext,
 }
 
 impl CodeActionContents {
@@ -1332,13 +1339,11 @@ impl CodeActionContents {
         tasks: Option<ResolvedTasks>,
         actions: Option<Rc<[AvailableCodeAction]>>,
         debug_scenarios: Vec<DebugScenario>,
-        context: TaskContext,
     ) -> Self {
         Self {
             tasks: tasks.map(Rc::new),
             actions,
             debug_scenarios,
-            context,
         }
     }
 
@@ -1356,7 +1361,7 @@ impl CodeActionContents {
         self.len() == 0
     }
 
-    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {
@@ -1419,20 +1424,20 @@ pub enum CodeActionsItem {
 }
 
 impl CodeActionsItem {
-    fn as_task(&self) -> Option<&ResolvedTask> {
+    pub fn as_task(&self) -> Option<&ResolvedTask> {
         let Self::Task(_, task) = self else {
             return None;
         };
         Some(task)
     }
 
-    fn as_code_action(&self) -> Option<&CodeAction> {
+    pub fn as_code_action(&self) -> Option<&CodeAction> {
         let Self::CodeAction { action, .. } = self else {
             return None;
         };
         Some(action)
     }
-    fn as_debug_scenario(&self) -> Option<&DebugScenario> {
+    pub fn as_debug_scenario(&self) -> Option<&DebugScenario> {
         let Self::DebugScenario(scenario) = self else {
             return None;
         };
@@ -1441,198 +1446,78 @@ impl CodeActionsItem {
 
     pub fn label(&self) -> String {
         match self {
-            Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
+            Self::CodeAction { action, .. } => action.lsp_action.title().to_string(),
             Self::Task(_, task) => task.resolved_label.clone(),
             Self::DebugScenario(scenario) => scenario.label.to_string(),
         }
     }
 }
 
-pub struct CodeActionsMenu {
-    pub actions: CodeActionContents,
-    pub buffer: Entity<Buffer>,
-    pub selected_item: usize,
-    pub scroll_handle: UniformListScrollHandle,
-    pub deployed_from: Option<CodeActionSource>,
-}
-
-impl CodeActionsMenu {
-    fn select_first(&mut self, cx: &mut Context<Editor>) {
-        self.selected_item = if self.scroll_handle.y_flipped() {
-            self.actions.len() - 1
-        } else {
-            0
-        };
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify()
-    }
-
-    fn select_last(&mut self, cx: &mut Context<Editor>) {
-        self.selected_item = if self.scroll_handle.y_flipped() {
-            0
-        } else {
-            self.actions.len() - 1
-        };
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify()
-    }
-
-    fn select_prev(&mut self, cx: &mut Context<Editor>) {
-        self.selected_item = if self.scroll_handle.y_flipped() {
-            self.next_match_index()
-        } else {
-            self.prev_match_index()
-        };
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify();
-    }
-
-    fn select_next(&mut self, cx: &mut Context<Editor>) {
-        self.selected_item = if self.scroll_handle.y_flipped() {
-            self.prev_match_index()
-        } else {
-            self.next_match_index()
-        };
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify();
-    }
-
-    fn prev_match_index(&self) -> usize {
-        if self.selected_item > 0 {
-            self.selected_item - 1
-        } else {
-            self.actions.len() - 1
+pub fn create_code_actions_popover(
+    actions: CodeActionContents,
+    buffer: Entity<Buffer>,
+    deployed_from: Option<CodeActionSource>,
+    task_context: TaskContext,
+    task_position: Option<Anchor>,
+) -> FuzzyPopover<CodeActionsItem> {
+    let origin = deployed_from.as_ref().map(|source| match source {
+        CodeActionSource::Indicator(row) | CodeActionSource::RunMenu(row) => {
+            ContextMenuOrigin::GutterIndicator(*row)
         }
-    }
+        CodeActionSource::QuickActionBar => ContextMenuOrigin::QuickActionBar,
+    });
 
-    fn next_match_index(&self) -> usize {
-        if self.selected_item + 1 < self.actions.len() {
-            self.selected_item + 1
-        } else {
-            0
-        }
-    }
+    let is_quick_action_bar = matches!(origin, Some(ContextMenuOrigin::QuickActionBar));
 
-    pub fn visible(&self) -> bool {
-        !self.actions.is_empty()
-    }
-
-    fn origin(&self) -> ContextMenuOrigin {
-        match &self.deployed_from {
-            Some(CodeActionSource::Indicator(row)) | Some(CodeActionSource::RunMenu(row)) => {
-                ContextMenuOrigin::GutterIndicator(*row)
+    FuzzyPopover::new(
+        actions.iter().collect(),
+        buffer,
+        origin,
+        task_context,
+        task_position,
+        UniformListScrollHandle::default(),
+        |item| match item {
+            CodeActionsItem::CodeAction { action, .. } => {
+                action.lsp_action.title().replace("\n", "")
             }
-            Some(CodeActionSource::QuickActionBar) => ContextMenuOrigin::QuickActionBar,
-            None => ContextMenuOrigin::Cursor,
-        }
-    }
+            CodeActionsItem::Task(_, task) => task.resolved_label.replace("\n", ""),
+            CodeActionsItem::DebugScenario(scenario) => {
+                format!("debug: {}", scenario.label)
+            }
+        },
+        move |item, match_positions, selected, cx| {
+            use ui::ListItem;
+            let label = match item {
+                CodeActionsItem::CodeAction { action, .. } => {
+                    action.lsp_action.title().replace("\n", "")
+                }
+                CodeActionsItem::Task(_, task) => task.resolved_label.replace("\n", ""),
+                CodeActionsItem::DebugScenario(scenario) => {
+                    format!("debug: {}", scenario.label)
+                }
+            };
 
-    fn render(
-        &self,
-        _style: &EditorStyle,
-        max_height_in_lines: u32,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> AnyElement {
-        let actions = self.actions.clone();
-        let selected_item = self.selected_item;
-        let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
-
-        let list = uniform_list(
-            "code_actions_menu",
-            self.actions.len(),
-            cx.processor(move |_this, range: Range<usize>, _, cx| {
-                actions
-                    .iter()
-                    .skip(range.start)
-                    .take(range.end - range.start)
-                    .enumerate()
-                    .map(|(ix, action)| {
-                        let item_ix = range.start + ix;
-                        let selected = item_ix == selected_item;
-                        let colors = cx.theme().colors();
-                        div().min_w(px(220.)).max_w(px(540.)).child(
-                            ListItem::new(item_ix)
-                                .inset(true)
-                                .toggle_state(selected)
-                                .when_some(action.as_code_action(), |this, action| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(
-                                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title().replace("\n", ""),
-                                            )
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_task(), |this, task| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(task.resolved_label.replace("\n", ""))
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_debug_scenario(), |this, scenario| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child("debug: ")
-                                            .child(scenario.label.clone())
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .on_click(cx.listener(move |editor, _, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                })),
-                        )
-                    })
-                    .collect()
-            }),
-        )
-        .occlude()
-        .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(&self.scroll_handle)
-        .with_width_from_item(
-            self.actions
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, action)| match action {
-                    CodeActionsItem::Task(_, task) => task.resolved_label.chars().count(),
-                    CodeActionsItem::CodeAction { action, .. } => {
-                        action.lsp_action.title().chars().count()
-                    }
-                    CodeActionsItem::DebugScenario(scenario) => {
-                        format!("debug: {}", scenario.label).chars().count()
-                    }
-                })
-                .map(|(ix, _)| ix),
-        )
-        .with_sizing_behavior(ListSizingBehavior::Infer);
-
-        Popover::new().child(list).into_any_element()
-    }
+            ListItem::new(SharedString::from(label.clone()))
+                .inset(true)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .overflow_hidden()
+                        .when(is_quick_action_bar, |this| this.text_ui(cx))
+                        .child(ui::HighlightedLabel::new(label, match_positions)),
+                )
+                .into_any_element()
+        },
+        |_item, item_ix, editor, window, cx| {
+            if let Some(task) = editor.confirm_code_action(
+                &ConfirmCodeAction {
+                    item_ix: Some(item_ix),
+                },
+                window,
+                cx,
+            ) {
+                task.detach_and_log_err(cx)
+            }
+        },
+    )
 }
