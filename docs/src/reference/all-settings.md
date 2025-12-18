@@ -155,7 +155,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](../extensions/installing-extensions.md#installation-location):
 
 On macOS:
 
@@ -2221,7 +2221,7 @@ Example:
 
 ## Helix Mode
 
-- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](../helix.md) for more details.
 - Setting: `helix_mode`
 - Default: `false`
 
@@ -4649,7 +4649,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Collaboration Panel
 
@@ -4690,7 +4690,7 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 }
 ```
 
-See the [debugger page](./debugger.md) for more information about debugging support within Zed.
+See the [debugger page](../debugger.md) for more information about debugging support within Zed.
 
 ## Git Panel
 
