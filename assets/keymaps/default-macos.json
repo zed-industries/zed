@@ -267,6 +267,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-k l": "agent::OpenRulesLibrary",
       "alt-tab": "agent::CycleFavoriteModels",
+      "cmd-shift-v": "agent::PasteRaw",
     },
   },
   {
