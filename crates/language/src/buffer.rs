@@ -1697,9 +1697,6 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
-        if self.text.version() != *self.tree_sitter_data.version() {
-            self.invalidate_tree_sitter_data(self.text.snapshot());
-        }
         if self.reparse.is_some() {
             return;
         }
@@ -1801,9 +1798,7 @@ impl Buffer {
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        if self.text.version() != *self.tree_sitter_data.version() {
-            self.invalidate_tree_sitter_data(self.text.snapshot());
-        }
+        self.invalidate_tree_sitter_data(self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
