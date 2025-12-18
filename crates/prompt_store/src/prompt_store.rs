@@ -479,7 +479,7 @@ impl PromptStore {
         } else {
             PromptMetadata {
                 id,
-                title: title.clone(),
+                title,
                 default,
                 saved_at: Utc::now(),
             }
