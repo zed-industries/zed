@@ -43,6 +43,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
+use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -135,6 +136,46 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             matcher: LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "'".to_string(),
+                        end: "'".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: Default::default(),
             },
             ..Default::default()
         },
@@ -289,6 +330,10 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
+    pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        self.adapter.process_prompt_response(context, cx)
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -307,11 +352,22 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>>;
+    ) -> Result<Option<(PathBuf, Version)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+}
+
+/// Context provided to LSP adapters when a user responds to a ShowMessageRequest prompt.
+/// This allows adapters to intercept preference selections (like "Always" or "Never")
+/// and potentially persist them to Zed's settings.
+#[derive(Debug, Clone)]
+pub struct PromptResponseContext {
+    /// The original message shown to the user
+    pub message: String,
+    /// The action (button) the user selected
+    pub selected_action: lsp::MessageActionItem,
 }
 
 #[async_trait(?Send)]
@@ -470,6 +526,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn is_extension(&self) -> bool {
         false
     }
+
+    /// Called when a user responds to a ShowMessageRequest from this language server.
+    /// This allows adapters to intercept preference selections (like "Always" or "Never")
+    /// for settings that should be persisted to Zed's settings file.
+    fn process_prompt_response(&self, _context: &PromptResponseContext, _cx: &mut AsyncApp) {}
 }
 
 pub trait LspInstaller {
@@ -495,7 +556,7 @@ pub trait LspInstaller {
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> {
         async { None }
     }
 
@@ -504,7 +565,7 @@ pub trait LspInstaller {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Result<LanguageServerBinary>>;
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>>;
 
     fn cached_server_binary(
         &self,
@@ -535,6 +596,7 @@ pub trait DynLspInstaller {
 #[async_trait(?Send)]
 impl<LI, BinaryVersion> DynLspInstaller for LI
 where
+    BinaryVersion: Send + Sync,
     LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
 {
     async fn try_fetch_server_binary(
@@ -553,8 +615,13 @@ where
             .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
             .await?;
 
-        if let Some(binary) = self
-            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+        if let Some(binary) = cx
+            .background_executor()
+            .await_on_background(self.check_if_version_installed(
+                &latest_version,
+                &container_dir,
+                delegate.as_ref(),
+            ))
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
@@ -563,8 +630,13 @@ where
         } else {
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = self
-                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            let binary = cx
+                .background_executor()
+                .await_on_background(self.fetch_server_binary(
+                    latest_version,
+                    container_dir,
+                    delegate.as_ref(),
+                ))
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);
@@ -982,7 +1054,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: LanguageName::new(""),
+            name: LanguageName::new_static(""),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -2374,7 +2446,10 @@ impl CodeLabel {
             "invalid filter range"
         );
         runs.iter().for_each(|(range, _)| {
-            assert!(text.get(range.clone()).is_some(), "invalid run range");
+            assert!(
+                text.get(range.clone()).is_some(),
+                "invalid run range with inputs. Requested range {range:?} in text '{text}'",
+            );
         });
         Self {
             runs,
@@ -2656,7 +2731,28 @@ pub fn rust_lang() -> Arc<Language> {
         text_objects: Some(Cow::from(include_str!(
             "../../languages/src/rust/textobjects.scm"
         ))),
-        ..LanguageQueries::default()
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/rust/highlights.scm"
+        ))),
+        embedding: Some(Cow::from(include_str!(
+            "../../languages/src/rust/embedding.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/rust/injections.scm"
+        ))),
+        overrides: Some(Cow::from(include_str!(
+            "../../languages/src/rust/overrides.scm"
+        ))),
+        redactions: None,
+        runnables: Some(Cow::from(include_str!(
+            "../../languages/src/rust/runnables.scm"
+        ))),
+        debugger: Some(Cow::from(include_str!(
+            "../../languages/src/rust/debugger.scm"
+        ))),
+        imports: Some(Cow::from(include_str!(
+            "../../languages/src/rust/imports.scm"
+        ))),
     })
     .expect("Could not parse queries");
     Arc::new(language)
@@ -2684,6 +2780,15 @@ pub fn markdown_lang() -> Arc<Language> {
         ))),
         injections: Some(Cow::from(include_str!(
             "../../languages/src/markdown/injections.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/highlights.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/indents.scm"
+        ))),
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/outline.scm"
         ))),
         ..LanguageQueries::default()
     })
@@ -2726,9 +2831,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2739,9 +2844,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2752,9 +2857,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 

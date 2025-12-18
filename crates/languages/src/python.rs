@@ -19,6 +19,7 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
@@ -280,7 +281,7 @@ impl LspInstaller for TyLspAdapter {
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         let release =
-            latest_github_release("astral-sh/ty", true, true, delegate.http_client()).await?;
+            latest_github_release("astral-sh/ty", true, false, delegate.http_client()).await?;
         let (_, asset_name) = Self::build_asset_name()?;
         let asset = release
             .assets
@@ -621,14 +622,14 @@ impl LspAdapter for PyrightLspAdapter {
 }
 
 impl LspInstaller for PyrightLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version(Self::SERVER_NAME.as_ref())
             .await
@@ -672,6 +673,7 @@ impl LspInstaller for PyrightLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(Self::SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(
@@ -903,7 +905,7 @@ impl ContextProvider for PythonContextProvider {
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new("Python")), location, cx)
+    language_settings(Some(LanguageName::new_static("Python")), location, cx)
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1131,6 +1133,18 @@ fn wr_distance(
     }
 }
 
+fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+    match kind {
+        ShellKind::Csh => "csh",
+        ShellKind::Fish => "fish",
+        ShellKind::Nushell => "nu",
+        ShellKind::PowerShell => "powershell",
+        ShellKind::Cmd => "cmd.exe",
+        // default / catch-all:
+        _ => "posix",
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -1297,23 +1311,27 @@ impl ToolchainLister for PythonToolchainProvider {
                     .as_option()
                     .map(|venv| venv.conda_manager)
                     .unwrap_or(settings::CondaManager::Auto);
-
                 let manager = match conda_manager {
                     settings::CondaManager::Conda => "conda",
                     settings::CondaManager::Mamba => "mamba",
                     settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => {
-                        // When auto, prefer the detected manager or fall back to conda
-                        toolchain
-                            .environment
-                            .manager
-                            .as_ref()
-                            .and_then(|m| m.executable.file_name())
-                            .and_then(|name| name.to_str())
-                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                            .unwrap_or("conda")
-                    }
+                    settings::CondaManager::Auto => toolchain
+                        .environment
+                        .manager
+                        .as_ref()
+                        .and_then(|m| m.executable.file_name())
+                        .and_then(|name| name.to_str())
+                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                        .unwrap_or("conda"),
                 };
+
+                // Activate micromamba shell in the child shell
+                // [required for micromamba]
+                if manager == "micromamba" {
+                    let shell = micromamba_shell_name(shell);
+                    activation_script
+                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                }
 
                 if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("{manager} activate {name}"));
@@ -1344,7 +1362,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
                     ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::PowerShell => None,
+                    ShellKind::PowerShell | ShellKind::Pwsh => None,
                     ShellKind::Csh => None,
                     ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
@@ -1397,7 +1415,7 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             .to_str()?
             .to_owned()
             .into(),
-        language_name: LanguageName::new("Python"),
+        language_name: LanguageName::new_static("Python"),
         as_json: serde_json::to_value(data).ok()?,
     })
 }
@@ -2024,14 +2042,14 @@ impl LspAdapter for BasedPyrightLspAdapter {
 }
 
 impl LspInstaller for BasedPyrightLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version(Self::SERVER_NAME.as_ref())
             .await
@@ -2076,6 +2094,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(Self::SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(

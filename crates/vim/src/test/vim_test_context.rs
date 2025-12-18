@@ -23,11 +23,13 @@ impl VimTestContext {
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             project_panel::init(cx);
+            outline_panel::init(cx);
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             settings_ui::init(cx);
+            markdown_preview::init(cx);
         });
     }
 

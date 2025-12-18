@@ -166,7 +166,7 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        self.multibuffer().read(cx).excerpt_paths().next().is_some()
+        self.multibuffer().read(cx).paths().next().is_some()
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {

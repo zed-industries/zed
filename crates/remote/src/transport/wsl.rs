@@ -1,6 +1,7 @@
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -22,7 +23,8 @@ use std::{
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
@@ -68,7 +70,10 @@ impl WslRemoteConnection {
         let mut this = Self {
             connection_options,
             remote_binary_path: None,
-            platform: RemotePlatform { os: "", arch: "" },
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
@@ -107,23 +112,22 @@ impl WslRemoteConnection {
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
         let program = self.shell_kind.prepend_command_prefix("uname");
-        let arch_str = self.run_wsl_command_with_output(&program, &["-m"]).await?;
-        let arch_str = arch_str.trim().to_string();
-        let arch = match arch_str.as_str() {
-            "x86_64" => "x86_64",
-            "aarch64" | "arm64" => "aarch64",
-            _ => "x86_64",
-        };
-        Ok(RemotePlatform { os: "linux", arch })
+        let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
+        parse_platform(&output)
     }
 
     async fn detect_shell(&self) -> Result<String> {
-        Ok(self
+        const DEFAULT_SHELL: &str = "sh";
+        match self
             .run_wsl_command_with_output("sh", &["-c", "echo $SHELL"])
             .await
-            .inspect_err(|err| log::error!("Failed to detect remote shell: {err}"))
-            .ok()
-            .unwrap_or_else(|| "/bin/sh".to_string()))
+        {
+            Ok(output) => Ok(parse_shell(&output, DEFAULT_SHELL)),
+            Err(e) => {
+                log::error!("Failed to detect remote shell: {e}");
+                Ok(DEFAULT_SHELL.to_owned())
+            }
+        }
     }
 
     async fn detect_has_wsl_interop(&self) -> Result<bool> {
@@ -453,8 +457,10 @@ impl RemoteConnection for WslRemoteConnection {
         } else {
             write!(&mut exec, "{} -l", self.shell)?;
         }
+        let (command, args) =
+            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
 
-        let wsl_args = if let Some(user) = &self.connection_options.user {
+        let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![
                 "--distribution".to_string(),
                 self.connection_options.distro_name.clone(),
@@ -463,9 +469,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--cd".to_string(),
                 working_dir,
                 "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                exec,
+                command,
             ]
         } else {
             vec![
@@ -474,11 +478,10 @@ impl RemoteConnection for WslRemoteConnection {
                 "--cd".to_string(),
                 working_dir,
                 "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                exec,
+                command,
             ]
         };
+        wsl_args.extend(args);
 
         Ok(CommandTemplate {
             program: "wsl.exe".to_string(),

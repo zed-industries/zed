@@ -3,7 +3,7 @@ mod zed;
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -27,7 +27,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -130,6 +130,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
@@ -165,8 +166,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
-    ztracing::init();
-
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]
@@ -241,6 +240,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -250,6 +250,7 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -405,6 +406,14 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        let trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx) {
+            Ok(trusted_paths) => trusted_paths,
+            Err(e) => {
+                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                HashMap::default()
+            }
+        };
+        trusted_worktrees::init(trusted_paths, None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -473,6 +482,7 @@ pub fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
+
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
@@ -596,6 +606,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -645,6 +656,7 @@ pub fn main() {
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
+        which_key::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -800,7 +812,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window);
+                            panel.focus_handle(cx).focus(window, cx);
                         }
                     })
                 })
@@ -878,6 +890,44 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             cx,
                         ),
                     })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::GitCommit { sha } => {
+                cx.spawn(async move |cx| {
+                    let paths_with_position =
+                        derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+                    let (workspace, _results) = open_paths_with_positions(
+                        &paths_with_position,
+                        &[],
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                    .await?;
+
+                    workspace
+                        .update(cx, |workspace, window, cx| {
+                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                            else {
+                                log::error!("no active repository found for commit view");
+                                return Err(anyhow::anyhow!("no active repository found"));
+                            };
+
+                            git_ui::commit_view::CommitView::open(
+                                sha,
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                            Ok(())
+                        })
+                        .log_err();
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -1155,7 +1205,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
                 },
             )
         })?

@@ -529,7 +529,7 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    #[ztracing::instrument(skip_all, fields(edits))]
+    #[ztracing::instrument(skip_all, fields(edits = ?edits))]
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: WrapPatch) {
         let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
 
@@ -545,7 +545,7 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
@@ -570,6 +570,9 @@ impl BlockMap {
         let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
         while let Some(edit) = edits.next() {
+            let span = ztracing::debug_span!("while edits", edit = ?edit);
+            let _enter = span.enter();
+
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
 
@@ -628,6 +631,8 @@ impl BlockMap {
             let mut old_end = edit.old.end;
             let mut new_end = edit.new.end;
             loop {
+                let span = ztracing::debug_span!("decide where edit ends loop");
+                let _enter = span.enter();
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left);
                 cursor.next();
@@ -710,6 +715,7 @@ impl BlockMap {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if let BlockPlacement::Above(row) = placement
                             && row < new_start
+                        // this will be true more often now
                         {
                             return None;
                         }
@@ -736,6 +742,10 @@ impl BlockMap {
             // and then insert the block itself.
             let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
+                let span =
+                    ztracing::debug_span!("for block in edits", block_height = block.height());
+                let _enter = span.enter();
+
                 let mut summary = TransformSummary {
                     input_rows: WrapRow(0),
                     output_rows: BlockRow(block.height()),
@@ -957,6 +967,7 @@ impl BlockMap {
     }
 }
 
+#[ztracing::instrument(skip(tree, wrap_snapshot))]
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot: &WrapSnapshot) {
     if rows == RowDelta(0) {
         return;

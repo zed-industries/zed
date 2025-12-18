@@ -840,31 +840,62 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[ztracing::instrument(skip_all, fields(point, ret))]
-    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+    /// Try to find a TabRow start that is also a WrapRow start
+    /// Every TabRow start is a WrapRow start
+    #[ztracing::instrument(skip_all, fields(point=?point))]
+    pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
         }
 
-        *point.column_mut() = 0;
+        let point = WrapPoint::new(point.row(), 0);
 
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
+
         cursor.seek(&point, Bias::Right);
         if cursor.item().is_none() {
             cursor.prev();
         }
 
+        //                          real newline     fake          fake
+        // text:      helloworldasldlfjasd\njdlasfalsk\naskdjfasdkfj\n
+        // dimensions v       v           v            v            v
+        // transforms |-------|-----NW----|-----W------|-----W------|
+        // cursor    ^        ^^^^^^^^^^^^^                          ^
+        //                               (^)           ^^^^^^^^^^^^^^
+        // point:                                            ^
+        // point(col_zero):                           (^)
+
         while let Some(transform) = cursor.item() {
-            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
-                return cmp::min(cursor.end().0.row(), point.row());
-            } else {
-                cursor.prev();
+            if transform.is_isomorphic() {
+                // this transform only has real linefeeds
+                let tab_summary = &transform.summary.input;
+                // is the wrap just before the end of the transform a tab row?
+                // thats only if this transform has at least one newline
+                //
+                // "this wrap row is a tab row" <=> self.to_tab_point(WrapPoint::new(wrap_row, 0)).column() == 0
+
+                // Note on comparison:
+                // We have code that relies on this to be row > 1
+                // It should work with row >= 1 but it does not :(
+                //
+                // That means that if every line is wrapped we walk back all the
+                // way to the start. Which invalidates the entire state triggering
+                // a full re-render.
+                if tab_summary.lines.row > 1 {
+                    let wrap_point_at_end = cursor.end().0.row();
+                    return cmp::min(wrap_point_at_end - RowDelta(1), point.row());
+                } else if cursor.start().1.column() == 0 {
+                    return cmp::min(cursor.end().0.row(), point.row());
+                }
             }
+
+            cursor.prev();
         }
 
-        unreachable!()
+        WrapRow(0)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -887,13 +918,11 @@ impl WrapSnapshot {
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.text_chunks(WrapRow(0)).collect()
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
@@ -1293,6 +1322,71 @@ mod tests {
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;
+
+    #[gpui::test]
+    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        fn test_wrap_snapshot(
+            text: &str,
+            soft_wrap_every: usize, // font size multiple
+            cx: &mut gpui::TestAppContext,
+        ) -> WrapSnapshot {
+            let text_system = cx.read(|cx| cx.text_system().clone());
+            let tab_size = 4.try_into().unwrap();
+            let font = test_font();
+            let _font_id = text_system.resolve_font(&font);
+            let font_size = px(14.0);
+            // this is very much an estimate to try and get the wrapping to
+            // occur at `soft_wrap_every` we check that it pans out for every test case
+            let soft_wrapping = Some(font_size * soft_wrap_every * 0.6);
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+            let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+            let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+            let tabs_snapshot = tab_map.set_max_expansion_column(32);
+            let (_wrap_map, wrap_snapshot) =
+                cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, soft_wrapping, cx));
+
+            wrap_snapshot
+        }
+
+        // These two should pass but dont, see the comparison note in
+        // prev_row_boundary about why.
+        //
+        // //                                      0123  4567  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("1234\n5678", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 3);
+
+        // //                                      012  345  678  wrap_rows
+        // let wrap_snapshot = test_wrap_snapshot("123\n456\n789", 1, cx);
+        // assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        // let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        // assert_eq!(row.0, 5);
+
+        //                                      012345678  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123456789", 1, cx);
+        assert_eq!(wrap_snapshot.text(), "1\n2\n3\n4\n5\n6\n7\n8\n9");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 0);
+
+        //                                      111  2222    44  wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("123\n4567\n\n89", 4, cx);
+        assert_eq!(wrap_snapshot.text(), "123\n4567\n\n89");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 2);
+
+        //                                      11  2223   wrap_rows
+        let wrap_snapshot = test_wrap_snapshot("12\n3456\n\n", 3, cx);
+        assert_eq!(wrap_snapshot.text(), "12\n345\n6\n\n");
+        let row = wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point());
+        assert_eq!(row.0, 3);
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {

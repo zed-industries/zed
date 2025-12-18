@@ -5,8 +5,10 @@ mod worktree_tests;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
+use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use encoding_rs::Encoding;
 use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -14,15 +16,17 @@ use futures::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
-    select_biased,
+    select_biased, stream,
     task::Poll,
 };
 use fuzzy::CharBag;
 use git::{
-    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
+    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, REPO_EXCLUDE,
+    status::GitSummary,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
+    Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -70,6 +74,8 @@ use util::{
 };
 pub use worktree_settings::WorktreeSettings;
 
+use crate::ignore::IgnoreKind;
+
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// A set of local or remote files that are being opened as part of a project.
@@ -97,9 +103,12 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
+#[derive(Debug)]
 pub struct LoadedFile {
     pub file: Arc<File>,
     pub text: String,
+    pub encoding: &'static Encoding,
+    pub has_bom: bool,
 }
 
 pub struct LoadedBinaryFile {
@@ -129,6 +138,7 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    scanning_enabled: bool,
 }
 
 pub struct PathPrefixScanRequest {
@@ -230,6 +240,9 @@ impl Default for WorkDirectory {
 pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
+    /// Exclude files for all git repositories in the worktree, indexed by their absolute path.
+    /// The boolean indicates whether the gitignore needs to be updated.
+    repo_exclude_by_work_dir_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
@@ -356,6 +369,7 @@ impl Worktree {
         visible: bool,
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
+        scanning_enabled: bool,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -389,6 +403,7 @@ impl Worktree {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
+                repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
@@ -459,6 +474,7 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
+                scanning_enabled,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -729,10 +745,14 @@ impl Worktree {
         path: Arc<RelPath>,
         text: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
         cx: &Context<Worktree>,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => {
+                this.write_file(path, text, line_ending, encoding, has_bom, cx)
+            }
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -1049,13 +1069,18 @@ impl LocalWorktree {
         let share_private_files = self.share_private_files;
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
+        let scanning_enabled = self.scanning_enabled;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
-                let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
+                let (events, watcher) = if scanning_enabled {
+                    fs.watch(&abs_path, FS_WATCH_LATENCY).await
+                } else {
+                    (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
+                };
                 let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                     log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
                     true
@@ -1080,6 +1105,7 @@ impl LocalWorktree {
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
+                    scanning_enabled,
                     settings,
                     watcher,
                 };
@@ -1333,7 +1359,9 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
-            let text = fs.load(&abs_path).await?;
+
+            let content = fs.load_bytes(&abs_path).await?;
+            let (text, encoding, has_bom) = decode_byte(content);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1361,7 +1389,12 @@ impl LocalWorktree {
                 }
             };
 
-            Ok(LoadedFile { file, text })
+            Ok(LoadedFile {
+                file,
+                text,
+                encoding,
+                has_bom,
+            })
         })
     }
 
@@ -1444,6 +1477,8 @@ impl LocalWorktree {
         path: Arc<RelPath>,
         text: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
+        has_bom: bool,
         cx: &Context<Worktree>,
     ) -> Task<Result<Arc<File>>> {
         let fs = self.fs.clone();
@@ -1453,7 +1488,49 @@ impl LocalWorktree {
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text, line_ending).await }
+            async move {
+                let bom_bytes = if has_bom {
+                    if encoding == encoding_rs::UTF_16LE {
+                        vec![0xFF, 0xFE]
+                    } else if encoding == encoding_rs::UTF_16BE {
+                        vec![0xFE, 0xFF]
+                    } else if encoding == encoding_rs::UTF_8 {
+                        vec![0xEF, 0xBB, 0xBF]
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+
+                // For UTF-8, use the optimized `fs.save` which writes Rope chunks directly to disk
+                // without allocating a contiguous string.
+                if encoding == encoding_rs::UTF_8 && !has_bom {
+                    return fs.save(&abs_path, &text, line_ending).await;
+                }
+                // For legacy encodings (e.g. Shift-JIS), we fall back to converting the entire Rope
+                // to a String/Bytes in memory before writing.
+                //
+                // Note: This is inefficient for very large files compared to the streaming approach above,
+                // but supporting streaming writes for arbitrary encodings would require a significant
+                // refactor of the `fs` crate to expose a Writer interface.
+                let text_string = text.to_string();
+                let normalized_text = match line_ending {
+                    LineEnding::Unix => text_string,
+                    LineEnding::Windows => text_string.replace('\n', "\r\n"),
+                };
+
+                let (cow, _, _) = encoding.encode(&normalized_text);
+                let bytes = if !bom_bytes.is_empty() {
+                    let mut bytes = bom_bytes;
+                    bytes.extend_from_slice(&cow);
+                    bytes.into()
+                } else {
+                    cow
+                };
+
+                fs.write(&abs_path, &bytes).await
+            }
         });
 
         cx.spawn(async move |this, cx| {
@@ -2554,13 +2631,21 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
+
+        if let Some((repo_exclude, _)) = repo_root
+            .as_ref()
+            .and_then(|abs_path| self.repo_exclude_by_work_dir_abs_path.get(abs_path))
+        {
+            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
+        }
         ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
-                ignore_stack = ignore_stack.append(parent_abs_path.into(), ignore);
+                ignore_stack =
+                    ignore_stack.append(IgnoreKind::Gitignore(parent_abs_path.into()), ignore);
             }
         }
 
@@ -3617,6 +3702,7 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    scanning_enabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -3632,14 +3718,33 @@ impl BackgroundScanner {
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
         let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
-        let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
-        self.state
-            .lock()
-            .await
-            .snapshot
-            .ignores_by_parent_abs_path
-            .extend(ignores);
-        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo {
+
+        let repo = if self.scanning_enabled {
+            let (ignores, exclude, repo) =
+                discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            self.state
+                .lock()
+                .await
+                .snapshot
+                .ignores_by_parent_abs_path
+                .extend(ignores);
+            if let Some(exclude) = exclude {
+                self.state
+                    .lock()
+                    .await
+                    .snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .insert(root_abs_path.as_path().into(), (exclude, false));
+            }
+
+            repo
+        } else {
+            None
+        };
+
+        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
+            && self.scanning_enabled
+        {
             maybe!(async {
                 self.state
                     .lock()
@@ -3663,6 +3768,7 @@ impl BackgroundScanner {
 
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
             &paths::global_gitignore_path()
+            && self.scanning_enabled
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
             self.state.lock().await.snapshot.global_gitignore = if is_file {
@@ -3705,7 +3811,7 @@ impl BackgroundScanner {
                         .insert_entry(root_entry, self.fs.as_ref(), self.watcher.as_ref())
                         .await;
                 }
-                if root_entry.is_dir() {
+                if root_entry.is_dir() && self.scanning_enabled {
                     state
                         .enqueue_scan_dir(
                             root_abs_path.as_path().into(),
@@ -3814,7 +3920,7 @@ impl BackgroundScanner {
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path {root_path:?}: {err}");
+                log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
                 return true;
             }
         };
@@ -3892,6 +3998,7 @@ impl BackgroundScanner {
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_abs_paths = Vec::new();
+        let mut work_dirs_needing_exclude_update = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         {
@@ -3965,6 +4072,18 @@ impl BackgroundScanner {
                     continue;
                 };
 
+                let absolute_path = abs_path.to_path_buf();
+                if absolute_path.ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE)) {
+                    if let Some(repository) = snapshot
+                        .git_repositories
+                        .values()
+                        .find(|repo| repo.common_dir_abs_path.join(REPO_EXCLUDE) == absolute_path)
+                    {
+                        work_dirs_needing_exclude_update
+                            .push(repository.work_directory_abs_path.clone());
+                    }
+                }
+
                 if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
                     for (_, repo) in snapshot
                         .git_repositories
@@ -4008,6 +4127,19 @@ impl BackgroundScanner {
 
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
+        }
+
+        if !work_dirs_needing_exclude_update.is_empty() {
+            let mut state = self.state.lock().await;
+            for work_dir_abs_path in work_dirs_needing_exclude_update {
+                if let Some((_, needs_update)) = state
+                    .snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .get_mut(&work_dir_abs_path)
+                {
+                    *needs_update = true;
+                }
+            }
         }
 
         self.state.lock().await.snapshot.scan_id += 1;
@@ -4123,7 +4255,7 @@ impl BackgroundScanner {
 
         let progress_update_count = AtomicUsize::new(0);
         self.executor
-            .scoped(|scope| {
+            .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         let mut last_progress_update_count = 0;
@@ -4277,7 +4409,8 @@ impl BackgroundScanner {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
-                        ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                        ignore_stack = ignore_stack
+                            .append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
@@ -4539,11 +4672,24 @@ impl BackgroundScanner {
                         .await;
 
                     if path.is_empty()
-                        && let Some((ignores, repo)) = new_ancestor_repo.take()
+                        && let Some((ignores, exclude, repo)) = new_ancestor_repo.take()
                     {
                         log::trace!("updating ancestor git repository");
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
+                            if let Some(exclude) = exclude {
+                                let work_directory_abs_path = self
+                                    .state
+                                    .lock()
+                                    .await
+                                    .snapshot
+                                    .work_directory_abs_path(&work_directory);
+
+                                state
+                                    .snapshot
+                                    .repo_exclude_by_work_dir_abs_path
+                                    .insert(work_directory_abs_path.into(), (exclude, false));
+                            }
                             state
                                 .insert_git_repository_for_path(
                                     work_directory,
@@ -4641,6 +4787,36 @@ impl BackgroundScanner {
         {
             let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
+
+            snapshot.repo_exclude_by_work_dir_abs_path.retain(
+                |work_dir_abs_path, (exclude, needs_update)| {
+                    if *needs_update {
+                        *needs_update = false;
+                        ignores_to_update.push(work_dir_abs_path.clone());
+
+                        if let Some((_, repository)) = snapshot
+                            .git_repositories
+                            .iter()
+                            .find(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path)
+                        {
+                            let exclude_abs_path =
+                                repository.common_dir_abs_path.join(REPO_EXCLUDE);
+                            if let Ok(current_exclude) = self
+                                .executor
+                                .block(build_gitignore(&exclude_abs_path, self.fs.as_ref()))
+                            {
+                                *exclude = Arc::new(current_exclude);
+                            }
+                        }
+                    }
+
+                    snapshot
+                        .git_repositories
+                        .iter()
+                        .any(|(_, repo)| &repo.work_directory_abs_path == work_dir_abs_path)
+                },
+            );
+
             snapshot
                 .ignores_by_parent_abs_path
                 .retain(|parent_abs_path, (_, needs_update)| {
@@ -4695,7 +4871,8 @@ impl BackgroundScanner {
 
         let mut ignore_stack = job.ignore_stack;
         if let Some((ignore, _)) = snapshot.ignores_by_parent_abs_path.get(&job.abs_path) {
-            ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+            ignore_stack =
+                ignore_stack.append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
         }
 
         let mut entries_by_id_edits = Vec::new();
@@ -4870,6 +5047,9 @@ impl BackgroundScanner {
                 let preserve = ids_to_preserve.contains(work_directory_id);
                 if !preserve {
                     affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
+                    snapshot
+                        .repo_exclude_by_work_dir_abs_path
+                        .remove(&entry.work_directory_abs_path);
                 }
                 preserve
             });
@@ -4909,8 +5089,10 @@ async fn discover_ancestor_git_repo(
     root_abs_path: &SanitizedPath,
 ) -> (
     HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    Option<Arc<Gitignore>>,
     Option<(PathBuf, WorkDirectory)>,
 ) {
+    let mut exclude = None;
     let mut ignores = HashMap::default();
     for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
         if index != 0 {
@@ -4946,6 +5128,7 @@ async fn discover_ancestor_git_repo(
                     // also mark where in the git repo the root folder is located.
                     return (
                         ignores,
+                        exclude,
                         Some((
                             ancestor_dot_git,
                             WorkDirectory::AboveProject {
@@ -4957,12 +5140,17 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
+            let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
+            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+                exclude = Some(Arc::new(repo_exclude));
+            }
+
             // Reached root of git repository.
             break;
         }
     }
 
-    (ignores, None)
+    (ignores, exclude, None)
 }
 
 fn build_diff(
@@ -5640,4 +5828,53 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
         }
     };
     (repository_dir_abs_path, common_dir_abs_path)
+}
+
+struct NullWatcher;
+
+impl fs::Watcher for NullWatcher {
+    fn add(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn decode_byte(bytes: Vec<u8>) -> (String, &'static Encoding, bool) {
+    // check BOM
+    if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {
+        let (cow, _) = encoding.decode_with_bom_removal(&bytes);
+        return (cow.into_owned(), encoding, true);
+    }
+
+    fn detect_encoding(bytes: Vec<u8>) -> (String, &'static Encoding) {
+        let mut detector = EncodingDetector::new();
+        detector.feed(&bytes, true);
+
+        let encoding = detector.guess(None, true); // Use None for TLD hint to ensure neutral detection logic.
+
+        let (cow, _, _) = encoding.decode(&bytes);
+        (cow.into_owned(), encoding)
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(text) => {
+            // ISO-2022-JP (and other ISO-2022 variants) consists entirely of 7-bit ASCII bytes,
+            // so it is valid UTF-8. However, it contains escape sequences starting with '\x1b'.
+            // If we find an escape character, we double-check the encoding to prevent
+            // displaying raw escape sequences instead of the correct characters.
+            if text.contains('\x1b') {
+                let (s, enc) = detect_encoding(text.into_bytes());
+                (s, enc, false)
+            } else {
+                (text, encoding_rs::UTF_8, false)
+            }
+        }
+        Err(e) => {
+            let (s, enc) = detect_encoding(e.into_bytes());
+            (s, enc, false)
+        }
+    }
 }

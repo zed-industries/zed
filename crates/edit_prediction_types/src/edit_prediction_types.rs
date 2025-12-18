@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt};
+use language::{Anchor, Buffer, OffsetRangeExt};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -95,13 +95,6 @@ pub trait EditPredictionDelegate: 'static + Sized {
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn cycle(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut Context<Self>,
-    );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
     fn did_show(&mut self, _cx: &mut Context<Self>) {}
@@ -134,13 +127,6 @@ pub trait EditPredictionDelegateHandle {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut App,
-    );
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
         cx: &mut App,
     );
     fn did_show(&self, cx: &mut App);
@@ -215,18 +201,6 @@ where
         })
     }
 
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut App,
-    ) {
-        self.update(cx, |this, cx| {
-            this.cycle(buffer, cursor_position, direction, cx)
-        })
-    }
-
     fn accept(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.accept(cx))
     }
@@ -249,11 +223,17 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditPredictionGranularity {
+    Word,
+    Line,
+    Full,
+}
 /// Returns edits updated based on user edits since the old snapshot. None is returned if any user
 /// edit is not a prefix of a predicted insertion.
 pub fn interpolate_edits(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
+    old_snapshot: &text::BufferSnapshot,
+    new_snapshot: &text::BufferSnapshot,
     current_edits: &[(Range<Anchor>, Arc<str>)],
 ) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
     let mut edits = Vec::new();

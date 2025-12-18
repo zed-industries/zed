@@ -109,22 +109,8 @@ pub fn init(cx: &mut App) {
         });
         // TODO: make it possible to bind this one to a held key for push to talk?
         // how to make "toggle_on_modifiers_press" contextual?
-        workspace.register_action(|_, _: &Mute, window, cx| {
-            let room = ActiveCall::global(cx).read(cx).room().cloned();
-            if let Some(room) = room {
-                window.defer(cx, move |_window, cx| {
-                    room.update(cx, |room, cx| room.toggle_mute(cx))
-                });
-            }
-        });
-        workspace.register_action(|_, _: &Deafen, window, cx| {
-            let room = ActiveCall::global(cx).read(cx).room().cloned();
-            if let Some(room) = room {
-                window.defer(cx, move |_window, cx| {
-                    room.update(cx, |room, cx| room.toggle_deafen(cx))
-                });
-            }
-        });
+        workspace.register_action(|_, _: &Mute, _, cx| title_bar::collab::toggle_mute(cx));
+        workspace.register_action(|_, _: &Deafen, _, cx| title_bar::collab::toggle_deafen(cx));
         workspace.register_action(|_, _: &LeaveCall, window, cx| {
             CollabPanel::leave_call(window, cx);
         });
@@ -1266,7 +1252,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1438,7 +1424,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1501,7 +1487,7 @@ impl CollabPanel {
             })
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1535,9 +1521,9 @@ impl CollabPanel {
         if cx.stop_active_drag(window) {
             return;
         } else if self.take_editing_state(window, cx) {
-            window.focus(&self.filter_editor.focus_handle(cx));
+            window.focus(&self.filter_editor.focus_handle(cx), cx);
         } else if !self.reset_filter_editor_text(window, cx) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1840,7 +1826,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1865,7 +1851,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1914,7 +1900,7 @@ impl CollabPanel {
                 editor.set_text(channel.name.clone(), window, cx);
                 editor.select_all(&Default::default(), window, cx);
             });
-            window.focus(&self.channel_name_editor.focus_handle(cx));
+            window.focus(&self.channel_name_editor.focus_handle(cx), cx);
             self.update_entries(false, cx);
             self.select_channel_editor();
         }

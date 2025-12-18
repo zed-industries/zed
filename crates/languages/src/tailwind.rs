@@ -6,6 +6,7 @@ use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolc
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
@@ -39,14 +40,14 @@ impl TailwindLspAdapter {
 }
 
 impl LspInstaller for TailwindLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
@@ -70,11 +71,12 @@ impl LspInstaller for TailwindLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: String,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(
@@ -92,7 +94,7 @@ impl LspInstaller for TailwindLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &String,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -140,13 +142,6 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-            "userLanguages": {
-                "html": "html",
-                "css": "css",
-                "javascript": "javascript",
-                "typescript": "typescript",
-                "typescriptreact": "typescriptreact",
-            },
         })))
     }
 
@@ -167,27 +162,49 @@ impl LspAdapter for TailwindLspAdapter {
             tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
+        if tailwind_user_settings.get("includeLanguages").is_none() {
+            tailwind_user_settings["includeLanguages"] = json!({
+                "html": "html",
+                "css": "css",
+                "javascript": "javascript",
+                "typescript": "typescript",
+                "typescriptreact": "typescriptreact",
+            });
+        }
+
         Ok(json!({
-            "tailwindCSS": tailwind_user_settings,
+            "tailwindCSS": tailwind_user_settings
         }))
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("Astro"), "astro".to_string()),
-            (LanguageName::new("HTML"), "html".to_string()),
-            (LanguageName::new("Gleam"), "html".to_string()),
-            (LanguageName::new("CSS"), "css".to_string()),
-            (LanguageName::new("JavaScript"), "javascript".to_string()),
-            (LanguageName::new("TypeScript"), "typescript".to_string()),
-            (LanguageName::new("TSX"), "typescriptreact".to_string()),
-            (LanguageName::new("Svelte"), "svelte".to_string()),
-            (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
-            (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
-            (LanguageName::new("ERB"), "erb".to_string()),
-            (LanguageName::new("HTML+ERB"), "erb".to_string()),
-            (LanguageName::new("PHP"), "php".to_string()),
-            (LanguageName::new("Vue.js"), "vue".to_string()),
+            (LanguageName::new_static("Astro"), "astro".to_string()),
+            (LanguageName::new_static("HTML"), "html".to_string()),
+            (LanguageName::new_static("Gleam"), "html".to_string()),
+            (LanguageName::new_static("CSS"), "css".to_string()),
+            (
+                LanguageName::new_static("JavaScript"),
+                "javascript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TypeScript"),
+                "typescript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TSX"),
+                "typescriptreact".to_string(),
+            ),
+            (LanguageName::new_static("Svelte"), "svelte".to_string()),
+            (
+                LanguageName::new_static("Elixir"),
+                "phoenix-heex".to_string(),
+            ),
+            (LanguageName::new_static("HEEX"), "phoenix-heex".to_string()),
+            (LanguageName::new_static("ERB"), "erb".to_string()),
+            (LanguageName::new_static("HTML+ERB"), "erb".to_string()),
+            (LanguageName::new_static("PHP"), "php".to_string()),
+            (LanguageName::new_static("Vue.js"), "vue".to_string()),
         ])
     }
 }

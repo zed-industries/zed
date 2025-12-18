@@ -11,7 +11,6 @@ use editor::{ClipboardSelection, Editor, SelectionEffects};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
-use multi_buffer::MultiBufferRow;
 use settings::Settings;
 
 struct HighlightOnYank;
@@ -198,11 +197,14 @@ impl Vim {
                 if kind.linewise() {
                     text.push('\n');
                 }
-                clipboard_selections.push(ClipboardSelection {
-                    len: text.len() - initial_len,
-                    is_entire_line: false,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
-                });
+                clipboard_selections.push(ClipboardSelection::for_buffer(
+                    text.len() - initial_len,
+                    false,
+                    start..end,
+                    &buffer,
+                    editor.project(),
+                    cx,
+                ));
             }
         }
 

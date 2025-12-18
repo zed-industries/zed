@@ -311,7 +311,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     |s| s.select_ranges([rows.start..rows.start]),
                 );
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
-                window.focus(&active_editor.focus_handle(cx));
+                window.focus(&active_editor.focus_handle(cx), cx);
             }
         });
 
@@ -391,7 +391,6 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
-    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::{path, rel_path::rel_path};
@@ -418,7 +417,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -579,89 +580,6 @@ mod tests {
             editor::init(cx);
             state
         })
-    }
-
-    fn rust_lang() -> Arc<Language> {
-        Arc::new(
-            Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                Some(tree_sitter_rust::LANGUAGE.into()),
-            )
-            .with_outline_query(
-                r#"(struct_item
-            (visibility_modifier)? @context
-            "struct" @context
-            name: (_) @name) @item
-
-        (enum_item
-            (visibility_modifier)? @context
-            "enum" @context
-            name: (_) @name) @item
-
-        (enum_variant
-            (visibility_modifier)? @context
-            name: (_) @name) @item
-
-        (impl_item
-            "impl" @context
-            trait: (_)? @name
-            "for"? @context
-            type: (_) @name) @item
-
-        (trait_item
-            (visibility_modifier)? @context
-            "trait" @context
-            name: (_) @name) @item
-
-        (function_item
-            (visibility_modifier)? @context
-            (function_modifiers)? @context
-            "fn" @context
-            name: (_) @name) @item
-
-        (function_signature_item
-            (visibility_modifier)? @context
-            (function_modifiers)? @context
-            "fn" @context
-            name: (_) @name) @item
-
-        (macro_definition
-            . "macro_rules!" @context
-            name: (_) @name) @item
-
-        (mod_item
-            (visibility_modifier)? @context
-            "mod" @context
-            name: (_) @name) @item
-
-        (type_item
-            (visibility_modifier)? @context
-            "type" @context
-            name: (_) @name) @item
-
-        (associated_type
-            "type" @context
-            name: (_) @name) @item
-
-        (const_item
-            (visibility_modifier)? @context
-            "const" @context
-            name: (_) @name) @item
-
-        (field_declaration
-            (visibility_modifier)? @context
-            name: (_) @name) @item
-"#,
-            )
-            .unwrap(),
-        )
     }
 
     #[track_caller]

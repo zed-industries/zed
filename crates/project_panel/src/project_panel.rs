@@ -880,7 +880,7 @@ impl ProjectPanel {
                                 });
                                 if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
-                                    window.focus(&focus_handle);
+                                    window.focus(&focus_handle, cx);
                                 }
                             }
                         }
@@ -1142,7 +1142,7 @@ impl ProjectPanel {
                             )
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .action("File History", Box::new(git::FileHistory))
+                                    .action("View File History", Box::new(git::FileHistory))
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -1169,7 +1169,7 @@ impl ProjectPanel {
                 })
             });
 
-            window.focus(&context_menu.focus_handle(cx));
+            window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
@@ -1376,7 +1376,7 @@ impl ProjectPanel {
                 }
             });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.notify();
         }
     }
@@ -1399,7 +1399,7 @@ impl ProjectPanel {
                 }
             }
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.notify();
         }
     }
@@ -1663,12 +1663,20 @@ impl ProjectPanel {
         let edit_state = self.state.edit_state.as_mut()?;
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
-        let filename = self.filename_editor.read(cx).text(cx);
+        let mut filename = self.filename_editor.read(cx).text(cx);
+        let path_style = self.project.read(cx).path_style(cx);
+        if path_style.is_windows() {
+            // on windows, trailing dots are ignored in paths
+            // this can cause project panel to create a new entry with a trailing dot
+            // while the actual one without the dot gets populated by the file watcher
+            while let Some(trimmed) = filename.strip_suffix('.') {
+                filename = trimmed.to_string();
+            }
+        }
         if filename.trim().is_empty() {
             return None;
         }
 
-        let path_style = self.project.read(cx).path_style(cx);
         let filename_indicates_dir = if path_style.is_windows() {
             filename.ends_with('/') || filename.ends_with('\\')
         } else {
@@ -1711,7 +1719,7 @@ impl ProjectPanel {
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
                 if existing.id == entry.id && refocus {
-                    window.focus(&self.focus_handle);
+                    window.focus(&self.focus_handle, cx);
                 }
                 return None;
             }
@@ -1722,7 +1730,7 @@ impl ProjectPanel {
         };
 
         if refocus {
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
         }
         edit_state.processing_filename = Some(filename);
         cx.notify();
@@ -1831,7 +1839,7 @@ impl ProjectPanel {
             self.autoscroll(cx);
         }
 
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -3608,7 +3616,7 @@ impl ProjectPanel {
                 if this.update_visible_entries_task.focus_filename_editor {
                     this.update_visible_entries_task.focus_filename_editor = false;
                     this.filename_editor.update(cx, |editor, cx| {
-                        window.focus(&editor.focus_handle(cx));
+                        window.focus(&editor.focus_handle(cx), cx);
                     });
                 }
                 if this.update_visible_entries_task.autoscroll {
@@ -5944,7 +5952,7 @@ impl Render for ProjectPanel {
                                     cx.stop_propagation();
                                     this.state.selection = None;
                                     this.marked_entries.clear();
-                                    this.focus_handle(cx).focus(window);
+                                    this.focus_handle(cx).focus(window, cx);
                                 }))
                                 .on_mouse_down(
                                     MouseButton::Right,
