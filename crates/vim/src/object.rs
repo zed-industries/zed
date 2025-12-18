@@ -1102,7 +1102,14 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| r.end - r.start);
+    // For "around" text objects, prefer larger matches (e.g., full declaration over just arrow function)
+    // For "inside" text objects, prefer smaller matches
+    let is_around = target.around().is_none();
+    if is_around {
+        matches.sort_by_key(|r| std::cmp::Reverse(r.end - r.start));
+    } else {
+        matches.sort_by_key(|r| r.end - r.start);
+    }
     if let Some(buffer_range) = matches.first() {
         let buffer_range = BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end);
         let range = excerpt.map_range_from_buffer(buffer_range);
@@ -3406,5 +3413,164 @@ mod test {
             .await
             .assert_eq("    ˇf = (x: unknown) => {");
         cx.shared_clipboard().await.assert_eq("const ");
+    }
+
+    #[gpui::test]
+    async fn test_arrow_function_text_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_typescript(cx).await;
+
+        // Test `vaf` on arrow function in variable declaration
+        // Should select the entire declaration including `const foo =`
+        cx.set_state(
+            indoc! {"
+                const foo = () => {
+                    return ˇ1;
+                };
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «const foo = () => {
+                    return 1;
+                };ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` on arrow function used as callback (should only select the arrow function)
+        cx.set_state(
+            indoc! {"
+                arr.map(() => {
+                    return ˇ1;
+                });
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                arr.map(«() => {
+                    return 1;
+                }ˇ»);
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vif` on arrow function (should select only the function body)
+        cx.set_state(
+            indoc! {"
+                const foo = () => {
+                    return ˇ1;
+                };
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i f");
+        cx.assert_state(
+            indoc! {"
+                const foo = () => {
+                    «return 1;ˇ»
+                };
+            "},
+            Mode::Visual,
+        );
+
+        // Test `vaf` on IIFE (immediately invoked function expression)
+        // Should only select the arrow function, not the call expression
+        cx.set_state(
+            indoc! {"
+                (() => {
+                    console.log(ˇ1);
+                })();
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                («() => {
+                    console.log(1);
+                }ˇ»)();
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` on exported arrow function
+        // Should select the declaration but not the export keyword (for now)
+        cx.set_state(
+            indoc! {"
+                const foo = () => {
+                    return ˇ1;
+                };
+                export { foo };
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «const foo = () => {
+                    return 1;
+                };ˇ»
+                export { foo };
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` with `let` declaration
+        cx.set_state(
+            indoc! {"
+                let bar = () => {
+                    return ˇ2;
+                };
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «let bar = () => {
+                    return 2;
+                };ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` with `var` declaration
+        cx.set_state(
+            indoc! {"
+                var baz = () => {
+                    return ˇ3;
+                };
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «var baz = () => {
+                    return 3;
+                };ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` on expression-bodied arrow function in declaration
+        // Note: lexical_declaration node doesn't include trailing semicolon in tree-sitter
+        cx.set_state(
+            indoc! {"
+                const add = (a, b) => a + ˇb;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «ˇconst add = (a, b) => a + b»;
+            "},
+            Mode::VisualLine,
+        );
     }
 }
