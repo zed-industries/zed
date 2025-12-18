@@ -170,12 +170,15 @@ impl AgentTool for GrepTool {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        let results = self
+        let (results, search_task) = self
             .project
             .update(cx, |project, cx| project.search(query, cx));
 
         let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
+            // Keep the search alive for the duration of result iteration. Dropping this task is the
+            // cancellation mechanism; we intentionally do not detach it.
+            let _search_task = search_task;
             futures::pin_mut!(results);
 
             let mut output = String::new();

@@ -303,7 +303,7 @@ impl ProjectSearch {
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
-        let search = self.project.update(cx, |project, cx| {
+        let (search, project_search_task) = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
@@ -326,6 +326,10 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
+            // Keep the search task alive for the lifetime of this pending search task.
+            // Dropping it is the cancellation mechanism; we intentionally do not detach it.
+            let _project_search_task = project_search_task;
+
             let mut matches = pin!(search.ready_chunks(1024));
             project_search
                 .update(cx, |project_search, cx| {

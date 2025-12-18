@@ -4141,7 +4141,11 @@ impl Project {
         searcher.into_handle(query, cx)
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> (Receiver<SearchResult>, Task<()>) {
         self.search_impl(query, cx).results(cx)
     }
 
@@ -5025,9 +5029,13 @@ impl Project {
         let path_style = this.read_with(&cx, |this, cx| this.path_style(cx))?;
         let query =
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
-        let results = this.update(&mut cx, |this, cx| {
+        let (results, search_task) = this.update(&mut cx, |this, cx| {
             this.search_impl(query, cx).matching_buffers(cx)
         })?;
+
+        // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+        // We intentionally do not detach it.
+        let _search_task = search_task;
 
         let mut response = proto::FindSearchCandidatesResponse {
             buffer_ids: Vec::new(),

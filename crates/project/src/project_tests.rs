@@ -10400,7 +10400,10 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let (search_rx, search_task) = project.update(cx, |project, cx| project.search(query, cx));
+    // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+    let _search_task = search_task;
+
     let mut results = HashMap::default();
     while let Ok(search_result) = search_rx.recv().await {
         match search_result {

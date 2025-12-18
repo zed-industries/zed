@@ -5179,7 +5179,7 @@ async fn test_project_search(
 
     // Perform a search as the guest.
     let mut results = HashMap::default();
-    let search_rx = project_b.update(cx_b, |project, cx| {
+    let (search_rx, search_task) = project_b.update(cx_b, |project, cx| {
         project.search(
             SearchQuery::text(
                 "world",
@@ -5195,6 +5195,8 @@ async fn test_project_search(
             cx,
         )
     });
+    // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+    let _search_task = search_task;
     while let Ok(result) = search_rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {

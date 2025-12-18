@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader},
+    io::{BufReader, Cursor, Read},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -68,13 +68,14 @@ pub struct SearchResultsHandle {
 }
 
 impl SearchResultsHandle {
-    pub fn results(self, cx: &mut App) -> Receiver<SearchResult> {
-        (self.trigger_search)(cx).detach();
-        self.results
+    pub fn results(self, cx: &mut App) -> (Receiver<SearchResult>, Task<()>) {
+        let task = (self.trigger_search)(cx);
+        (self.results, task)
     }
-    pub fn matching_buffers(self, cx: &mut App) -> Receiver<Entity<Buffer>> {
-        (self.trigger_search)(cx).detach();
-        self.matching_buffers
+
+    pub fn matching_buffers(self, cx: &mut App) -> (Receiver<Entity<Buffer>>, Task<()>) {
+        let task = (self.trigger_search)(cx);
+        (self.matching_buffers, task)
     }
 }
 
@@ -681,32 +682,40 @@ impl RequestHandler<'_> {
     }
 
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
-        _=maybe!(async move {
+        _ = (async move || -> anyhow::Result<()> {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self.fs.context("Trying to query filesystem in remote project search")?.open_sync(&abs_path).await.log_err() else {
-                return anyhow::Ok(());
-            };
 
-            let mut file = BufReader::new(file);
-            let file_start = file.fill_buf()?;
+            // Avoid blocking IO here: cancellation of the search is implemented via task drop, and a
+            // synchronous `std::fs::File::open` / `Read::read` can delay task cancellation for a long time.
+            let contents = self
+                .fs
+                .context("Trying to query filesystem in remote project search")?
+                .load_bytes(&abs_path)
+                .await?;
 
-            if let Err(Some(starting_position)) =
-            std::str::from_utf8(file_start).map_err(|e| e.error_len())
-            {
-                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
-                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
-                log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
-                );
-                return Ok(());
+            // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
+            // That way we can still match files without having to look at "obviously binary" files.
+            if let Err(error) = std::str::from_utf8(&contents) {
+                if let Some(starting_position) = error.error_len() {
+                    log::debug!(
+                        "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
+                    );
+                    return Ok(());
+                }
             }
+
+            let file: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(contents));
+            let file = BufReader::new(file);
 
             if self.query.detect(file).unwrap_or(false) {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send(entry.path).await?;
             }
+
             Ok(())
-        }).await;
+        })()
+        .await
+        .log_err();
     }
 
     async fn handle_scan_path(&self, req: InputPath) {
