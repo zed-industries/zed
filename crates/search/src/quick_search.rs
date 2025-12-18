@@ -1022,7 +1022,11 @@ fn apply_batch_to_picker(
     if is_first {
         delegate.items.iter().find_map(|item| {
             if let QuickSearchItem::LineMatch(data) = item {
-                Some((data.project_path.clone(), data.line, data.match_ranges.clone()))
+                Some((
+                    data.project_path.clone(),
+                    data.line,
+                    data.match_ranges.clone(),
+                ))
             } else {
                 None
             }
@@ -1362,9 +1366,7 @@ impl QuickSearchDelegate {
         self.visible_indices
             .get(visible_index)
             .and_then(|&actual_idx| self.items.get(actual_idx))
-            .map_or(false, |item| {
-                matches!(item, QuickSearchItem::LineMatch(_))
-            })
+            .map_or(false, |item| matches!(item, QuickSearchItem::LineMatch(_)))
     }
 
     #[inline]
@@ -1620,9 +1622,11 @@ impl PickerDelegate for QuickSearchDelegate {
         let quick_search = self.quick_search.clone();
         let actual_index = self.actual_index(self.selected_index);
         let preview_data = actual_index.and_then(|idx| match self.items.get(idx) {
-            Some(QuickSearchItem::LineMatch(data)) => {
-                Some((data.project_path.clone(), data.line, data.match_ranges.clone()))
-            }
+            Some(QuickSearchItem::LineMatch(data)) => Some((
+                data.project_path.clone(),
+                data.line,
+                data.match_ranges.clone(),
+            )),
             _ => None,
         });
 
@@ -2510,8 +2514,7 @@ mod tests {
 
         fixture.search("test_function").await;
 
-        let (match_count, file_count) =
-            fixture.delegate(|d| (d.match_count, d.file_count));
+        let (match_count, file_count) = fixture.delegate(|d| (d.match_count, d.file_count));
 
         assert_eq!(match_count, 500);
         assert_eq!(file_count, 1);
@@ -2585,8 +2588,7 @@ mod tests {
         .await;
 
         fixture.search("fn main").await;
-        let (match_count, file_count) =
-            fixture.delegate(|d| (d.match_count, d.file_count));
+        let (match_count, file_count) = fixture.delegate(|d| (d.match_count, d.file_count));
 
         assert_eq!(match_count, 1);
         assert_eq!(file_count, 1);
