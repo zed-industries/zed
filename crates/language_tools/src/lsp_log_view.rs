@@ -1342,10 +1342,7 @@ impl ServerInfo {
             capabilities: server.capabilities(),
             status: LanguageServerStatus {
                 name: server.name(),
-                server_version: server
-                    .server_info()
-                    .and_then(|info| info.version)
-                    .map(SharedString::from),
+                server_version: server.server_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
