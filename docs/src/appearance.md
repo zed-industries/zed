@@ -1,14 +1,14 @@
 # Appearance
 
-Zed's visual appearance is highly configurable. You can change themes, fonts, icon styles, and dozens of UI elements to match your preferences.
+Customize Zed's visual appearance to match your preferences. This guide covers themes, fonts, icons, and other visual settings.
 
-This page covers the essentials to get you started quickly, outlines how settings work, and points you to detailed documentation for specific customizations.
+For information on how the settings system works, see [Configuring Zed](./configuring-zed.md).
 
 ## Customize Zed in 5 Minutes
 
 Here's how to make Zed feel like home:
 
-1. **Pick a theme**: Open the command palette with {#kb theme_selector::Toggle} and type "theme" to open the Theme Selector. Arrow through the list to preview themes in real time, and press Enter to apply.
+1. **Pick a theme**: Press {#kb theme_selector::Toggle} to open the Theme Selector. Arrow through the list to preview themes in real time, and press Enter to apply.
 
 2. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
 
@@ -18,39 +18,11 @@ Here's how to make Zed feel like home:
 
 That's it. You now have a personalized Zed setup.
 
-## How Settings Work
+## Themes
 
-The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Zed. It provides a searchable interface where you can browse available settings, see their current values, and make changes. As you type in the search box, matching settings appear with descriptions and controls to modify them.
+Install themes from the Extensions page ({#action zed::Extensions}), then switch between them with the Theme Selector ({#kb theme_selector::Toggle}).
 
-Changes you make in the Settings Editor are saved automatically to your settings file.
-
-### User Settings vs Project Settings
-
-Zed supports two levels of configuration:
-
-- **User settings** apply globally across all projects. These are your defaults.
-
-- **Project settings** override user settings for a specific project. Create a `.zed/settings.json` file in your project root to customize behavior per-codebase (for example, different tab sizes or formatters for different projects).
-
-### Editing Settings as JSON
-
-If you prefer working with JSON directly, open your settings file with {#kb zed::OpenSettingsFile}. This file is located at:
-
-- macOS/Linux: `~/.config/zed/settings.json`
-- Windows: `%APPDATA%\Zed\settings.json`
-
-The Settings Editor and JSON file represent the same configuration—changes in one are reflected in the other.
-
-> **Tip:** Some advanced settings aren't yet available in the Settings Editor. For full control, edit the JSON file directly.
-
-### Example: Changing Your Theme
-
-Using the Settings Editor:
-1. Press {#kb zed::OpenSettings}
-2. Search for "theme"
-3. Select your preferred theme from the dropdown
-
-Or add this to your `settings.json`:
+Zed supports separate themes for light and dark mode with automatic switching based on your system preference:
 
 ```json [settings]
 {
@@ -62,41 +34,89 @@ Or add this to your `settings.json`:
 }
 ```
 
-## Using Settings Deep Links
-
-Zed supports deep links that open specific settings directly. These are useful for:
-
-- Sharing configuration tips with teammates
-- Quick access from documentation
-- Automation and scripting
-
-Deep links follow the format `zed://settings/setting_name`. For example, `zed://settings/theme` opens the theme settings.
-
-## Detailed Customization
-
-### Themes
-
-Install themes from the Extensions page ({#action zed::Extensions}), then switch between them with the Theme Selector ({#kb theme_selector::Toggle}).
-
-Zed supports separate themes for light and dark mode, automatic switching based on your system preference, and per-theme overrides for fine-grained control.
+You can also override specific theme attributes for fine-grained control.
 
 → [Themes documentation](./themes.md)
 
-### Icon Themes
+## Icon Themes
 
-Customize file and folder icons in the project panel and tabs. Browse available icon themes with the Icon Theme Selector.
+Customize file and folder icons in the Project Panel and tabs. Browse available icon themes with the Icon Theme Selector (`icon theme selector: toggle` in the command palette).
+
+Like color themes, icon themes support separate light and dark variants:
+
+```json [settings]
+{
+  "icon_theme": {
+    "mode": "system",
+    "light": "Zed (Default)",
+    "dark": "Zed (Default)"
+  }
+}
+```
 
 → [Icon Themes documentation](./icon-themes.md)
 
-### Fonts & Visual Tweaks
+## Fonts
 
-Configure fonts for the editor buffer, UI, and terminal independently. Adjust line height, enable or disable ligatures, and tweak dozens of visual elements like the status bar, tab bar, scrollbar, and panels.
+Zed uses three font settings for different contexts:
 
-→ [Visual Customization documentation](./visual-customization.md)
+| Setting | Used for |
+|---------|----------|
+| `buffer_font_family` | Editor text |
+| `ui_font_family` | Interface elements |
+| `terminal.font_family` | Terminal |
+
+Example configuration:
+
+```json [settings]
+{
+  "buffer_font_family": "JetBrains Mono",
+  "buffer_font_size": 14,
+  "ui_font_family": "Inter",
+  "ui_font_size": 16,
+  "terminal": {
+    "font_family": "JetBrains Mono",
+    "font_size": 14
+  }
+}
+```
+
+### Font Ligatures
+
+To disable font ligatures:
+
+```json [settings]
+{
+  "buffer_font_features": {
+    "calt": false
+  }
+}
+```
+
+### Line Height
+
+Adjust line spacing with `buffer_line_height`:
+
+- `"comfortable"` — 1.618 ratio (default)
+- `"standard"` — 1.3 ratio
+- `{ "custom": 1.5 }` — Custom ratio
+
+## UI Elements
+
+Zed provides extensive control over UI elements including:
+
+- **Tab bar** — Show/hide, navigation buttons, file icons, git status
+- **Status bar** — Language selector, cursor position, line endings
+- **Scrollbar** — Visibility, git diff indicators, search results
+- **Minimap** — Code overview display
+- **Gutter** — Line numbers, fold indicators, breakpoints
+- **Panels** — Project Panel, Terminal, Agent Panel sizing and docking
+
+→ [Visual Customization documentation](./visual-customization.md) for all UI element settings
 
 ## What's Next
 
+- [Configuring Zed](./configuring-zed.md) — How the settings system works
 - [Key bindings](./key-bindings.md) — Customize keyboard shortcuts
 - [Vim Mode](./vim.md) — Enable modal editing
-- [Snippets](./snippets.md) — Create custom code snippets
-- [All Settings](./configuring-zed.md) — Complete settings reference
+- [All Settings](./reference/all-settings.md) — Complete settings reference
