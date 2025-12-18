@@ -1697,6 +1697,9 @@ impl Buffer {
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
+        if self.text.version() != *self.tree_sitter_data.version() {
+            self.invalidate_tree_sitter_data(self.text.snapshot());
+        }
         if self.reparse.is_some() {
             return;
         }
