@@ -350,6 +350,8 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
 }
