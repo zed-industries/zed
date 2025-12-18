@@ -76,6 +76,11 @@ jobs:
       name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - id: record_clippy_failure
+      name: steps::record_clippy_failure
+      if: always()
+      run: echo "failed=${{ steps.clippy.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -90,7 +95,7 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     outputs:
-      clippy_failed: ${{ steps.clippy.outcome == 'failure' }}
+      clippy_failed: ${{ steps.record_clippy_failure.outputs.failed == 'true' }}
     timeout-minutes: 60
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

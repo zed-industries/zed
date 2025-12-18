@@ -54,8 +54,25 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub const PRETTIER_STEP_ID: &str = "prettier";
+pub const CARGO_FMT_STEP_ID: &str = "cargo_fmt";
+pub const RECORD_STYLE_FAILURE_STEP_ID: &str = "record_style_failure";
+
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier").id(PRETTIER_STEP_ID)
+}
+
 pub fn cargo_fmt() -> Step<Run> {
-    named::bash("cargo fmt --all -- --check")
+    named::bash("cargo fmt --all -- --check").id(CARGO_FMT_STEP_ID)
+}
+
+pub fn record_style_failure() -> Step<Run> {
+    named::bash(format!(
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' || steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
+        PRETTIER_STEP_ID, CARGO_FMT_STEP_ID
+    ))
+    .id(RECORD_STYLE_FAILURE_STEP_ID)
+    .if_condition(Expression::new("always()"))
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
@@ -102,12 +119,22 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
 }
 
 pub const CLIPPY_STEP_ID: &str = "clippy";
+pub const RECORD_CLIPPY_FAILURE_STEP_ID: &str = "record_clippy_failure";
 
 pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1").id(CLIPPY_STEP_ID),
         _ => named::bash("./script/clippy").id(CLIPPY_STEP_ID),
     }
+}
+
+pub fn record_clippy_failure() -> Step<Run> {
+    named::bash(format!(
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
+        CLIPPY_STEP_ID
+    ))
+    .id(RECORD_CLIPPY_FAILURE_STEP_ID)
+    .if_condition(Expression::new("always()"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {

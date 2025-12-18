@@ -74,11 +74,18 @@ jobs:
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - name: ./script/prettier
+    - id: prettier
+      name: steps::prettier
       run: ./script/prettier
       shell: bash -euxo pipefail {0}
-    - name: steps::cargo_fmt
+    - id: cargo_fmt
+      name: steps::cargo_fmt
       run: cargo fmt --all -- --check
+      shell: bash -euxo pipefail {0}
+    - id: record_style_failure
+      name: steps::record_style_failure
+      if: always()
+      run: echo "failed=${{ steps.prettier.outcome == 'failure' || steps.cargo_fmt.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: ./script/check-todos
       run: ./script/check-todos
@@ -90,6 +97,8 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    outputs:
+      style_failed: ${{ steps.record_style_failure.outputs.failed == 'true' }}
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -162,6 +171,11 @@ jobs:
       name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - id: record_clippy_failure
+      name: steps::record_clippy_failure
+      if: always()
+      run: echo "failed=${{ steps.clippy.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -176,7 +190,7 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     outputs:
-      clippy_failed: ${{ steps.clippy.outcome == 'failure' }}
+      clippy_failed: ${{ steps.record_clippy_failure.outputs.failed == 'true' }}
     timeout-minutes: 60
   run_tests_mac:
     needs:
@@ -582,7 +596,7 @@ jobs:
     needs:
     - check_style
     - run_tests_linux
-    if: (needs.check_style.result == 'failure' || needs.run_tests_linux.outputs.clippy_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
+    if: always() && (needs.check_style.outputs.style_failed == 'true' || needs.run_tests_linux.outputs.clippy_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: get-app-token
