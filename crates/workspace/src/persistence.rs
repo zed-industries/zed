@@ -3296,4 +3296,53 @@ mod tests {
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
     }
+
+    #[gpui::test]
+    async fn test_empty_workspace_window_bounds() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_empty_workspace_window_bounds").await;
+        let id = db.next_id().await.unwrap();
+
+        // Create a workspace with empty paths (empty workspace)
+        let empty_paths: &[&str] = &[];
+        let display_uuid = Uuid::new_v4();
+        let window_bounds = SerializedWindowBounds(WindowBounds::Windowed(Bounds {
+            origin: point(px(100.0), px(200.0)),
+            size: size(px(800.0), px(600.0)),
+        }));
+
+        let workspace = SerializedWorkspace {
+            id,
+            paths: PathList::new(empty_paths),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+
+        // Save the workspace (this creates the record with empty paths)
+        db.save_workspace(workspace.clone()).await;
+
+        // Save window bounds separately (as the actual code does via set_window_open_status)
+        db.set_window_open_status(id, window_bounds, display_uuid)
+            .await
+            .unwrap();
+
+        // Retrieve it using empty paths
+        let retrieved = db.workspace_for_roots(empty_paths).unwrap();
+
+        // Verify window bounds were persisted
+        assert_eq!(retrieved.id, id);
+        assert!(retrieved.window_bounds.is_some());
+        assert_eq!(retrieved.window_bounds.unwrap().0, window_bounds.0);
+        assert!(retrieved.display.is_some());
+        assert_eq!(retrieved.display.unwrap(), display_uuid);
+    }
 }

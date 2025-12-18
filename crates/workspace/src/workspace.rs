@@ -5665,12 +5665,24 @@ impl Workspace {
                     persistence::DB.save_workspace(serialized_workspace).await;
                 })
             }
-            WorkspaceLocation::DetachFromSession => window.spawn(cx, async move |_| {
-                persistence::DB
-                    .set_session_id(database_id, None)
-                    .await
-                    .log_err();
-            }),
+            WorkspaceLocation::DetachFromSession => {
+                let window_bounds = SerializedWindowBounds(window.window_bounds());
+                let display = window.display(cx).and_then(|d| d.uuid().ok());
+                window.spawn(cx, async move |_| {
+                    persistence::DB
+                        .set_window_open_status(
+                            database_id,
+                            window_bounds,
+                            display.unwrap_or_default(),
+                        )
+                        .await
+                        .log_err();
+                    persistence::DB
+                        .set_session_id(database_id, None)
+                        .await
+                        .log_err();
+                })
+            }
             WorkspaceLocation::None => Task::ready(()),
         }
     }
