@@ -85,7 +85,7 @@ jobs:
     - id: record_style_failure
       name: steps::record_style_failure
       if: always()
-      run: echo "failed=${{ steps.prettier.outcome == 'failure' || steps.cargo_fmt.outcome == 'failure' }}" >> $GITHUB_OUTPUT
+      run: echo "failed=${{ steps.prettier.outcome == 'failure' || steps.cargo_fmt.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: ./script/check-todos
       run: ./script/check-todos
@@ -174,7 +174,7 @@ jobs:
     - id: record_clippy_failure
       name: steps::record_clippy_failure
       if: always()
-      run: echo "failed=${{ steps.clippy.outcome == 'failure' }}" >> $GITHUB_OUTPUT
+      run: echo "failed=${{ steps.clippy.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest

@@ -68,7 +68,7 @@ pub fn cargo_fmt() -> Step<Run> {
 
 pub fn record_style_failure() -> Step<Run> {
     named::bash(format!(
-        "echo \"failed=${{{{ steps.{}.outcome == 'failure' || steps.{}.outcome == 'failure' }}}}\" >> $GITHUB_OUTPUT",
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' || steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
         PRETTIER_STEP_ID, CARGO_FMT_STEP_ID
     ))
     .id(RECORD_STYLE_FAILURE_STEP_ID)
@@ -130,7 +130,7 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 
 pub fn record_clippy_failure() -> Step<Run> {
     named::bash(format!(
-        "echo \"failed=${{{{ steps.{}.outcome == 'failure' }}}}\" >> $GITHUB_OUTPUT",
+        "echo \"failed=${{{{ steps.{}.outcome == 'failure' }}}}\" >> \"$GITHUB_OUTPUT\"",
         CLIPPY_STEP_ID
     ))
     .id(RECORD_CLIPPY_FAILURE_STEP_ID)
