@@ -51,6 +51,8 @@ pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 pub const COMPLETION_MENU_MIN_WIDTH: Pixels = px(280.);
 pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
+pub const CODE_ACTION_MENU_MIN_WIDTH: Pixels = px(220.);
+pub const CODE_ACTION_MENU_MAX_WIDTH: Pixels = px(540.);
 
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
@@ -179,7 +181,7 @@ impl CodeContextMenu {
     ) -> Option<AnyElement> {
         match self {
             CodeContextMenu::Completions(menu) => menu.render_aside(max_size, window, cx),
-            CodeContextMenu::CodeActions(_) => None,
+            CodeContextMenu::CodeActions(menu) => menu.render_aside(max_size, window, cx),
         }
     }
 
@@ -1419,31 +1421,19 @@ pub enum CodeActionsItem {
 }
 
 impl CodeActionsItem {
-    fn as_task(&self) -> Option<&ResolvedTask> {
-        let Self::Task(_, task) = self else {
-            return None;
-        };
-        Some(task)
-    }
-
-    fn as_code_action(&self) -> Option<&CodeAction> {
-        let Self::CodeAction { action, .. } = self else {
-            return None;
-        };
-        Some(action)
-    }
-    fn as_debug_scenario(&self) -> Option<&DebugScenario> {
-        let Self::DebugScenario(scenario) = self else {
-            return None;
-        };
-        Some(scenario)
-    }
-
     pub fn label(&self) -> String {
         match self {
             Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
             Self::DebugScenario(scenario) => scenario.label.to_string(),
+        }
+    }
+
+    pub fn menu_label(&self) -> String {
+        match self {
+            Self::CodeAction { action, .. } => action.lsp_action.title().replace("\n", ""),
+            Self::Task(_, task) => task.resolved_label.replace("\n", ""),
+            Self::DebugScenario(scenario) => format!("debug: {}", scenario.label),
         }
     }
 }
@@ -1555,60 +1545,33 @@ impl CodeActionsMenu {
                         let item_ix = range.start + ix;
                         let selected = item_ix == selected_item;
                         let colors = cx.theme().colors();
-                        div().min_w(px(220.)).max_w(px(540.)).child(
-                            ListItem::new(item_ix)
-                                .inset(true)
-                                .toggle_state(selected)
-                                .when_some(action.as_code_action(), |this, action| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(
-                                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title().replace("\n", ""),
-                                            )
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_task(), |this, task| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(task.resolved_label.replace("\n", ""))
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_debug_scenario(), |this, scenario| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child("debug: ")
-                                            .child(scenario.label.clone())
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .on_click(cx.listener(move |editor, _, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                })),
-                        )
+
+                        ListItem::new(item_ix)
+                            .inset(true)
+                            .toggle_state(selected)
+                            .overflow_x()
+                            .child(
+                                div()
+                                    .min_w(CODE_ACTION_MENU_MIN_WIDTH)
+                                    .max_w(CODE_ACTION_MENU_MAX_WIDTH)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .when(is_quick_action_bar, |this| this.text_ui(cx))
+                                    .when(selected, |this| this.text_color(colors.text_accent))
+                                    .child(action.menu_label()),
+                            )
+                            .on_click(cx.listener(move |editor, _, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(task) = editor.confirm_code_action(
+                                    &ConfirmCodeAction {
+                                        item_ix: Some(item_ix),
+                                    },
+                                    window,
+                                    cx,
+                                ) {
+                                    task.detach_and_log_err(cx)
+                                }
+                            }))
                     })
                     .collect()
             }),
@@ -1634,5 +1597,43 @@ impl CodeActionsMenu {
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
         Popover::new().child(list).into_any_element()
+    }
+
+    fn render_aside(
+        &mut self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) -> Option<AnyElement> {
+        let Some(action) = self.actions.get(self.selected_item) else {
+            return None;
+        };
+
+        let label = action.menu_label();
+        let text_system = window.text_system();
+        let mut line_wrapper = text_system.line_wrapper(
+            window.text_style().font(),
+            window.text_style().font_size.to_pixels(window.rem_size()),
+        );
+        let is_truncated =
+            line_wrapper.should_truncate_line(&label, CODE_ACTION_MENU_MAX_WIDTH, "…");
+
+        if is_truncated.is_none() {
+            return None;
+        }
+
+        Some(
+            Popover::new()
+                .child(
+                    div()
+                        .child(label)
+                        .id("code_actions_menu_extended")
+                        .px(MENU_ASIDE_X_PADDING / 2.)
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
+                        .occlude(),
+                )
+                .into_any_element(),
+        )
     }
 }

@@ -128,22 +128,21 @@ impl LineWrapper {
         })
     }
 
-    /// Truncate a line of text to the given width with this wrapper's font and font size.
-    pub fn truncate_line<'a>(
+    /// Determines if a line should be truncated based on its width.
+    pub fn should_truncate_line(
         &mut self,
-        line: SharedString,
+        line: &str,
         truncate_width: Pixels,
         truncation_suffix: &str,
-        runs: &'a [TextRun],
-    ) -> (SharedString, Cow<'a, [TextRun]>) {
+    ) -> Option<usize> {
         let mut width = px(0.);
-        let mut suffix_width = truncation_suffix
+        let suffix_width = truncation_suffix
             .chars()
             .map(|c| self.width_for_char(c))
             .fold(px(0.0), |a, x| a + x);
-        let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
-        for (ix, c) in char_indices {
+
+        for (ix, c) in line.char_indices() {
             if width + suffix_width < truncate_width {
                 truncate_ix = ix;
             }
@@ -152,16 +151,32 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                let mut runs = runs.to_vec();
-                update_runs_after_truncation(&result, truncation_suffix, &mut runs);
-
-                return (result, Cow::Owned(runs));
+                return Some(truncate_ix);
             }
         }
 
-        (line, Cow::Borrowed(runs))
+        None
+    }
+
+    /// Truncate a line of text to the given width with this wrapper's font and font size.
+    pub fn truncate_line<'a>(
+        &mut self,
+        line: SharedString,
+        truncate_width: Pixels,
+        truncation_suffix: &str,
+        runs: &'a [TextRun],
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
+        if let Some(truncate_ix) =
+            self.should_truncate_line(&line, truncate_width, truncation_suffix)
+        {
+            let result =
+                SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+            let mut runs = runs.to_vec();
+            update_runs_after_truncation(&result, truncation_suffix, &mut runs);
+            (result, Cow::Owned(runs))
+        } else {
+            (line, Cow::Borrowed(runs))
+        }
     }
 
     /// Any character in this list should be treated as a word character,
