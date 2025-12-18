@@ -216,10 +216,7 @@ impl TextSystem {
     ///
     /// Uses the advance width of the `m` character in the given font and size.
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
-        Ok(self
-            .platform_text_system
-            .layout_line("m", font_size, &[FontRun { len: 1, font_id }])
-            .width)
+        Ok(self.advance(font_id, font_size, 'm')?.width)
     }
 
     /// Returns the width of an `ch`.
