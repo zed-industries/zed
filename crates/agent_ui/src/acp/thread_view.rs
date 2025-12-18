@@ -2185,7 +2185,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .w_full()
-                .pl(rems_from_px(20.0))
+                .pl_5()
                 .bg(cx.theme().colors().panel_background.opacity(0.2))
                 .child(
                     div()
@@ -2449,25 +2449,25 @@ impl AcpThreadView {
                     | ToolCallStatus::Completed
                     | ToolCallStatus::Failed
                     | ToolCallStatus::Canceled => v_flex()
-                        .mt_1p5()
-                        .w_full()
-                        .child(
-                            v_flex()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pb_1()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(input_output_header("Raw Input".into()))
-                                .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                    self.render_markdown(
-                                        input,
-                                        default_markdown_style(false, false, window, cx),
-                                    )
-                                }))
-                                .child(input_output_header("Output:".into())),
-                        )
+                        .when(!is_edit && !is_terminal_tool, |this| {
+                            this.mt_1p5().w_full().child(
+                                v_flex()
+                                    .ml(rems(0.4))
+                                    .px_3p5()
+                                    .pb_1()
+                                    .gap_1()
+                                    .border_l_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(input_output_header("Raw Input:".into()))
+                                    .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                        self.render_markdown(
+                                            input,
+                                            default_markdown_style(false, false, window, cx),
+                                        )
+                                    }))
+                                    .child(input_output_header("Output:".into())),
+                            )
+                        })
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
                                 div().child(self.render_tool_call_content(
