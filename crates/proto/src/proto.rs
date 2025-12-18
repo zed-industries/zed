@@ -342,7 +342,8 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (FindSearchCandidatesChunk, Background)
 );
 
 request_messages!(
@@ -530,6 +531,7 @@ request_messages!(
     (GitCreateWorktree, Ack),
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
+    (FindSearchCandidatesChunk, Ack),
 );
 
 lsp_messages!(
@@ -705,6 +707,7 @@ entity_messages!(
     GitCreateWorktree,
     TrustWorktrees,
     RestrictWorktrees,
+    FindSearchCandidatesChunk,
 );
 
 entity_messages!(

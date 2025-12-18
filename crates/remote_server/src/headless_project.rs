@@ -783,33 +783,63 @@ impl HeadlessProject {
             message.query.context("missing query field")?,
             PathStyle::local(),
         )?;
-        let results = this.update(&mut cx, |this, cx| {
-            project::Search::local(
-                this.fs.clone(),
-                this.buffer_store.clone(),
-                this.worktree_store.clone(),
-                message.limit as _,
-                cx,
-            )
-            .into_handle(query, cx)
-            .matching_buffers(cx)
+
+        let project_id = message.project_id;
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
+        let next_project_search_id = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |this, _| {
+                util::post_inc(&mut this.next_project_search_id)
+            })
         })?;
 
-        let mut response = proto::FindSearchCandidatesResponse {
-            buffer_ids: Vec::new(),
+        let response = proto::FindSearchCandidatesResponse {
+            handle: next_project_search_id,
         };
-
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
-
-        while let Ok(buffer) = results.rx.recv().await {
-            let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
-            response.buffer_ids.push(buffer_id.to_proto());
-            buffer_store
-                .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                })?
+        let client = this.read_with(&cx, |this, _| this.session.clone())?;
+        cx.spawn(async move |cx| {
+            let results = this.update(cx, |this, cx| {
+                project::Search::local(
+                    this.fs.clone(),
+                    this.buffer_store.clone(),
+                    this.worktree_store.clone(),
+                    message.limit as _,
+                    cx,
+                )
+                .into_handle(query, cx)
+                .matching_buffers(cx)
+            })?;
+            let mut buffer_ids = vec![];
+            while let Ok(buffer) = results.rx.recv().await {
+                buffer_store
+                    .update(cx, |buffer_store, cx| {
+                        buffer_store.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                    })?
+                    .await?;
+                buffer_ids.push(buffer.read_with(cx, |this, _| this.remote_id().to_proto())?);
+                let _ = client
+                    .request(proto::FindSearchCandidatesChunk {
+                        handle: next_project_search_id,
+                        project_id,
+                        variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                            proto::FindSearchCandidatesMatches {
+                                buffer_ids: std::mem::take(&mut buffer_ids),
+                            },
+                        )),
+                    })
+                    .await?;
+            }
+            let _ = client
+                .request(proto::FindSearchCandidatesChunk {
+                    handle: next_project_search_id,
+                    project_id,
+                    variant: Some(proto::find_search_candidates_chunk::Variant::Done(
+                        proto::FindSearchCandidatesDone {},
+                    )),
+                })
                 .await?;
-        }
+            anyhow::Ok(())
+        })
+        .detach();
 
         Ok(response)
     }

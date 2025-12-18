@@ -39,6 +39,8 @@ pub struct BufferStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
+    project_search_chunks: HashMap<u64, smol::channel::Sender<BufferId>>,
+    pub(crate) next_project_search_id: u64,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -770,6 +772,8 @@ impl BufferStore {
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
+            project_search_chunks: Default::default(),
+            next_project_search_id: 0,
         }
     }
 
@@ -795,6 +799,8 @@ impl BufferStore {
             shared_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
+            project_search_chunks: Default::default(),
+            next_project_search_id: 0,
         }
     }
 
@@ -1686,6 +1692,51 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
+    }
+
+    pub(crate) fn register_project_search_result_handle(
+        &mut self,
+        handle: u64,
+        sender: smol::channel::Sender<BufferId>,
+    ) {
+        self.project_search_chunks.insert(handle, sender);
+    }
+
+    pub(crate) async fn handle_find_search_candidates_chunk(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        use proto::find_search_candidates_chunk::Variant;
+        let handle = envelope.payload.handle;
+
+        let buffer_ids = match envelope
+            .payload
+            .variant
+            .context("Expected non-null variant")?
+        {
+            Variant::Matches(find_search_candidates_matches) => find_search_candidates_matches
+                .buffer_ids
+                .into_iter()
+                .filter_map(|buffer_id| BufferId::new(buffer_id).ok())
+                .collect::<Vec<_>>(),
+            Variant::Done(_) => {
+                this.update(&mut cx, |this, _| {
+                    this.project_search_chunks.remove(&handle)
+                })?;
+                return Ok(proto::Ack {});
+            }
+        };
+        let Some(sender) = this.read_with(&mut cx, |this, _| {
+            this.project_search_chunks.get(&handle).cloned()
+        })?
+        else {
+            return Ok(proto::Ack {});
+        };
+        for buffer_id in buffer_ids {
+            sender.send(buffer_id).await?;
+        }
+        Ok(proto::Ack {})
     }
 }
 
