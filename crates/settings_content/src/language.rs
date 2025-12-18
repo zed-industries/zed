@@ -96,6 +96,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    Ollama,
     Experimental(&'static str),
 }
 
@@ -116,6 +117,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Supermaven,
             Zed,
             Codestral,
+            Ollama,
             Experimental(String),
         }
 
@@ -125,6 +127,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Ollama => EditPredictionProvider::Ollama,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
             {
@@ -164,6 +167,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Ollama
             | EditPredictionProvider::Experimental(_) => false,
         }
     }
@@ -184,6 +188,7 @@ impl EditPredictionProvider {
                 EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
             ) => Some("Zeta2"),
             EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Ollama => Some("Ollama"),
         }
     }
 }
@@ -205,6 +210,8 @@ pub struct EditPredictionSettingsContent {
     pub codestral: Option<CodestralSettingsContent>,
     /// Settings specific to Sweep.
     pub sweep: Option<SweepSettingsContent>,
+    /// Settings specific to Ollama.
+    pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -262,6 +269,19 @@ pub struct SweepSettingsContent {
     ///
     /// Default: false
     pub privacy_mode: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OllamaEditPredictionSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: "qwen2.5-coder:1.5b"
+    pub model: Option<String>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "http://localhost:11434"
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.

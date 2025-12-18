@@ -306,6 +306,40 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                let tooltip_meta = "Powered by Ollama";
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| this.build_ollama_context_menu(window, cx))
+                                .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("ollama-icon", IconName::ZedPredict)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let icons = self
@@ -978,6 +1012,20 @@ impl EditPredictionButton {
         })
     }
 
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let menu = self.build_language_settings_menu(menu, window, cx);
+            let menu =
+                self.add_provider_switching_section(menu, EditPredictionProvider::Ollama, cx);
+
+            menu
+        })
+    }
+
     fn build_edit_prediction_context_menu(
         &self,
         provider: EditPredictionProvider,
@@ -1292,7 +1340,7 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
     });
 }
 
-pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
+fn get_available_providers(&self, cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
     providers.push(EditPredictionProvider::Zed);
@@ -1303,12 +1351,11 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         ));
     }
 
-    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
-    {
-        providers.push(EditPredictionProvider::Copilot);
-    };
+    if let Some(copilot) = Copilot::global(cx) {
+        if matches!(copilot.read(cx).status(), Status::Authorized) {
+            providers.push(EditPredictionProvider::Copilot);
+        }
+    }
 
     if let Some(supermaven) = Supermaven::global(cx) {
         if let Supermaven::Spawned(agent) = supermaven.read(cx) {
@@ -1321,6 +1368,9 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     if CodestralEditPredictionDelegate::has_api_key(cx) {
         providers.push(EditPredictionProvider::Codestral);
     }
+
+    // Ollama is always available as it runs locally
+    providers.push(EditPredictionProvider::Ollama);
 
     if cx.has_flag::<SweepFeatureFlag>()
         && edit_prediction::sweep_ai::sweep_api_token(cx)

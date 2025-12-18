@@ -10,6 +10,7 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
+use ollama::OllamaEditPredictionDelegate;
 use settings::{
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
@@ -193,6 +194,11 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Codestral => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
+        EditPredictionProvider::Ollama => {
+            let http_client = client.http_client();
+            let provider = cx.new(|_| OllamaEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
