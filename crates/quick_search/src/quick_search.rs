@@ -771,6 +771,7 @@ impl PreviewFooterState {
             div()
                 .id("quick_search-preview-footer")
                 .flex_shrink_0()
+                .min_h_0()
                 .max_h(max_height)
                 .overflow_y_scroll()
                 .border_t_1()
@@ -817,6 +818,16 @@ impl QuickSearch {
     ) {
         let has_selected = self.picker.read(cx).delegate.selected_match().is_some();
         self.preview_footer.toggle_active_open(has_selected, window, cx);
+        self.preview.needs_preview_scroll = true;
+        let owner = cx.entity().downgrade();
+        window.defer(cx, move |window, cx| {
+            let Some(qs) = owner.upgrade() else {
+                return;
+            };
+            qs.update(cx, |qs, cx| {
+                qs.preview.apply_preview_selection(window, cx);
+            });
+        });
         self.picker.update(cx, |_picker, cx| cx.notify());
         cx.notify();
     }

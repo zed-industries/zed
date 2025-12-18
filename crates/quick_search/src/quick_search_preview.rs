@@ -992,7 +992,7 @@ impl PreviewState {
                     anchor_ranges.push(MultiBufferAnchor::min()..MultiBufferAnchor::min());
                 }
 
-                let effects = SelectionEffects::scroll(Autoscroll::fit());
+                let effects = SelectionEffects::scroll(Autoscroll::center());
                 editor.change_selections(effects, window, cx, move |selections| {
                     selections.clear_disjoint();
                     selections.select_anchor_ranges(anchor_ranges);
@@ -1027,7 +1027,7 @@ impl PreviewState {
                     anchor_ranges.push(MultiBufferAnchor::min()..MultiBufferAnchor::min());
                 }
 
-                let effects = SelectionEffects::scroll(Autoscroll::fit());
+                let effects = SelectionEffects::scroll(Autoscroll::center());
                 editor.change_selections(effects, window, cx, move |selections| {
                     selections.clear_disjoint();
                     selections.select_anchor_ranges(anchor_ranges);
