@@ -213,6 +213,8 @@ actions!(
         ActivatePreviousWindow,
         /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Closes the open project folders in the current workspace.
+        CloseFolder,
         /// Clears all notifications.
         ClearAllNotifications,
         /// Clears all navigation history, including forward/backward navigation, recently opened files, and recently closed tabs. **This action is irreversible**.
@@ -2391,6 +2393,11 @@ impl Workspace {
         self.project.read(cx).visible_worktrees(cx)
     }
 
+    fn can_close_folder(&self, cx: &App) -> bool {
+        let project = self.project.read(cx);
+        !project.is_via_collab() && project.visible_worktrees(cx).next().is_some()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
@@ -2960,6 +2967,33 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn close_folder(&mut self, _: &CloseFolder, _window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project.read(cx);
+        if project.is_via_collab() {
+            drop(project);
+            self.show_error(
+                &anyhow!("You cannot close folders in someone else's project"),
+                cx,
+            );
+            return;
+        }
+
+        let worktree_ids: Vec<WorktreeId> = project
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).id())
+            .collect();
+        drop(project);
+
+        if worktree_ids.is_empty() {
+            return;
+        }
+
+        for worktree_id in worktree_ids {
+            self.project
+                .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        }
     }
 
     pub fn project_path_for_path(
@@ -5906,6 +5940,9 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
+            .when(self.can_close_folder(cx), |div| {
+                div.on_action(cx.listener(Self::close_folder))
+            })
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
