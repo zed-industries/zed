@@ -239,7 +239,7 @@ impl WorktreeListDelegate {
                         multiple: false,
                         prompt: Some("Select directory for new worktree".into()),
                     },
-                    DirectoryLister::Project(this.project().clone()),
+                    DirectoryLister::Project(this.project().clone(), project::DirectoryListerMode::Open, None),
                     window,
                     cx,
                 )

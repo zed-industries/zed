@@ -247,6 +247,10 @@ actions!(
         NewWindow,
         /// Opens a file or directory.
         Open,
+        /// Browse and open a file from the project root.
+        Browse,
+        /// Browse and open a file, starting from the current file's directory.
+        BrowseFromCurrentDirectory,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -2244,7 +2248,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
-        if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
+        // Force in-app picker when there's an initial path to preselect,
+        // since the system picker doesn't support starting in a specific directory
+        if !lister.is_local(cx)
+            || !WorkspaceSettings::get_global(cx).use_system_path_prompts
+            || lister.preselect_filename().is_some()
+        {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
             let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_open_path = Some(prompt);
@@ -2925,7 +2934,7 @@ impl Workspace {
                 multiple: true,
                 prompt: None,
             },
-            DirectoryLister::Project(self.project.clone()),
+            DirectoryLister::Project(self.project.clone(), project::DirectoryListerMode::Open, None),
             window,
             cx,
         );

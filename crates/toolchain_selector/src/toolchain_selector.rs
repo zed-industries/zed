@@ -128,29 +128,30 @@ impl AddToolchainState {
     ) -> (OpenPathDelegate, oneshot::Receiver<Option<Vec<PathBuf>>>) {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
-        let lister = OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, cx)
-            .show_hidden()
-            .with_footer(Arc::new(move |_, cx| {
-                let error = weak
-                    .read_with(cx, |this, _| {
-                        if let AddState::Path { error, .. } = &this.state {
-                            error.clone()
-                        } else {
-                            None
-                        }
-                    })
-                    .ok()
-                    .flatten();
-                let is_loading = weak
-                    .read_with(cx, |this, _| {
-                        matches!(
-                            this.state,
-                            AddState::Path {
-                                input_state: PathInputState::Resolving(_),
-                                ..
+        let lister =
+            OpenPathDelegate::new(tx, DirectoryLister::Project(project, project::DirectoryListerMode::Open, None), false, cx)
+                .show_hidden()
+                .with_footer(Arc::new(move |_, cx| {
+                    let error = weak
+                        .read_with(cx, |this, _| {
+                            if let AddState::Path { error, .. } = &this.state {
+                                error.clone()
+                            } else {
+                                None
                             }
-                        )
-                    })
+                        })
+                        .ok()
+                        .flatten();
+                    let is_loading = weak
+                        .read_with(cx, |this, _| {
+                            matches!(
+                                this.state,
+                                AddState::Path {
+                                    input_state: PathInputState::Resolving(_),
+                                    ..
+                                }
+                            )
+                        })
                     .unwrap_or_default();
                 Some(
                     v_flex()

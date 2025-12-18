@@ -852,6 +852,8 @@ fn register_actions(
                 DirectoryLister::Local(
                     workspace.project().clone(),
                     workspace.app_state().fs.clone(),
+                    project::DirectoryListerMode::Open,
+                    None,
                 ),
                 window,
                 cx,
@@ -863,13 +865,100 @@ fn register_actions(
                 };
 
                 if let Some(task) = this
-                    .update_in(cx, |this, window, cx| {
-                        this.open_workspace_for_paths(false, paths, window, cx)
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_workspace_for_paths(false, paths, window, cx)
                     })
                     .log_err()
                 {
                     task.await.log_err();
                 }
+            })
+            .detach()
+        })
+        .register_action(|workspace, _: &workspace::Browse, window, cx| {
+            let lister = if !workspace.project().read(cx).is_local() {
+                DirectoryLister::Project(workspace.project().clone(), project::DirectoryListerMode::Browse, None)
+            } else {
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                    project::DirectoryListerMode::Browse,
+                    None,
+                )
+            };
+
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                    prompt: None,
+                },
+                lister,
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                this.update_in(cx, |workspace, window, cx| {
+                    workspace
+                        .open_paths(paths, workspace::OpenOptions::default(), None, window, cx)
+                        .detach();
+                })
+                .log_err();
+            })
+            .detach()
+        })
+        .register_action(|workspace, _: &workspace::BrowseFromCurrentDirectory, window, cx| {
+            let current_path = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .and_then(|project_path| {
+                    let worktree = workspace
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(worktree.read(cx).absolutize(&project_path.path))
+                });
+
+            let lister = if !workspace.project().read(cx).is_local() {
+                DirectoryLister::Project(workspace.project().clone(), project::DirectoryListerMode::Browse, current_path)
+            } else {
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                    project::DirectoryListerMode::Browse,
+                    current_path,
+                )
+            };
+
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                    prompt: None,
+                },
+                lister,
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                this.update_in(cx, |workspace, window, cx| {
+                    workspace
+                        .open_paths(paths, workspace::OpenOptions::default(), None, window, cx)
+                        .detach();
+                })
+                .log_err();
             })
             .detach()
         })
@@ -890,7 +979,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                DirectoryLister::Project(workspace.project().clone()),
+                DirectoryLister::Project(workspace.project().clone(), project::DirectoryListerMode::Open, None),
                 window,
                 cx,
             );

@@ -2267,9 +2267,11 @@ impl Pane {
                             DirectoryLister::Local(
                                 workspace.project().clone(),
                                 workspace.app_state().fs.clone(),
+                                project::DirectoryListerMode::Open,
+                                None,
                             )
                         } else {
-                            DirectoryLister::Project(workspace.project().clone())
+                            DirectoryLister::Project(workspace.project().clone(), project::DirectoryListerMode::Open, None)
                         };
                         workspace.prompt_for_new_path(lister, Some(suggested_name), window, cx)
                     })

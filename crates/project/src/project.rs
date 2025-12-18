@@ -883,30 +883,44 @@ impl std::hash::Hash for ColorPresentation {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectoryListerMode {
+    Open,
+    Browse,
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
-    Project(Entity<Project>),
-    Local(Entity<Project>, Arc<dyn Fs>),
+    Project(Entity<Project>, DirectoryListerMode, Option<PathBuf>),
+    Local(Entity<Project>, Arc<dyn Fs>, DirectoryListerMode, Option<PathBuf>),
 }
 
 impl std::fmt::Debug for DirectoryLister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DirectoryLister::Project(project) => {
-                write!(f, "DirectoryLister::Project({project:?})")
+            DirectoryLister::Project(project, mode, initial_path) => {
+                write!(f, "DirectoryLister::Project({project:?}, {mode:?}, {initial_path:?})")
             }
-            DirectoryLister::Local(project, _) => {
-                write!(f, "DirectoryLister::Local({project:?})")
+            DirectoryLister::Local(project, _, mode, initial_path) => {
+                write!(f, "DirectoryLister::Local({project:?}, {mode:?}, {initial_path:?})")
             }
         }
     }
 }
 
 impl DirectoryLister {
+    pub fn browse_mode(&self) -> bool {
+        match self {
+            DirectoryLister::Project(_, mode, _) | DirectoryLister::Local(_, _, mode, _) => {
+                *mode == DirectoryListerMode::Browse
+            }
+        }
+    }
+
     pub fn is_local(&self, cx: &App) -> bool {
         match self {
             DirectoryLister::Local(..) => true,
-            DirectoryLister::Project(project) => project.read(cx).is_local(),
+            DirectoryLister::Project(project, _, _) => project.read(cx).is_local(),
         }
     }
 
@@ -919,12 +933,21 @@ impl DirectoryLister {
     }
 
     pub fn default_query(&self, cx: &mut App) -> String {
-        let project = match self {
-            DirectoryLister::Project(project) => project,
-            DirectoryLister::Local(project, _) => project,
-        }
-        .read(cx);
+        let (project, initial_path) = match self {
+            DirectoryLister::Project(project, _, initial_path) => (project, initial_path.as_ref()),
+            DirectoryLister::Local(project, _, _, initial_path) => (project, initial_path.as_ref()),
+        };
+        let project = project.read(cx);
         let path_style = project.path_style(cx);
+
+        if let Some(path) = initial_path {
+            if let Some(parent) = path.parent() {
+                let mut s = parent.to_string_lossy().into_owned();
+                s.push_str(path_style.primary_separator());
+                return s;
+            }
+        }
+
         project
             .visible_worktrees(cx)
             .next()
@@ -944,12 +967,22 @@ impl DirectoryLister {
             })
     }
 
+    pub fn preselect_filename(&self) -> Option<String> {
+        let initial_path = match self {
+            DirectoryLister::Project(_, _, path) | DirectoryLister::Local(_, _, _, path) => path,
+        };
+        initial_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
     pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {
         match self {
-            DirectoryLister::Project(project) => {
+            DirectoryLister::Project(project, _, _) => {
                 project.update(cx, |project, cx| project.list_directory(path, cx))
             }
-            DirectoryLister::Local(_, fs) => {
+            DirectoryLister::Local(_, fs, _, _) => {
                 let fs = fs.clone();
                 cx.background_spawn(async move {
                     let mut results = vec![];
@@ -4366,7 +4399,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
-            DirectoryLister::Local(cx.entity(), self.fs.clone()).list_directory(query, cx)
+            DirectoryLister::Local(cx.entity(), self.fs.clone(), DirectoryListerMode::Open, None).list_directory(query, cx)
         } else if let Some(session) = self.remote_client.as_ref() {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,
