@@ -80,12 +80,6 @@ jobs:
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
-    - name: steps::trigger_autofix
-      if: failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
-      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=false
-      shell: bash -euxo pipefail {0}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: ./script/check-todos
       run: ./script/check-todos
       shell: bash -euxo pipefail {0}
@@ -116,7 +110,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
     - name: steps::clear_target_dir_if_large
@@ -163,15 +158,10 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
-    - name: steps::trigger_autofix
-      if: failure() && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
-      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=true
-      shell: bash -euxo pipefail {0}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -185,6 +175,8 @@ jobs:
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
+    outputs:
+      clippy_failed: ${{ steps.clippy.outcome == 'failure' }}
     timeout-minutes: 60
   run_tests_mac:
     needs:
@@ -205,7 +197,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
+    - id: clippy
+      name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
@@ -585,6 +578,24 @@ jobs:
 
         exit $EXIT_CODE
       shell: bash -euxo pipefail {0}
+  call_autofix:
+    needs:
+    - check_style
+    - run_tests_linux
+    if: (needs.check_style.result == 'failure' || needs.run_tests_linux.outputs.clippy_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: run_tests::call_autofix::dispatch_autofix
+      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=${{ needs.run_tests_linux.outputs.clippy_failed == 'true' }}
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

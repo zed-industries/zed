@@ -45,11 +45,15 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
+    let check_style = check_style();
+    let run_tests_linux = run_platform_tests(Platform::Linux);
+    let call_autofix = call_autofix(&check_style, &run_tests_linux);
+
     let mut jobs = vec![
         orchestrate,
-        check_style(),
+        check_style,
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
+        should_run_tests.guard(run_tests_linux),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
@@ -106,6 +110,7 @@ pub(crate) fn run_tests() -> Workflow {
             workflow
         })
         .add_job(tests_pass.name, tests_pass.job)
+        .add_job(call_autofix.name, call_autofix.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
@@ -238,11 +243,42 @@ fn check_style() -> NamedJob {
             .add_step(steps::setup_pnpm())
             .add_step(steps::script("./script/prettier"))
             .add_step(steps::cargo_fmt())
-            .add_step(steps::trigger_autofix(false))
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos()),
     )
+}
+
+fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob {
+    fn dispatch_autofix(run_tests_linux_name: &str) -> Step<Run> {
+        let clippy_failed_expr = format!(
+            "needs.{}.outputs.{} == 'true'",
+            run_tests_linux_name, CLIPPY_FAILED_OUTPUT
+        );
+        named::bash(format!(
+            "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy=${{{{ {} }}}}",
+            clippy_failed_expr
+        ))
+        .add_env(("GITHUB_TOKEN", "${{ steps.get-app-token.outputs.token }}"))
+    }
+
+    let clippy_failed_expr = format!(
+        "needs.{}.outputs.{} == 'true'",
+        run_tests_linux.name, CLIPPY_FAILED_OUTPUT
+    );
+    let (authenticate, _token) = steps::authenticate_as_zippy();
+
+    let job = Job::default()
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new(format!(
+            "(needs.{}.result == 'failure' || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
+            check_style.name, clippy_failed_expr
+        )))
+        .needs(vec![check_style.name.clone(), run_tests_linux.name.clone()])
+        .add_step(authenticate)
+        .add_step(dispatch_autofix(&run_tests_linux.name));
+
+    named::job(job)
 }
 
 fn check_dependencies() -> NamedJob {
@@ -305,6 +341,8 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
+pub const CLIPPY_FAILED_OUTPUT: &str = "clippy_failed";
+
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
@@ -327,12 +365,20 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .add_step(steps::setup_node())
             .add_step(steps::clippy(platform))
             .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::trigger_autofix(true))
-                    .add_step(steps::cargo_install_nextest())
+                job.add_step(steps::cargo_install_nextest())
             })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
-            .add_step(steps::cleanup_cargo_config(platform)),
+            .add_step(steps::cleanup_cargo_config(platform))
+            .when(platform == Platform::Linux, |job| {
+                job.outputs([(
+                    CLIPPY_FAILED_OUTPUT.to_owned(),
+                    format!(
+                        "${{{{ steps.{}.outcome == 'failure' }}}}",
+                        steps::CLIPPY_STEP_ID
+                    ),
+                )])
+            }),
     }
 }
 
