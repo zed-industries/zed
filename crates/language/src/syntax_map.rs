@@ -19,7 +19,10 @@ use std::{
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
-use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
+use tree_sitter::{
+    Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
+    QueryPredicateArg, Tree,
+};
 
 pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
 
@@ -82,6 +85,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
     matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
@@ -1163,6 +1167,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 depth: layer.depth,
                 grammar_index,
                 matches,
+                query,
                 next_pattern_index: 0,
                 next_captures: Vec::new(),
                 has_next: false,
@@ -1260,13 +1265,20 @@ impl SyntaxMapCapturesLayer<'_> {
 
 impl SyntaxMapMatchesLayer<'_> {
     fn advance(&mut self) {
-        if let Some(mat) = self.matches.next() {
-            self.next_captures.clear();
-            self.next_captures.extend_from_slice(mat.captures);
-            self.next_pattern_index = mat.pattern_index;
-            self.has_next = true;
-        } else {
-            self.has_next = false;
+        loop {
+            if let Some(mat) = self.matches.next() {
+                if !satisfies_custom_predicates(self.query, mat) {
+                    continue;
+                }
+                self.next_captures.clear();
+                self.next_captures.extend_from_slice(mat.captures);
+                self.next_pattern_index = mat.pattern_index;
+                self.has_next = true;
+                return;
+            } else {
+                self.has_next = false;
+                return;
+            }
         }
     }
 
@@ -1293,6 +1305,39 @@ impl<'a> Iterator for SyntaxMapCaptures<'a> {
         self.advance();
         result
     }
+}
+
+fn satisfies_custom_predicates(query: &Query, mat: &QueryMatch) -> bool {
+    for predicate in query.general_predicates(mat.pattern_index) {
+        let satisfied = match predicate.operator.as_ref() {
+            "has-parent?" => has_parent(&predicate.args, mat),
+            "not-has-parent?" => !has_parent(&predicate.args, mat),
+            _ => true,
+        };
+        if !satisfied {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_parent(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
+    let (
+        Some(QueryPredicateArg::Capture(capture_ix)),
+        Some(QueryPredicateArg::String(parent_kind)),
+    ) = (args.first(), args.get(1))
+    else {
+        return false;
+    };
+
+    let Some(capture) = mat.captures.iter().find(|c| c.index == *capture_ix) else {
+        return false;
+    };
+
+    capture
+        .node
+        .parent()
+        .is_some_and(|p| p.kind() == parent_kind.as_ref())
 }
 
 fn join_ranges(

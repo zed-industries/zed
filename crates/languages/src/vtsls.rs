@@ -2,19 +2,28 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
+use language::{
+    LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, PromptResponseContext, Toolchain,
+};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use regex::Regex;
 use semver::Version;
 use serde_json::Value;
+use serde_json::json;
+use settings::update_settings_file;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 use util::{ResultExt, maybe, merge_json_value_into};
+
+const ACTION_ALWAYS: &str = "Always";
+const ACTION_NEVER: &str = "Never";
+const UPDATE_IMPORTS_MESSAGE_PATTERN: &str = "Update imports for";
+const VTSLS_SERVER_NAME: &str = "vtsls";
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -301,6 +310,52 @@ impl LspAdapter for VtslsLspAdapter {
             (LanguageName::new_static("JavaScript"), "javascript".into()),
             (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
+    }
+
+    fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        let selected_title = context.selected_action.title.as_str();
+        let is_preference_response =
+            selected_title == ACTION_ALWAYS || selected_title == ACTION_NEVER;
+        if !is_preference_response {
+            return;
+        }
+
+        if context.message.contains(UPDATE_IMPORTS_MESSAGE_PATTERN) {
+            let setting_value = match selected_title {
+                ACTION_ALWAYS => "always",
+                ACTION_NEVER => "never",
+                _ => return,
+            };
+
+            let settings = json!({
+                "typescript": {
+                    "updateImportsOnFileMove": {
+                        "enabled": setting_value
+                    }
+                },
+                "javascript": {
+                    "updateImportsOnFileMove": {
+                        "enabled": setting_value
+                    }
+                }
+            });
+
+            let _ = cx.update(|cx| {
+                update_settings_file(self.fs.clone(), cx, move |content, _| {
+                    let lsp_settings = content
+                        .project
+                        .lsp
+                        .entry(VTSLS_SERVER_NAME.into())
+                        .or_default();
+
+                    if let Some(existing) = &mut lsp_settings.settings {
+                        merge_json_value_into(settings, existing);
+                    } else {
+                        lsp_settings.settings = Some(settings);
+                    }
+                });
+            });
+        }
     }
 }
 

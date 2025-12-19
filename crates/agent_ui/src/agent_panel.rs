@@ -7,7 +7,6 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_workspace_trust},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -264,17 +263,6 @@ impl AgentType {
             Self::Custom { .. } => Some(IconName::Sparkle),
         }
     }
-
-    fn is_mcp(&self) -> bool {
-        match self {
-            Self::NativeAgent => false,
-            Self::TextThread => false,
-            Self::Custom { .. } => false,
-            Self::Gemini => true,
-            Self::ClaudeCode => true,
-            Self::Codex => true,
-        }
-    }
 }
 
 impl From<ExternalAgent> for AgentType {
@@ -455,9 +443,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
-    new_agent_thread_task: Task<()>,
     show_trust_workspace_message: bool,
-    _worktree_trust_subscription: Option<Subscription>,
 }
 
 impl AgentPanel {
@@ -681,48 +667,6 @@ impl AgentPanel {
             None
         };
 
-        let mut show_trust_workspace_message = false;
-        let worktree_trust_subscription =
-            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
-                let has_global_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust_workspace(
-                        project
-                            .read(cx)
-                            .remote_connection_options(cx)
-                            .map(RemoteHostLocation::from),
-                        cx,
-                    )
-                });
-                if has_global_trust {
-                    None
-                } else {
-                    show_trust_workspace_message = true;
-                    let project = project.clone();
-                    Some(cx.subscribe(
-                        &trusted_worktrees,
-                        move |agent_panel, trusted_worktrees, _, cx| {
-                            let new_show_trust_workspace_message =
-                                !trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                    trusted_worktrees.can_trust_workspace(
-                                        project
-                                            .read(cx)
-                                            .remote_connection_options(cx)
-                                            .map(RemoteHostLocation::from),
-                                        cx,
-                                    )
-                                });
-                            if new_show_trust_workspace_message
-                                != agent_panel.show_trust_workspace_message
-                            {
-                                agent_panel.show_trust_workspace_message =
-                                    new_show_trust_workspace_message;
-                                cx.notify();
-                            };
-                        },
-                    ))
-                }
-            });
-
         let mut panel = Self {
             active_view,
             workspace,
@@ -745,14 +689,12 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
-            new_agent_thread_task: Task::ready(()),
             onboarding,
             acp_history,
             history_store,
             selected_agent: AgentType::default(),
             loading: false,
-            show_trust_workspace_message,
-            _worktree_trust_subscription: worktree_trust_subscription,
+            show_trust_workspace_message: false,
         };
 
         // Initial sync of agent servers from extensions
@@ -880,7 +822,7 @@ impl AgentPanel {
             window,
             cx,
         );
-        text_thread_editor.focus_handle(cx).focus(window);
+        text_thread_editor.focus_handle(cx).focus(window, cx);
     }
 
     fn external_thread(
@@ -945,47 +887,6 @@ impl AgentPanel {
                 }
             };
 
-            if ext_agent.is_mcp() {
-                let wait_task = this.update(cx, |agent_panel, cx| {
-                    agent_panel.project.update(cx, |project, cx| {
-                        wait_for_workspace_trust(
-                            project.remote_connection_options(cx),
-                            "context servers",
-                            cx,
-                        )
-                    })
-                })?;
-                if let Some(wait_task) = wait_task {
-                    this.update_in(cx, |agent_panel, window, cx| {
-                        agent_panel.show_trust_workspace_message = true;
-                        cx.notify();
-                        agent_panel.new_agent_thread_task =
-                            cx.spawn_in(window, async move |agent_panel, cx| {
-                                wait_task.await;
-                                let server = ext_agent.server(fs, history);
-                                agent_panel
-                                    .update_in(cx, |agent_panel, window, cx| {
-                                        agent_panel.show_trust_workspace_message = false;
-                                        cx.notify();
-                                        agent_panel._external_thread(
-                                            server,
-                                            resume_thread,
-                                            summarize_thread,
-                                            workspace,
-                                            project,
-                                            loading,
-                                            ext_agent,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            });
-                    })?;
-                    return Ok(());
-                }
-            }
-
             let server = ext_agent.server(fs, history);
             this.update_in(cx, |agent_panel, window, cx| {
                 agent_panel._external_thread(
@@ -1034,7 +935,7 @@ impl AgentPanel {
         if let Some(thread_view) = self.active_thread_view() {
             thread_view.update(cx, |view, cx| {
                 view.expand_message_editor(&ExpandMessageEditor, window, cx);
-                view.focus_handle(cx).focus(window);
+                view.focus_handle(cx).focus(window, cx);
             });
         }
     }
@@ -1115,12 +1016,12 @@ impl AgentPanel {
 
                     match &self.active_view {
                         ActiveView::ExternalAgentThread { thread_view } => {
-                            thread_view.focus_handle(cx).focus(window);
+                            thread_view.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::TextThread {
                             text_thread_editor, ..
                         } => {
-                            text_thread_editor.focus_handle(cx).focus(window);
+                            text_thread_editor.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::History | ActiveView::Configuration => {}
                     }
@@ -1268,7 +1169,7 @@ impl AgentPanel {
                 Self::handle_agent_configuration_event,
             ));
 
-            configuration.focus_handle(cx).focus(window);
+            configuration.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -1404,7 +1305,7 @@ impl AgentPanel {
         }
 
         if focus {
-            self.focus_handle(cx).focus(window);
+            self.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -1510,36 +1411,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let wait_task = if agent.is_mcp() {
-            self.project.update(cx, |project, cx| {
-                wait_for_workspace_trust(
-                    project.remote_connection_options(cx),
-                    "context servers",
-                    cx,
-                )
-            })
-        } else {
-            None
-        };
-        if let Some(wait_task) = wait_task {
-            self.show_trust_workspace_message = true;
-            cx.notify();
-            self.new_agent_thread_task = cx.spawn_in(window, async move |agent_panel, cx| {
-                wait_task.await;
-                agent_panel
-                    .update_in(cx, |agent_panel, window, cx| {
-                        agent_panel.show_trust_workspace_message = false;
-                        cx.notify();
-                        agent_panel._new_agent_thread(agent, window, cx);
-                    })
-                    .ok();
-            });
-        } else {
-            self._new_agent_thread(agent, window, cx);
-        }
-    }
-
-    fn _new_agent_thread(&mut self, agent: AgentType, window: &mut Window, cx: &mut Context<Self>) {
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -1749,14 +1620,19 @@ impl AgentPanel {
 
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
+                let is_generating_title = thread_view
+                    .read(cx)
+                    .as_native_thread(cx)
+                    .map_or(false, |t| t.read(cx).is_generating_title());
+
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
-                    div()
+                    let container = div()
                         .w_full()
                         .on_action({
                             let thread_view = thread_view.downgrade();
                             move |_: &menu::Confirm, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
+                                    thread_view.focus_handle(cx).focus(window, cx);
                                 }
                             }
                         })
@@ -1764,12 +1640,25 @@ impl AgentPanel {
                             let thread_view = thread_view.downgrade();
                             move |_: &editor::actions::Cancel, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
+                                    thread_view.focus_handle(cx).focus(window, cx);
                                 }
                             }
                         })
-                        .child(title_editor)
-                        .into_any_element()
+                        .child(title_editor);
+
+                    if is_generating_title {
+                        container
+                            .with_animation(
+                                "generating_title",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |div, delta| div.opacity(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        container.into_any_element()
+                    }
                 } else {
                     Label::new(thread_view.read(cx).title(cx))
                         .color(Color::Muted)
@@ -1799,6 +1688,13 @@ impl AgentPanel {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
                                 .truncate()
                                 .color(Color::Muted)
+                                .with_animation(
+                                    "generating_title",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                    |label, delta| label.alpha(delta),
+                                )
                                 .into_any_element()
                         }
                     }
@@ -1842,6 +1738,25 @@ impl AgentPanel {
             .into_any()
     }
 
+    fn handle_regenerate_thread_title(thread_view: Entity<AcpThreadView>, cx: &mut App) {
+        thread_view.update(cx, |thread_view, cx| {
+            if let Some(thread) = thread_view.as_native_thread(cx) {
+                thread.update(cx, |thread, cx| {
+                    thread.generate_title(cx);
+                });
+            }
+        });
+    }
+
+    fn handle_regenerate_text_thread_title(
+        text_thread_editor: Entity<TextThreadEditor>,
+        cx: &mut App,
+    ) {
+        text_thread_editor.update(cx, |text_thread_editor, cx| {
+            text_thread_editor.regenerate_summary(cx);
+        });
+    }
+
     fn render_panel_options_menu(
         &self,
         window: &mut Window,
@@ -1860,6 +1775,35 @@ impl AgentPanel {
         };
 
         let selected_agent = self.selected_agent.clone();
+
+        let text_thread_view = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => Some(text_thread_editor.clone()),
+            _ => None,
+        };
+        let text_thread_with_messages = match &self.active_view {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => text_thread_editor
+                .read(cx)
+                .text_thread()
+                .read(cx)
+                .messages(cx)
+                .any(|message| message.role == language_model::Role::Assistant),
+            _ => false,
+        };
+
+        let thread_view = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => Some(thread_view.clone()),
+            _ => None,
+        };
+        let thread_with_messages = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.read(cx).has_user_submitted_prompt(cx)
+            }
+            _ => false,
+        };
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
@@ -1883,6 +1827,7 @@ impl AgentPanel {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
+
                         if let Some(usage) = usage {
                             menu = menu
                                 .header_with_link("Prompt Usage", "Manage", account_url.clone())
@@ -1918,6 +1863,38 @@ impl AgentPanel {
                                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                                 )
                                 .separator()
+                        }
+
+                        if thread_with_messages | text_thread_with_messages {
+                            menu = menu.header("Current Thread");
+
+                            if let Some(text_thread_view) = text_thread_view.as_ref() {
+                                menu = menu
+                                    .entry("Regenerate Thread Title", None, {
+                                        let text_thread_view = text_thread_view.clone();
+                                        move |_, cx| {
+                                            Self::handle_regenerate_text_thread_title(
+                                                text_thread_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
+
+                            if let Some(thread_view) = thread_view.as_ref() {
+                                menu = menu
+                                    .entry("Regenerate Thread Title", None, {
+                                        let thread_view = thread_view.clone();
+                                        move |_, cx| {
+                                            Self::handle_regenerate_thread_title(
+                                                thread_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .separator();
+                            }
                         }
 
                         menu = menu
@@ -2451,7 +2428,7 @@ impl AgentPanel {
                 let history_is_empty = self.history_store.read(cx).is_empty(cx);
 
                 let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
-                    .providers()
+                    .visible_providers()
                     .iter()
                     .any(|provider| {
                         provider.is_authenticated(cx)

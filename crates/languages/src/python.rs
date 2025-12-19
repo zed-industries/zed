@@ -295,6 +295,23 @@ impl LspInstaller for TyLspAdapter {
         })
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let Some(ty_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await else {
+            return None;
+        };
+        let env = delegate.shell_env().await;
+        Some(LanguageServerBinary {
+            path: ty_bin,
+            env: Some(env),
+            arguments: vec!["server".into()],
+        })
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,

@@ -477,7 +477,7 @@ pub fn initialize_workspace(
         initialize_panels(prompt_builder.clone(), window, cx);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window);
+        workspace.focus_handle(cx).focus(window, cx);
     })
     .detach();
 }
@@ -707,7 +707,6 @@ fn setup_or_teardown_ai_panel<P: Panel>(
         .disable_ai
         || cfg!(test);
     let existing_panel = workspace.panel::<P>(cx);
-
     match (disable_ai, existing_panel) {
         (false, None) => cx.spawn_in(window, async move |workspace, cx| {
             let panel = load_panel(workspace.clone(), cx.clone()).await?;
@@ -2327,7 +2326,7 @@ mod tests {
     use project::{Project, ProjectPath};
     use semver::Version;
     use serde_json::json;
-    use settings::{SettingsStore, watch_config_file};
+    use settings::{SaturatingBool, SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         time::Duration,
@@ -4781,7 +4780,6 @@ mod tests {
                 "activity_indicator",
                 "agent",
                 "agents",
-                #[cfg(not(target_os = "macos"))]
                 "app_menu",
                 "assistant",
                 "assistant2",
@@ -5169,6 +5167,28 @@ mod tests {
             new_content_str.contains("UNIQUEVALUE"),
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_crash(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.disable_ai = Some(SaturatingBool(true));
+                });
+            });
+        });
+
+        cx.run_until_parked();
+
+        // If this panics, the test has failed
     }
 
     #[gpui::test]

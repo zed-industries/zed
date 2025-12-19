@@ -1713,7 +1713,7 @@ impl PickerDelegate for FileFinderDelegate {
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
                                                 move |window, cx| {
-                                                    window.focus(&focus_handle);
+                                                    window.focus(&focus_handle, cx);
                                                     window.dispatch_action(
                                                         ToggleIncludeIgnored.boxed_clone(),
                                                         cx,

@@ -46,6 +46,7 @@
 - [Tasks](./tasks.md)
 - [Tab Switcher](./tab-switcher.md)
 - [Remote Development](./remote-development.md)
+- [Dev Containers](./dev-containers.md)
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
@@ -91,6 +92,9 @@
 
 - [VS Code](./migrate/vs-code.md)
 - [IntelliJ IDEA](./migrate/intellij.md)
+- [PyCharm](./migrate/pycharm.md)
+- [WebStorm](./migrate/webstorm.md)
+- [RustRover](./migrate/rustrover.md)
 
 # Language Support
 
@@ -173,7 +177,6 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [FreeBSD](./development/freebsd.md)
-  - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
   - [Performance](./performance.md)
   - [Glossary](./development/glossary.md)

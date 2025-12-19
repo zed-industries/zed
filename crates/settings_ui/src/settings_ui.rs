@@ -346,8 +346,8 @@ impl NonFocusableHandle {
     fn from_handle(handle: FocusHandle, window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             let _subscription = cx.on_focus(&handle, window, {
-                move |_, window, _| {
-                    window.focus_next();
+                move |_, window, cx| {
+                    window.focus_next(cx);
                 }
             });
             Self {
@@ -891,7 +891,7 @@ impl SettingsPageItem {
                             .size(ButtonSize::Medium)
                             .on_click({
                                 let sub_page_link = sub_page_link.clone();
-                                cx.listener(move |this, _, _, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     let mut section_index = item_index;
                                     let current_page = this.current_page();
 
@@ -910,7 +910,7 @@ impl SettingsPageItem {
                                         )
                                     };
 
-                                    this.push_sub_page(sub_page_link.clone(), header, cx)
+                                    this.push_sub_page(sub_page_link.clone(), header, window, cx)
                                 })
                             }),
                         )
@@ -1551,7 +1551,7 @@ impl SettingsWindow {
         this.build_search_index();
 
         this.search_bar.update(cx, |editor, cx| {
-            editor.focus_handle(cx).focus(window);
+            editor.focus_handle(cx).focus(window, cx);
         });
 
         this
@@ -2187,7 +2187,7 @@ impl SettingsWindow {
                     let focus_handle = focus_handle.clone();
                     move |this, _: &gpui::ClickEvent, window, cx| {
                         this.change_file(ix, window, cx);
-                        focus_handle.focus(window);
+                        focus_handle.focus(window, cx);
                     }
                 }))
             };
@@ -2264,7 +2264,7 @@ impl SettingsWindow {
                                                             this.update(cx, |this, cx| {
                                                                 this.change_file(ix, window, cx);
                                                             });
-                                                            focus_handle.focus(window);
+                                                            focus_handle.focus(window, cx);
                                                         }
                                                     },
                                                 );
@@ -2398,7 +2398,7 @@ impl SettingsWindow {
                 let focused_entry_parent = this.root_entry_containing(focused_entry);
                 if this.navbar_entries[focused_entry_parent].expanded {
                     this.toggle_navbar_entry(focused_entry_parent);
-                    window.focus(&this.navbar_entries[focused_entry_parent].focus_handle);
+                    window.focus(&this.navbar_entries[focused_entry_parent].focus_handle, cx);
                 }
                 cx.notify();
             }))
@@ -2547,6 +2547,7 @@ impl SettingsWindow {
                                                         window.focus(
                                                             &this.navbar_entries[entry_index]
                                                                 .focus_handle,
+                                                            cx,
                                                         );
                                                         cx.notify();
                                                     },
@@ -2671,7 +2672,7 @@ impl SettingsWindow {
         // back to back.
         cx.on_next_frame(window, move |_, window, cx| {
             if let Some(handle) = handle_to_focus.as_ref() {
-                window.focus(handle);
+                window.focus(handle, cx);
             }
 
             cx.on_next_frame(window, |_, _, cx| {
@@ -2738,7 +2739,7 @@ impl SettingsWindow {
         };
         self.navbar_scroll_handle
             .scroll_to_item(position, gpui::ScrollStrategy::Top);
-        window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle, cx);
         cx.notify();
     }
 
@@ -3008,8 +3009,8 @@ impl SettingsWindow {
                             IconButton::new("back-btn", IconName::ArrowLeft)
                                 .icon_size(IconSize::Small)
                                 .shape(IconButtonShape::Square)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.pop_sub_page(cx);
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.pop_sub_page(window, cx);
                                 })),
                         )
                         .child(self.render_sub_page_breadcrumbs()),
@@ -3113,7 +3114,7 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
-                    window.focus_next();
+                    window.focus_next(cx);
                     return;
                 }
                 for (logical_index, (actual_index, _)) in this.visible_page_items().enumerate() {
@@ -3133,7 +3134,7 @@ impl SettingsWindow {
                         cx.on_next_frame(window, |_, window, cx| {
                             cx.notify();
                             cx.on_next_frame(window, |_, window, cx| {
-                                window.focus_next();
+                                window.focus_next(cx);
                                 cx.notify();
                             });
                         });
@@ -3141,11 +3142,11 @@ impl SettingsWindow {
                         return;
                     }
                 }
-                window.focus_next();
+                window.focus_next(cx);
             }))
             .on_action(cx.listener(|this, _: &menu::SelectPrevious, window, cx| {
                 if !sub_page_stack().is_empty() {
-                    window.focus_prev();
+                    window.focus_prev(cx);
                     return;
                 }
                 let mut prev_was_header = false;
@@ -3165,7 +3166,7 @@ impl SettingsWindow {
                         cx.on_next_frame(window, |_, window, cx| {
                             cx.notify();
                             cx.on_next_frame(window, |_, window, cx| {
-                                window.focus_prev();
+                                window.focus_prev(cx);
                                 cx.notify();
                             });
                         });
@@ -3174,7 +3175,7 @@ impl SettingsWindow {
                     }
                     prev_was_header = is_header;
                 }
-                window.focus_prev();
+                window.focus_prev(cx);
             }))
             .when(sub_page_stack().is_empty(), |this| {
                 this.vertical_scrollbar_for(&self.list_state, window, cx)
@@ -3368,23 +3369,28 @@ impl SettingsWindow {
         &mut self,
         sub_page_link: SubPageLink,
         section_header: &'static str,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
         sub_page_stack_mut().push(SubPage {
             link: sub_page_link,
             section_header,
         });
+        self.sub_page_scroll_handle
+            .set_offset(point(px(0.), px(0.)));
+        self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
-    fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
+    fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         sub_page_stack_mut().pop();
+        self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
-    fn focus_file_at_index(&mut self, index: usize, window: &mut Window) {
+    fn focus_file_at_index(&mut self, index: usize, window: &mut Window, cx: &mut App) {
         if let Some((_, handle)) = self.files.get(index) {
-            handle.focus(window);
+            handle.focus(window, cx);
         }
     }
 
@@ -3464,7 +3470,7 @@ impl Render for SettingsWindow {
                             window.minimize_window();
                         })
                         .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
-                            this.search_bar.focus_handle(cx).focus(window);
+                            this.search_bar.focus_handle(cx).focus(window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
                             if this
@@ -3484,8 +3490,8 @@ impl Render for SettingsWindow {
                             }
                         }))
                         .on_action(cx.listener(
-                            |this, FocusFile(file_index): &FocusFile, window, _| {
-                                this.focus_file_at_index(*file_index as usize, window);
+                            |this, FocusFile(file_index): &FocusFile, window, cx| {
+                                this.focus_file_at_index(*file_index as usize, window, cx);
                             },
                         ))
                         .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
@@ -3493,11 +3499,11 @@ impl Render for SettingsWindow {
                                 this.focused_file_index(window, cx) + 1,
                                 this.files.len().saturating_sub(1),
                             );
-                            this.focus_file_at_index(next_index, window);
+                            this.focus_file_at_index(next_index, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
                             let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
-                            this.focus_file_at_index(prev_index, window);
+                            this.focus_file_at_index(prev_index, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                             if this
@@ -3507,11 +3513,11 @@ impl Render for SettingsWindow {
                             {
                                 this.focus_and_scroll_to_first_visible_nav_entry(window, cx);
                             } else {
-                                window.focus_next();
+                                window.focus_next(cx);
                             }
                         }))
-                        .on_action(|_: &menu::SelectPrevious, window, _| {
-                            window.focus_prev();
+                        .on_action(|_: &menu::SelectPrevious, window, cx| {
+                            window.focus_prev(cx);
                         })
                         .flex()
                         .flex_row()

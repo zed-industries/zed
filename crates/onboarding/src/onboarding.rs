@@ -190,7 +190,7 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
                 let onboarding_page = Onboarding::new(workspace, cx);
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
-                window.focus(&onboarding_page.focus_handle(cx));
+                window.focus(&onboarding_page.focus_handle(cx), cx);
 
                 cx.notify();
             };
@@ -277,11 +277,11 @@ impl Render for Onboarding {
             .on_action(Self::handle_sign_in)
             .on_action(Self::handle_open_account)
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
-                window.focus_next();
+                window.focus_next(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|_, _: &menu::SelectPrevious, window, cx| {
-                window.focus_prev();
+                window.focus_prev(cx);
                 cx.notify();
             }))
             .child(

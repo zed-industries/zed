@@ -174,16 +174,6 @@ impl ExternalAgent {
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
-
-    pub fn is_mcp(&self) -> bool {
-        match self {
-            Self::Gemini => true,
-            Self::ClaudeCode => true,
-            Self::Codex => true,
-            Self::NativeAgent => false,
-            Self::Custom { .. } => false,
-        }
-    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -358,7 +348,8 @@ fn init_language_model_settings(cx: &mut App) {
         |_, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            | language_model::Event::RemovedProvider(_)
+            | language_model::Event::ProvidersChanged => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}

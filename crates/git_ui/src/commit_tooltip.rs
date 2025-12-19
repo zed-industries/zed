@@ -3,7 +3,7 @@ use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
-use git::{GitRemote, blame::ParsedCommitMessage};
+use git::{GitRemote, commit::ParsedCommitMessage};
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
