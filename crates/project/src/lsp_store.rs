@@ -1037,8 +1037,9 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        this.update(&mut cx, |lsp_store, _| {
+                        this.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
+                            lsp_store.pull_document_diagnostics_for_server(server_id, cx);
                             lsp_store
                                 .downstream_client
                                 .as_ref()
@@ -12133,6 +12134,38 @@ impl LspStore {
             for diagnostics in workspace_diagnostics_refresh_tasks.values_mut() {
                 diagnostics.refresh_tx.try_send(()).ok();
             }
+        }
+    }
+
+    /// Refreshes `textDocument/diagnostic` for all open buffers associated with the given server.
+    /// This is called in response to `workspace/diagnostic/refresh` to comply with the LSP spec,
+    /// which requires refreshing both workspace and document diagnostics.
+    pub fn pull_document_diagnostics_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let associated_buffers: Vec<_> = {
+            let Some(local) = self.as_local() else {
+                return;
+            };
+            let buffers: Vec<_> = self.buffer_store().read(cx).buffers().collect();
+            buffers
+                .into_iter()
+                .filter(|buffer| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.file().is_some()
+                            && local
+                                .language_server_ids_for_buffer(buffer, cx)
+                                .contains(&server_id)
+                    })
+                })
+                .collect()
+        };
+
+        for buffer in associated_buffers {
+            self.pull_diagnostics_for_buffer(buffer, cx)
+                .detach_and_log_err(cx);
         }
     }
 
