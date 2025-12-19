@@ -39,7 +39,7 @@ jobs:
       - name: Install Droid CLI
         run: |
           curl -fsSL https://cli.factory.ai/install.sh | bash
-          echo "$HOME/.factory/bin" >> $GITHUB_PATH
+          echo "${HOME}/.factory/bin" >> "$GITHUB_PATH"
 
       - name: Setup Node.js (for Prettier)
         uses: actions/setup-node@v4
@@ -55,23 +55,23 @@ jobs:
           if [ -n "${{ inputs.pr_number }}" ]; then
             # Get full PR diff
             echo "Analyzing PR #${{ inputs.pr_number }}"
-            echo "source=pr" >> $GITHUB_OUTPUT
-            echo "ref=${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
-            gh pr diff ${{ inputs.pr_number }} --name-only > /tmp/changed_files.txt
+            echo "source=pr" >> "$GITHUB_OUTPUT"
+            echo "ref=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+            gh pr diff "${{ inputs.pr_number }}" --name-only > /tmp/changed_files.txt
           elif [ -n "${{ inputs.trigger_sha }}" ]; then
             # Get single commit diff
             SHA="${{ inputs.trigger_sha }}"
             echo "Analyzing commit $SHA"
-            echo "source=commit" >> $GITHUB_OUTPUT
-            echo "ref=$SHA" >> $GITHUB_OUTPUT
-            git diff --name-only $SHA^ $SHA > /tmp/changed_files.txt
+            echo "source=commit" >> "$GITHUB_OUTPUT"
+            echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+            git diff --name-only "${SHA}^" "$SHA" > /tmp/changed_files.txt
           else
             # Default to current commit
             SHA="${{ github.sha }}"
             echo "Analyzing commit $SHA"
-            echo "source=commit" >> $GITHUB_OUTPUT
-            echo "ref=$SHA" >> $GITHUB_OUTPUT
-            git diff --name-only $SHA^ $SHA > /tmp/changed_files.txt || git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
+            echo "source=commit" >> "$GITHUB_OUTPUT"
+            echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+            git diff --name-only "${SHA}^" "$SHA" > /tmp/changed_files.txt || git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
           fi
           
           echo "Changed files:"
@@ -98,7 +98,7 @@ jobs:
       - name: "Phase 3: Analyze Changes"
         id: phase3
         run: |
-          CHANGED_FILES=$(cat /tmp/changed_files.txt | tr '\n' ' ')
+          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
           droid exec \
             --model "$DROID_MODEL" \
             --autonomy read-only \
@@ -127,9 +127,9 @@ jobs:
           
           # Check if updates are required
           if grep -q "Documentation Updates Required: No" /tmp/phase4-plan.md; then
-            echo "updates_required=false" >> $GITHUB_OUTPUT
+            echo "updates_required=false" >> "$GITHUB_OUTPUT"
           else
-            echo "updates_required=true" >> $GITHUB_OUTPUT
+            echo "updates_required=true" >> "$GITHUB_OUTPUT"
           fi
 
       # Phase 5: Apply Plan (Write-Enabled)
@@ -212,9 +212,10 @@ jobs:
           
           # Stage and commit
           git add docs/src/
+          SUMMARY=$(head -50 < /tmp/phase6-summary.md)
           git commit -m "docs: auto-update documentation
 
-          $(cat /tmp/phase6-summary.md | head -50)
+          ${SUMMARY}
 
           Triggered by: ${{ steps.changed.outputs.source }} ${{ steps.changed.outputs.ref }}
 
@@ -243,13 +244,13 @@ jobs:
       - name: "Summary"
         if: always()
         run: |
-          echo "## Documentation Automation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Documentation Automation Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           
           if [ "${{ steps.phase4.outputs.updates_required }}" == "false" ]; then
-            echo "No documentation updates required for this change." >> $GITHUB_STEP_SUMMARY
+            echo "No documentation updates required for this change." >> "$GITHUB_STEP_SUMMARY"
           elif [ -f /tmp/phase6-summary.md ]; then
-            cat /tmp/phase6-summary.md >> $GITHUB_STEP_SUMMARY
+            cat /tmp/phase6-summary.md >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Workflow completed. Check individual phase outputs for details." >> $GITHUB_STEP_SUMMARY
+            echo "Workflow completed. Check individual phase outputs for details." >> "$GITHUB_STEP_SUMMARY"
           fi
