@@ -23545,91 +23545,50 @@ fn list_delimiter_for_newline(
         .take_while(|c| c.is_whitespace())
         .count();
 
-    let task_delimeter = maybe!({
-        let TaskListConfig {
-            prefixes,
-            continuation,
-        } = language.task_list()?;
-        let max_prefix_len = prefixes.iter().map(|p| p.len()).max()?;
-        let task_candidate: String = snapshot
-            .chars_for_range(range.clone())
-            .skip(num_of_whitespaces)
-            .take(max_prefix_len)
-            .collect();
-        let prefix_len = prefixes
+    let task_list_entries = language.task_list().into_iter().flat_map(|config| {
+        config
+            .prefixes
             .iter()
-            .filter_map(|prefix| {
-                if task_candidate.starts_with(prefix.as_ref()) {
-                    Some(prefix.len())
-                } else {
-                    None
-                }
-            })
-            .max_by_key(|len| *len)?;
-        let end_of_prefix = num_of_whitespaces + prefix_len;
-        let has_content_after_marker = snapshot
-            .chars_for_range(range.clone())
-            .skip(end_of_prefix)
-            .any(|c| !c.is_whitespace());
-        if has_content_after_marker {
-            Some(continuation.clone())
-        } else {
-            if start_point.column as usize == end_of_prefix {
-                if num_of_whitespaces == 0 {
-                    *newline_config = NewlineConfig::ClearCurrentLine;
-                } else {
-                    *newline_config = NewlineConfig::UnindentCurrentLine {
-                        continuation: continuation.clone(),
-                    };
-                }
-            }
-            None
-        }
+            .map(move |prefix| (prefix.clone(), config.continuation.clone()))
     });
+    let unordered_list_entries = language
+        .unordered_list()
+        .iter()
+        .map(|marker| (marker.clone(), marker.clone()));
 
-    if let Some(task_delimeter) = task_delimeter {
-        return Some(task_delimeter);
-    };
+    let all_prefixes: Vec<_> = task_list_entries.chain(unordered_list_entries).collect();
 
-    let unordered_list_delimiter = maybe!({
-        let unordered_markers = language.unordered_list();
-        if unordered_markers.is_empty() {
-            return None;
-        }
-        let max_marker_len = unordered_markers.iter().map(|m| m.len()).max()?;
-        let marker_candidate: String = snapshot
-            .chars_for_range(range.clone())
-            .skip(num_of_whitespaces)
-            .take(max_marker_len)
-            .collect();
-        let marker = unordered_markers
-            .iter()
-            .find(|marker| marker_candidate.starts_with(marker.as_ref()))?;
-        let marker_len = marker.len();
-        let end_of_marker = num_of_whitespaces + marker_len;
-        let has_content_after_marker = snapshot
-            .chars_for_range(range.clone())
-            .skip(end_of_marker)
-            .any(|c| !c.is_whitespace());
-        if has_content_after_marker {
-            Some(marker.clone())
+    let max_prefix_len = all_prefixes.iter().map(|(p, _)| p.len()).max()?;
+    let candidate: String = snapshot
+        .chars_for_range(range.clone())
+        .skip(num_of_whitespaces)
+        .take(max_prefix_len)
+        .collect();
+
+    let (prefix, continuation) = all_prefixes
+        .iter()
+        .filter(|(prefix, _)| candidate.starts_with(prefix.as_ref()))
+        .max_by_key(|(prefix, _)| prefix.len())?;
+
+    let end_of_prefix = num_of_whitespaces + prefix.len();
+    let has_content_after_marker = snapshot
+        .chars_for_range(range.clone())
+        .skip(end_of_prefix)
+        .any(|c| !c.is_whitespace());
+
+    if has_content_after_marker {
+        return Some(continuation.clone());
+    }
+
+    if start_point.column as usize == end_of_prefix {
+        if num_of_whitespaces == 0 {
+            *newline_config = NewlineConfig::ClearCurrentLine;
         } else {
-            if start_point.column as usize == end_of_marker {
-                if num_of_whitespaces == 0 {
-                    *newline_config = NewlineConfig::ClearCurrentLine;
-                } else {
-                    *newline_config = NewlineConfig::UnindentCurrentLine {
-                        continuation: marker.clone(),
-                    };
-                }
-            }
-            None
+            *newline_config = NewlineConfig::UnindentCurrentLine {
+                continuation: continuation.clone(),
+            };
         }
-    });
-
-    if let Some(unordered_list_delimiter) = unordered_list_delimiter {
-        return Some(unordered_list_delimiter);
-    };
+    }
 
     // // Check for ordered lists
     // for ordered_config in &ordered {
