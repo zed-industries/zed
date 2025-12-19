@@ -1,6 +1,11 @@
 use gpui::{Action, FocusHandle, prelude::*};
 use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 
+enum ModelIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
 #[derive(IntoElement)]
 pub struct ModelSelectorHeader {
     title: SharedString,
@@ -33,11 +38,6 @@ impl RenderOnce for ModelSelectorHeader {
                     .color(Color::Muted),
             )
     }
-}
-
-enum ModelIcon {
-    Name(IconName),
-    Path(SharedString),
 }
 
 #[derive(IntoElement)]
