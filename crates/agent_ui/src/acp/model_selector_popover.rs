@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use acp_thread::{AgentModelInfo, AgentModelSelector};
+use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use fs::Fs;
@@ -70,7 +70,7 @@ impl Render for AcpModelSelectorPopover {
             .map(|model| model.name.clone())
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
-        let model_icon = model.as_ref().and_then(|model| model.icon);
+        let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 
         let focus_handle = self.focus_handle.clone();
 
@@ -125,7 +125,14 @@ impl Render for AcpModelSelectorPopover {
             ButtonLike::new("active-model")
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .when_some(model_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                    this.child(
+                        match icon {
+                            AgentModelIcon::Path(path) => Icon::from_external_svg(path),
+                            AgentModelIcon::Named(icon_name) => Icon::new(icon_name),
+                        }
+                        .color(color)
+                        .size(IconSize::XSmall),
+                    )
                 })
                 .child(
                     Label::new(model_name)

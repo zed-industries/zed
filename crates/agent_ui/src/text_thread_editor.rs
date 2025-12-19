@@ -33,7 +33,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
+    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
+    Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -2231,10 +2232,10 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon = match active_provider {
-            Some(provider) => provider.icon(),
-            None => IconName::Ai,
-        };
+        let provider_icon = active_provider
+            .as_ref()
+            .map(|p| p.icon())
+            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2243,6 +2244,13 @@ impl TextThreadEditor {
         } else {
             (Color::Muted, IconName::ChevronDown)
         };
+
+        let provider_icon_element = match provider_icon {
+            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+            IconOrSvg::Icon(name) => Icon::new(name),
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
         let tooltip = Tooltip::element({
             move |_, cx| {
@@ -2291,7 +2299,7 @@ impl TextThreadEditor {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
+                        .child(provider_icon_element)
                         .child(
                             Label::new(model_name)
                                 .color(color)

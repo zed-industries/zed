@@ -6,10 +6,6 @@ See the platform-specific instructions for building Zed from source:
 - [Linux](./development/linux.md)
 - [Windows](./development/windows.md)
 
-If you'd like to develop collaboration features, additionally see:
-
-- [Local Collaboration](./development/local-collaboration.md)
-
 ## Keychain access
 
 Zed stores secrets in the system keychain.

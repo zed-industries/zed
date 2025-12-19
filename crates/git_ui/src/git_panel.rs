@@ -2849,93 +2849,15 @@ impl GitPanel {
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
-        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Select as Repository Destination".into()),
-        });
-
         let workspace = self.workspace.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let mut paths = path.await.ok()?.ok()??;
-            let mut path = paths.pop()?;
-            let repo_name = repo.split("/").last()?.strip_suffix(".git")?.to_owned();
-
-            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
-
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
-                Ok(_) => cx.update(|window, cx| {
-                    window.prompt(
-                        PromptLevel::Info,
-                        &format!("Git Clone: {}", repo_name),
-                        None,
-                        &["Add repo to project", "Open repo in new project"],
-                        cx,
-                    )
-                }),
-                Err(e) => {
-                    this.update(cx, |this: &mut GitPanel, cx| {
-                        let toast = StatusToast::new(e.to_string(), cx, |this, _| {
-                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                .dismiss_button(true)
-                        });
-
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_status_toast(toast, cx);
-                            })
-                            .ok();
-                    })
-                    .ok()?;
-
-                    return None;
-                }
-            }
-            .ok()?;
-
-            path.push(repo_name);
-            match prompt_answer.await.ok()? {
-                0 => {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace
-                                .project()
-                                .update(cx, |project, cx| {
-                                    project.create_worktree(path.as_path(), true, cx)
-                                })
-                                .detach();
-                        })
-                        .ok();
-                }
-                1 => {
-                    workspace
-                        .update(cx, move |workspace, cx| {
-                            workspace::open_new(
-                                Default::default(),
-                                workspace.app_state().clone(),
-                                cx,
-                                move |workspace, _, cx| {
-                                    cx.activate(true);
-                                    workspace
-                                        .project()
-                                        .update(cx, |project, cx| {
-                                            project.create_worktree(&path, true, cx)
-                                        })
-                                        .detach();
-                                },
-                            )
-                            .detach();
-                        })
-                        .ok();
-                }
-                _ => {}
-            }
-
-            Some(())
-        })
-        .detach();
+        crate::clone::clone_and_open(
+            repo.into(),
+            workspace,
+            window,
+            cx,
+            Arc::new(|_workspace: &mut workspace::Workspace, _window, _cx| {}),
+        );
     }
 
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {

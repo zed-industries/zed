@@ -3864,6 +3864,7 @@ pub enum LspStoreEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
+    pub server_version: Option<SharedString>,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     pub progress_tokens: HashSet<ProgressToken>,
@@ -8354,6 +8355,7 @@ impl LspStore {
                     server_id,
                     LanguageServerStatus {
                         name,
+                        server_version: None,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -9389,6 +9391,7 @@ impl LspStore {
                 server_id,
                 LanguageServerStatus {
                     name: server_name.clone(),
+                    server_version: None,
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -11419,6 +11422,7 @@ impl LspStore {
             server_id,
             LanguageServerStatus {
                 name: language_server.name(),
+                server_version: language_server.version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
