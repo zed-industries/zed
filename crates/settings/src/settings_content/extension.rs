@@ -20,12 +20,6 @@ pub struct ExtensionSettingsContent {
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
     /// The capabilities granted to extensions.
     pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
-    /// Extension language model providers that are allowed to read API keys from
-    /// environment variables. Each entry is in the format
-    /// "extension_id:provider_id:ENV_VAR_NAME" (e.g., "google-ai:google-ai:GEMINI_API_KEY").
-    ///
-    /// Default: []
-    pub allowed_env_var_providers: Option<Vec<Arc<str>>>,
 }
 
 /// A capability for an extension.
