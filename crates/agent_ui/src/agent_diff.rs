@@ -1476,8 +1476,18 @@ impl AgentDiff {
                 };
 
                 let multibuffer = editor.read(cx).buffer().clone();
+                let new_diff = diff_handle.update(cx, |original_diff, cx| {
+                    cx.new(|cx| buffer_diff::BufferDiff::new(&original_diff.base_text(cx), cx))
+                });
                 multibuffer.update(cx, |multibuffer, cx| {
-                    multibuffer.add_diff(diff_handle.clone(), cx);
+                    // TODO kb is there a better way?
+                    // This will force real buffer and agent panel's one to calculate diffs independently.
+                    // Buffer's calculation will be non-instant (debounced by rapid edits) and theoretically may be different
+                    // (as the agent one could be optimized for streaming)
+
+                    multibuffer.add_diff(new_diff, cx);
+                    // If we keep the diff handle shared, real buffer will flicker if the line wrap is enabled and the agent edits multiple lines.
+                    // multibuffer.add_diff(diff_handle.clone(), cx);
                 });
 
                 let reviewing_state = EditorState::Reviewing;
