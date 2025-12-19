@@ -48,12 +48,14 @@ pub struct AliPanel {
     focus_handle: FocusHandle,
     height: Option<Pixels>,
     thread_view: Option<Entity<AcpThreadView>>,
-    _workspace: WeakEntity<Workspace>,
-    _project: Entity<Project>,
-    _history_store: Entity<HistoryStore>,
-    _prompt_store: Option<Entity<PromptStore>>,
-    _fs: Arc<dyn Fs>,
-    _subscription: Option<Subscription>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
+    fs: Arc<dyn Fs>,
+    tried_resume: bool,
+    pending_resume_thread: Option<agent::DbThreadMetadata>,
+    _history_subscription: Subscription,
 }
 
 pub fn init(cx: &mut App) {
@@ -81,11 +83,18 @@ impl AliPanel {
         let focus_handle = cx.focus_handle();
         let weak_workspace = workspace.weak_handle();
 
-        // Create the Ali thread view immediately
+        // Observe history store changes to catch when threads are loaded
+        let history_subscription = cx.observe(&history_store, |this, _, cx| {
+            // When history changes, try to resume if we haven't already
+            this.try_resume_existing_thread(cx);
+        });
+
+        // Create the Ali thread view immediately (without resume - threads not loaded yet)
         let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
 
-        // Try to find an existing thread for Ali
+        // Try immediate resume (might work if history already loaded)
         let resume_thread = history_store.read(cx).thread_by_agent_name(ALI_SERVER_NAME).cloned();
+        let tried_resume = resume_thread.is_some();
 
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
@@ -106,12 +115,58 @@ impl AliPanel {
             focus_handle,
             height: None,
             thread_view: Some(thread_view),
-            _workspace: weak_workspace,
-            _project: project,
-            _history_store: history_store,
-            _prompt_store: prompt_store,
-            _fs: fs,
-            _subscription: None,
+            workspace: weak_workspace,
+            project,
+            history_store,
+            prompt_store,
+            fs,
+            tried_resume,
+            pending_resume_thread: None,
+            _history_subscription: history_subscription,
+        }
+    }
+
+    /// Try to resume an existing Ali thread when history becomes available
+    fn try_resume_existing_thread(&mut self, cx: &mut Context<Self>) {
+        // Only try once to avoid recreating the view repeatedly
+        if self.tried_resume {
+            return;
+        }
+
+        // Check if we now have an Ali thread in history
+        let resume_thread = self.history_store.read(cx).thread_by_agent_name(ALI_SERVER_NAME).cloned();
+
+        if let Some(thread_metadata) = resume_thread {
+            log::info!("Ali panel: Found existing thread {} to resume", thread_metadata.id);
+            self.tried_resume = true;
+
+            // Store the thread metadata to use when we have window access
+            // The thread view will be recreated on next render with the proper context
+            self.pending_resume_thread = Some(thread_metadata);
+            cx.notify();
+        }
+    }
+
+    /// Called during render to handle pending resume
+    fn handle_pending_resume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread_metadata) = self.pending_resume_thread.take() {
+            let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
+
+            let new_thread_view = cx.new(|cx| {
+                AcpThreadView::new(
+                    server,
+                    Some(thread_metadata),
+                    None,
+                    self.workspace.clone(),
+                    self.project.clone(),
+                    self.history_store.clone(),
+                    self.prompt_store.clone(),
+                    false, // don't focus - we're resuming in background
+                    window,
+                    cx,
+                )
+            });
+            self.thread_view = Some(new_thread_view);
         }
     }
 
@@ -167,7 +222,7 @@ impl AliPanel {
                     .items_center()
                     .gap_2()
                     .child(
-                        Icon::new(IconName::Ai)
+                        Icon::new(IconName::ConvergioAli)
                             .size(IconSize::Small)
                             .color(Color::Accent)
                     )
@@ -247,7 +302,10 @@ impl Panel for AliPanel {
 }
 
 impl Render for AliPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Handle pending resume if we have one
+        self.handle_pending_resume(window, cx);
+
         div()
             .id("ali-panel")
             .key_context("AliPanel")

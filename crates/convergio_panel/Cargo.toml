@@ -13,6 +13,7 @@ path = "src/convergio_panel.rs"
 doctest = false
 
 [dependencies]
+agent.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
 collections.workspace = true

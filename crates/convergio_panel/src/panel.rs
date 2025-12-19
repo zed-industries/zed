@@ -1,6 +1,7 @@
 //! Convergio Panel - displays list of AI agents organized by category
 
 use crate::ConvergioPanelSettings;
+use agent::HistoryStore;
 use agent_ui::{AgentPanel, ExternalAgent, NewExternalAgentThread};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
@@ -284,6 +285,11 @@ pub struct ConvergioPanel {
     _filter_editor_subscription: Subscription,
     // Onboarding state
     show_onboarding: bool,
+    // History store for conversation resume
+    history_store: Option<Entity<HistoryStore>>,
+    _history_subscription: Option<Subscription>,
+    // Pending thread opens waiting for history to load (agent_name, server_name)
+    pending_thread_opens: Vec<(String, String)>,
 }
 
 pub fn init(cx: &mut App) {
@@ -312,6 +318,19 @@ impl ConvergioPanel {
                 this.on_filter_changed(cx);
             }
         });
+
+        // Get history store from AgentPanel if available
+        let (history_store, history_subscription) = workspace
+            .panel::<AgentPanel>(cx)
+            .map(|panel| {
+                let store = panel.read(cx).history_store().clone();
+                // Use observe instead of subscribe since HistoryStore uses cx.notify()
+                let sub = cx.observe(&store, |this, _, cx| {
+                    this.process_pending_thread_opens(cx);
+                });
+                (Some(store), Some(sub))
+            })
+            .unwrap_or((None, None));
 
         // Load persisted agent sessions asynchronously
         cx.spawn(async move |this, cx| {
@@ -361,6 +380,9 @@ impl ConvergioPanel {
             _agent_sessions: HashMap::default(),
             _filter_editor_subscription: subscription,
             show_onboarding: true, // Show by default, will be updated async
+            history_store,
+            _history_subscription: history_subscription,
+            pending_thread_opens: Vec::new(),
         }
     }
 
@@ -400,18 +422,22 @@ impl ConvergioPanel {
         self.active_agents.insert(agent_name.to_string());
         log::info!("Opening Convergio agent chat: {}", agent_name);
 
-        // Try to find existing thread in history by agent_name
-        let mut found_thread_id: Option<String> = None;
+        // Try to find existing thread in history by agent_name using stored history_store
+        let found_thread_id: Option<String> = self.history_store
+            .as_ref()
+            .and_then(|store| {
+                store.read(cx).thread_by_agent_name(server_name)
+                    .map(|thread| {
+                        log::info!("Found existing thread {} for agent {}", thread.id, server_name);
+                        thread.id.to_string()
+                    })
+            });
 
-        if let Some(workspace) = self.workspace.upgrade() {
-            if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                // Search by full server name (e.g., "Convergio-Ali") as stored in DB
-                if let Some(thread) = panel.read(cx).history_store.read(cx).thread_by_agent_name(server_name) {
-                    found_thread_id = Some(thread.id.to_string());
-                    log::info!("Found existing thread {} for agent {}", thread.id, server_name);
-                }
-            }
-        }
+        // Check if history might still be loading (empty entries)
+        let history_might_be_loading = self.history_store
+            .as_ref()
+            .map(|store| store.read(cx).is_empty(cx))
+            .unwrap_or(true);
 
         if let Some(thread_id) = found_thread_id {
             // Resume existing conversation
@@ -421,8 +447,17 @@ impl ConvergioPanel {
                 thread_id
             );
             window.dispatch_action(action.boxed_clone(), cx);
+        } else if history_might_be_loading {
+            // History not loaded yet - add to pending and create new thread for now
+            // When history loads, if we find an existing thread, subsequent opens will resume
+            log::info!("History may not be loaded yet for {}, creating new thread (will resume on next open)", agent_name);
+            self.pending_thread_opens.push((agent_name.to_string(), server_name.to_string()));
+            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
+                name: server_name.to_string().into()
+            });
+            window.dispatch_action(action.boxed_clone(), cx);
         } else {
-            // Create new thread
+            // History is loaded but no existing thread - create new
             log::info!("Creating new thread for {}", agent_name);
             let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
                 name: server_name.to_string().into()
@@ -430,6 +465,27 @@ impl ConvergioPanel {
             window.dispatch_action(action.boxed_clone(), cx);
         }
         cx.notify();
+    }
+
+    /// Process pending thread opens when history becomes available
+    fn process_pending_thread_opens(&mut self, cx: &mut Context<Self>) {
+        if self.pending_thread_opens.is_empty() {
+            return;
+        }
+
+        // Check if history is now loaded
+        let history_loaded = self.history_store
+            .as_ref()
+            .map(|store| !store.read(cx).is_empty(cx))
+            .unwrap_or(false);
+
+        if history_loaded {
+            // Clear pending opens - next time user clicks, we'll find the thread
+            let pending_count = self.pending_thread_opens.len();
+            self.pending_thread_opens.clear();
+            log::info!("History loaded, cleared {} pending thread opens - will resume on next click", pending_count);
+            cx.notify();
+        }
     }
 
     /// Stores a session ID for an agent and persists it to storage
