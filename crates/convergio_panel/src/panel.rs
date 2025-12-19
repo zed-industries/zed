@@ -89,20 +89,41 @@ impl AgentCategory {
 
     fn icon(&self) -> IconName {
         match self {
-            Self::Leadership => IconName::UserGroup,
+            Self::Leadership => IconName::ZedAgent,
             Self::Finance => IconName::Hash,
             Self::Technology => IconName::Code,
             Self::Security => IconName::ShieldCheck,
-            Self::Product => IconName::File,
+            Self::Product => IconName::SwatchBook,
             Self::Data => IconName::DatabaseZap,
-            Self::Strategy => IconName::ArrowRightLeft,
+            Self::Strategy => IconName::Crosshair,
             Self::Marketing => IconName::Sparkle,
-            Self::ProjectManagement => IconName::Check,
-            Self::HrPeople => IconName::Person,
-            Self::Operations => IconName::Blocks,
-            Self::External => IconName::Book,
-            Self::AiCoordination => IconName::Blocks,
+            Self::ProjectManagement => IconName::ListTodo,
+            Self::HrPeople => IconName::UserGroup,
+            Self::Operations => IconName::Cog,
+            Self::External => IconName::Public,
+            Self::AiCoordination => IconName::Ai,
             Self::Executive => IconName::Bell,
+        }
+    }
+
+    /// Returns the accent color for this category (HSLA format)
+    fn color(&self) -> gpui::Hsla {
+        use gpui::hsla;
+        match self {
+            Self::Leadership => hsla(0.08, 0.9, 0.55, 1.0),      // Gold/Orange - leadership
+            Self::Finance => hsla(0.33, 0.7, 0.45, 1.0),         // Green - money
+            Self::Technology => hsla(0.58, 0.8, 0.50, 1.0),      // Blue - tech
+            Self::Security => hsla(0.0, 0.75, 0.50, 1.0),        // Red - security
+            Self::Product => hsla(0.83, 0.7, 0.55, 1.0),         // Purple - design
+            Self::Data => hsla(0.50, 0.7, 0.50, 1.0),            // Cyan - data
+            Self::Strategy => hsla(0.75, 0.6, 0.50, 1.0),        // Violet - strategy
+            Self::Marketing => hsla(0.92, 0.8, 0.55, 1.0),       // Pink - marketing
+            Self::ProjectManagement => hsla(0.17, 0.7, 0.50, 1.0), // Yellow - PM
+            Self::HrPeople => hsla(0.42, 0.6, 0.50, 1.0),        // Teal - people
+            Self::Operations => hsla(0.67, 0.5, 0.50, 1.0),      // Indigo - ops
+            Self::External => hsla(0.25, 0.6, 0.45, 1.0),        // Lime - external
+            Self::AiCoordination => hsla(0.55, 0.9, 0.60, 1.0),  // Bright blue - AI
+            Self::Executive => hsla(0.08, 0.8, 0.60, 1.0),       // Amber - exec
         }
     }
 }
@@ -122,81 +143,81 @@ impl ConvergioAgent {
     fn all_agents() -> Vec<Self> {
         vec![
             // Leadership & Orchestration
-            Self::new("ali", "Ali - Chief of Staff", "Master orchestrator, coordinates all agents", IconName::Sparkle, AgentCategory::Leadership, vec!["orchestration", "coordination", "strategy"]),
-            Self::new("satya-board-of-directors", "Satya - Board", "System-thinking strategist, transformation", IconName::UserGroup, AgentCategory::Leadership, vec!["strategy", "transformation", "leadership"]),
+            Self::new("ali", "Ali - Chief of Staff", "Master orchestrator, coordinates all agents", IconName::ZedAgent, AgentCategory::Leadership, vec!["orchestration", "coordination", "strategy"]),
+            Self::new("satya-board-of-directors", "Satya - Board", "System-thinking strategist, transformation", IconName::Star, AgentCategory::Leadership, vec!["strategy", "transformation", "leadership"]),
 
             // Finance & Business
             Self::new("amy-cfo", "Amy - CFO", "Financial strategy, ROI analysis", IconName::Hash, AgentCategory::Finance, vec!["finance", "roi", "investment"]),
             Self::new("fiona-market-analyst", "Fiona - Markets", "Financial markets, stock research", IconName::ArrowUpRight, AgentCategory::Finance, vec!["markets", "stocks", "analysis"]),
             Self::new("wiz-investor-venture-capital", "Wiz - VC", "Investment strategy, portfolio", IconName::BoltOutlined, AgentCategory::Finance, vec!["investment", "vc", "startups"]),
-            Self::new("michael-vc", "Michael - Corporate VC", "Corporate ventures, M&A", IconName::Star, AgentCategory::Finance, vec!["corporate", "ma", "ventures"]),
+            Self::new("michael-vc", "Michael - Corporate VC", "Corporate ventures, M&A", IconName::StarFilled, AgentCategory::Finance, vec!["corporate", "ma", "ventures"]),
 
             // Technology & Architecture
-            Self::new("baccio-tech-architect", "Baccio - Architect", "System design, DDD, Clean Architecture", IconName::Folder, AgentCategory::Technology, vec!["architecture", "design", "ddd"]),
-            Self::new("dario-debugger", "Dario - Debugger", "Root cause analysis, troubleshooting", IconName::MagnifyingGlass, AgentCategory::Technology, vec!["debugging", "troubleshooting", "analysis"]),
+            Self::new("baccio-tech-architect", "Baccio - Architect", "System design, DDD, Clean Architecture", IconName::Blocks, AgentCategory::Technology, vec!["architecture", "design", "ddd"]),
+            Self::new("dario-debugger", "Dario - Debugger", "Root cause analysis, troubleshooting", IconName::Debug, AgentCategory::Technology, vec!["debugging", "troubleshooting", "analysis"]),
             Self::new("rex-code-reviewer", "Rex - Reviewer", "Code quality, design patterns", IconName::Code, AgentCategory::Technology, vec!["code review", "quality", "patterns"]),
             Self::new("paolo-best-practices-enforcer", "Paolo - Standards", "Coding standards, best practices", IconName::Check, AgentCategory::Technology, vec!["standards", "best practices", "quality"]),
             Self::new("marco-devops-engineer", "Marco - DevOps", "CI/CD, Kubernetes, IaC", IconName::Terminal, AgentCategory::Technology, vec!["devops", "cicd", "kubernetes"]),
-            Self::new("otto-performance-optimizer", "Otto - Performance", "Profiling, bottleneck analysis", IconName::BoltOutlined, AgentCategory::Technology, vec!["performance", "optimization", "profiling"]),
+            Self::new("otto-performance-optimizer", "Otto - Performance", "Profiling, bottleneck analysis", IconName::BoltFilled, AgentCategory::Technology, vec!["performance", "optimization", "profiling"]),
             Self::new("dan-engineering-gm", "Dan - Eng GM", "Engineering leadership, team building", IconName::Server, AgentCategory::Technology, vec!["engineering", "leadership", "teams"]),
 
             // Security & Compliance
             Self::new("luca-security-expert", "Luca - Security", "Penetration testing, Zero-Trust", IconName::ShieldCheck, AgentCategory::Security, vec!["security", "penetration", "zero-trust"]),
-            Self::new("elena-legal-compliance-expert", "Elena - Legal", "GDPR, contracts, risk management", IconName::Book, AgentCategory::Security, vec!["legal", "gdpr", "compliance"]),
+            Self::new("elena-legal-compliance-expert", "Elena - Legal", "GDPR, contracts, risk management", IconName::FileDoc, AgentCategory::Security, vec!["legal", "gdpr", "compliance"]),
             Self::new("dr-enzo-healthcare-compliance-manager", "Enzo - Healthcare", "HIPAA, FDA, medical devices", IconName::Plus, AgentCategory::Security, vec!["hipaa", "fda", "healthcare"]),
-            Self::new("guardian-ai-security-validator", "Guardian - AI Security", "AI/ML security, bias detection", IconName::ShieldCheck, AgentCategory::Security, vec!["ai security", "bias", "ethics"]),
-            Self::new("thor-quality-assurance-guardian", "Thor - QA", "Quality watchdog, ISE testing", IconName::Check, AgentCategory::Security, vec!["qa", "testing", "quality"]),
+            Self::new("guardian-ai-security-validator", "Guardian - AI Security", "AI/ML security, bias detection", IconName::AiClaude, AgentCategory::Security, vec!["ai security", "bias", "ethics"]),
+            Self::new("thor-quality-assurance-guardian", "Thor - QA", "Quality watchdog, ISE testing", IconName::TodoComplete, AgentCategory::Security, vec!["qa", "testing", "quality"]),
 
             // Product & Design
-            Self::new("marcello-pm", "Marcello - Product", "Product strategy, roadmap", IconName::File, AgentCategory::Product, vec!["product", "roadmap", "strategy"]),
-            Self::new("oliver-pm", "Oliver - Sr PM", "Product leadership, vision", IconName::File, AgentCategory::Product, vec!["product", "leadership", "vision"]),
-            Self::new("sara-ux-ui-designer", "Sara - UX/UI", "User experience, WCAG", IconName::Screen, AgentCategory::Product, vec!["ux", "ui", "design"]),
+            Self::new("marcello-pm", "Marcello - Product", "Product strategy, roadmap", IconName::FileTextOutlined, AgentCategory::Product, vec!["product", "roadmap", "strategy"]),
+            Self::new("oliver-pm", "Oliver - Sr PM", "Product leadership, vision", IconName::FileTextFilled, AgentCategory::Product, vec!["product", "leadership", "vision"]),
+            Self::new("sara-ux-ui-designer", "Sara - UX/UI", "User experience, WCAG", IconName::SwatchBook, AgentCategory::Product, vec!["ux", "ui", "design"]),
             Self::new("jenny-inclusive-accessibility-champion", "Jenny - A11y", "Accessibility, inclusive design", IconName::Person, AgentCategory::Product, vec!["accessibility", "wcag", "inclusive"]),
             Self::new("jony-creative-director", "Jony - Creative", "Creative strategy, brand", IconName::Sparkle, AgentCategory::Product, vec!["creative", "brand", "design"]),
-            Self::new("stefano-design-thinking-facilitator", "Stefano - Design", "Design thinking, workshops", IconName::Blocks, AgentCategory::Product, vec!["design thinking", "workshops", "ideation"]),
+            Self::new("stefano-design-thinking-facilitator", "Stefano - Design", "Design thinking, workshops", IconName::Pencil, AgentCategory::Product, vec!["design thinking", "workshops", "ideation"]),
 
             // Data & Analytics
-            Self::new("omri-data-scientist", "Omri - Data", "ML, predictive modeling, AI", IconName::Hash, AgentCategory::Data, vec!["ml", "data science", "ai"]),
+            Self::new("omri-data-scientist", "Omri - Data", "ML, predictive modeling, AI", IconName::Ai, AgentCategory::Data, vec!["ml", "data science", "ai"]),
             Self::new("angela-da", "Angela - Analytics", "Decision frameworks, analytics", IconName::DatabaseZap, AgentCategory::Data, vec!["analytics", "decisions", "data"]),
-            Self::new("ethan-da", "Ethan - Analytics", "Strategic analytics, trade-offs", IconName::DatabaseZap, AgentCategory::Data, vec!["analytics", "strategy", "analysis"]),
-            Self::new("evan-ic6da", "Evan - Sr Analytics", "Enterprise decisions, alignment", IconName::DatabaseZap, AgentCategory::Data, vec!["enterprise", "decisions", "alignment"]),
-            Self::new("ava-analytics-insights-virtuoso", "Ava - Insights", "Ecosystem intelligence, patterns", IconName::Sparkle, AgentCategory::Data, vec!["insights", "patterns", "intelligence"]),
+            Self::new("ethan-da", "Ethan - Analytics", "Strategic analytics, trade-offs", IconName::ArrowRightLeft, AgentCategory::Data, vec!["analytics", "strategy", "analysis"]),
+            Self::new("evan-ic6da", "Evan - Sr Analytics", "Enterprise decisions, alignment", IconName::Crosshair, AgentCategory::Data, vec!["enterprise", "decisions", "alignment"]),
+            Self::new("ava-analytics-insights-virtuoso", "Ava - Insights", "Ecosystem intelligence, patterns", IconName::Eye, AgentCategory::Data, vec!["insights", "patterns", "intelligence"]),
 
             // Strategy & Decision Making
-            Self::new("matteo-strategic-business-architect", "Matteo - Strategy", "Business model, positioning", IconName::ArrowRightLeft, AgentCategory::Strategy, vec!["business", "strategy", "positioning"]),
-            Self::new("antonio-strategy-expert", "Antonio - Strategy", "OKR, Lean, Agile, SWOT", IconName::ArrowRightLeft, AgentCategory::Strategy, vec!["okr", "lean", "agile"]),
-            Self::new("domik-mckinsey-strategic-decision-maker", "Domik - McKinsey", "Quantitative analysis, ISE", IconName::ArrowRightLeft, AgentCategory::Strategy, vec!["mckinsey", "analysis", "decisions"]),
+            Self::new("matteo-strategic-business-architect", "Matteo - Strategy", "Business model, positioning", IconName::Crosshair, AgentCategory::Strategy, vec!["business", "strategy", "positioning"]),
+            Self::new("antonio-strategy-expert", "Antonio - Strategy", "OKR, Lean, Agile, SWOT", IconName::ListTodo, AgentCategory::Strategy, vec!["okr", "lean", "agile"]),
+            Self::new("domik-mckinsey-strategic-decision-maker", "Domik - McKinsey", "Quantitative analysis, ISE", IconName::Hash, AgentCategory::Strategy, vec!["mckinsey", "analysis", "decisions"]),
             Self::new("socrates-first-principles-reasoning", "Socrates - Reasoning", "First principles, Socratic method", IconName::CircleHelp, AgentCategory::Strategy, vec!["first principles", "reasoning", "analysis"]),
 
             // Marketing & Sales
             Self::new("sofia-marketing-strategist", "Sofia - Marketing", "Digital marketing, growth", IconName::Sparkle, AgentCategory::Marketing, vec!["marketing", "digital", "growth"]),
             Self::new("fabio-sales-business-development", "Fabio - Sales", "Revenue growth, partnerships", IconName::ArrowUpRight, AgentCategory::Marketing, vec!["sales", "partnerships", "revenue"]),
-            Self::new("riccardo-storyteller", "Riccardo - Stories", "Brand narratives, content", IconName::Book, AgentCategory::Marketing, vec!["storytelling", "content", "brand"]),
+            Self::new("riccardo-storyteller", "Riccardo - Stories", "Brand narratives, content", IconName::Quote, AgentCategory::Marketing, vec!["storytelling", "content", "brand"]),
             Self::new("steve-executive-communication-strategist", "Steve - Comms", "C-suite messaging, stakeholders", IconName::Envelope, AgentCategory::Marketing, vec!["communication", "executive", "stakeholders"]),
 
             // Project & Program Management
-            Self::new("davide-project-manager", "Davide - PM", "Agile, Scrum, Waterfall", IconName::Check, AgentCategory::ProjectManagement, vec!["project", "agile", "scrum"]),
+            Self::new("davide-project-manager", "Davide - PM", "Agile, Scrum, Waterfall", IconName::ListTodo, AgentCategory::ProjectManagement, vec!["project", "agile", "scrum"]),
             Self::new("luke-program-manager", "Luke - Program", "Portfolio management, coordination", IconName::Blocks, AgentCategory::ProjectManagement, vec!["program", "portfolio", "coordination"]),
-            Self::new("taskmaster-strategic-task-decomposition-master", "Taskmaster", "Task decomposition, OKR", IconName::Check, AgentCategory::ProjectManagement, vec!["tasks", "decomposition", "planning"]),
+            Self::new("taskmaster-strategic-task-decomposition-master", "Taskmaster", "Task decomposition, OKR", IconName::TodoProgress, AgentCategory::ProjectManagement, vec!["tasks", "decomposition", "planning"]),
 
             // HR & People
             Self::new("giulia-hr-talent-acquisition", "Giulia - HR", "Recruitment, talent strategy", IconName::Person, AgentCategory::HrPeople, vec!["hr", "recruitment", "talent"]),
             Self::new("coach-team-coach", "Coach - Teams", "Team building, performance", IconName::UserGroup, AgentCategory::HrPeople, vec!["coaching", "teams", "performance"]),
-            Self::new("behice-cultural-coach", "Behice - Culture", "Cross-cultural, global teams", IconName::Circle, AgentCategory::HrPeople, vec!["culture", "global", "diversity"]),
+            Self::new("behice-cultural-coach", "Behice - Culture", "Cross-cultural, global teams", IconName::Public, AgentCategory::HrPeople, vec!["culture", "global", "diversity"]),
 
             // Operations & Process
-            Self::new("enrico-business-process-engineer", "Enrico - Process", "Workflow, automation", IconName::ArrowRightLeft, AgentCategory::Operations, vec!["process", "workflow", "automation"]),
-            Self::new("dave-change-management-specialist", "Dave - Change", "Transformation, adoption", IconName::ArrowRightLeft, AgentCategory::Operations, vec!["change", "transformation", "adoption"]),
+            Self::new("enrico-business-process-engineer", "Enrico - Process", "Workflow, automation", IconName::Cog, AgentCategory::Operations, vec!["process", "workflow", "automation"]),
+            Self::new("dave-change-management-specialist", "Dave - Change", "Transformation, adoption", IconName::RotateCw, AgentCategory::Operations, vec!["change", "transformation", "adoption"]),
             Self::new("andrea-customer-success-manager", "Andrea - CS", "Customer lifecycle, retention", IconName::UserCheck, AgentCategory::Operations, vec!["customer", "success", "retention"]),
 
             // Government & External
-            Self::new("sophia-govaffairs", "Sophia - GovAffairs", "Regulatory, policy advocacy", IconName::Book, AgentCategory::External, vec!["government", "regulatory", "policy"]),
+            Self::new("sophia-govaffairs", "Sophia - GovAffairs", "Regulatory, policy advocacy", IconName::Public, AgentCategory::External, vec!["government", "regulatory", "policy"]),
             Self::new("sam-startupper", "Sam - Startup", "Y Combinator, PMF, fundraising", IconName::BoltOutlined, AgentCategory::External, vec!["startup", "yc", "fundraising"]),
 
             // AI & Coordination
-            Self::new("po-prompt-optimizer", "PO - Prompts", "Prompt engineering, LLM", IconName::Sparkle, AgentCategory::AiCoordination, vec!["prompts", "llm", "ai"]),
+            Self::new("po-prompt-optimizer", "PO - Prompts", "Prompt engineering, LLM", IconName::TextSnippet, AgentCategory::AiCoordination, vec!["prompts", "llm", "ai"]),
             Self::new("wanda-workflow-orchestrator", "Wanda - Workflows", "Multi-agent workflows", IconName::Blocks, AgentCategory::AiCoordination, vec!["workflows", "orchestration", "agents"]),
-            Self::new("xavier-coordination-patterns", "Xavier - Coordination", "Swarm intelligence, patterns", IconName::Blocks, AgentCategory::AiCoordination, vec!["coordination", "swarm", "patterns"]),
+            Self::new("xavier-coordination-patterns", "Xavier - Coordination", "Swarm intelligence, patterns", IconName::GitBranch, AgentCategory::AiCoordination, vec!["coordination", "swarm", "patterns"]),
             Self::new("marcus-context-memory-keeper", "Marcus - Memory", "Context persistence, memory", IconName::DatabaseZap, AgentCategory::AiCoordination, vec!["memory", "context", "persistence"]),
             Self::new("diana-performance-dashboard", "Diana - Dashboard", "Agent analytics, KPIs", IconName::Screen, AgentCategory::AiCoordination, vec!["dashboard", "analytics", "kpis"]),
 
@@ -234,6 +255,8 @@ impl ConvergioAgent {
 struct SerializedConvergioPanel {
     width: Option<f32>,
     collapsed_categories: Vec<String>,
+    #[serde(default)]
+    has_seen_onboarding: bool,
 }
 
 const AGENT_SESSIONS_KEY: &str = "ConvergioPanelAgentSessions";
@@ -259,6 +282,8 @@ pub struct ConvergioPanel {
     // Maps agent_name -> last_session_id (for future use when thread creation events are available)
     _agent_sessions: HashMap<String, String>,
     _filter_editor_subscription: Subscription,
+    // Onboarding state
+    show_onboarding: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -305,6 +330,22 @@ impl ConvergioPanel {
             }
         }).detach();
 
+        // Load onboarding state
+        let panel_key = CONVERGIO_PANEL_KEY.to_string();
+        cx.spawn(async move |this, cx| {
+            let result: anyhow::Result<Option<String>> = cx.background_executor().spawn(async move {
+                KEY_VALUE_STORE.read_kvp(&panel_key)
+            }).await;
+
+            if let Ok(Some(serialized)) = result {
+                if let Ok(data) = serde_json::from_str::<SerializedConvergioPanel>(&serialized) {
+                    let _ = this.update(cx, |this, _| {
+                        this.show_onboarding = !data.has_seen_onboarding;
+                    });
+                }
+            }
+        }).detach();
+
         Self {
             focus_handle,
             workspace: workspace_handle,
@@ -319,6 +360,7 @@ impl ConvergioPanel {
             show_active_only: false,
             _agent_sessions: HashMap::default(),
             _filter_editor_subscription: subscription,
+            show_onboarding: true, // Show by default, will be updated async
         }
     }
 
@@ -426,17 +468,25 @@ impl ConvergioPanel {
             .detach();
     }
 
+    fn dismiss_onboarding(&mut self, cx: &mut Context<Self>) {
+        self.show_onboarding = false;
+        self.serialize(cx);
+        cx.notify();
+    }
+
     fn serialize(&self, cx: &mut Context<Self>) {
         let width = self.width.map(|w| f32::from(w));
         let collapsed: Vec<String> = self.collapsed_categories
             .iter()
             .map(|c| format!("{:?}", c))
             .collect();
+        let has_seen_onboarding = !self.show_onboarding;
         cx.background_executor()
             .spawn(async move {
                 let serialized = serde_json::to_string(&SerializedConvergioPanel {
                     width,
                     collapsed_categories: collapsed,
+                    has_seen_onboarding,
                 }).ok();
                 if let Some(serialized) = serialized {
                     KEY_VALUE_STORE
@@ -446,6 +496,169 @@ impl ConvergioPanel {
                 }
             })
             .detach();
+    }
+
+    fn render_onboarding(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("convergio-onboarding")
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(cx.theme().colors().panel_background)
+            .p_4()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::ZedAgent)
+                            .size(IconSize::XLarge)
+                            .color(Color::Accent)
+                    )
+                    .child(
+                        Label::new("Welcome to Convergio")
+                            .size(LabelSize::Large)
+                            .weight(gpui::FontWeight::BOLD)
+                    )
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::UserGroup)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        Label::new("54 Specialized Agents")
+                                            .size(LabelSize::Default)
+                                            .weight(gpui::FontWeight::MEDIUM)
+                                    )
+                                    .child(
+                                        Label::new("From CFO to DevOps, each agent brings deep expertise")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Ai)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        Label::new("Ali - Your Chief of Staff")
+                                            .size(LabelSize::Default)
+                                            .weight(gpui::FontWeight::MEDIUM)
+                                    )
+                                    .child(
+                                        Label::new("Orchestrates all agents and maintains context")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Chat)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        Label::new("Persistent Conversations")
+                                            .size(LabelSize::Default)
+                                            .weight(gpui::FontWeight::MEDIUM)
+                                    )
+                                    .child(
+                                        Label::new("Agents remember your previous discussions")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .mt_4()
+                    .child(
+                        Label::new("Quick Start:")
+                            .size(LabelSize::Small)
+                            .weight(gpui::FontWeight::MEDIUM)
+                    )
+                    .child(
+                        Label::new("1. Click any agent to start a conversation")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    )
+                    .child(
+                        Label::new("2. Use search to find agents by skill")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    )
+                    .child(
+                        Label::new("3. Ali stays aware of all your conversations")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    )
+            )
+            .child(
+                div()
+                    .mt_auto()
+                    .pt_4()
+                    .child(
+                        div()
+                            .id("get-started-btn")
+                            .px_4()
+                            .py_2()
+                            .rounded_md()
+                            .bg(cx.theme().colors().element_selected)
+                            .cursor_pointer()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                Label::new("Get Started")
+                                    .size(LabelSize::Default)
+                                    .weight(gpui::FontWeight::MEDIUM)
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dismiss_onboarding(cx);
+                            }))
+                    )
+            )
     }
 
     fn filtered_agents(&self) -> Vec<&ConvergioAgent> {
@@ -477,6 +690,7 @@ impl ConvergioPanel {
     fn render_category_header(&self, category: AgentCategory, agent_count: usize, active_in_cat: usize, cx: &Context<Self>) -> impl IntoElement {
         let is_collapsed = self.collapsed_categories.contains(&category);
         let cat = category;
+        let category_color = category.color();
 
         div()
             .id(SharedString::from(format!("category-{:?}", category)))
@@ -494,6 +708,14 @@ impl ConvergioPanel {
             }))
             .child(
                 Disclosure::new(SharedString::from(format!("disc-{:?}", category)), !is_collapsed)
+            )
+            .child(
+                div()
+                    .w_1()
+                    .h_4()
+                    .rounded_sm()
+                    .bg(category_color)
+                    .mr_1()
             )
             .child(
                 Icon::new(category.icon())
@@ -711,6 +933,11 @@ impl Panel for ConvergioPanel {
 
 impl Render for ConvergioPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Show onboarding if not dismissed
+        if self.show_onboarding {
+            return self.render_onboarding(cx).into_any_element();
+        }
+
         let mut global_ix = 0usize;
 
         div()
@@ -774,5 +1001,6 @@ impl Render for ConvergioPanel {
                             })
                     )
             )
+            .into_any_element()
     }
 }
