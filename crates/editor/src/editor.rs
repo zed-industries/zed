@@ -2362,6 +2362,8 @@ impl Editor {
                             if active {
                                 editor.show_mouse_cursor(cx);
                             }
+
+                            cx.notify();
                         }),
                     ]
                 })
