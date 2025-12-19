@@ -2,8 +2,8 @@ use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
-    register_tooltip_mouse_handlers, set_tooltip_on_window,
+    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use itertools::Itertools;
@@ -354,7 +354,7 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, truncation_suffix, truncate_start) =
+                let (truncate_width, truncation_affix, truncate_from) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
                             crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
@@ -365,11 +365,11 @@ impl TextLayout {
                         });
 
                         match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s, false),
-                            TextOverflow::TruncateStart(s) => (width, s, true),
+                            TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
+                            TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
                         }
                     } else {
-                        (None, "".into(), false)
+                        (None, "".into(), TruncateFrom::End)
                     };
 
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
@@ -381,21 +381,13 @@ impl TextLayout {
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    if truncate_start {
-                        line_wrapper.truncate_line_start(
-                            text.clone(),
-                            truncate_width,
-                            &truncation_suffix,
-                            &runs,
-                        )
-                    } else {
-                        line_wrapper.truncate_line(
-                            text.clone(),
-                            truncate_width,
-                            &truncation_suffix,
-                            &runs,
-                        )
-                    }
+                    line_wrapper.truncate_line(
+                        text.clone(),
+                        truncate_width,
+                        &truncation_affix,
+                        &runs,
+                        truncate_from,
+                    )
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };

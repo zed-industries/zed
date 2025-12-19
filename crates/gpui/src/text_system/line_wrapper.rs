@@ -2,6 +2,15 @@ use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, 
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
+/// Determines whether to truncate text from the start or end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TruncateFrom {
+    /// Truncate text from the start.
+    Start,
+    /// Truncate text from the end.
+    End,
+}
+
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
     platform_text_system: Arc<dyn PlatformTextSystem>,
@@ -129,29 +138,50 @@ impl LineWrapper {
     }
 
     /// Determines if a line should be truncated based on its width.
+    ///
+    /// Returns the truncation index in `line`.
     pub fn should_truncate_line(
         &mut self,
         line: &str,
         truncate_width: Pixels,
-        truncation_suffix: &str,
+        truncation_affix: &str,
+        truncate_from: TruncateFrom,
     ) -> Option<usize> {
         let mut width = px(0.);
-        let suffix_width = truncation_suffix
+        let suffix_width = truncation_affix
             .chars()
             .map(|c| self.width_for_char(c))
             .fold(px(0.0), |a, x| a + x);
         let mut truncate_ix = 0;
 
-        for (ix, c) in line.char_indices() {
-            if width + suffix_width < truncate_width {
-                truncate_ix = ix;
+        match truncate_from {
+            TruncateFrom::Start => {
+                for (ix, c) in line.char_indices().rev() {
+                    if width + suffix_width < truncate_width {
+                        truncate_ix = ix;
+                    }
+
+                    let char_width = self.width_for_char(c);
+                    width += char_width;
+
+                    if width.floor() > truncate_width {
+                        return Some(truncate_ix);
+                    }
+                }
             }
+            TruncateFrom::End => {
+                for (ix, c) in line.char_indices() {
+                    if width + suffix_width < truncate_width {
+                        truncate_ix = ix;
+                    }
 
-            let char_width = self.width_for_char(c);
-            width += char_width;
+                    let char_width = self.width_for_char(c);
+                    width += char_width;
 
-            if width.floor() > truncate_width {
-                return Some(truncate_ix);
+                    if width.floor() > truncate_width {
+                        return Some(truncate_ix);
+                    }
+                }
             }
         }
 
@@ -163,79 +193,27 @@ impl LineWrapper {
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
-        truncation_suffix: &str,
+        truncation_affix: &str,
         runs: &'a [TextRun],
+        truncate_from: TruncateFrom,
     ) -> (SharedString, Cow<'a, [TextRun]>) {
         if let Some(truncate_ix) =
-            self.should_truncate_line(&line, truncate_width, truncation_suffix)
+            self.should_truncate_line(&line, truncate_width, truncation_affix, truncate_from)
         {
-            let result =
-                SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+            let result = match truncate_from {
+                TruncateFrom::Start => {
+                    SharedString::from(format!("{truncation_affix}{}", &line[truncate_ix + 1..]))
+                }
+                TruncateFrom::End => {
+                    SharedString::from(format!("{}{truncation_affix}", &line[..truncate_ix]))
+                }
+            };
             let mut runs = runs.to_vec();
-            update_runs_after_truncation(&result, truncation_suffix, &mut runs);
+            update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);
             (result, Cow::Owned(runs))
         } else {
             (line, Cow::Borrowed(runs))
         }
-    }
-
-    /// Truncate a line of text from the start to the given width.
-    /// Truncates from the beginning, e.g., "…ong text here"
-    pub fn truncate_line_start<'a>(
-        &mut self,
-        line: SharedString,
-        truncate_width: Pixels,
-        truncation_prefix: &str,
-        runs: &'a [TextRun],
-    ) -> (SharedString, Cow<'a, [TextRun]>) {
-        // First, measure the full line width to see if truncation is needed
-        let full_width: Pixels = line.chars().map(|c| self.width_for_char(c)).sum();
-
-        if full_width <= truncate_width {
-            return (line, Cow::Borrowed(runs));
-        }
-
-        let prefix_width: Pixels = truncation_prefix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .sum();
-
-        let available_width = truncate_width - prefix_width;
-
-        if available_width <= px(0.) {
-            return (
-                SharedString::from(truncation_prefix.to_string()),
-                Cow::Owned(vec![]),
-            );
-        }
-
-        // Work backwards from the end to find where to start the visible text
-        let char_indices: Vec<(usize, char)> = line.char_indices().collect();
-        let mut width_from_end = px(0.);
-        let mut start_byte_index = line.len();
-
-        for (byte_index, c) in char_indices.iter().rev() {
-            let char_width = self.width_for_char(*c);
-            if width_from_end + char_width > available_width {
-                break;
-            }
-            width_from_end += char_width;
-            start_byte_index = *byte_index;
-        }
-
-        if start_byte_index == 0 {
-            return (line, Cow::Borrowed(runs));
-        }
-
-        let result = SharedString::from(format!(
-            "{}{}",
-            truncation_prefix,
-            &line[start_byte_index..]
-        ));
-        let mut runs = runs.to_vec();
-        update_runs_after_start_truncation(&result, truncation_prefix, start_byte_index, &mut runs);
-
-        (result, Cow::Owned(runs))
     }
 
     /// Any character in this list should be treated as a word character,
@@ -304,61 +282,35 @@ impl LineWrapper {
     }
 }
 
-fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
-    let mut truncate_at = result.len() - ellipsis.len();
-    for (run_index, run) in runs.iter_mut().enumerate() {
-        if run.len <= truncate_at {
-            truncate_at -= run.len;
-        } else {
-            run.len = truncate_at + ellipsis.len();
-            runs.truncate(run_index + 1);
-            break;
-        }
-    }
-}
-
-fn update_runs_after_start_truncation(
+fn update_runs_after_truncation(
     result: &str,
-    prefix: &str,
-    bytes_removed: usize,
+    ellipsis: &str,
     runs: &mut Vec<TextRun>,
+    truncate_from: TruncateFrom,
 ) {
-    let prefix_len = prefix.len();
-
-    let mut bytes_to_skip = bytes_removed;
-    let mut first_relevant_run = 0;
-
-    for (index, run) in runs.iter().enumerate() {
-        if bytes_to_skip >= run.len {
-            bytes_to_skip -= run.len;
-            first_relevant_run = index + 1;
-        } else {
-            break;
+    let mut truncate_at = result.len() - ellipsis.len();
+    match truncate_from {
+        TruncateFrom::Start => {
+            for (run_index, run) in runs.iter_mut().enumerate().rev() {
+                if run.len <= truncate_at {
+                    truncate_at -= run.len;
+                } else {
+                    run.len = truncate_at + ellipsis.len();
+                    runs.splice(..run_index, std::iter::empty());
+                    break;
+                }
+            }
         }
-    }
-
-    if first_relevant_run > 0 {
-        runs.drain(0..first_relevant_run);
-    }
-
-    if !runs.is_empty() && bytes_to_skip > 0 {
-        runs[0].len -= bytes_to_skip;
-    }
-
-    if !runs.is_empty() {
-        runs[0].len += prefix_len;
-    } else {
-        runs.push(TextRun {
-            len: result.len(),
-            ..Default::default()
-        });
-    }
-
-    let total_run_len: usize = runs.iter().map(|r| r.len).sum();
-    if total_run_len != result.len() && !runs.is_empty() {
-        let diff = result.len() as isize - total_run_len as isize;
-        if let Some(last) = runs.last_mut() {
-            last.len = (last.len as isize + diff) as usize;
+        TruncateFrom::End => {
+            for (run_index, run) in runs.iter_mut().enumerate() {
+                if run.len <= truncate_at {
+                    truncate_at -= run.len;
+                } else {
+                    run.len = truncate_at + ellipsis.len();
+                    runs.truncate(run_index + 1);
+                    break;
+                }
+            }
         }
     }
 }
@@ -608,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_line() {
+    fn test_truncate_line_end() {
         let mut wrapper = build_wrapper();
 
         fn perform_test(
@@ -619,8 +571,13 @@ mod tests {
         ) {
             let dummy_run_lens = vec![text.len()];
             let dummy_runs = generate_test_runs(&dummy_run_lens);
-            let (result, dummy_runs) =
-                wrapper.truncate_line(text.into(), px(220.), ellipsis, &dummy_runs);
+            let (result, dummy_runs) = wrapper.truncate_line(
+                text.into(),
+                px(220.),
+                ellipsis,
+                &dummy_runs,
+                TruncateFrom::End,
+            );
             assert_eq!(result, expected);
             assert_eq!(dummy_runs.first().unwrap().len, result.len());
         }
@@ -646,7 +603,50 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_multiple_runs() {
+    fn test_truncate_line_start() {
+        let mut wrapper = build_wrapper();
+
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            expected: &'static str,
+            ellipsis: &str,
+        ) {
+            let dummy_run_lens = vec![text.len()];
+            let dummy_runs = generate_test_runs(&dummy_run_lens);
+            let (result, dummy_runs) = wrapper.truncate_line(
+                text.into(),
+                px(220.),
+                ellipsis,
+                &dummy_runs,
+                TruncateFrom::Start,
+            );
+            assert_eq!(result, expected);
+            assert_eq!(dummy_runs.first().unwrap().len, result.len());
+        }
+
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc ddddd eeee fff gg",
+            "cccc ddddd eeee fff gg",
+            "",
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc ddddd eeee fff gg",
+            "…ccc ddddd eeee fff gg",
+            "…",
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc ddddd eeee fff gg",
+            "......dddd eeee fff gg",
+            "......",
+        );
+    }
+
+    #[test]
+    fn test_truncate_multiple_runs_end() {
         let mut wrapper = build_wrapper();
 
         fn perform_test(
@@ -659,7 +659,7 @@ mod tests {
         ) {
             let dummy_runs = generate_test_runs(run_lens);
             let (result, dummy_runs) =
-                wrapper.truncate_line(text.into(), line_width, "…", &dummy_runs);
+                wrapper.truncate_line(text.into(), line_width, "…", &dummy_runs, TruncateFrom::End);
             assert_eq!(result, expected);
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
                 assert_eq!(run.len, *result_len);
@@ -705,10 +705,75 @@ mod tests {
     }
 
     #[test]
-    fn test_update_run_after_truncation() {
+    fn test_truncate_multiple_runs_start() {
+        let mut wrapper = build_wrapper();
+
+        #[track_caller]
+        fn perform_test(
+            wrapper: &mut LineWrapper,
+            text: &'static str,
+            expected: &str,
+            run_lens: &[usize],
+            result_run_len: &[usize],
+            line_width: Pixels,
+        ) {
+            let dummy_runs = generate_test_runs(run_lens);
+            let (result, dummy_runs) = wrapper.truncate_line(
+                text.into(),
+                line_width,
+                "…",
+                &dummy_runs,
+                TruncateFrom::Start,
+            );
+            assert_eq!(result, expected);
+            for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
+                assert_eq!(run.len, *result_len);
+            }
+        }
+        // Case 0: Normal
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 12, ... }
+        //
+        // Truncate res: …ijkl (truncate_at = 9)
+        // Run res: Run0 { string: …ijkl, len: 7, ... }
+        perform_test(&mut wrapper, "abcdefghijkl", "…ijkl", &[12], &[7], px(50.));
+        // Case 1: Drop some runs
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: …ghijkl (truncate_at = 7)
+        // Runs res: Run0 { string: …gh, len: 5, ... }, Run1 { string: ijkl, len:
+        // 4, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "…ghijkl",
+            &[4, 4, 4],
+            &[5, 4],
+            px(70.),
+        );
+        // Case 2: Truncate at start of some run
+        // Text: abcdefghijkl
+        // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+        //
+        // Truncate res: abcdefgh… (truncate_at = 3)
+        // Runs res: Run0 { string: …, len: 3, ... }, Run1 { string: efgh, len:
+        // 4, ... }, Run2 { string: ijkl, len: 4, ... }
+        perform_test(
+            &mut wrapper,
+            "abcdefghijkl",
+            "…efghijkl",
+            &[4, 4, 4],
+            &[3, 4, 4],
+            px(90.),
+        );
+    }
+
+    #[test]
+    fn test_update_run_after_truncation_end() {
         fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
             let mut dummy_runs = generate_test_runs(run_lens);
-            update_runs_after_truncation(result, "…", &mut dummy_runs);
+            update_runs_after_truncation(result, "…", &mut dummy_runs, TruncateFrom::End);
             for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
                 assert_eq!(run.len, *result_len);
             }
