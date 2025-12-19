@@ -1077,11 +1077,9 @@ impl App {
         self.platform.window_appearance()
     }
 
-    /// Writes data to the primary selection buffer.
-    /// Only available on Linux.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub fn write_to_primary(&self, item: ClipboardItem) {
-        self.platform.write_to_primary(item)
+    /// Reads data from the platform clipboard.
+    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_clipboard()
     }
 
     /// Writes data to the platform clipboard.
@@ -1096,9 +1094,31 @@ impl App {
         self.platform.read_from_primary()
     }
 
-    /// Reads data from the platform clipboard.
-    pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.platform.read_from_clipboard()
+    /// Writes data to the primary selection buffer.
+    /// Only available on Linux.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn write_to_primary(&self, item: ClipboardItem) {
+        self.platform.write_to_primary(item)
+    }
+
+    /// Reads data from macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_find_pasteboard()
+    }
+
+    /// Writes data to macOS's "Find" pasteboard.
+    ///
+    /// Used to share the current search string between apps.
+    ///
+    /// https://developer.apple.com/documentation/appkit/nspasteboard/name-swift.struct/find
+    #[cfg(target_os = "macos")]
+    pub fn write_to_find_pasteboard(&self, item: ClipboardItem) {
+        self.platform.write_to_find_pasteboard(item)
     }
 
     /// Writes credentials to the platform keychain.
