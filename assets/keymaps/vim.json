@@ -540,6 +540,7 @@
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
       "g q": "vim::PushRewrap",
+    },
   },
   {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
