@@ -343,7 +343,6 @@ impl LanguageServerState {
                                             format!("Language server {server_name}:\n\n{message}"),
                                         )],
                                         None,
-                                        true,
                                         cx,
                                     );
                                     buffer.set_capability(language::Capability::ReadOnly, cx);

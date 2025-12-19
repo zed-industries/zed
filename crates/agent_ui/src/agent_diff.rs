@@ -1788,7 +1788,6 @@ mod tests {
                             (Point::new(7, 1)..Point::new(7, 2), "W"),
                         ],
                         None,
-                        true,
                         cx,
                     )
                     .unwrap()
@@ -2000,7 +1999,6 @@ mod tests {
                             (Point::new(7, 1)..Point::new(7, 2), "W"),
                         ],
                         None,
-                        true,
                         cx,
                     )
                     .unwrap()
@@ -2016,7 +2014,6 @@ mod tests {
                             (Point::new(2, 1)..Point::new(2, 2), "H"),
                         ],
                         None,
-                        true,
                         cx,
                     )
                     .unwrap();

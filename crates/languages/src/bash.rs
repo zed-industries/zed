@@ -46,7 +46,7 @@ mod tests {
                 |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
                     buffer.edit(
                         [(0..buffer.len(), input)],
-                        Some(AutoindentMode::EachLine),true,
+                        Some(AutoindentMode::EachLine),
                         cx,
                     );
                     assert_eq!(buffer.text(), expected);
@@ -135,15 +135,15 @@ mod tests {
                 .unindent(),
             );
 
-            buffer.edit([(0..buffer.len(), input)], None,true, cx);
+            buffer.edit([(0..buffer.len(), input)], None, cx);
             buffer.edit(
                 [(offsets[0]..offsets[0], "\n")],
-                Some(AutoindentMode::EachLine),true,
+                Some(AutoindentMode::EachLine),
                 cx,
             );
             buffer.edit(
                 [(offsets[0] + 3..offsets[0] + 3, "elif")],
-                Some(AutoindentMode::EachLine),true,
+                Some(AutoindentMode::EachLine),
                 cx,
             );
             let expected = r#"

@@ -192,7 +192,7 @@ impl TerminalOutput {
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(buffer.len()..buffer.len(), text)], None, true, cx);
+                buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
             });
         }
     }

@@ -124,7 +124,7 @@ impl ConflictRegion {
         }
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(deletions, None, true, cx);
+            buffer.edit(deletions, None, cx);
         });
     }
 }
@@ -597,7 +597,6 @@ mod tests {
                     (14..14, "=======\nTWO\n>>>>>>> branch\n"),
                 ],
                 None,
-                true,
                 cx,
             );
         });

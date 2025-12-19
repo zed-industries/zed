@@ -917,7 +917,6 @@ impl BufferSearchBar {
                         replacement_buffer.edit(
                             [(MultiBufferOffset(0)..len, replacement.unwrap())],
                             None,
-                            true,
                             cx,
                         );
                     });
@@ -943,7 +942,7 @@ impl BufferSearchBar {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
-                    query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, true, cx);
+                    query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
             });
             self.set_search_options(options, cx);

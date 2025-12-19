@@ -244,7 +244,7 @@ fn build_clipboard_buffer(
 
         let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
         let range_end = source_buffer_snapshot.point_to_offset(replacement_range.end);
-        buffer.edit([(range_start..range_end, text)], None, true, cx);
+        buffer.edit([(range_start..range_end, text)], None, cx);
 
         buffer
     })
