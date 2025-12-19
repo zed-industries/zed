@@ -121,8 +121,8 @@ use language::{
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, OffsetRangeExt,
-    OutlineItem, Point, Runnable, Selection, SelectionGoal, TaskListConfig, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    OutlineItem, Point, Runnable, Selection, SelectionGoal, TextObject, TransactionId,
+    TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -23549,25 +23549,25 @@ fn list_delimiter_for_newline(
         config
             .prefixes
             .iter()
-            .map(move |prefix| (prefix.clone(), config.continuation.clone()))
+            .map(|prefix| (prefix.as_ref(), config.continuation.as_ref()))
     });
     let unordered_list_entries = language
         .unordered_list()
         .iter()
-        .map(|marker| (marker.clone(), marker.clone()));
+        .map(|marker| (marker.as_ref(), marker.as_ref()));
 
-    let all_prefixes: Vec<_> = task_list_entries.chain(unordered_list_entries).collect();
+    let all_entries: Vec<_> = task_list_entries.chain(unordered_list_entries).collect();
 
-    let max_prefix_len = all_prefixes.iter().map(|(p, _)| p.len()).max()?;
+    let max_prefix_len = all_entries.iter().map(|(p, _)| p.len()).max()?;
     let candidate: String = snapshot
         .chars_for_range(range.clone())
         .skip(num_of_whitespaces)
         .take(max_prefix_len)
         .collect();
 
-    let (prefix, continuation) = all_prefixes
+    let (prefix, continuation) = all_entries
         .iter()
-        .filter(|(prefix, _)| candidate.starts_with(prefix.as_ref()))
+        .filter(|(prefix, _)| candidate.starts_with(*prefix))
         .max_by_key(|(prefix, _)| prefix.len())?;
 
     let end_of_prefix = num_of_whitespaces + prefix.len();
@@ -23577,7 +23577,7 @@ fn list_delimiter_for_newline(
         .any(|c| !c.is_whitespace());
 
     if has_content_after_marker {
-        return Some(continuation.clone());
+        return Some((*continuation).into());
     }
 
     if start_point.column as usize == end_of_prefix {
@@ -23585,42 +23585,10 @@ fn list_delimiter_for_newline(
             *newline_config = NewlineConfig::ClearCurrentLine;
         } else {
             *newline_config = NewlineConfig::UnindentCurrentLine {
-                continuation: continuation.clone(),
+                continuation: (*continuation).into(),
             };
         }
     }
-
-    // // Check for ordered lists
-    // for ordered_config in &ordered {
-    //     let pattern_with_rest = format!("^{}(.*)", ordered_config.pattern);
-    //     let regex = match Regex::new(&pattern_with_rest) {
-    //         Ok(r) => r,
-    //         Err(_) => continue,
-    //     };
-
-    //     if let Some(captures) = regex.captures(content_after_whitespace) {
-    //         // The last capture group is the content after the marker
-    //         let content_after_marker = captures.get(captures.len() - 1)?.as_str();
-    //         let marker_text = captures.get(0)?.as_str();
-    //         let marker_len = marker_text.len() - content_after_marker.len();
-
-    //         if content_after_marker.trim().is_empty() {
-    //             return Some((None, marker_len));
-    //         }
-
-    //         // Get the first capture group (the number) and increment it
-    //         let number: u32 = captures.get(1)?.as_str().parse().ok()?;
-    //         let continuation = ordered_config
-    //             .format
-    //             .replace("{1}", &(number + 1).to_string());
-
-    //         return Some((
-    //             Some(format!("{}{}", leading_whitespace, continuation).into()),
-    //             0,
-    //         ));
-    //     }
-    // }
-
     None
 }
 
