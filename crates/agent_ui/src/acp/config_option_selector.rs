@@ -16,7 +16,7 @@ use ui::{
 use super::config_option_picker::{ConfigOptionPicker, config_option_picker, count_config_options};
 use crate::ui::HoldForDefault;
 
-const PICKER_THRESHOLD: usize = 10;
+const PICKER_THRESHOLD: usize = 4;
 
 pub struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
@@ -290,10 +290,13 @@ impl ConfigOptionSelector {
 
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
-            return Button::new("config-option-trigger", "Unknown")
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .disabled(true);
+            return Button::new(
+                format!("config-option-trigger-{}", &*self.config_id.0),
+                "Unknown",
+            )
+            .label_size(LabelSize::Small)
+            .color(Color::Muted)
+            .disabled(true);
         };
 
         let current_value_name = self.current_value_name();
@@ -311,7 +314,7 @@ impl ConfigOptionSelector {
         };
 
         Button::new(
-            ElementId::Name(format!("config-option-{}", option.id.0).into()),
+            ElementId::Name(format!("config-option-{}-{}", self.config_id, option.id.0).into()),
             current_value_name,
         )
         .label_size(LabelSize::Small)
@@ -386,7 +389,7 @@ impl ConfigOptionSelector {
         };
 
         let trigger_button = Button::new(
-            ElementId::Name(format!("config-option-{}", option.id.0).into()),
+            ElementId::Name(format!("config-option-{}-{}", self.config_id, option.id.0).into()),
             self.current_value_name(),
         )
         .label_size(LabelSize::Small)
@@ -397,7 +400,7 @@ impl ConfigOptionSelector {
         .icon_color(Color::Muted)
         .disabled(self.setting_value);
 
-        let menu_id = format!("config-option-menu-{}", option.id.0);
+        let menu_id = format!("config-option-menu-{}-{}", self.config_id, option.id.0);
 
         PopoverMenu::new(menu_id)
             .trigger_with_tooltip(
