@@ -16,7 +16,7 @@ use std::{
 };
 use text::ToOffset;
 
-use crate::OLLAMA_API_URL;
+use crate::{OLLAMA_API_URL, get_models, pick_recommended_edit_prediction_model};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
@@ -166,12 +166,7 @@ impl EditPredictionDelegate for OllamaEditPredictionDelegate {
         let http_client = self.http_client.clone();
 
         let settings = all_language_settings(None, cx);
-        let model = settings
-            .edit_predictions
-            .ollama
-            .model
-            .clone()
-            .unwrap_or_else(|| "qwen2.5-coder:3b-base".to_string());
+        let configured_model = settings.edit_predictions.ollama.model.clone();
         let api_url = settings
             .edit_predictions
             .ollama
@@ -184,6 +179,31 @@ impl EditPredictionDelegate for OllamaEditPredictionDelegate {
                 log::debug!("Ollama: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
+
+            let model = if let Some(model) = configured_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+            {
+                model.to_string()
+            } else {
+                let local_models = get_models(http_client.as_ref(), &api_url, None).await?;
+                let available_model_names = local_models.iter().map(|model| model.name.as_str());
+
+                match pick_recommended_edit_prediction_model(available_model_names) {
+                    Some(recommended) => recommended.to_string(),
+                    None => {
+                        log::debug!(
+                            "Ollama: No model configured and no recommended local model found; skipping edit prediction"
+                        );
+                        this.update(cx, |this, cx| {
+                            this.pending_request = None;
+                            cx.notify();
+                        })?;
+                        return Ok(());
+                    }
+                }
+            };
 
             let cursor_offset = cursor_position.to_offset(&snapshot);
             let cursor_point = cursor_offset.to_point(&snapshot);

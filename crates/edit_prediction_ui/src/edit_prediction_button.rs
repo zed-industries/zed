@@ -92,9 +92,9 @@ impl Render for EditPredictionButton {
             return div().hidden();
         }
 
-        let all_language_settings = all_language_settings(None, cx);
+        let language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
                     return div().hidden();
@@ -298,8 +298,6 @@ impl Render for EditPredictionButton {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
 
-                let tooltip_meta = "Powered by Ollama";
-
                 div().child(
                     PopoverMenu::new("ollama")
                         .menu(move |window, cx| {
@@ -323,6 +321,22 @@ impl Render for EditPredictionButton {
                                         ))
                                 }),
                             move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta = match settings
+                                    .edit_predictions
+                                    .ollama
+                                    .model
+                                    .as_deref()
+                                {
+                                    Some(model) if !model.trim().is_empty() => {
+                                        format!("Powered by Ollama ({model})")
+                                    }
+                                    _ => {
+                                        "Ollama model not configured — configure a model before use"
+                                            .to_string()
+                                    }
+                                };
+
                                 Tooltip::with_meta(
                                     "Edit Prediction",
                                     Some(&ToggleMenu),

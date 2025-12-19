@@ -214,7 +214,7 @@ pub struct CodestralSettingsContent {
 pub struct OllamaEditPredictionSettingsContent {
     /// Model to use for completions.
     ///
-    /// Default: "qwen2.5-coder:1.5b"
+    /// Default: none
     pub model: Option<String>,
     /// Api URL to use for completions.
     ///
