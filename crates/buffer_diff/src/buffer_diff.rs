@@ -314,6 +314,12 @@ impl BufferDiffSnapshot {
         self.inner.hunks.is_empty()
     }
 
+    pub fn base_text_string(&self) -> Option<String> {
+        self.inner
+            .base_text_exists
+            .then(|| self.inner.base_text.text())
+    }
+
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
         self.secondary_diff.as_deref()
     }
