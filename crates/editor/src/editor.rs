@@ -4321,6 +4321,7 @@ impl Editor {
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
         let mut all_selections_read_only = true;
+        let mut has_adjacent_edits = false;
         let mut in_adjacent_group = false;
 
         let mut regions = self
@@ -4621,6 +4622,10 @@ impl Editor {
 
         if all_selections_read_only {
             return;
+            if next_is_adjacent {
+                has_adjacent_edits = true;
+            }
+
             in_adjacent_group = next_is_adjacent;
         }
 
@@ -4636,7 +4641,11 @@ impl Editor {
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                if has_adjacent_edits {
+                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                } else {
+                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                }
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
