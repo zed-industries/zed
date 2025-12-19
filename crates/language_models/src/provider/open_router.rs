@@ -370,26 +370,7 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        // Check if this is a ToolResults follow-up request
-        let has_tool_results = request.messages.iter().any(|msg| {
-            msg.content
-                .iter()
-                .any(|c| matches!(c, MessageContent::ToolResult(_)))
-        });
-
         let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
-
-        // Extra logging to help reproduce/diagnose https://github.com/zed-industries/zed/issues/44032
-        // Dump full request JSON for requests that have tool results.
-        if has_tool_results {
-            if let Ok(json_str) = serde_json::to_string_pretty(&openrouter_request) {
-                eprintln!(
-                    "***DEBUG LOGGING FOR ISSUE*** openrouter_request_json:\n{}",
-                    json_str
-                );
-            }
-        }
-
         let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
@@ -404,14 +385,26 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> open_router::Request {
+    // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
+    // in requests - it's an output-only field for them. However, Gemini models require
+    // the thought signatures to be echoed back for proper reasoning chain continuity.
+    let is_anthropic_model = model.id().starts_with("anthropic/");
+
     let mut messages = Vec::new();
     for message in request.messages {
+        let reasoning_details_for_message = if is_anthropic_model {
+            None
+        } else {
+            message.reasoning_details.clone()
+        };
+
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
                     open_router::MessagePart::Text { text },
                     message.role,
                     &mut messages,
+                    reasoning_details_for_message.clone(),
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
@@ -422,6 +415,7 @@ pub fn into_open_router(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details_for_message.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -445,9 +439,7 @@ pub fn into_open_router(
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
-                            // Don't include reasoning_details in outbound requests - it's an
-                            // output-only field that OpenRouter provides, not one we should echo back.
-                            reasoning_details: None,
+                            reasoning_details: reasoning_details_for_message.clone(),
                         });
                     }
                 }
@@ -523,6 +515,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
+    reasoning_details: Option<serde_json::Value>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))
@@ -546,7 +539,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
-                    reasoning_details: None,
+                    reasoning_details,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
