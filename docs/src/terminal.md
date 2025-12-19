@@ -4,11 +4,11 @@ Zed includes a built-in terminal emulator that supports multiple terminal instan
 
 ## Opening Terminals
 
-| Action                          | macOS                    | Linux/Windows            |
-| ------------------------------- | ------------------------ | ------------------------ |
-| Toggle terminal panel           | `` Ctrl+` ``             | `` Ctrl+` ``             |
-| Open new terminal               | `Ctrl+~`                 | `Ctrl+~`                 |
-| Open terminal in center         | Command palette          | Command palette          |
+| Action                  | macOS           | Linux/Windows   |
+| ----------------------- | --------------- | --------------- |
+| Toggle terminal panel   | `` Ctrl+` ``    | `` Ctrl+` ``    |
+| Open new terminal       | `Ctrl+~`        | `Ctrl+~`        |
+| Open terminal in center | Command palette | Command palette |
 
 You can also open a terminal from the command palette with `terminal panel: toggle` or `workspace: new terminal`.
 
@@ -58,12 +58,12 @@ To pass arguments to your shell:
 
 Control where new terminals start:
 
-| Value                        | Behavior                                                                |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| `"current_project_directory"` | Uses the project directory of the currently open file (default)       |
-| `"first_project_directory"`   | Uses the first project in your workspace                               |
-| `"always_home"`               | Always starts in your home directory                                   |
-| `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory             |
+| Value                                         | Behavior                                                        |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| `"current_project_directory"`                 | Uses the project directory of the currently open file (default) |
+| `"first_project_directory"`                   | Uses the first project in your workspace                        |
+| `"always_home"`                               | Always starts in your home directory                            |
+| `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory                           |
 
 ```json [settings]
 {
@@ -175,14 +175,14 @@ Zed adjusts terminal colors to maintain readability. The default value of `45` e
 
 Navigate terminal history with these keybindings:
 
-| Action            | macOS           | Linux/Windows      |
-| ----------------- | --------------- | ------------------ |
-| Scroll page up    | `Shift+PageUp` or `Cmd+Up` | `Shift+PageUp` |
-| Scroll page down  | `Shift+PageDown` or `Cmd+Down` | `Shift+PageDown` |
-| Scroll line up    | `Shift+Up`      | `Shift+Up`         |
-| Scroll line down  | `Shift+Down`    | `Shift+Down`       |
-| Scroll to top     | `Shift+Home` or `Cmd+Home` | `Shift+Home` |
-| Scroll to bottom  | `Shift+End` or `Cmd+End` | `Shift+End` |
+| Action           | macOS                          | Linux/Windows    |
+| ---------------- | ------------------------------ | ---------------- |
+| Scroll page up   | `Shift+PageUp` or `Cmd+Up`     | `Shift+PageUp`   |
+| Scroll page down | `Shift+PageDown` or `Cmd+Down` | `Shift+PageDown` |
+| Scroll line up   | `Shift+Up`                     | `Shift+Up`       |
+| Scroll line down | `Shift+Down`                   | `Shift+Down`     |
+| Scroll to top    | `Shift+Home` or `Cmd+Home`     | `Shift+Home`     |
+| Scroll to bottom | `Shift+End` or `Cmd+End`       | `Shift+End`      |
 
 Adjust scroll speed with:
 
@@ -196,10 +196,10 @@ Adjust scroll speed with:
 
 ## Copy and Paste
 
-| Action | macOS    | Linux/Windows         |
-| ------ | -------- | --------------------- |
-| Copy   | `Cmd+C`  | `Ctrl+Shift+C`        |
-| Paste  | `Cmd+V`  | `Ctrl+Shift+V`        |
+| Action | macOS   | Linux/Windows  |
+| ------ | ------- | -------------- |
+| Copy   | `Cmd+C` | `Ctrl+Shift+C` |
+| Paste  | `Cmd+V` | `Ctrl+Shift+V` |
 
 ### Copy on Select
 

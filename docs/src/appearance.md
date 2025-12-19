@@ -60,11 +60,11 @@ Like color themes, icon themes support separate light and dark variants:
 
 Zed uses three font settings for different contexts:
 
-| Setting                | Used for           |
-| ---------------------- | ------------------ |
-| `buffer_font_family`   | Editor text        |
-| `ui_font_family`       | Interface elements |
-| `terminal.font_family` | [Terminal](./terminal.md)           |
+| Setting                | Used for                  |
+| ---------------------- | ------------------------- |
+| `buffer_font_family`   | Editor text               |
+| `ui_font_family`       | Interface elements        |
+| `terminal.font_family` | [Terminal](./terminal.md) |
 
 Example configuration:
 

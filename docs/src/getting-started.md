@@ -18,14 +18,14 @@ Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Z
 
 ### 2. Learn the Essential Commands
 
-| Action                | macOS           | Linux/Windows    |
-| --------------------- | --------------- | ---------------- |
-| Command palette       | `Cmd+Shift+P`   | `Ctrl+Shift+P`   |
-| Go to file            | `Cmd+P`         | `Ctrl+P`         |
-| Go to symbol          | `Cmd+Shift+O`   | `Ctrl+Shift+O`   |
-| Find in project       | `Cmd+Shift+F`   | `Ctrl+Shift+F`   |
-| Toggle terminal       | `` Ctrl+` ``    | `` Ctrl+` ``     |
-| Open settings         | `Cmd+,`         | `Ctrl+,`         |
+| Action          | macOS         | Linux/Windows  |
+| --------------- | ------------- | -------------- |
+| Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
+| Go to file      | `Cmd+P`       | `Ctrl+P`       |
+| Go to symbol    | `Cmd+Shift+O` | `Ctrl+Shift+O` |
+| Find in project | `Cmd+Shift+F` | `Ctrl+Shift+F` |
+| Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
+| Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
 The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
 
@@ -71,6 +71,7 @@ You can also enable familiar keybindings:
 - **Helix**: Enable `helix_mode` in settings. See [Helix Mode](./helix.md).
 
 ## Join the Community
+
 Zed is proudly open source, and we get better with every contribution. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
 
 - [Discord](https://discord.com/invite/zedindustries)
