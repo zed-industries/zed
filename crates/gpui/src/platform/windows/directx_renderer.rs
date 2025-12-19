@@ -835,7 +835,7 @@ impl DirectXRenderPipelines {
             "subpixel_sprite_pipeline",
             ShaderModule::SubpixelSprite,
             512,
-            create_subpixel_blend_state(device)?,
+            create_blend_state_for_subpixel_rendering(device)?,
         )?;
         let poly_sprites = PipelineState::new(
             device,
@@ -1301,7 +1301,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
 }
 
 #[inline]
-fn create_subpixel_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0].BlendEnable = true.into();
     desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;

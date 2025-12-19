@@ -18,7 +18,7 @@ pub struct WorkspaceSettingsContent {
     /// Whether to enable subpixel (ClearType-style) text rendering.
     ///
     /// Default: platform_default
-    pub subpixel_text_rendering: Option<SubpixelTextRendering>,
+    pub use_subpixel_text_rendering: Option<SubpixelTextRendering>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -568,10 +568,10 @@ pub enum SubpixelTextRendering {
     /// Use platform default behavior.
     #[default]
     PlatformDefault,
-    /// Always enable subpixel (ClearType) text rendering.
-    Yes,
-    /// Always disable subpixel (ClearType) text rendering.
-    No,
+    /// Always enable subpixel text rendering.
+    Always,
+    /// Always disable subpixel text rendering.
+    Never,
 }
 
 impl OnLastWindowClosed {

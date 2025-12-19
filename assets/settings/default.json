@@ -172,12 +172,12 @@
   // Whether to enable subpixel (ClearType-style) text rendering.
   // May take 3 values:
   //  1. Use platform default behavior:
-  //         "subpixel_text_rendering": "platform_default"
+  //         "use_subpixel_text_rendering": "platform_default"
   //  2. Always enable subpixel text rendering:
-  //         "subpixel_text_rendering": "yes"
-  //  3. Always disable subpixel text rendering:
-  //         "subpixel_text_rendering": "no"
-  "subpixel_text_rendering": "platform_default",
+  //         "use_subpixel_text_rendering": "always"
+  //  3. Never enable subpixel text rendering:
+  //         "use_subpixel_text_rendering": "never"
+  "use_subpixel_text_rendering": "platform_default",
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
