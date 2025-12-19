@@ -23602,50 +23602,50 @@ fn list_delimiter_for_newline(
 
             return None;
         }
-    } else {
-        let candidate: String = snapshot
-            .chars_for_range(range.clone())
-            .skip(num_of_whitespaces)
-            .take(ORDERED_LIST_MAX_MARKER_LEN)
-            .collect();
+    }
 
-        for ordered_config in language.ordered_list() {
-            let regex = match Regex::new(&ordered_config.pattern) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+    let candidate: String = snapshot
+        .chars_for_range(range.clone())
+        .skip(num_of_whitespaces)
+        .take(ORDERED_LIST_MAX_MARKER_LEN)
+        .collect();
 
-            if let Some(captures) = regex.captures(&candidate) {
-                let full_match = captures.get(0)?;
-                let marker_len = full_match.len();
-                let end_of_prefix = num_of_whitespaces + marker_len;
+    for ordered_config in language.ordered_list() {
+        let regex = match Regex::new(&ordered_config.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
 
-                let has_content_after_marker = snapshot
-                    .chars_for_range(range.clone())
-                    .skip(end_of_prefix)
-                    .any(|c| !c.is_whitespace());
+        if let Some(captures) = regex.captures(&candidate) {
+            let full_match = captures.get(0)?;
+            let marker_len = full_match.len();
+            let end_of_prefix = num_of_whitespaces + marker_len;
 
-                if has_content_after_marker {
-                    let number: u32 = captures.get(1)?.as_str().parse().ok()?;
-                    let continuation = ordered_config
-                        .format
-                        .replace("{1}", &(number + 1).to_string());
-                    return Some(continuation.into());
-                }
+            let has_content_after_marker = snapshot
+                .chars_for_range(range.clone())
+                .skip(end_of_prefix)
+                .any(|c| !c.is_whitespace());
 
-                if start_point.column as usize == end_of_prefix {
-                    let continuation = ordered_config.format.replace("{1}", "1");
-                    if num_of_whitespaces == 0 {
-                        *newline_config = NewlineConfig::ClearCurrentLine;
-                    } else {
-                        *newline_config = NewlineConfig::UnindentCurrentLine {
-                            continuation: continuation.into(),
-                        };
-                    }
-                }
-
-                return None;
+            if has_content_after_marker {
+                let number: u32 = captures.get(1)?.as_str().parse().ok()?;
+                let continuation = ordered_config
+                    .format
+                    .replace("{1}", &(number + 1).to_string());
+                return Some(continuation.into());
             }
+
+            if start_point.column as usize == end_of_prefix {
+                let continuation = ordered_config.format.replace("{1}", "1");
+                if num_of_whitespaces == 0 {
+                    *newline_config = NewlineConfig::ClearCurrentLine;
+                } else {
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: continuation.into(),
+                    };
+                }
+            }
+
+            return None;
         }
     }
 
