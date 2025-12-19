@@ -108,7 +108,7 @@ pub struct BufferSearchBar {
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     #[cfg(target_os = "macos")]
-    active_searchable_item_subscriptions: Option<[Subscription; 3]>,
+    active_searchable_item_subscriptions: Option<[Subscription; 2]>,
     #[cfg(not(target_os = "macos"))]
     active_searchable_item_subscriptions: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
@@ -519,9 +519,6 @@ impl ToolbarItemView for BufferSearchBar {
                             }
                         });
                     }),
-                    cx.on_focus_out(&item_focus_handle, window, |this, _, _window, cx| {
-                        this.update_find_pasteboard(cx);
-                    }),
                 ]);
             }
             #[cfg(not(target_os = "macos"))]
@@ -827,12 +824,6 @@ impl BufferSearchBar {
         true
     }
 
-    #[cfg(target_os = "macos")]
-    fn update_find_pasteboard(&self, cx: &mut Context<Self>) {
-        let query = self.query(cx);
-        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string(query));
-    }
-
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
         self.active_searchable_item
             .as_ref()
@@ -1115,11 +1106,7 @@ impl BufferSearchBar {
     ) {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
-            editor::EditorEvent::Blurred => {
-                #[cfg(target_os = "macos")]
-                self.update_find_pasteboard(cx);
-                self.query_editor_focused = false
-            }
+            editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
@@ -1326,6 +1313,11 @@ impl BufferSearchBar {
                     let matches = matches.await;
 
                     this.update_in(cx, |this, window, cx| {
+                        #[cfg(target_os = "macos")]
+                        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string(
+                            query_text.clone(),
+                        ));
+
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {
@@ -1333,6 +1325,7 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(window, cx);
+
                             if add_to_history {
                                 this.search_history
                                     .add(&mut this.search_history_cursor, query_text);
