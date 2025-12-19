@@ -344,7 +344,6 @@ pub struct Switch {
     label: Option<SharedString>,
     label_position: Option<SwitchLabelPosition>,
     label_size: LabelSize,
-    label_color: Color,
     full_width: bool,
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
@@ -362,7 +361,6 @@ impl Switch {
             label: None,
             label_position: None,
             label_size: LabelSize::Small,
-            label_color: Color::Default,
             full_width: false,
             key_binding: None,
             color: SwitchColor::default(),
@@ -407,11 +405,6 @@ impl Switch {
 
     pub fn label_size(mut self, size: LabelSize) -> Self {
         self.label_size = size;
-        self
-    }
-
-    pub fn label_color(mut self, color: Color) -> Self {
-        self.label_color = color;
         self
     }
 
@@ -514,11 +507,7 @@ impl RenderOnce for Switch {
                 self.label_position == Some(SwitchLabelPosition::Start),
                 |this| {
                     this.when_some(label.clone(), |this, label| {
-                        this.child(
-                            Label::new(label)
-                                .color(self.label_color)
-                                .size(self.label_size),
-                        )
+                        this.child(Label::new(label).size(self.label_size))
                     })
                 },
             )
@@ -527,11 +516,7 @@ impl RenderOnce for Switch {
                 self.label_position == Some(SwitchLabelPosition::End),
                 |this| {
                     this.when_some(label, |this, label| {
-                        this.child(
-                            Label::new(label)
-                                .color(self.label_color)
-                                .size(self.label_size),
-                        )
+                        this.child(Label::new(label).size(self.label_size))
                     })
                 },
             )
