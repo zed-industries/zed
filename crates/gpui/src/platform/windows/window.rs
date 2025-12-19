@@ -448,6 +448,9 @@ impl WindowsWindow {
 
             (dwexstyle, dwstyle)
         };
+        if !disable_direct_composition {
+            dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
+        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -802,18 +805,6 @@ impl PlatformWindow for WindowsWindow {
         self.state.background_appearance.set(background_appearance);
         let hwnd = self.0.hwnd;
 
-        unsafe {
-            let mut ex_style = get_window_long(hwnd, GWL_EXSTYLE) as u32;
-
-            if background_appearance != WindowBackgroundAppearance::Opaque {
-                ex_style |= WS_EX_NOREDIRECTIONBITMAP.0;
-            } else {
-                ex_style &= !WS_EX_NOREDIRECTIONBITMAP.0;
-            }
-
-            set_window_long(hwnd, GWL_EXSTYLE, ex_style as isize);
-        }
-
         // using Dwm APIs for Mica and MicaAlt backdrops.
         // others follow the set_window_composition_attribute approach
         match background_appearance {
@@ -922,7 +913,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.state.renderer.borrow_mut().draw(scene).log_err();
+        self.state
+            .renderer
+            .borrow_mut()
+            .draw(scene, self.state.background_appearance.get())
+            .log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
