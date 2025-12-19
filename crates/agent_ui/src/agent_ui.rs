@@ -381,9 +381,6 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
-    // Filter out models from providers that are not authenticated
-    fn is_provider_authenticated(selection: &LanguageModelSelection) -> bool {}
-
     let registry = LanguageModelRegistry::global(cx);
     let registry_ref = registry.read(cx);
 
