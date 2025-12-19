@@ -1,8 +1,7 @@
 //! An HTTP client.
 
 pub use crate::wit::zed::extension::http_client::{
-    HttpMethod, HttpRequest, HttpResponse, HttpResponseStream, HttpResponseWithStatus,
-    RedirectPolicy, fetch, fetch_fallible, fetch_stream,
+    HttpMethod, HttpRequest, HttpResponse, HttpResponseStream, RedirectPolicy, fetch, fetch_stream,
 };
 
 impl HttpRequest {
@@ -14,11 +13,6 @@ impl HttpRequest {
     /// Executes the [`HttpRequest`] with [`fetch`].
     pub fn fetch(&self) -> Result<HttpResponse, String> {
         fetch(self)
-    }
-
-    /// Like [`fetch`], except it doesn't treat any status codes as errors.
-    pub fn fetch_fallible(&self) -> Result<HttpResponseWithStatus, String> {
-        fetch_fallible(self)
     }
 
     /// Executes the [`HttpRequest`] with [`fetch_stream`].
