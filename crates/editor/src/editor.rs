@@ -23532,6 +23532,8 @@ fn documentation_delimiter_for_newline(
     }
 }
 
+const ORDERED_LIST_MAX_MARKER_LEN: usize = 16;
+
 fn list_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
@@ -23545,50 +23547,108 @@ fn list_delimiter_for_newline(
         .take_while(|c| c.is_whitespace())
         .count();
 
-    let task_list_entries = language.task_list().into_iter().flat_map(|config| {
-        config
-            .prefixes
-            .iter()
-            .map(|prefix| (prefix.as_ref(), config.continuation.as_ref()))
-    });
-    let unordered_list_entries = language
+    let task_list_entries: Vec<_> = language
+        .task_list()
+        .into_iter()
+        .flat_map(|config| {
+            config
+                .prefixes
+                .iter()
+                .map(|prefix| (prefix.as_ref(), config.continuation.as_ref()))
+        })
+        .collect();
+    let unordered_list_entries: Vec<_> = language
         .unordered_list()
         .iter()
-        .map(|marker| (marker.as_ref(), marker.as_ref()));
-
-    let all_entries: Vec<_> = task_list_entries.chain(unordered_list_entries).collect();
-
-    let max_prefix_len = all_entries.iter().map(|(p, _)| p.len()).max()?;
-    let candidate: String = snapshot
-        .chars_for_range(range.clone())
-        .skip(num_of_whitespaces)
-        .take(max_prefix_len)
+        .map(|marker| (marker.as_ref(), marker.as_ref()))
         .collect();
 
-    let (prefix, continuation) = all_entries
-        .iter()
-        .filter(|(prefix, _)| candidate.starts_with(*prefix))
-        .max_by_key(|(prefix, _)| prefix.len())?;
+    let all_entries: Vec<_> = task_list_entries
+        .into_iter()
+        .chain(unordered_list_entries)
+        .collect();
 
-    let end_of_prefix = num_of_whitespaces + prefix.len();
-    let has_content_after_marker = snapshot
-        .chars_for_range(range.clone())
-        .skip(end_of_prefix)
-        .any(|c| !c.is_whitespace());
+    if let Some(max_prefix_len) = all_entries.iter().map(|(p, _)| p.len()).max() {
+        let candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_prefix_len)
+            .collect();
 
-    if has_content_after_marker {
-        return Some((*continuation).into());
-    }
+        if let Some((prefix, continuation)) = all_entries
+            .iter()
+            .filter(|(prefix, _)| candidate.starts_with(*prefix))
+            .max_by_key(|(prefix, _)| prefix.len())
+        {
+            let end_of_prefix = num_of_whitespaces + prefix.len();
+            let has_content_after_marker = snapshot
+                .chars_for_range(range.clone())
+                .skip(end_of_prefix)
+                .any(|c| !c.is_whitespace());
 
-    if start_point.column as usize == end_of_prefix {
-        if num_of_whitespaces == 0 {
-            *newline_config = NewlineConfig::ClearCurrentLine;
-        } else {
-            *newline_config = NewlineConfig::UnindentCurrentLine {
-                continuation: (*continuation).into(),
+            if has_content_after_marker {
+                return Some((*continuation).into());
+            }
+
+            if start_point.column as usize == end_of_prefix {
+                if num_of_whitespaces == 0 {
+                    *newline_config = NewlineConfig::ClearCurrentLine;
+                } else {
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: (*continuation).into(),
+                    };
+                }
+            }
+
+            return None;
+        }
+    } else {
+        let candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(ORDERED_LIST_MAX_MARKER_LEN)
+            .collect();
+
+        for ordered_config in language.ordered_list() {
+            let regex = match Regex::new(&ordered_config.pattern) {
+                Ok(r) => r,
+                Err(_) => continue,
             };
+
+            if let Some(captures) = regex.captures(&candidate) {
+                let full_match = captures.get(0)?;
+                let marker_len = full_match.len();
+                let end_of_prefix = num_of_whitespaces + marker_len;
+
+                let has_content_after_marker = snapshot
+                    .chars_for_range(range.clone())
+                    .skip(end_of_prefix)
+                    .any(|c| !c.is_whitespace());
+
+                if has_content_after_marker {
+                    let number: u32 = captures.get(1)?.as_str().parse().ok()?;
+                    let continuation = ordered_config
+                        .format
+                        .replace("{1}", &(number + 1).to_string());
+                    return Some(continuation.into());
+                }
+
+                if start_point.column as usize == end_of_prefix {
+                    let continuation = ordered_config.format.replace("{1}", "1");
+                    if num_of_whitespaces == 0 {
+                        *newline_config = NewlineConfig::ClearCurrentLine;
+                    } else {
+                        *newline_config = NewlineConfig::UnindentCurrentLine {
+                            continuation: continuation.into(),
+                        };
+                    }
+                }
+
+                return None;
+            }
         }
     }
+
     None
 }
 
