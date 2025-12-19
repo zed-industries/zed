@@ -37,9 +37,13 @@ jobs:
           fetch-depth: 0
 
       - name: Install Droid CLI
+        id: install-droid
         run: |
           curl -fsSL https://cli.factory.ai/install.sh | bash
           echo "${HOME}/.factory/bin" >> "$GITHUB_PATH"
+          echo "DROID_BIN=${HOME}/.factory/bin/droid" >> "$GITHUB_ENV"
+          # Verify installation
+          "${HOME}/.factory/bin/droid" --version
 
       - name: Setup Node.js (for Prettier)
         uses: actions/setup-node@v4
@@ -85,7 +89,7 @@ jobs:
       - name: "Phase 2: Explore Repository"
         id: phase2
         run: |
-          droid exec \
+          "$DROID_BIN" exec \
             --model "$DROID_MODEL" \
             --autonomy read-only \
             --prompt-file .factory/prompts/docs-automation/phase2-explore.md \
@@ -99,7 +103,7 @@ jobs:
         id: phase3
         run: |
           CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
-          droid exec \
+          "$DROID_BIN" exec \
             --model "$DROID_MODEL" \
             --autonomy read-only \
             --prompt-file .factory/prompts/docs-automation/phase3-analyze.md \
@@ -114,7 +118,7 @@ jobs:
       - name: "Phase 4: Plan Documentation Impact"
         id: phase4
         run: |
-          droid exec \
+          "$DROID_BIN" exec \
             --model "$DROID_MODEL" \
             --autonomy read-only \
             --prompt-file .factory/prompts/docs-automation/phase4-plan.md \
@@ -137,7 +141,7 @@ jobs:
         id: phase5
         if: steps.phase4.outputs.updates_required == 'true'
         run: |
-          droid exec \
+          "$DROID_BIN" exec \
             --model "$DROID_MODEL" \
             --autonomy medium \
             --prompt-file .factory/prompts/docs-automation/phase5-apply.md \
@@ -170,7 +174,7 @@ jobs:
           # Get git diff of docs
           git diff docs/src/ > /tmp/docs-diff.txt || true
           
-          droid exec \
+          "$DROID_BIN" exec \
             --model "$DROID_MODEL" \
             --autonomy read-only \
             --prompt-file .factory/prompts/docs-automation/phase6-summarize.md \
