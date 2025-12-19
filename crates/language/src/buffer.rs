@@ -1490,19 +1490,23 @@ impl Buffer {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
-            let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
+            let Some((new_mtime, load_bytes_task, encoding)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-
-                Some((file.disk_state().mtime(), file.load(cx)))
+                Some((
+                    file.disk_state().mtime(),
+                    file.load_bytes(cx),
+                    this.encoding,
+                ))
             })?
             else {
                 return Ok(());
             };
 
-            let new_text = new_text.await?;
-            let diff = this
-                .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
-                .await;
+            let bytes = load_bytes_task.await?;
+            let (cow, _encoding_used, _has_errors) = encoding.decode(&bytes);
+            let new_text = cow.into_owned();
+
+            let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();

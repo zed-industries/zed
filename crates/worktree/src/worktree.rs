@@ -1361,7 +1361,7 @@ impl LocalWorktree {
             }
 
             let content = fs.load_bytes(&abs_path).await?;
-            let (text, encoding, has_bom) = decode_byte(content);
+            let (text, encoding, has_bom) = decode_byte(content)?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1489,25 +1489,12 @@ impl LocalWorktree {
             let fs = fs.clone();
             let abs_path = abs_path.clone();
             async move {
-                let bom_bytes = if has_bom {
-                    if encoding == encoding_rs::UTF_16LE {
-                        vec![0xFF, 0xFE]
-                    } else if encoding == encoding_rs::UTF_16BE {
-                        vec![0xFE, 0xFF]
-                    } else if encoding == encoding_rs::UTF_8 {
-                        vec![0xEF, 0xBB, 0xBF]
-                    } else {
-                        vec![]
-                    }
-                } else {
-                    vec![]
-                };
-
                 // For UTF-8, use the optimized `fs.save` which writes Rope chunks directly to disk
                 // without allocating a contiguous string.
                 if encoding == encoding_rs::UTF_8 && !has_bom {
                     return fs.save(&abs_path, &text, line_ending).await;
                 }
+
                 // For legacy encodings (e.g. Shift-JIS), we fall back to converting the entire Rope
                 // to a String/Bytes in memory before writing.
                 //
@@ -1520,13 +1507,45 @@ impl LocalWorktree {
                     LineEnding::Windows => text_string.replace('\n', "\r\n"),
                 };
 
-                let (cow, _, _) = encoding.encode(&normalized_text);
-                let bytes = if !bom_bytes.is_empty() {
-                    let mut bytes = bom_bytes;
-                    bytes.extend_from_slice(&cow);
-                    bytes.into()
+                // Create the byte vector manually for UTF-16 encodings because encoding_rs encodes to UTF-8 by default (per WHATWG standards),
+                //  which is not what we want for saving files.
+                let bytes = if encoding == encoding_rs::UTF_16BE {
+                    let mut data = Vec::with_capacity(normalized_text.len() * 2 + 2);
+                    if has_bom {
+                        data.extend_from_slice(&[0xFE, 0xFF]); // BOM
+                    }
+                    let utf16be_bytes =
+                        normalized_text.encode_utf16().flat_map(|u| u.to_be_bytes());
+                    data.extend(utf16be_bytes);
+                    data.into()
+                } else if encoding == encoding_rs::UTF_16LE {
+                    let mut data = Vec::with_capacity(normalized_text.len() * 2 + 2);
+                    if has_bom {
+                        data.extend_from_slice(&[0xFF, 0xFE]); // BOM
+                    }
+                    let utf16le_bytes =
+                        normalized_text.encode_utf16().flat_map(|u| u.to_le_bytes());
+                    data.extend(utf16le_bytes);
+                    data.into()
                 } else {
-                    cow
+                    // For other encodings (Shift-JIS, UTF-8 with BOM, etc.), delegate to encoding_rs.
+                    let bom_bytes = if has_bom {
+                        if encoding == encoding_rs::UTF_8 {
+                            vec![0xEF, 0xBB, 0xBF]
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    };
+                    let (cow, _, _) = encoding.encode(&normalized_text);
+                    if !bom_bytes.is_empty() {
+                        let mut bytes = bom_bytes;
+                        bytes.extend_from_slice(&cow);
+                        bytes.into()
+                    } else {
+                        cow
+                    }
                 };
 
                 fs.write(&abs_path, &bytes).await
@@ -5842,11 +5861,28 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-fn decode_byte(bytes: Vec<u8>) -> (String, &'static Encoding, bool) {
+fn decode_byte(bytes: Vec<u8>) -> anyhow::Result<(String, &'static Encoding, bool)> {
     // check BOM
     if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {
         let (cow, _) = encoding.decode_with_bom_removal(&bytes);
-        return (cow.into_owned(), encoding, true);
+        return Ok((cow.into_owned(), encoding, true));
+    }
+
+    match analyze_byte_content(&bytes) {
+        ByteContent::Utf16Le => {
+            let encoding = encoding_rs::UTF_16LE;
+            let (cow, _, _) = encoding.decode(&bytes);
+            return Ok((cow.into_owned(), encoding, false));
+        }
+        ByteContent::Utf16Be => {
+            let encoding = encoding_rs::UTF_16BE;
+            let (cow, _, _) = encoding.decode(&bytes);
+            return Ok((cow.into_owned(), encoding, false));
+        }
+        ByteContent::Binary => {
+            anyhow::bail!("Binary files are not supported");
+        }
+        ByteContent::Unknown => {}
     }
 
     fn detect_encoding(bytes: Vec<u8>) -> (String, &'static Encoding) {
@@ -5867,14 +5903,66 @@ fn decode_byte(bytes: Vec<u8>) -> (String, &'static Encoding, bool) {
             // displaying raw escape sequences instead of the correct characters.
             if text.contains('\x1b') {
                 let (s, enc) = detect_encoding(text.into_bytes());
-                (s, enc, false)
+                Ok((s, enc, false))
             } else {
-                (text, encoding_rs::UTF_8, false)
+                Ok((text, encoding_rs::UTF_8, false))
             }
         }
         Err(e) => {
             let (s, enc) = detect_encoding(e.into_bytes());
-            (s, enc, false)
+            Ok((s, enc, false))
         }
     }
+}
+
+#[derive(PartialEq)]
+enum ByteContent {
+    Utf16Le,
+    Utf16Be,
+    Binary,
+    Unknown,
+}
+// Heuristic check using null byte distribution.
+// NOTE: This relies on the presence of ASCII characters (which become `0x00` in UTF-16).
+// Files consisting purely of non-ASCII characters (like Japanese) may not be detected here
+// and will result in `Unknown`.
+fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
+    if bytes.len() < 2 {
+        return ByteContent::Unknown;
+    }
+
+    let check_len = bytes.len().min(1024);
+    let sample = &bytes[..check_len];
+
+    if !sample.contains(&0) {
+        return ByteContent::Unknown;
+    }
+
+    let mut even_nulls = 0;
+    let mut odd_nulls = 0;
+
+    for (i, &byte) in sample.iter().enumerate() {
+        if byte == 0 {
+            if i % 2 == 0 {
+                even_nulls += 1;
+            } else {
+                odd_nulls += 1;
+            }
+        }
+    }
+
+    let total_nulls = even_nulls + odd_nulls;
+    if total_nulls < check_len / 10 {
+        return ByteContent::Unknown;
+    }
+
+    if even_nulls > odd_nulls * 4 {
+        return ByteContent::Utf16Be;
+    }
+
+    if odd_nulls > even_nulls * 4 {
+        return ByteContent::Utf16Le;
+    }
+
+    ByteContent::Binary
 }
