@@ -6,7 +6,7 @@ use crate::{
     TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
-use collections::{HashMap, VecDeque};
+use collections::VecDeque;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
@@ -32,7 +32,6 @@ pub(crate) struct TestPlatform {
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
-    credentials: Mutex<HashMap<String, (String, Vec<u8>)>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
@@ -118,7 +117,6 @@ impl TestPlatform {
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
-            credentials: Mutex::new(HashMap::default()),
             weak: weak.clone(),
             opened_url: Default::default(),
             #[cfg(target_os = "windows")]
@@ -418,20 +416,15 @@ impl Platform for TestPlatform {
         self.current_clipboard_item.lock().clone()
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        self.credentials
-            .lock()
-            .insert(url.to_string(), (username.to_string(), password.to_vec()));
+    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let result = self.credentials.lock().get(url).cloned();
-        Task::ready(Ok(result))
+    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        Task::ready(Ok(None))
     }
 
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        self.credentials.lock().remove(url);
+    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
