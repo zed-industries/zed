@@ -12570,6 +12570,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "notifications",
  "pretty_assertions",
  "project",
  "rayon",
