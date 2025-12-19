@@ -23,7 +23,7 @@ permissions:
 
 env:
   FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
-  DROID_MODEL: claude-opus-4-5
+  DROID_MODEL: claude-opus-4-5-20251101
 
 jobs:
   docs-automation:
