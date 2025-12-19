@@ -739,7 +739,7 @@ impl ActivityIndicator {
                         extension_store.outstanding_operations().iter().next()
                 {
                     let (message, icon, rotate) = match operation {
-                        ExtensionOperation::Install | ExtensionOperation::AutoInstall => (
+                        ExtensionOperation::Install => (
                             format!("Installing {extension_id} extension…"),
                             IconName::LoadCircle,
                             true,
