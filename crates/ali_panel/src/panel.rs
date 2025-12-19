@@ -62,15 +62,13 @@ pub fn init(cx: &mut App) {
     ]);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(|_workspace, _: &ToggleFocus, window, cx| {
-            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-                name: ALI_SERVER_NAME.into()
-            });
-            window.dispatch_action(action.boxed_clone(), cx);
+        // ToggleFocus should toggle the AliPanel in the bottom dock
+        workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            workspace.toggle_panel_focus::<AliPanel>(window, cx);
         });
 
+        // InvokeAli opens a new Ali chat thread
         workspace.register_action(|_workspace, _: &InvokeAli, window, cx| {
-            // Open Ali chat when invoked
             let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
                 name: ALI_SERVER_NAME.into()
             });
