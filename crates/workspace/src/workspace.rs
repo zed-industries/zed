@@ -2934,7 +2934,11 @@ impl Workspace {
                 multiple: true,
                 prompt: None,
             },
-            DirectoryLister::Project(self.project.clone(), project::DirectoryListerMode::Open, None),
+            DirectoryLister::Project(
+                self.project.clone(),
+                project::DirectoryListerMode::Open,
+                None,
+            ),
             window,
             cx,
         );

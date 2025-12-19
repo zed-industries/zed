@@ -434,7 +434,10 @@ async fn test_browse_mode(cx: &mut TestAppContext) {
 
     // Find and select the "subdir" directory
     let candidates = collect_match_candidates(&picker, cx);
-    let subdir_index = candidates.iter().position(|c| c == "subdir").expect("Should find subdir");
+    let subdir_index = candidates
+        .iter()
+        .position(|c| c == "subdir")
+        .expect("Should find subdir");
 
     picker.update_in(cx, |p, window, cx| {
         p.set_selected_index(subdir_index, None, false, window, cx);
@@ -557,7 +560,11 @@ fn build_open_path_prompt(
     cx: &mut TestAppContext,
 ) -> (Entity<Picker<OpenPathDelegate>>, &mut VisualTestContext) {
     let (tx, _) = futures::channel::oneshot::channel();
-    let lister = project::DirectoryLister::Project(project.clone(), project::DirectoryListerMode::Open, None);
+    let lister = project::DirectoryLister::Project(
+        project.clone(),
+        project::DirectoryListerMode::Open,
+        None,
+    );
 
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     (
@@ -583,8 +590,12 @@ fn build_open_path_prompt_with_preselect<'a>(
 ) -> (Entity<Picker<OpenPathDelegate>>, &'a mut VisualTestContext) {
     let (tx, _) = futures::channel::oneshot::channel();
     let fs = project.read_with(cx, |p, _| p.fs().clone());
-    let lister =
-        project::DirectoryLister::Local(project.clone(), fs, project::DirectoryListerMode::Browse, Some(initial_path.to_path_buf()));
+    let lister = project::DirectoryLister::Local(
+        project.clone(),
+        fs,
+        project::DirectoryListerMode::Browse,
+        Some(initial_path.to_path_buf()),
+    );
 
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     (

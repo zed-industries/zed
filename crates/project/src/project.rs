@@ -892,17 +892,28 @@ pub enum DirectoryListerMode {
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>, DirectoryListerMode, Option<PathBuf>),
-    Local(Entity<Project>, Arc<dyn Fs>, DirectoryListerMode, Option<PathBuf>),
+    Local(
+        Entity<Project>,
+        Arc<dyn Fs>,
+        DirectoryListerMode,
+        Option<PathBuf>,
+    ),
 }
 
 impl std::fmt::Debug for DirectoryLister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DirectoryLister::Project(project, mode, initial_path) => {
-                write!(f, "DirectoryLister::Project({project:?}, {mode:?}, {initial_path:?})")
+                write!(
+                    f,
+                    "DirectoryLister::Project({project:?}, {mode:?}, {initial_path:?})"
+                )
             }
             DirectoryLister::Local(project, _, mode, initial_path) => {
-                write!(f, "DirectoryLister::Local({project:?}, {mode:?}, {initial_path:?})")
+                write!(
+                    f,
+                    "DirectoryLister::Local({project:?}, {mode:?}, {initial_path:?})"
+                )
             }
         }
     }
@@ -4399,7 +4410,13 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
-            DirectoryLister::Local(cx.entity(), self.fs.clone(), DirectoryListerMode::Open, None).list_directory(query, cx)
+            DirectoryLister::Local(
+                cx.entity(),
+                self.fs.clone(),
+                DirectoryListerMode::Open,
+                None,
+            )
+            .list_directory(query, cx)
         } else if let Some(session) = self.remote_client.as_ref() {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,
