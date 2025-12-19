@@ -1,30 +1,27 @@
-//! # Component Preview Example
-//!
-//! A standalone component preview application that can be used to preview
-//! UI components without building the full Zed application.
-
-use fs::RealFs;
-use gpui::{
-    AppContext as _, Application, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, size,
-};
-
-use client::{Client, UserStore};
-use language::LanguageRegistry;
-use node_runtime::NodeRuntime;
-use project::Project;
-use reqwest_client::ReqwestClient;
-use session::{AppSession, Session};
-use std::sync::Arc;
-use ui::{App, px};
-use workspace::{AppState, Workspace, WorkspaceStore};
-
-use crate::{ComponentPreview, init};
-
 /// Run the component preview application.
 ///
 /// This initializes the application with minimal required infrastructure
 /// and opens a workspace with the ComponentPreview item.
+#[cfg(feature = "preview")]
 pub fn run_component_preview() {
+    use fs::RealFs;
+    use gpui::{
+        AppContext as _, Application, Bounds, KeyBinding, WindowBounds, WindowOptions, actions,
+        size,
+    };
+
+    use client::{Client, UserStore};
+    use language::LanguageRegistry;
+    use node_runtime::NodeRuntime;
+    use project::Project;
+    use reqwest_client::ReqwestClient;
+    use session::{AppSession, Session};
+    use std::sync::Arc;
+    use ui::{App, px};
+    use workspace::{AppState, Workspace, WorkspaceStore};
+
+    use crate::{ComponentPreview, init};
+
     actions!(zed, [Quit]);
 
     fn quit(_: &Quit, cx: &mut App) {

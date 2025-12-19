@@ -20,7 +20,8 @@ use workspace::{
     Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
 };
 
-pub use component_preview_example::run_component_preview;
+#[allow(unused_imports)]
+pub use component_preview_example::*;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);

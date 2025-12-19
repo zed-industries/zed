@@ -13,6 +13,7 @@ path = "src/component_preview.rs"
 
 [features]
 default = []
+preview = []
 test-support = ["db/test-support"]
 
 [dependencies]
@@ -41,3 +42,4 @@ workspace.workspace = true
 [[example]]
 name = "component_preview"
 path = "examples/component_preview.rs"
+required-features = ["preview"]
