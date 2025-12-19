@@ -1102,14 +1102,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
-    // For "around" text objects, prefer larger matches (e.g., full declaration over just arrow function)
-    // For "inside" text objects, prefer smaller matches
-    let is_around = target.around().is_none();
-    if is_around {
-        matches.sort_by_key(|r| std::cmp::Reverse(r.end - r.start));
-    } else {
-        matches.sort_by_key(|r| r.end - r.start);
-    }
+    matches.sort_by_key(|r| r.end - r.start);
     if let Some(buffer_range) = matches.first() {
         let buffer_range = BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end);
         let range = excerpt.map_range_from_buffer(buffer_range);
@@ -3571,6 +3564,71 @@ mod test {
                 «ˇconst add = (a, b) => a + b»;
             "},
             Mode::VisualLine,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_arrow_function_in_jsx(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_tsx(cx).await;
+
+        // Test `vaf` on arrow function in JSX onClick handler (block body)
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() => {
+                        alert("Hello world!");
+                        console.log(ˇ"clicked");
+                      }}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => {
+                        alert("Hello world!");
+                        console.log("clicked");
+                      }ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
+        );
+
+        // Test `vaf` on expression-bodied arrow function in JSX onClick handler
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() => console.log("clickˇed")}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«ˇ() => console.log("clicked")»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Visual,
         );
     }
 }
