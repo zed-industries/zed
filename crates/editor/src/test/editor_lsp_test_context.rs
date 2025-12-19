@@ -205,6 +205,49 @@ impl EditorLspTestContext {
                 (_ "{" "}" @end) @indent
                 (_ "(" ")" @end) @indent
                 "#})),
+            text_objects: Some(Cow::from(indoc! {r#"
+                (function_declaration
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                (method_definition
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                ; Arrow function in variable declaration - capture the full declaration
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                ]) @function.around
+
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                ]) @function.around
+
+                ; Catch-all for arrow functions in other contexts (callbacks, etc.)
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
+                "#})),
             ..Default::default()
         })
         .expect("Could not parse queries");
@@ -275,6 +318,49 @@ impl EditorLspTestContext {
                 (jsx_element
                   (jsx_opening_element) @start
                   (jsx_closing_element)? @end) @indent
+                "#})),
+            text_objects: Some(Cow::from(indoc! {r#"
+                (function_declaration
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                (method_definition
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                ; Arrow function in variable declaration - capture the full declaration
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                ]) @function.around
+
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                ]) @function.around
+
+                ; Catch-all for arrow functions in other contexts (callbacks, etc.)
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
                 "#})),
             ..Default::default()
         })
