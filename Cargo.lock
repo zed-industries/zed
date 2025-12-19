@@ -5021,8 +5021,6 @@ name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "command_palette",
- "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -5031,7 +5029,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "zed",
  "zlog",
 ]
 

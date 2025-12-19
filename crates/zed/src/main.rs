@@ -1,3 +1,6 @@
+// Disable command line from opening on release mode
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod reliability;
 mod zed;
 
@@ -163,9 +166,9 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
-pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
+static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
-pub fn main() {
+fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]
@@ -1301,7 +1304,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-pub fn stdout_is_a_pty() -> bool {
+fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
@@ -1547,14 +1550,14 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
-        aliases: &'static [&'static str],
+        deprecated_aliases: &'static [&'static str],
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.deprecated_aliases,
+            deprecated_aliases: action.deprecated_aliases,
             documentation: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
