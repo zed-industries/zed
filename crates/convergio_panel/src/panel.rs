@@ -31,6 +31,83 @@ actions!(
     ]
 );
 
+/// Agent Pack presets for different use cases
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AgentPack {
+    /// All 54 agents - full enterprise experience
+    #[default]
+    Enterprise,
+    /// Core agents for startups: Ali, Baccio, Dario, Rex, Amy, Marcello
+    Startup,
+    /// Developer-focused: Ali, Baccio, Dario, Rex, Paolo, Guardian
+    Developer,
+    /// Minimal: Just Ali
+    Minimal,
+    /// Custom selection (uses active_agents filter)
+    Custom,
+}
+
+impl AgentPack {
+    #[allow(dead_code)]
+    fn all() -> Vec<Self> {
+        vec![
+            Self::Enterprise,
+            Self::Startup,
+            Self::Developer,
+            Self::Minimal,
+            Self::Custom,
+        ]
+    }
+
+    fn display_name(&self) -> &'static str {
+        match self {
+            Self::Enterprise => "Enterprise (All 54)",
+            Self::Startup => "Startup (6 core)",
+            Self::Developer => "Developer (6 tech)",
+            Self::Minimal => "Minimal (Ali only)",
+            Self::Custom => "Custom",
+        }
+    }
+
+    #[allow(dead_code)]
+    fn description(&self) -> &'static str {
+        match self {
+            Self::Enterprise => "Full access to all agents for enterprise teams",
+            Self::Startup => "Essential agents for fast-moving startups",
+            Self::Developer => "Tech-focused agents for development workflows",
+            Self::Minimal => "Just Ali as your AI Chief of Staff",
+            Self::Custom => "Your custom agent selection",
+        }
+    }
+
+    /// Returns the agent names included in this pack
+    fn included_agents(&self) -> Option<Vec<&'static str>> {
+        match self {
+            Self::Enterprise => None, // All agents
+            Self::Startup => Some(vec![
+                "ali", "baccio-tech-architect", "dario-debugger",
+                "rex-code-reviewer", "amy-cfo", "marcello-pm"
+            ]),
+            Self::Developer => Some(vec![
+                "ali", "baccio-tech-architect", "dario-debugger",
+                "rex-code-reviewer", "paolo-best-practices-enforcer", "guardian-ai-security-validator"
+            ]),
+            Self::Minimal => Some(vec!["ali"]),
+            Self::Custom => None, // Uses active_agents filter
+        }
+    }
+
+    fn icon(&self) -> IconName {
+        match self {
+            Self::Enterprise => IconName::UserGroup,
+            Self::Startup => IconName::Sparkle,
+            Self::Developer => IconName::Code,
+            Self::Minimal => IconName::ConvergioAli,
+            Self::Custom => IconName::Settings,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AgentCategory {
     Leadership,
@@ -279,6 +356,11 @@ pub struct ConvergioPanel {
     filter_query: String,
     active_agents: HashSet<String>,
     show_active_only: bool,
+    // Active agent pack preset
+    active_pack: AgentPack,
+    // Show pack selector UI (future: expanded view with descriptions)
+    #[allow(dead_code)]
+    show_pack_selector: bool,
     // Track session IDs for conversation persistence
     // Maps agent_name -> last_session_id (for future use when thread creation events are available)
     _agent_sessions: HashMap<String, String>,
@@ -377,6 +459,8 @@ impl ConvergioPanel {
             filter_query: String::new(),
             active_agents: HashSet::default(),
             show_active_only: false,
+            active_pack: AgentPack::default(),
+            show_pack_selector: false,
             _agent_sessions: HashMap::default(),
             _filter_editor_subscription: subscription,
             show_onboarding: true, // Show by default, will be updated async
@@ -414,6 +498,17 @@ impl ConvergioPanel {
     fn toggle_active_filter(&mut self, cx: &mut Context<Self>) {
         self.show_active_only = !self.show_active_only;
         cx.notify();
+    }
+
+    fn set_active_pack(&mut self, pack: AgentPack, cx: &mut Context<Self>) {
+        if self.active_pack != pack {
+            self.active_pack = pack;
+            log::info!("Switched to agent pack: {}", pack.display_name());
+            // Reset selected index since filtered list will change
+            self.selected_index = None;
+            cx.notify();
+            // TODO: Persist pack selection to KEY_VALUE_STORE
+        }
     }
 
     /// Opens a Convergio agent thread, attempting to resume an existing conversation if available.
@@ -706,13 +801,27 @@ impl ConvergioPanel {
         self.agents
             .iter()
             .filter(|agent| {
+                // First check pack filter
+                let matches_pack = match self.active_pack {
+                    AgentPack::Enterprise => true, // All agents
+                    AgentPack::Custom => true, // Uses show_active_only filter below
+                    _ => {
+                        // Check if agent is in the pack
+                        if let Some(pack_agents) = self.active_pack.included_agents() {
+                            pack_agents.contains(&agent.name.as_str())
+                        } else {
+                            true
+                        }
+                    }
+                };
+
                 let matches_query = agent.matches_query(&self.filter_query);
                 let matches_active = if self.show_active_only {
                     self.active_agents.contains(&agent.name)
                 } else {
                     true
                 };
-                matches_query && matches_active
+                matches_pack && matches_query && matches_active
             })
             .collect()
     }
@@ -850,6 +959,67 @@ impl ConvergioPanel {
             }))
     }
 
+    fn render_pack_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_pack = self.active_pack;
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .mb_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Icon::new(current_pack.icon())
+                            .size(IconSize::Small)
+                            .color(Color::Accent)
+                    )
+                    .child(
+                        Label::new(current_pack.display_name())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                    )
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(self.render_pack_button(AgentPack::Enterprise, current_pack, cx))
+                    .child(self.render_pack_button(AgentPack::Startup, current_pack, cx))
+                    .child(self.render_pack_button(AgentPack::Developer, current_pack, cx))
+                    .child(self.render_pack_button(AgentPack::Minimal, current_pack, cx))
+                    .child(self.render_pack_button(AgentPack::Custom, current_pack, cx))
+            )
+    }
+
+    fn render_pack_button(&self, pack: AgentPack, current_pack: AgentPack, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_selected = pack == current_pack;
+        let id = SharedString::from(format!("pack-{:?}", pack));
+        div()
+            .id(id)
+            .px_2()
+            .py_0p5()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_selected)
+            })
+            .hover(|this| {
+                this.bg(cx.theme().colors().element_hover)
+            })
+            .child(
+                Icon::new(pack.icon())
+                    .size(IconSize::XSmall)
+                    .color(if is_selected { Color::Accent } else { Color::Muted })
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_active_pack(pack, cx);
+            }))
+    }
+
     fn render_search_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_count = self.active_count();
 
@@ -860,6 +1030,7 @@ impl ConvergioPanel {
             .flex()
             .flex_col()
             .gap_2()
+            .child(self.render_pack_selector(cx))
             .child(
                 div()
                     .flex()
