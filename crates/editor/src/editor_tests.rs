@@ -29460,6 +29460,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ] taskˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] task
         - [ ] ˇ
@@ -29470,6 +29471,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [x] completed taskˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [x] completed task
         - [ ] ˇ
@@ -29480,6 +29482,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ] taˇsk
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] ta
         - [ ] ˇsk
@@ -29490,6 +29493,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ]  ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(
         indoc! {"
         - [ ]$$
@@ -29505,6 +29509,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
           - [ ] indentedˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] task
           - [ ] indented
@@ -29518,12 +29523,14 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
             - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] task
           - [ ] sub task
           - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
 
     // Case 7: Adding newline with cursor right after prefix, removes marker
     cx.assert_editor_state(indoc! {"
@@ -29532,6 +29539,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] task
           - [ ] sub task
@@ -29554,6 +29562,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         - itemˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - item
         - ˇ
@@ -29564,6 +29573,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         * starred itemˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         * starred item
         * ˇ
@@ -29573,6 +29583,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         + plus itemˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         + plus item
         + ˇ
@@ -29583,6 +29594,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         - itˇem
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - it
         - ˇem
@@ -29593,6 +29605,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         -  ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(
         indoc! {"
         - $
@@ -29608,6 +29621,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
           - indentedˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - item
           - indented
@@ -29621,12 +29635,14 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
             - ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - item
           - sub item
           - ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
 
     // Case 7: Adding newline with cursor right after marker, removes marker
     cx.assert_editor_state(indoc! {"
@@ -29635,6 +29651,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         - ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - item
           - sub item
@@ -29657,6 +29674,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1. first itemˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. first item
         2. ˇ
@@ -29667,6 +29685,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         10. tenth itemˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         10. tenth item
         11. ˇ
@@ -29677,6 +29696,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1. itˇem
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. it
         2. ˇem
@@ -29687,6 +29707,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1.  ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(
         indoc! {"
         1. $
@@ -29702,6 +29723,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
           2. indentedˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. item
           2. indented
@@ -29715,12 +29737,14 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
             3. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
           1. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
 
     // Case 7: Adding newline with cursor right after marker, removes marker
     cx.assert_editor_state(indoc! {"
@@ -29729,10 +29753,38 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
         ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    // Case 1: Adding newline after (whitespace + marker + any non-whitespace) increments number
+    cx.set_state(indoc! {"
+        1. first item
+          1. sub first item
+          2. sub second item
+          3. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1. first item
+          1. sub first item
+          2. sub second item
+        1. ˇ
     "});
 }
 
