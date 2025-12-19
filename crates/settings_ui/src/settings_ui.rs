@@ -602,7 +602,7 @@ pub fn open_settings_editor(
                 focus: true,
                 show: true,
                 is_movable: true,
-                kind: gpui::WindowKind::Floating,
+                kind: gpui::WindowKind::Normal,
                 window_background: cx.theme().window_background_appearance(),
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
