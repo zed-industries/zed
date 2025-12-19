@@ -4636,14 +4636,7 @@ impl Editor {
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                let chunks = edits
-                    .into_iter()
-                    .enumerate()
-                    .chunk_by(|(index, _)| adjacent_edits.contains(&index));
-
-                for (_, chunk) in chunks.into_iter() {
-                    buffer.edit(chunk.map(|(_, e)| e), this.autoindent_mode.clone(), cx);
-                }
+                buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {

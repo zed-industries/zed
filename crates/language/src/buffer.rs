@@ -2600,7 +2600,7 @@ impl Buffer {
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
                 if let Some((prev_range, prev_text)) = edits.last_mut()
-                    && prev_range.end >= range.start
+                    && prev_range.end > range.start
                 {
                     prev_range.end = cmp::max(prev_range.end, range.end);
                     *prev_text = format!("{prev_text}{new_text}").into();

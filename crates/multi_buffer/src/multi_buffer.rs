@@ -1322,7 +1322,7 @@ impl MultiBuffer {
                             ..
                         }) = edits.peek()
                         {
-                            if range.end >= next_range.start {
+                            if range.end > next_range.start {
                                 range.end = cmp::max(next_range.end, range.end);
                                 is_insertion |= *next_is_insertion;
                                 if excerpt_id == *next_excerpt_id {
