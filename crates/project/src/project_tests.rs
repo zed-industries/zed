@@ -10943,7 +10943,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             ".git": {},
             "file.txt": file_contents.clone()
@@ -10956,11 +10956,11 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         &[("file.txt", committed_contents.clone())],
     );
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/file.txt", cx)
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
         })
         .await
         .unwrap();
