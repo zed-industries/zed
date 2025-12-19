@@ -1840,7 +1840,7 @@ fn next_subword_start(
             let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
-            let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
+            let is_word_start = (left_kind != right_kind) && right != '_';
             let is_subword_start =
                 left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
 
@@ -1934,7 +1934,7 @@ fn previous_subword_start(
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
+                let is_word_start = (left_kind != right_kind) && right != '_';
                 let is_subword_start =
                     left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
 
