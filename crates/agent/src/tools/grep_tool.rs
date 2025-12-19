@@ -176,14 +176,15 @@ impl AgentTool for GrepTool {
 
         let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
-            futures::pin_mut!(results);
+            let  rx = results.rx;
+            futures::pin_mut!(rx);
 
             let mut output = String::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = rx.next().await {
                 if ranges.is_empty() {
                     continue;
                 }

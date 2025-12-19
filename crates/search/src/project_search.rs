@@ -25,7 +25,7 @@ use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
-    Project, ProjectPath,
+    Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
@@ -326,7 +326,9 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
-            let mut matches = pin!(search.ready_chunks(1024));
+            let SearchResults { rx, _task_handle } = search;
+
+            let mut matches = pin!(rx.ready_chunks(1024));
             project_search
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.clear();

@@ -67,14 +67,22 @@ pub struct SearchResultsHandle {
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
+pub struct SearchResults<T> {
+    pub _task_handle: Task<()>,
+    pub rx: Receiver<T>,
+}
 impl SearchResultsHandle {
-    pub fn results(self, cx: &mut App) -> Receiver<SearchResult> {
-        (self.trigger_search)(cx).detach();
-        self.results
+    pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
+        SearchResults {
+            _task_handle: (self.trigger_search)(cx),
+            rx: self.results,
+        }
     }
-    pub fn matching_buffers(self, cx: &mut App) -> Receiver<Entity<Buffer>> {
-        (self.trigger_search)(cx).detach();
-        self.matching_buffers
+    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<Entity<Buffer>> {
+        SearchResults {
+            _task_handle: (self.trigger_search)(cx),
+            rx: self.matching_buffers,
+        }
     }
 }
 
