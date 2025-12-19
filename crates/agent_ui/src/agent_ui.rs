@@ -390,23 +390,23 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     let default = settings
         .default_model
         .as_ref()
-        .map(|s| to_selectad_model(s, registry_ref, cx));
+        .and_then(|s| to_selected_model(s, registry_ref, cx));
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
-        .map(|s| to_selected_model(s, registry_ref, cx));
+        .and_then(|s| to_selected_model(s, registry_ref, cx));
     let commit_message = settings
         .commit_message_model
         .as_ref()
-        .map(|s| to_selected_model(s, registry_ref, cx));
+        .and_then(|s| to_selected_model(s, registry_ref, cx));
     let thread_summary = settings
         .thread_summary_model
         .as_ref()
-        .map(|s| to_selected_model(s, registry_ref, cx));
+        .and_then(|s| to_selected_model(s, registry_ref, cx));
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
-        .map(|s| to_selected_model(s, registry_ref, cx))
+        .filter_map(|s| to_selected_model(s, registry_ref, cx))
         .collect::<Vec<_>>();
 
     registry.update(cx, |registry, cx| {
