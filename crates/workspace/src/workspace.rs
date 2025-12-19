@@ -1697,8 +1697,22 @@ impl Workspace {
 
             let toolchains = DB.toolchains(workspace_id).await?;
 
-            for (toolchain, worktree_id, path) in toolchains {
+            for (toolchain, worktree_path, path) in toolchains {
                 let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                })?
+                else {
+                    // We did not find a worktree with a given path, but that's whatever.
+                    continue;
+                };
                 if !app_state.fs.is_file(toolchain_path.as_path()).await {
                     continue;
                 }
@@ -8217,9 +8231,22 @@ async fn open_remote_project_inner(
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
-    for (toolchain, worktree_id, path) in toolchains {
+    for (toolchain, worktree_path, path) in toolchains {
         project
             .update(cx, |this, cx| {
+                let Some(worktree_id) =
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                else {
+                    return Task::ready(None);
+                };
+
                 this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
             })?
             .await;
