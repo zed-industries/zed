@@ -5,8 +5,9 @@ use crate::{
 };
 use gpui::{Bounds, Context, Pixels, Window};
 use language::Point;
-use multi_buffer::Anchor;
-use std::cmp;
+use multi_buffer::{Anchor, ToPoint};
+use std::{cmp, ops::RangeBounds};
+use text::Bias;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -186,6 +187,22 @@ impl Editor {
             }
         }
 
+        let style = self.style(cx).clone();
+        let sticky_headers = self.sticky_headers(&style, cx).unwrap_or_default();
+        let visible_sticky_headers = dbg!(
+            sticky_headers
+                .iter()
+                .filter(|h| {
+                    let buffer_snapshot = display_map.buffer_snapshot();
+                    let buffer_range = h.range.start.to_point(buffer_snapshot)
+                        ..h.range.end.to_point(buffer_snapshot);
+
+                    buffer_range.contains(&Point::new(target_top as u32, 0))
+                })
+                .count()
+        );
+        let header_count = sticky_headers.len();
+
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
@@ -218,7 +235,8 @@ impl Editor {
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (target_top - margin).max(0.0);
+                let target_top =
+                    dbg!((target_top - margin - dbg!(visible_sticky_headers) as f64).max(0.0));
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;
