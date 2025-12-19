@@ -4223,7 +4223,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane.clone();
-        self.active_item_path_changed(window, cx);
+        self.active_item_path_changed(true, window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
@@ -4280,7 +4280,7 @@ impl Workspace {
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(*focus_changed, window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
                     self.set_active_pane(pane, window, cx);
@@ -4296,7 +4296,7 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(false, window, cx);
                 }
                 serialize_workspace = false;
             }
@@ -4465,7 +4465,7 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(window, cx);
+            self.active_item_path_changed(true, window, cx);
         }
         cx.emit(Event::PaneRemoved);
     }
@@ -4719,14 +4719,19 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn active_item_path_changed(
+        &mut self,
+        focus_changed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project.update(cx, |project, cx| {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if let Some(project_path) = &active_entry {
+        if focus_changed && let Some(project_path) = &active_entry {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
