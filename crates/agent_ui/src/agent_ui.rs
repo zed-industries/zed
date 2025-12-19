@@ -361,24 +361,28 @@ fn init_language_model_settings(cx: &mut App) {
 fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AgentSettings::get_global(cx);
 
-    fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
-        language_model::SelectedModel {
-            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
-            model: LanguageModelId::from(selection.model.clone()),
+    fn to_selected_model(
+        selection: &LanguageModelSelection,
+        registry: &LanguageModelRegistry,
+        cx: &App,
+    ) -> Option<language_model::SelectedModel> {
+        let provider_id = LanguageModelProviderId::from(selection.provider.0.clone());
+
+        if registry
+            .provider(&provider_id)
+            .map_or(false, |provider| provider.is_authenticated(cx))
+        {
+            Some(language_model::SelectedModel {
+                provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+                model: LanguageModelId::from(selection.model.clone()),
+            })
+        } else {
+            None
         }
     }
 
     // Filter out models from providers that are not authenticated
-    fn is_provider_authenticated(
-        selection: &LanguageModelSelection,
-        registry: &LanguageModelRegistry,
-        cx: &App,
-    ) -> bool {
-        let provider_id = LanguageModelProviderId::from(selection.provider.0.clone());
-        registry
-            .provider(&provider_id)
-            .map_or(false, |provider| provider.is_authenticated(cx))
-    }
+    fn is_provider_authenticated(selection: &LanguageModelSelection) -> bool {}
 
     let registry = LanguageModelRegistry::global(cx);
     let registry_ref = registry.read(cx);
@@ -386,28 +390,23 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     let default = settings
         .default_model
         .as_ref()
-        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
-        .map(to_selected_model);
+        .map(|s| to_selectad_model(s, registry_ref, cx));
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
-        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
-        .map(to_selected_model);
+        .map(|s| to_selected_model(s, registry_ref, cx));
     let commit_message = settings
         .commit_message_model
         .as_ref()
-        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
-        .map(to_selected_model);
+        .map(|s| to_selected_model(s, registry_ref, cx));
     let thread_summary = settings
         .thread_summary_model
         .as_ref()
-        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
-        .map(to_selected_model);
+        .map(|s| to_selected_model(s, registry_ref, cx));
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
-        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
-        .map(to_selected_model)
+        .map(|s| to_selected_model(s, registry_ref, cx))
         .collect::<Vec<_>>();
 
     registry.update(cx, |registry, cx| {
