@@ -183,6 +183,7 @@ impl Application {
     where
         F: 'static + FnOnce(&mut App),
     {
+        #[cfg(debug_assertions)]
         dioxus_devtools::connect_subsecond();
 
         let this = self.0.clone();

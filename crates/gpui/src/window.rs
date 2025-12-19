@@ -33,8 +33,8 @@ use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::sync::atomic;
-use std::sync::atomic::AtomicBool;
+#[cfg(debug_assertions)]
+use std::sync::atomic::{self, AtomicBool};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -1125,7 +1125,10 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
+
+            #[cfg(debug_assertions)]
             let reloaded = Arc::new(AtomicBool::new(false));
+            #[cfg(debug_assertions)]
             subsecond::register_handler({
                 let reloaded = reloaded.clone();
                 Arc::new(move || {
@@ -1152,10 +1155,12 @@ impl Window {
                     || needs_present.get()
                     || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
 
-                if invalidator.is_dirty()
-                    || request_frame_options.force_render
-                    || reloaded.swap(false, atomic::Ordering::AcqRel)
-                {
+                #[cfg(debug_assertions)]
+                let hotpatch = reloaded.swap(false, atomic::Ordering::AcqRel);
+                #[cfg(not(debug_assertions))]
+                let hotpatch = false;
+
+                if invalidator.is_dirty() || request_frame_options.force_render || hotpatch {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
