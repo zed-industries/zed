@@ -504,14 +504,19 @@ impl ToolbarItemView for BufferSearchBar {
 
                 self.active_searchable_item_subscriptions = Some([
                     search_event_subscription,
-                    cx.on_focus(&item_focus_handle, window, |_this, window, cx| {
+                    cx.on_focus(&item_focus_handle, window, |this, window, cx| {
+                        if this.query_editor_focused {
+                            // no need to read pasteboard since focus came from our query editor
+                            return;
+                        }
+
                         cx.defer_in(window, |this, window, cx| {
                             if let Some(text) =
                                 cx.read_from_find_pasteboard().and_then(|p| p.text())
                             {
                                 drop(this.search(
                                     &text,
-                                    Some(this.default_options),
+                                    Some(this.search_options),
                                     true,
                                     window,
                                     cx,
