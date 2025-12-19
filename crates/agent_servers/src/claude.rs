@@ -115,6 +115,41 @@ impl AgentServer for ClaudeCode {
         });
     }
 
+    fn default_config_option(&self, config_id: &str, cx: &App) -> Option<String> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).claude.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_config_options.get(config_id).cloned())
+    }
+
+    fn set_default_config_option(
+        &self,
+        config_id: &str,
+        value_id: Option<&str>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) {
+        let config_id = config_id.to_string();
+        let value_id = value_id.map(|s| s.to_string());
+        update_settings_file(fs, cx, move |settings, _| {
+            let config_options = &mut settings
+                .agent_servers
+                .get_or_insert_default()
+                .claude
+                .get_or_insert_default()
+                .default_config_options;
+
+            if let Some(value) = value_id.clone() {
+                config_options.insert(config_id.clone(), value);
+            } else {
+                config_options.remove(&config_id);
+            }
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -128,6 +163,14 @@ impl AgentServer for ClaudeCode {
         let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .claude
+                .as_ref()
+                .map(|s| s.default_config_options.clone())
+                .unwrap_or_default()
+        });
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -150,6 +193,7 @@ impl AgentServer for ClaudeCode {
                 root_dir.as_ref(),
                 default_mode,
                 default_model,
+                default_config_options,
                 is_remote,
                 cx,
             )

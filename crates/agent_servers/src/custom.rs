@@ -56,6 +56,7 @@ impl AgentServer for CustomAgentServer {
                     default_model: None,
                     default_mode: None,
                     favorite_models: Vec::new(),
+                    default_config_options: Default::default(),
                 });
 
             match settings {
@@ -93,6 +94,7 @@ impl AgentServer for CustomAgentServer {
                     default_model: None,
                     default_mode: None,
                     favorite_models: Vec::new(),
+                    default_config_options: Default::default(),
                 });
 
             match settings {
@@ -142,6 +144,7 @@ impl AgentServer for CustomAgentServer {
                     default_model: None,
                     default_mode: None,
                     favorite_models: Vec::new(),
+                    default_config_options: Default::default(),
                 });
 
             let favorite_models = match settings {
@@ -164,6 +167,62 @@ impl AgentServer for CustomAgentServer {
         });
     }
 
+    fn default_config_option(&self, config_id: &str, cx: &App) -> Option<String> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .custom
+                .get(&self.name())
+                .cloned()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_config_option(config_id).map(|s| s.to_string()))
+    }
+
+    fn set_default_config_option(
+        &self,
+        config_id: &str,
+        value_id: Option<&str>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) {
+        let name = self.name();
+        let config_id = config_id.to_string();
+        let value_id = value_id.map(|s| s.to_string());
+        update_settings_file(fs, cx, move |settings, _| {
+            let settings = settings
+                .agent_servers
+                .get_or_insert_default()
+                .custom
+                .entry(name.clone())
+                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
+                    default_model: None,
+                    default_mode: None,
+                    default_config_options: Default::default(),
+                    favorite_models: Vec::new(),
+                });
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom {
+                    default_config_options,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Extension {
+                    default_config_options,
+                    ..
+                } => {
+                    if let Some(value) = value_id.clone() {
+                        default_config_options.insert(config_id.clone(), value);
+                    } else {
+                        default_config_options.remove(&config_id);
+                    }
+                }
+            }
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -175,6 +234,23 @@ impl AgentServer for CustomAgentServer {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .custom
+                .get(&self.name())
+                .map(|s| match s {
+                    project::agent_server_store::CustomAgentServerSettings::Custom {
+                        default_config_options,
+                        ..
+                    }
+                    | project::agent_server_store::CustomAgentServerSettings::Extension {
+                        default_config_options,
+                        ..
+                    } => default_config_options.clone(),
+                })
+                .unwrap_or_default()
+        });
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
@@ -200,6 +276,7 @@ impl AgentServer for CustomAgentServer {
                 root_dir.as_ref(),
                 default_mode,
                 default_model,
+                default_config_options,
                 is_remote,
                 cx,
             )

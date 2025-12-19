@@ -1,38 +1,92 @@
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol as acp;
-use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use agent_servers::AgentServer;
+use agent_settings::AgentSettings;
+use fs::Fs;
+use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
+use picker::popover_menu::PickerPopoverMenu;
+use settings::Settings as _;
 use std::rc::Rc;
+use std::sync::Arc;
 use ui::{
     Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, PopoverMenu,
     PopoverMenuHandle, Tooltip, prelude::*,
 };
 
+use super::config_option_picker::{ConfigOptionPicker, config_option_picker, count_config_options};
+use crate::ui::HoldForDefault;
+
+const PICKER_THRESHOLD: usize = 10;
+
+pub enum MenuHandle {
+    ContextMenu(PopoverMenuHandle<ContextMenu>),
+    Picker(PopoverMenuHandle<ConfigOptionPicker>),
+}
+
 pub struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     config_id: acp::SessionConfigId,
-    menu_handle: PopoverMenuHandle<ContextMenu>,
-    #[allow(dead_code)]
-    focus_handle: FocusHandle,
+    agent_server: Rc<dyn AgentServer>,
+    fs: Arc<dyn Fs>,
+    context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    picker_handle: PopoverMenuHandle<ConfigOptionPicker>,
+    picker: Option<Entity<ConfigOptionPicker>>,
     setting_value: bool,
+    use_picker: bool,
 }
 
 impl ConfigOptionSelector {
     pub fn new(
         config_options: Rc<dyn AgentSessionConfigOptions>,
         config_id: acp::SessionConfigId,
-        focus_handle: FocusHandle,
+        agent_server: Rc<dyn AgentServer>,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let option_count = config_options
+            .config_options()
+            .iter()
+            .find(|opt| opt.id == config_id)
+            .map(|opt| count_config_options(opt))
+            .unwrap_or(0);
+
+        let use_picker = option_count >= PICKER_THRESHOLD;
+
+        let picker = if use_picker {
+            Some(cx.new(|cx| {
+                config_option_picker(
+                    config_options.clone(),
+                    config_id.clone(),
+                    agent_server.clone(),
+                    fs.clone(),
+                    window,
+                    cx,
+                )
+            }))
+        } else {
+            None
+        };
+
         Self {
             config_options,
             config_id,
-            menu_handle: PopoverMenuHandle::default(),
-            focus_handle,
+            agent_server,
+            fs,
+            context_menu_handle: PopoverMenuHandle::default(),
+            picker_handle: PopoverMenuHandle::default(),
+            picker,
             setting_value: false,
+            use_picker,
         }
     }
 
-    pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
-        self.menu_handle.clone()
+    pub fn menu_handle(&self) -> MenuHandle {
+        if self.use_picker {
+            MenuHandle::Picker(self.picker_handle.clone())
+        } else {
+            MenuHandle::ContextMenu(self.context_menu_handle.clone())
+        }
     }
 
     fn current_option(&self) -> Option<acp::SessionConfigOption> {
@@ -114,33 +168,64 @@ impl ConfigOptionSelector {
         };
 
         let current_value = self.current_value();
+        let agent_server = self.agent_server.clone();
+        let config_id = self.config_id.clone();
 
-        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-            let side = DocumentationSide::Left;
+        ContextMenu::build(window, cx, move |mut menu, _window, cx| {
+            let settings = AgentSettings::get_global(cx);
+            let side = match settings.dock {
+                settings::DockPosition::Left => DocumentationSide::Right,
+                settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                    DocumentationSide::Left
+                }
+            };
 
             match &option.kind {
                 acp::SessionConfigKind::Select(select) => match &select.options {
                     acp::SessionConfigSelectOptions::Ungrouped(options) => {
                         for opt in options {
                             let is_selected = current_value.as_ref() == Some(&opt.value);
+                            let default_value =
+                                agent_server.default_config_option(&config_id.0, cx);
+                            let is_default = default_value.as_deref() == Some(opt.value.0.as_ref());
+
                             let entry = ContextMenuEntry::new(opt.name.clone())
                                 .toggleable(IconPosition::End, is_selected);
 
-                            let entry = if let Some(description) = &opt.description {
+                            let entry =
                                 entry.documentation_aside(side, DocumentationEdge::Bottom, {
-                                    let description = description.clone();
-                                    move |_| Label::new(description.clone()).into_any_element()
-                                })
-                            } else {
-                                entry
-                            };
+                                    let description = opt.description.clone();
+                                    move |_| {
+                                        v_flex()
+                                            .gap_1()
+                                            .when_some(description.clone(), |this, desc| {
+                                                this.child(Label::new(desc))
+                                            })
+                                            .child(HoldForDefault::new(is_default))
+                                            .into_any_element()
+                                    }
+                                });
 
                             menu.push_item(entry.handler({
                                 let value = opt.value.clone();
                                 let weak_self = weak_self.clone();
-                                move |_window, cx| {
+                                let config_id = config_id.clone();
+                                move |window, cx| {
                                     weak_self
                                         .update(cx, |this, cx| {
+                                            if window.modifiers().secondary() {
+                                                this.agent_server.set_default_config_option(
+                                                    config_id.0.as_ref(),
+                                                    if is_default {
+                                                        None
+                                                    } else {
+                                                        Some(value.0.as_ref())
+                                                    },
+                                                    this.fs.clone(),
+                                                    cx,
+                                                );
+                                            }
+
                                             this.set_value(value.clone(), cx);
                                         })
                                         .ok();
@@ -157,24 +242,48 @@ impl ConfigOptionSelector {
 
                             for opt in &group.options {
                                 let is_selected = current_value.as_ref() == Some(&opt.value);
+                                let default_value =
+                                    agent_server.default_config_option(config_id.0.as_ref(), cx);
+                                let is_default =
+                                    default_value.as_deref() == Some(opt.value.0.as_ref());
+
                                 let entry = ContextMenuEntry::new(opt.name.clone())
                                     .toggleable(IconPosition::End, is_selected);
 
-                                let entry = if let Some(description) = &opt.description {
+                                let entry =
                                     entry.documentation_aside(side, DocumentationEdge::Bottom, {
-                                        let description = description.clone();
-                                        move |_| Label::new(description.clone()).into_any_element()
-                                    })
-                                } else {
-                                    entry
-                                };
+                                        let description = opt.description.clone();
+                                        move |_| {
+                                            v_flex()
+                                                .gap_1()
+                                                .when_some(description.clone(), |this, desc| {
+                                                    this.child(Label::new(desc))
+                                                })
+                                                .child(HoldForDefault::new(is_default))
+                                                .into_any_element()
+                                        }
+                                    });
 
                                 menu.push_item(entry.handler({
                                     let value = opt.value.clone();
                                     let weak_self = weak_self.clone();
-                                    move |_window, cx| {
+                                    let config_id = config_id.clone();
+                                    move |window, cx| {
                                         weak_self
                                             .update(cx, |this, cx| {
+                                                if window.modifiers().secondary() {
+                                                    this.agent_server.set_default_config_option(
+                                                        config_id.0.as_ref(),
+                                                        if is_default {
+                                                            None
+                                                        } else {
+                                                            Some(value.0.as_ref())
+                                                        },
+                                                        this.fs.clone(),
+                                                        cx,
+                                                    );
+                                                }
+
                                                 this.set_value(value.clone(), cx);
                                             })
                                             .ok();
@@ -191,21 +300,99 @@ impl ConfigOptionSelector {
             menu.key_context("ConfigOptionSelector")
         })
     }
-}
 
-impl Render for ConfigOptionSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
+        let Some(option) = self.current_option() else {
+            return Button::new("config-option-trigger", "Unknown")
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .disabled(true);
+        };
+
+        let current_value_name = self.current_value_name();
+
+        let icon = if self.use_picker {
+            if self.picker_handle.is_deployed() {
+                IconName::ChevronUp
+            } else {
+                IconName::ChevronDown
+            }
+        } else if self.context_menu_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
+        Button::new(
+            ElementId::Name(format!("config-option-{}", option.id.0).into()),
+            current_value_name,
+        )
+        .label_size(LabelSize::Small)
+        .color(Color::Muted)
+        .icon(icon)
+        .icon_size(IconSize::XSmall)
+        .icon_position(IconPosition::End)
+        .icon_color(Color::Muted)
+        .disabled(self.setting_value)
+    }
+
+    fn render_with_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(picker) = self.picker.clone() else {
+            return div().into_any_element();
+        };
+
         let Some(option) = self.current_option() else {
             return div().into_any_element();
         };
 
-        let current_value_name = self.current_value_name();
+        let option_name = option.name.clone();
+        let option_description = option.description;
+
+        let trigger_button = self.render_trigger_button(window, cx);
+
+        let tooltip = Tooltip::element({
+            move |_window, _cx| {
+                let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
+
+                if let Some(ref desc) = option_description {
+                    content = content.child(
+                        Label::new(desc.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    );
+                }
+
+                content.into_any()
+            }
+        });
+
+        PickerPopoverMenu::new(
+            picker,
+            trigger_button,
+            tooltip,
+            gpui::Corner::BottomRight,
+            cx,
+        )
+        .with_handle(self.picker_handle.clone())
+        .render(window, cx)
+        .into_any_element()
+    }
+
+    fn render_with_context_menu(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(option) = self.current_option() else {
+            return div().into_any_element();
+        };
+
         let option_name = option.name.clone();
         let option_description = option.description.clone();
 
         let this = cx.weak_entity();
 
-        let icon = if self.menu_handle.is_deployed() {
+        let icon = if self.context_menu_handle.is_deployed() {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
@@ -213,7 +400,7 @@ impl Render for ConfigOptionSelector {
 
         let trigger_button = Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
-            current_value_name,
+            self.current_value_name(),
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
@@ -245,7 +432,7 @@ impl Render for ConfigOptionSelector {
                 }),
             )
             .anchor(gpui::Corner::BottomRight)
-            .with_handle(self.menu_handle.clone())
+            .with_handle(self.context_menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -255,5 +442,19 @@ impl Render for ConfigOptionSelector {
                     .ok()
             })
             .into_any_element()
+    }
+}
+
+impl Render for ConfigOptionSelector {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.current_option().is_none() {
+            return div().into_any_element();
+        }
+
+        if self.use_picker {
+            self.render_with_picker(window, cx)
+        } else {
+            self.render_with_context_menu(window, cx)
+        }
     }
 }

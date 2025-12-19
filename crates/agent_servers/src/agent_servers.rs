@@ -95,6 +95,19 @@ pub trait AgentServer: Send {
         HashSet::default()
     }
 
+    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
+        None
+    }
+
+    fn set_default_config_option(
+        &self,
+        _config_id: &str,
+        _value_id: Option<&str>,
+        _fs: Arc<dyn Fs>,
+        _cx: &mut App,
+    ) {
+    }
+
     fn toggle_favorite_model(
         &self,
         _model_id: agent_client_protocol::ModelId,

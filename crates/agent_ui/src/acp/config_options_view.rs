@@ -2,7 +2,7 @@ use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use fs::Fs;
-use gpui::{Context, Entity, FocusHandle, Window, prelude::*};
+use gpui::{Context, Entity, Window, prelude::*};
 use std::rc::Rc;
 use std::sync::Arc;
 use ui::prelude::*;
@@ -12,11 +12,8 @@ use super::config_option_selector::ConfigOptionSelector;
 pub struct ConfigOptionsView {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     selectors: Vec<Entity<ConfigOptionSelector>>,
-    #[allow(dead_code)]
     agent_server: Rc<dyn AgentServer>,
-    #[allow(dead_code)]
     fs: Arc<dyn Fs>,
-    focus_handle: FocusHandle,
 }
 
 impl ConfigOptionsView {
@@ -24,25 +21,24 @@ impl ConfigOptionsView {
         config_options: Rc<dyn AgentSessionConfigOptions>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
-        focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let selectors = Self::build_selectors(&config_options, focus_handle.clone(), window, cx);
+        let selectors = Self::build_selectors(&config_options, &agent_server, &fs, window, cx);
 
         Self {
             config_options,
             selectors,
             agent_server,
             fs,
-            focus_handle,
         }
     }
 
     fn build_selectors(
         config_options: &Rc<dyn AgentSessionConfigOptions>,
-        focus_handle: FocusHandle,
-        _window: &mut Window,
+        agent_server: &Rc<dyn AgentServer>,
+        fs: &Arc<dyn Fs>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Entity<ConfigOptionSelector>> {
         config_options
@@ -50,9 +46,17 @@ impl ConfigOptionsView {
             .into_iter()
             .map(|option| {
                 let config_options = config_options.clone();
-                let focus_handle = focus_handle.clone();
-                cx.new(|_cx| {
-                    ConfigOptionSelector::new(config_options, option.id.clone(), focus_handle)
+                let agent_server = agent_server.clone();
+                let fs = fs.clone();
+                cx.new(|cx| {
+                    ConfigOptionSelector::new(
+                        config_options,
+                        option.id.clone(),
+                        agent_server,
+                        fs,
+                        window,
+                        cx,
+                    )
                 })
             })
             .collect()
@@ -61,8 +65,13 @@ impl ConfigOptionsView {
     /// Rebuild selectors when config options change.
     /// This should be called when a `ConfigOptionsUpdated` event is received.
     pub fn rebuild_selectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.selectors =
-            Self::build_selectors(&self.config_options, self.focus_handle.clone(), window, cx);
+        self.selectors = Self::build_selectors(
+            &self.config_options,
+            &self.agent_server,
+            &self.fs,
+            window,
+            cx,
+        );
         cx.notify();
     }
 

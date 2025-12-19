@@ -630,16 +630,8 @@ impl AcpThreadView {
                             // Use config options - don't create mode_selector or model_selector
                             let agent_server = this.agent.clone();
                             let fs = this.project.read(cx).fs().clone();
-                            let focus_handle = this.focus_handle(cx);
                             this.config_options_view = Some(cx.new(|cx| {
-                                ConfigOptionsView::new(
-                                    config_options,
-                                    agent_server,
-                                    fs,
-                                    focus_handle,
-                                    window,
-                                    cx,
-                                )
+                                ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
                             }));
                             this.model_selector = None;
                             mode_selector = None;

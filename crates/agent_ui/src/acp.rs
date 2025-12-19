@@ -1,3 +1,4 @@
+mod config_option_picker;
 mod config_option_selector;
 mod config_options_view;
 mod entry_view_state;
@@ -8,6 +9,7 @@ mod model_selector_popover;
 mod thread_history;
 mod thread_view;
 
+pub use config_option_picker::ConfigOptionPicker;
 pub use config_option_selector::ConfigOptionSelector;
 pub use config_options_view::ConfigOptionsView;
 pub use mode_selector::ModeSelector;
