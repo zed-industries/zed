@@ -298,58 +298,6 @@ pub struct LanguageModelProviderManifestEntry {
     /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
     #[serde(default)]
     pub icon: Option<String>,
-    /// Hardcoded models to always show (as opposed to a model list loaded over the network).
-    #[serde(default)]
-    pub models: Vec<LanguageModelManifestEntry>,
-    /// Authentication configuration.
-    #[serde(default)]
-    pub auth: Option<LanguageModelAuthConfig>,
-}
-
-/// Manifest entry for a language model.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct LanguageModelManifestEntry {
-    /// Unique identifier for the model.
-    pub id: String,
-    /// Display name for the model.
-    pub name: String,
-    /// Maximum input token count.
-    pub max_token_count: u64,
-    /// Maximum output tokens (optional).
-    pub max_output_tokens: Option<u64>,
-    /// Whether the model supports image inputs.
-    pub supports_images: bool,
-    /// Whether the model supports tool/function calling.
-    pub supports_tools: bool,
-    /// Whether the model supports extended thinking/reasoning.
-    pub supports_thinking: bool,
-}
-
-/// Authentication configuration for a language model provider.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct LanguageModelAuthConfig {
-    /// Human-readable name for the credential shown in the UI input field (e.g. "API Key", "Access Token").
-    pub credential_label: Option<String>,
-    /// Environment variable names for the API key (if env var auth supported).
-    /// Multiple env vars can be specified; they will be checked in order.
-    #[serde(default)]
-    pub env_vars: Option<Vec<String>>,
-    /// OAuth configuration for web-based authentication flows.
-    #[serde(default)]
-    pub oauth: Option<OAuthConfig>,
-}
-
-/// OAuth configuration for web-based authentication.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct OAuthConfig {
-    /// The text to display on the sign-in button (e.g. "Sign in with GitHub").
-    pub sign_in_button_label: Option<String>,
-    /// The Zed icon path to display on the sign-in button (e.g. "github").
-    #[serde(default)]
-    pub sign_in_button_icon: Option<String>,
-    /// The description text shown next to the sign-in button in edit prediction settings.
-    #[serde(default)]
-    pub sign_in_description: Option<String>,
 }
 
 impl ExtensionManifest {
