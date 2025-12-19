@@ -486,8 +486,6 @@ impl ToolbarItemView for BufferSearchBar {
         {
             let this = cx.entity().downgrade();
 
-            let item_focus_handle = searchable_item_handle.item_focus_handle(cx);
-
             let search_event_subscription = searchable_item_handle.subscribe_to_search_events(
                 window,
                 cx,
@@ -502,6 +500,8 @@ impl ToolbarItemView for BufferSearchBar {
 
             #[cfg(target_os = "macos")]
             {
+                let item_focus_handle = searchable_item_handle.item_focus_handle(cx);
+
                 self.active_searchable_item_subscriptions = Some([
                     search_event_subscription,
                     cx.on_focus(&item_focus_handle, window, |_this, window, cx| {
