@@ -95,8 +95,9 @@ fn main() {
 
             // Open a real Zed workspace window
             let window_size = size(px(1280.0), px(800.0));
+            // Position window offscreen so it's invisible but still rendered by the compositor
             let bounds = Bounds {
-                origin: point(px(100.0), px(100.0)),
+                origin: point(px(-10000.0), px(-10000.0)),
                 size: window_size,
             };
 
