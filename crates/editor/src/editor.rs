@@ -23596,12 +23596,13 @@ fn list_delimiter_for_newline(
             .max_by_key(|(prefix, _)| prefix.len())
         {
             let end_of_prefix = num_of_whitespaces + prefix.len();
+            let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
             let has_content_after_marker = snapshot
                 .chars_for_range(range.clone())
                 .skip(end_of_prefix)
                 .any(|c| !c.is_whitespace());
 
-            if has_content_after_marker {
+            if has_content_after_marker && cursor_is_after_prefix {
                 return Some((*continuation).into());
             }
 
@@ -23635,13 +23636,14 @@ fn list_delimiter_for_newline(
             let full_match = captures.get(0)?;
             let marker_len = full_match.len();
             let end_of_prefix = num_of_whitespaces + marker_len;
+            let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
 
             let has_content_after_marker = snapshot
                 .chars_for_range(range.clone())
                 .skip(end_of_prefix)
                 .any(|c| !c.is_whitespace());
 
-            if has_content_after_marker {
+            if has_content_after_marker && cursor_is_after_prefix {
                 let number: u32 = captures.get(1)?.as_str().parse().ok()?;
                 let continuation = ordered_config
                     .format

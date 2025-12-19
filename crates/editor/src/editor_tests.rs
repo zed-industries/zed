@@ -29545,6 +29545,28 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
           - [ ] sub task
         ˇ
     "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ- [ ] task
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ- [ ] task
+    "});
+
+    cx.set_state(indoc! {"
+        - [ˇ ] task
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [
+        ˇ
+        ] task
+    "});
 }
 
 #[gpui::test]
@@ -29657,6 +29679,27 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
           - sub item
         ˇ
     "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ- item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ- item
+    "});
+
+    cx.set_state(indoc! {"
+        -ˇ item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        -
+        ˇitem
+    "});
 }
 
 #[gpui::test]
@@ -29758,6 +29801,27 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         1. item
           2. sub item
         ˇ
+    "});
+
+    // Case 8: Cursor before or inside prefix does not add marker
+    cx.set_state(indoc! {"
+        ˇ1. item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+
+        ˇ1. item
+    "});
+
+    cx.set_state(indoc! {"
+        1ˇ. item
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        1
+        ˇ. item
     "});
 }
 
