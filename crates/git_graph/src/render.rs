@@ -3,10 +3,13 @@
 use crate::graph::{GitGraph, RefType};
 use crate::layout::GraphLayout;
 use gpui::{
-    div, prelude::*, App, Context, EventEmitter, FocusHandle, Focusable,
-    Render, SharedString, Window,
+    actions, div, prelude::*, App, Context, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Render, SharedString, Window,
 };
+use menu::{Confirm, SelectNext, SelectPrevious};
 use ui::prelude::*;
+
+actions!(git_graph_view, [CopyCommitSha, ShowCommitDetails]);
 
 /// Branch colors for graph lines (based on VS Code Git Graph)
 pub const BRANCH_COLORS: [u32; 8] = [
@@ -61,6 +64,7 @@ pub struct GitGraphView {
     graph: GitGraph,
     layout: GraphLayout,
     selected_commit: Option<SharedString>,
+    selected_index: Option<usize>,
     focus_handle: FocusHandle,
 }
 
@@ -71,6 +75,7 @@ impl GitGraphView {
             graph,
             layout,
             selected_commit: None,
+            selected_index: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -79,13 +84,69 @@ impl GitGraphView {
         self.layout = GraphLayout::from_graph(&graph);
         self.graph = graph;
         self.selected_commit = None;
+        self.selected_index = None;
         cx.notify();
     }
 
     pub fn select_commit(&mut self, sha: SharedString, cx: &mut Context<Self>) {
+        // Find index for this commit
+        self.selected_index = self.graph.ordered_commits.iter().position(|s| s == &sha);
         self.selected_commit = Some(sha.clone());
         cx.emit(GitGraphEvent::CommitSelected(sha));
         cx.notify();
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.graph.ordered_commits.len();
+        if count == 0 {
+            return;
+        }
+        let new_index = match self.selected_index {
+            Some(ix) => (ix + 1).min(count - 1),
+            None => 0,
+        };
+        self.selected_index = Some(new_index);
+        if let Some(sha) = self.graph.ordered_commits.get(new_index) {
+            self.selected_commit = Some(sha.clone());
+            cx.emit(GitGraphEvent::CommitSelected(sha.clone()));
+        }
+        cx.notify();
+    }
+
+    fn select_previous(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.graph.ordered_commits.len();
+        if count == 0 {
+            return;
+        }
+        let new_index = match self.selected_index {
+            Some(ix) => ix.saturating_sub(1),
+            None => count - 1,
+        };
+        self.selected_index = Some(new_index);
+        if let Some(sha) = self.graph.ordered_commits.get(new_index) {
+            self.selected_commit = Some(sha.clone());
+            cx.emit(GitGraphEvent::CommitSelected(sha.clone()));
+        }
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(sha) = &self.selected_commit {
+            cx.emit(GitGraphEvent::CommitActivated(sha.clone()));
+        }
+    }
+
+    fn copy_commit_sha(&mut self, _: &CopyCommitSha, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(sha) = &self.selected_commit {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(sha.to_string()));
+        }
+    }
+
+    fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
+        let mut context = KeyContext::new_with_defaults();
+        context.add("GitGraphView");
+        context.add("menu");
+        context
     }
 
     fn render_commit_row(&self, row: usize, sha: &SharedString, cx: &Context<Self>) -> impl IntoElement {
@@ -99,10 +160,12 @@ impl GitGraphView {
                 c.author_name.clone(),
                 c.lane,
                 c.refs.clone(),
+                c.timestamp,
             )
         });
 
         let sha_for_click = sha.clone();
+        let sha_for_double_click = sha.clone();
 
         div()
             .id(SharedString::from(format!("commit-{}", row)))
@@ -113,10 +176,16 @@ impl GitGraphView {
             .cursor_pointer()
             .when(is_selected, |el| {
                 el.bg(cx.theme().colors().element_selected)
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border_focused)
             })
             .hover(|el| el.bg(cx.theme().colors().element_hover))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
                 this.select_commit(sha_for_click.clone(), cx);
+                // Double-click activates the commit
+                if event.click_count() >= 2 {
+                    cx.emit(GitGraphEvent::CommitActivated(sha_for_double_click.clone()));
+                }
             }))
             .child(
                 // Graph lines area
@@ -125,7 +194,7 @@ impl GitGraphView {
                     .h_full()
                     .flex()
                     .items_center()
-                    .child(self.render_graph_node(row, commit_info.as_ref().map(|(_, _, _, lane, _)| *lane).unwrap_or(0), cx))
+                    .child(self.render_graph_node(row, commit_info.as_ref().map(|(_, _, _, lane, _, _)| *lane).unwrap_or(0), cx))
             )
             .child(
                 // Commit info
@@ -134,16 +203,25 @@ impl GitGraphView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .children(commit_info.map(|(short_sha, subject, author, _lane, refs)| {
+                    .overflow_hidden()
+                    .children(commit_info.map(|(short_sha, subject, author, _lane, refs, _timestamp)| {
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
+                            .overflow_hidden()
                             .child(
-                                // Short SHA
-                                Label::new(short_sha)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
+                                // Short SHA with monospace font
+                                div()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(cx.theme().colors().surface_background)
+                                    .child(
+                                        Label::new(short_sha)
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    )
                             )
                             // Refs (branches/tags)
                             .children(refs.iter().take(3).map(|r| {
@@ -165,10 +243,15 @@ impl GitGraphView {
                                     )
                             }))
                             .child(
-                                // Subject
-                                Label::new(subject.to_string())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Default)
+                                // Subject (truncated)
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .child(
+                                        Label::new(subject.to_string())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Default)
+                                    )
                             )
                             .child(
                                 // Author
@@ -210,7 +293,7 @@ impl Focusable for GitGraphView {
 impl EventEmitter<GitGraphEvent> for GitGraphView {}
 
 impl Render for GitGraphView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("git-graph-view")
             .size_full()
@@ -218,13 +301,31 @@ impl Render for GitGraphView {
             .flex_col()
             .bg(cx.theme().colors().panel_background)
             .track_focus(&self.focus_handle)
+            .key_context(self.dispatch_context(window, cx))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::copy_commit_sha))
             .child(
                 // Header
                 div()
                     .p_2()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .child(Label::new("Git Graph").size(LabelSize::Default).weight(gpui::FontWeight::MEDIUM))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!("{} commits", self.graph.ordered_commits.len()))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                            )
+                    )
             )
             .child(
                 // Graph content

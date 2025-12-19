@@ -7136,6 +7136,7 @@ dependencies = [
  "collections",
  "git",
  "gpui",
+ "menu",
  "pretty_assertions",
  "serde",
  "ui",
