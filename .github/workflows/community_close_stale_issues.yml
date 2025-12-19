@@ -3,6 +3,15 @@ on:
   schedule:
     - cron: "0 8 31 DEC *"
   workflow_dispatch:
+    inputs:
+      debug-only:
+        description: "Run in dry-run mode (no changes made)"
+        type: boolean
+        default: false
+      operations-per-run:
+        description: "Max number of issues to process (default: 1000)"
+        type: number
+        default: 1000
 
 jobs:
   stale:
@@ -23,8 +32,9 @@ jobs:
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
-          operations-per-run: 1000
+          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
           ascending: true
           enable-statistics: true
+          debug-only: ${{ inputs.debug-only }}
           stale-issue-label: "stale"
           exempt-issue-labels: "never stale"
