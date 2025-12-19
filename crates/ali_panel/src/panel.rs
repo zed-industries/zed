@@ -12,7 +12,7 @@ use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
-    actions, div, prelude::*, Action, AnyView, App, AsyncWindowContext, Context, Entity,
+    actions, div, prelude::*, Action, App, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels,
     Render, Styled, Subscription, WeakEntity, Window,
 };
@@ -48,11 +48,11 @@ pub struct AliPanel {
     focus_handle: FocusHandle,
     height: Option<Pixels>,
     thread_view: Option<Entity<AcpThreadView>>,
-    workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
-    history_store: Entity<HistoryStore>,
-    prompt_store: Option<Entity<PromptStore>>,
-    fs: Arc<dyn Fs>,
+    _workspace: WeakEntity<Workspace>,
+    _project: Entity<Project>,
+    _history_store: Entity<HistoryStore>,
+    _prompt_store: Option<Entity<PromptStore>>,
+    _fs: Arc<dyn Fs>,
     _subscription: Option<Subscription>,
 }
 
@@ -106,11 +106,11 @@ impl AliPanel {
             focus_handle,
             height: None,
             thread_view: Some(thread_view),
-            workspace: weak_workspace,
-            project,
-            history_store,
-            prompt_store,
-            fs,
+            _workspace: weak_workspace,
+            _project: project,
+            _history_store: history_store,
+            _prompt_store: prompt_store,
+            _fs: fs,
             _subscription: None,
         }
     }
