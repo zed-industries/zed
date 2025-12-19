@@ -29864,6 +29864,43 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
         $$- itemˇ
     "};
     cx.assert_editor_state(expected.replace("$", " ").as_str());
+
+    // Case 7: Cursor at start of list item, indents it
+    cx.set_state(indoc! {"
+        - item
+        ˇ  - sub item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        - item
+          ˇ  - sub item
+    "};
+    cx.assert_editor_state(expected);
+
+    // Case 8: Cursor at start of list item, moves the cursor when "extend_list_on_newline" is false
+    cx.update_editor(|_, _, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .extend_list_on_newline = Some(false);
+            });
+        });
+    });
+    cx.set_state(indoc! {"
+        - item
+        ˇ  - sub item
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    let expected = indoc! {"
+        - item
+          ˇ- sub item
+    "};
+    cx.assert_editor_state(expected);
 }
 
 #[gpui::test]

@@ -10452,6 +10452,24 @@ impl Editor {
             }
             prev_edited_row = selection.end.row;
 
+            // If cursor is after a list prefix, make selection non-empty to trigger line indent
+            if selection.is_empty() {
+                let cursor = selection.head();
+                let settings = buffer.language_settings_at(cursor, cx);
+                if settings.extend_list_on_newline {
+                    if let Some(language) = snapshot.language_scope_at(Point::new(cursor.row, 0)) {
+                        if let Some(_) =
+                            list_prefix_end_column(MultiBufferRow(cursor.row), &snapshot, &language)
+                        {
+                            row_delta = Self::indent_selection(
+                                buffer, &snapshot, selection, &mut edits, row_delta, cx,
+                            );
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // If the selection is non-empty, then increase the indentation of the selected lines.
             if !selection.is_empty() {
                 row_delta =
@@ -23643,6 +23661,78 @@ fn list_delimiter_for_newline(
             }
 
             return None;
+        }
+    }
+
+    None
+}
+
+fn list_prefix_end_column(
+    row: MultiBufferRow,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> Option<u32> {
+    let (snapshot, range) = buffer.buffer_line_for_row(row)?;
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+
+    let task_list_prefixes: Vec<_> = language
+        .task_list()
+        .into_iter()
+        .flat_map(|config| {
+            config
+                .prefixes
+                .iter()
+                .map(|p| p.as_ref())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let unordered_list_markers: Vec<_> = language
+        .unordered_list()
+        .iter()
+        .map(|marker| marker.as_ref())
+        .collect();
+
+    let all_prefixes: Vec<_> = task_list_prefixes
+        .into_iter()
+        .chain(unordered_list_markers)
+        .collect();
+
+    if let Some(max_prefix_len) = all_prefixes.iter().map(|p| p.len()).max() {
+        let candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_prefix_len)
+            .collect();
+
+        if let Some(prefix) = all_prefixes
+            .iter()
+            .filter(|prefix| candidate.starts_with(*prefix))
+            .max_by_key(|prefix| prefix.len())
+        {
+            return Some((num_of_whitespaces + prefix.trim_end().len()) as u32);
+        }
+    }
+
+    let candidate: String = snapshot
+        .chars_for_range(range.clone())
+        .skip(num_of_whitespaces)
+        .take(ORDERED_LIST_MAX_MARKER_LEN)
+        .collect();
+
+    for ordered_config in language.ordered_list() {
+        let regex = match Regex::new(&ordered_config.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if let Some(captures) = regex.captures(&candidate) {
+            let full_match = captures.get(0)?;
+            let marker_text = full_match.as_str();
+            return Some((num_of_whitespaces + marker_text.trim_end().len()) as u32);
         }
     }
 
