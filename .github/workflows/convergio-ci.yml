@@ -1,0 +1,79 @@
+name: Convergio CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/acp_*/**'
+      - 'crates/git_graph/**'
+      - 'crates/git_ui/src/git_graph_view.rs'
+      - 'CONVERGIO_*'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/acp_*/**'
+      - 'crates/git_graph/**'
+      - 'crates/git_ui/src/git_graph_view.rs'
+      - 'CONVERGIO_*'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  check-convergio:
+    name: Check Convergio Crates
+    runs-on: macos-14  # Apple Silicon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-convergio-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check git_graph crate
+        run: cargo check -p git_graph
+
+      - name: Check acp_tools crate
+        run: cargo check -p acp_tools
+
+      - name: Check acp_thread crate
+        run: cargo check -p acp_thread
+
+      - name: Test git_graph
+        run: cargo test -p git_graph
+
+  version-check:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify CONVERGIO_VERSION exists
+        run: |
+          if [ ! -f CONVERGIO_VERSION ]; then
+            echo "::error::CONVERGIO_VERSION file is missing"
+            exit 1
+          fi
+
+      - name: Verify version format
+        run: |
+          VERSION=$(cat CONVERGIO_VERSION | tr -d '\n')
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "Version: $VERSION"

@@ -1,0 +1,132 @@
+name: Convergio Release
+
+on:
+  push:
+    tags:
+      - 'convergio-v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: convergio-studio-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: convergio-studio-macos-x64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: convergio-studio-linux-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libvulkan-dev \
+            libasound2-dev \
+            libfontconfig-dev
+
+      - name: Build release
+        run: cargo build --release -p zed --target ${{ matrix.target }}
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cp target/${{ matrix.target }}/release/zed dist/convergio-studio
+          else
+            cp target/${{ matrix.target }}/release/zed dist/convergio-studio
+          fi
+          cd dist
+          tar -czvf ../${{ matrix.artifact }}.tar.gz convergio-studio
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: build-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/convergio-v}" >> $GITHUB_OUTPUT
+
+      - name: Verify CONVERGIO_VERSION matches tag
+        run: |
+          FILE_VERSION=$(cat CONVERGIO_VERSION | tr -d '\n')
+          TAG_VERSION=${{ steps.version.outputs.VERSION }}
+          if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::CONVERGIO_VERSION ($FILE_VERSION) doesn't match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          # Extract changes for this version from CONVERGIO_CHANGELOG.md
+          VERSION=${{ steps.version.outputs.VERSION }}
+          CHANGES=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CONVERGIO_CHANGELOG.md | head -n -1)
+          echo "CHANGES<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Convergio Studio v${{ steps.version.outputs.VERSION }}
+          body: |
+            # Convergio Studio v${{ steps.version.outputs.VERSION }}
+
+            ${{ steps.changelog.outputs.CHANGES }}
+
+            ## Installation
+
+            Download the appropriate binary for your platform and run:
+            ```bash
+            tar -xzf convergio-studio-*.tar.gz
+            chmod +x convergio-studio
+            ./convergio-studio
+            ```
+
+            ## Requirements
+
+            - **convergio-acp**: The Convergio ACP server
+            - Anthropic API key configured in Convergio
+          files: |
+            artifacts/**/*.tar.gz
+          generate_release_notes: true
