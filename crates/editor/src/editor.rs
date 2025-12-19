@@ -4788,11 +4788,26 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        let (delimiter, newline_formatting) = if let Some(language) =
-                            &language_scope
-                        {
-                            let mut newline_formatting =
-                                NewlineFormatting::new(&buffer, start..end, language);
+                        let (delimiter, newline_config) = if let Some(language) = &language_scope {
+                            let needs_extra_newline = NewlineConfig::insert_extra_newline_brackets(
+                                &buffer,
+                                start..end,
+                                language,
+                            )
+                                || NewlineConfig::insert_extra_newline_tree_sitter(
+                                    &buffer,
+                                    start..end,
+                                );
+
+                            let mut newline_config = NewlineConfig::Newline {
+                                additional_indent: IndentSize::spaces(0),
+                                extra_line_additional_indent: if needs_extra_newline {
+                                    Some(IndentSize::spaces(0))
+                                } else {
+                                    None
+                                },
+                                prevent_auto_indent: false,
+                            };
 
                             let comment_delimiter = maybe!({
                                 if !selection_is_empty {
@@ -4823,7 +4838,7 @@ impl Editor {
                                     &start_point,
                                     &buffer,
                                     language,
-                                    &mut newline_formatting,
+                                    &mut newline_config,
                                 );
                             });
 
@@ -4840,72 +4855,82 @@ impl Editor {
                                     &start_point,
                                     &buffer,
                                     language,
-                                    &mut newline_formatting,
+                                    &mut newline_config,
                                 );
                             });
 
                             (
                                 comment_delimiter.or(doc_delimiter).or(list_delimiter),
-                                newline_formatting,
+                                newline_config,
                             )
                         } else {
-                            (None, NewlineFormatting::default())
+                            (
+                                None,
+                                NewlineConfig::Newline {
+                                    additional_indent: IndentSize::spaces(0),
+                                    extra_line_additional_indent: None,
+                                    prevent_auto_indent: false,
+                                },
+                            )
                         };
 
-                        let (edit_start, new_text) = if let Some(action) =
-                            &newline_formatting.list_line_action
-                        {
-                            let row_start = buffer.point_to_offset(Point::new(start_point.row, 0));
-                            match action {
-                                ListLineAction::ClearLine => (row_start, String::new()),
-                                ListLineAction::UnindentLine(continuation) => {
-                                    let tab_size = language_scope
-                                        .as_ref()
-                                        .map(|_| multi_buffer.language_settings(cx).tab_size)
-                                        .unwrap_or(NonZeroU32::new(4).unwrap());
-                                    let tab_size_indent = IndentSize::spaces(tab_size.get());
-                                    let reduced_indent =
-                                        existing_indent.with_delta(Ordering::Less, tab_size_indent);
-                                    let mut new_text = String::new();
-                                    new_text.extend(reduced_indent.chars());
-                                    new_text.push_str(continuation);
-                                    (row_start, new_text)
-                                }
+                        let (edit_start, new_text, prevent_auto_indent) = match &newline_config {
+                            NewlineConfig::ClearCurrentLine => {
+                                let row_start =
+                                    buffer.point_to_offset(Point::new(start_point.row, 0));
+                                (row_start, String::new(), false)
                             }
-                        } else {
-                            let capacity_for_delimiter =
-                                delimiter.as_deref().map(str::len).unwrap_or_default();
-                            let mut new_text = String::with_capacity(
-                                1 + capacity_for_delimiter
-                                    + existing_indent.len as usize
-                                    + newline_formatting.indent_on_newline.len as usize
-                                    + newline_formatting.indent_on_extra_newline.len as usize,
-                            );
-                            new_text.push('\n');
-                            new_text.extend(existing_indent.chars());
-                            new_text.extend(newline_formatting.indent_on_newline.chars());
-
-                            if let Some(delimiter) = &delimiter {
-                                new_text.push_str(delimiter);
+                            NewlineConfig::UnindentCurrentLine { continuation } => {
+                                let row_start =
+                                    buffer.point_to_offset(Point::new(start_point.row, 0));
+                                let tab_size = language_scope
+                                    .as_ref()
+                                    .map(|_| multi_buffer.language_settings(cx).tab_size)
+                                    .unwrap_or(NonZeroU32::new(4).unwrap());
+                                let tab_size_indent = IndentSize::spaces(tab_size.get());
+                                let reduced_indent =
+                                    existing_indent.with_delta(Ordering::Less, tab_size_indent);
+                                let mut new_text = String::new();
+                                new_text.extend(reduced_indent.chars());
+                                new_text.push_str(continuation);
+                                (row_start, new_text, false)
                             }
-
-                            if newline_formatting.insert_extra_newline {
+                            NewlineConfig::Newline {
+                                additional_indent,
+                                extra_line_additional_indent,
+                                prevent_auto_indent,
+                            } => {
+                                let capacity_for_delimiter =
+                                    delimiter.as_deref().map(str::len).unwrap_or_default();
+                                let extra_line_len = extra_line_additional_indent
+                                    .map(|i| 1 + existing_indent.len as usize + i.len as usize)
+                                    .unwrap_or(0);
+                                let mut new_text = String::with_capacity(
+                                    1 + capacity_for_delimiter
+                                        + existing_indent.len as usize
+                                        + additional_indent.len as usize
+                                        + extra_line_len,
+                                );
                                 new_text.push('\n');
                                 new_text.extend(existing_indent.chars());
-                                new_text.extend(newline_formatting.indent_on_extra_newline.chars());
+                                new_text.extend(additional_indent.chars());
+                                if let Some(delimiter) = &delimiter {
+                                    new_text.push_str(delimiter);
+                                }
+                                if let Some(extra_indent) = extra_line_additional_indent {
+                                    new_text.push('\n');
+                                    new_text.extend(existing_indent.chars());
+                                    new_text.extend(extra_indent.chars());
+                                }
+                                (start, new_text, *prevent_auto_indent)
                             }
-
-                            (start, new_text)
                         };
 
                         let anchor = buffer.anchor_after(end);
                         let new_selection = selection.map(|_| anchor);
                         (
-                            (
-                                (edit_start..end, new_text),
-                                newline_formatting.prevent_auto_indent,
-                            ),
-                            (newline_formatting.insert_extra_newline, new_selection),
+                            ((edit_start..end, new_text), prevent_auto_indent),
+                            (newline_config.has_extra_line(), new_selection),
                         )
                     })
                     .unzip()
@@ -23398,7 +23423,7 @@ fn documentation_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
-    newline_formatting: &mut NewlineFormatting,
+    newline_config: &mut NewlineConfig,
 ) -> Option<Arc<str>> {
     let BlockCommentConfig {
         start: start_tag,
@@ -23450,6 +23475,9 @@ fn documentation_delimiter_for_newline(
         }
     };
 
+    let mut needs_extra_line = false;
+    let mut extra_line_additional_indent = IndentSize::spaces(0);
+
     let cursor_is_before_end_tag_if_exists = {
         let mut char_position = 0u32;
         let mut end_tag_offset = None;
@@ -23467,11 +23495,11 @@ fn documentation_delimiter_for_newline(
             let cursor_is_before_end_tag = column <= end_tag_offset;
             if cursor_is_after_start_tag {
                 if cursor_is_before_end_tag {
-                    newline_formatting.insert_extra_newline = true;
+                    needs_extra_line = true;
                 }
                 let cursor_is_at_start_of_end_tag = column == end_tag_offset;
                 if cursor_is_at_start_of_end_tag {
-                    newline_formatting.indent_on_extra_newline.len = *len;
+                    extra_line_additional_indent.len = *len;
                 }
             }
             cursor_is_before_end_tag
@@ -23483,10 +23511,21 @@ fn documentation_delimiter_for_newline(
     if (cursor_is_after_start_tag || cursor_is_after_delimiter)
         && cursor_is_before_end_tag_if_exists
     {
-        if cursor_is_after_start_tag {
-            newline_formatting.indent_on_newline.len = *len;
-        }
-        newline_formatting.prevent_auto_indent = true;
+        let additional_indent = if cursor_is_after_start_tag {
+            IndentSize::spaces(*len)
+        } else {
+            IndentSize::spaces(0)
+        };
+
+        *newline_config = NewlineConfig::Newline {
+            additional_indent,
+            extra_line_additional_indent: if needs_extra_line {
+                Some(extra_line_additional_indent)
+            } else {
+                None
+            },
+            prevent_auto_indent: true,
+        };
         Some(delimiter.clone())
     } else {
         None
@@ -23497,7 +23536,7 @@ fn list_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
-    newline_formatting: &mut NewlineFormatting,
+    newline_config: &mut NewlineConfig,
 ) -> Option<Arc<str>> {
     let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
@@ -23537,10 +23576,11 @@ fn list_delimiter_for_newline(
         } else {
             if start_point.column as usize == end_of_prefix {
                 if num_of_whitespaces == 0 {
-                    newline_formatting.list_line_action = Some(ListLineAction::ClearLine);
+                    *newline_config = NewlineConfig::ClearCurrentLine;
                 } else {
-                    newline_formatting.list_line_action =
-                        Some(ListLineAction::UnindentLine(continuation.clone()));
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: continuation.clone(),
+                    };
                 }
             }
             None
@@ -23597,37 +23637,28 @@ fn list_delimiter_for_newline(
 }
 
 #[derive(Debug)]
-enum ListLineAction {
-    ClearLine,
-    UnindentLine(Arc<str>),
+enum NewlineConfig {
+    /// Insert newline with optional additional indent and optional extra blank line
+    Newline {
+        additional_indent: IndentSize,
+        extra_line_additional_indent: Option<IndentSize>,
+        prevent_auto_indent: bool,
+    },
+    /// Clear the current line
+    ClearCurrentLine,
+    /// Unindent the current line and add continuation
+    UnindentCurrentLine { continuation: Arc<str> },
 }
 
-#[derive(Debug, Default)]
-struct NewlineFormatting {
-    insert_extra_newline: bool,
-    indent_on_newline: IndentSize,
-    indent_on_extra_newline: IndentSize,
-    prevent_auto_indent: bool,
-    list_line_action: Option<ListLineAction>,
-}
-
-impl NewlineFormatting {
-    fn new(
-        buffer: &MultiBufferSnapshot,
-        range: Range<MultiBufferOffset>,
-        language: &LanguageScope,
-    ) -> Self {
-        Self {
-            insert_extra_newline: Self::insert_extra_newline_brackets(
-                buffer,
-                range.clone(),
-                language,
-            ) || Self::insert_extra_newline_tree_sitter(buffer, range),
-            indent_on_newline: IndentSize::spaces(0),
-            indent_on_extra_newline: IndentSize::spaces(0),
-            prevent_auto_indent: false,
-            list_line_action: None,
-        }
+impl NewlineConfig {
+    fn has_extra_line(&self) -> bool {
+        matches!(
+            self,
+            Self::Newline {
+                extra_line_additional_indent: Some(_),
+                ..
+            }
+        )
     }
 
     fn insert_extra_newline_brackets(
