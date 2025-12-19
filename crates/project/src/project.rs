@@ -83,7 +83,7 @@ use gpui::{
     Task, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
     LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
     ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
@@ -5671,7 +5671,9 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.file().map(|file| ProjectPath {
+        let file = self.file()?;
+
+        (!matches!(file.disk_state(), DiskState::Historic { .. })).then(|| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })

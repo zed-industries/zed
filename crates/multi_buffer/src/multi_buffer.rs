@@ -19,9 +19,9 @@ use gpui::{App, Context, Entity, EntityId, EventEmitter};
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability,
-    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState,
-    File, IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File,
+    IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
     ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
@@ -2980,7 +2980,7 @@ impl MultiBuffer {
             *is_dirty |= buffer.is_dirty();
             *has_deleted_file |= buffer
                 .file()
-                .is_some_and(|file| file.disk_state() == DiskState::Deleted);
+                .is_some_and(|file| file.disk_state().is_deleted());
             *has_conflict |= buffer.has_conflict();
         }
         if edited {

@@ -3235,7 +3235,8 @@ impl language::File for File {
             entry_id: self.entry_id.map(|id| id.to_proto()),
             path: self.path.as_ref().to_proto(),
             mtime: self.disk_state.mtime().map(|time| time.into()),
-            is_deleted: self.disk_state == DiskState::Deleted,
+            is_deleted: self.disk_state.is_deleted(),
+            is_historic: matches!(self.disk_state, DiskState::Historic { .. }),
         }
     }
 
@@ -3296,7 +3297,11 @@ impl File {
             "worktree id does not match file"
         );
 
-        let disk_state = if proto.is_deleted {
+        let disk_state = if proto.is_historic {
+            DiskState::Historic {
+                was_deleted: proto.is_deleted,
+            }
+        } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
             DiskState::Present { mtime }
