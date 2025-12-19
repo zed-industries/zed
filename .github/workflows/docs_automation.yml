@@ -85,71 +85,74 @@ jobs:
 
       # Phase 0: Guardrails are loaded via AGENTS.md in each phase
 
-      # Phase 2: Explore Repository (Read-Only)
+      # Phase 2: Explore Repository (Read-Only - default)
       - name: "Phase 2: Explore Repository"
         id: phase2
         run: |
           "$DROID_BIN" exec \
-            --model "$DROID_MODEL" \
-            --autonomy read-only \
-            --prompt-file .factory/prompts/docs-automation/phase2-explore.md \
-            --output /tmp/phase2-output.json \
-            --format json
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase2-explore.md \
+            > /tmp/phase2-output.txt 2>&1 || true
           echo "Repository exploration complete"
-          cat /tmp/phase2-output.json
+          cat /tmp/phase2-output.txt
 
-      # Phase 3: Analyze Changes (Read-Only)
+      # Phase 3: Analyze Changes (Read-Only - default)
       - name: "Phase 3: Analyze Changes"
         id: phase3
         run: |
           CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
+          echo "Analyzing changes in: $CHANGED_FILES"
+          
+          # Build prompt with context
+          cat > /tmp/phase3-prompt.md << 'EOF'
+          $(cat .factory/prompts/docs-automation/phase3-analyze.md)
+          
+          ## Context
+          
+          ### Changed Files
+          $CHANGED_FILES
+          
+          ### Phase 2 Output
+          $(cat /tmp/phase2-output.txt)
+          EOF
+          
           "$DROID_BIN" exec \
-            --model "$DROID_MODEL" \
-            --autonomy read-only \
-            --prompt-file .factory/prompts/docs-automation/phase3-analyze.md \
-            --context "Changed files: $CHANGED_FILES" \
-            --context-file /tmp/phase2-output.json \
-            --output /tmp/phase3-output.md \
-            --format markdown
+            -m "$DROID_MODEL" \
+            "$(cat .factory/prompts/docs-automation/phase3-analyze.md)
+            
+            Changed files: $CHANGED_FILES" \
+            > /tmp/phase3-output.md 2>&1 || true
           echo "Change analysis complete"
           cat /tmp/phase3-output.md
 
-      # Phase 4: Plan Documentation Impact (Read-Only)
+      # Phase 4: Plan Documentation Impact (Read-Only - default)
       - name: "Phase 4: Plan Documentation Impact"
         id: phase4
         run: |
           "$DROID_BIN" exec \
-            --model "$DROID_MODEL" \
-            --autonomy read-only \
-            --prompt-file .factory/prompts/docs-automation/phase4-plan.md \
-            --context-file /tmp/phase3-output.md \
-            --context-file docs/AGENTS.md \
-            --output /tmp/phase4-plan.md \
-            --format markdown
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase4-plan.md \
+            > /tmp/phase4-plan.md 2>&1 || true
           echo "Documentation plan complete"
           cat /tmp/phase4-plan.md
           
           # Check if updates are required
-          if grep -q "Documentation Updates Required: No" /tmp/phase4-plan.md; then
+          if grep -q "NO_UPDATES_REQUIRED" /tmp/phase4-plan.md; then
             echo "updates_required=false" >> "$GITHUB_OUTPUT"
           else
             echo "updates_required=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Phase 5: Apply Plan (Write-Enabled)
+      # Phase 5: Apply Plan (Write-Enabled with --auto medium)
       - name: "Phase 5: Apply Documentation Plan"
         id: phase5
         if: steps.phase4.outputs.updates_required == 'true'
         run: |
           "$DROID_BIN" exec \
-            --model "$DROID_MODEL" \
-            --autonomy medium \
-            --prompt-file .factory/prompts/docs-automation/phase5-apply.md \
-            --context-file /tmp/phase4-plan.md \
-            --context-file docs/AGENTS.md \
-            --context-file docs/.rules \
-            --output /tmp/phase5-report.md \
-            --format markdown
+            -m "$DROID_MODEL" \
+            --auto medium \
+            -f .factory/prompts/docs-automation/phase5-apply.md \
+            > /tmp/phase5-report.md 2>&1 || true
           echo "Documentation updates applied"
           cat /tmp/phase5-report.md
 
@@ -166,7 +169,7 @@ jobs:
           
           echo "Prettier formatting complete"
 
-      # Phase 6: Summarize Changes
+      # Phase 6: Summarize Changes (Read-Only - default)
       - name: "Phase 6: Summarize Changes"
         id: phase6
         if: steps.phase4.outputs.updates_required == 'true'
@@ -175,14 +178,9 @@ jobs:
           git diff docs/src/ > /tmp/docs-diff.txt || true
           
           "$DROID_BIN" exec \
-            --model "$DROID_MODEL" \
-            --autonomy read-only \
-            --prompt-file .factory/prompts/docs-automation/phase6-summarize.md \
-            --context-file /tmp/phase5-report.md \
-            --context-file /tmp/phase3-output.md \
-            --context "Trigger SHA: ${{ steps.changed.outputs.sha }}" \
-            --output /tmp/phase6-summary.md \
-            --format markdown
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase6-summarize.md \
+            > /tmp/phase6-summary.md 2>&1 || true
           echo "Summary generated"
           cat /tmp/phase6-summary.md
 
