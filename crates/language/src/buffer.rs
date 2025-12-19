@@ -1360,7 +1360,7 @@ impl Buffer {
 
         let operation = base_buffer.update(cx, |base_buffer, cx| {
             // cx.emit(BufferEvent::DiffBaseChanged);
-            base_buffer.edit(edits, None, cx)
+            base_buffer.edit(edits, None, true, cx)
         });
 
         if let Some(operation) = operation
@@ -2119,7 +2119,7 @@ impl Buffer {
             .collect();
 
         let preserve_preview = self.preserve_preview();
-        self.edit(edits, None, cx);
+        self.edit(edits, None, true, cx);
         if preserve_preview {
             self.refresh_preview();
         }
@@ -2222,7 +2222,7 @@ impl Buffer {
                 break;
             }
         }
-        self.edit([(offset..len, "\n")], None, cx);
+        self.edit([(offset..len, "\n")], None, true, cx);
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
@@ -2258,7 +2258,7 @@ impl Buffer {
 
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
-        self.edit(adjusted_edits, None, cx);
+        self.edit(adjusted_edits, None, true, cx);
         self.end_transaction(cx)
     }
 
@@ -2557,7 +2557,7 @@ impl Buffer {
         T: Into<Arc<str>>,
     {
         self.autoindent_requests.clear();
-        self.edit([(0..self.len(), text)], None, cx)
+        self.edit([(0..self.len(), text)], None, true, cx)
     }
 
     /// Appends the given text to the end of the buffer.
@@ -2565,7 +2565,7 @@ impl Buffer {
     where
         T: Into<Arc<str>>,
     {
-        self.edit([(self.len()..self.len(), text)], None, cx)
+        self.edit([(self.len()..self.len(), text)], None, true, cx)
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
@@ -2581,6 +2581,7 @@ impl Buffer {
         &mut self,
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
+        coalesce_adjacent: bool,
         cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
@@ -2599,8 +2600,17 @@ impl Buffer {
             }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some((prev_range, prev_text)) = edits.last_mut()
-                    && prev_range.end > range.start
+                let prev_edit = edits.last_mut();
+                let should_coalesce = prev_edit.as_ref().is_some_and(|(prev_range, _)| {
+                    if coalesce_adjacent {
+                        prev_range.end >= range.start
+                    } else {
+                        prev_range.end > range.start
+                    }
+                });
+
+                if let Some((prev_range, prev_text)) = prev_edit
+                    && should_coalesce
                 {
                     prev_range.end = cmp::max(prev_range.end, range.end);
                     *prev_text = format!("{prev_text}{new_text}").into();
@@ -2787,6 +2797,7 @@ impl Buffer {
         self.edit(
             [(position..position, "\n")],
             Some(AutoindentMode::EachLine),
+            true,
             cx,
         );
 
@@ -2798,6 +2809,7 @@ impl Buffer {
             self.edit(
                 [(position..position, "\n")],
                 Some(AutoindentMode::EachLine),
+                true,
                 cx,
             );
         }
@@ -2806,6 +2818,7 @@ impl Buffer {
             self.edit(
                 [(position..position, "\n")],
                 Some(AutoindentMode::EachLine),
+                true,
                 cx,
             );
             position.row += 1;
@@ -2817,6 +2830,7 @@ impl Buffer {
             self.edit(
                 [(position..position, "\n")],
                 Some(AutoindentMode::EachLine),
+                true,
                 cx,
             );
         }
@@ -3161,7 +3175,7 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         let edits = self.edits_for_marked_text(marked_string);
-        self.edit(edits, autoindent_mode, cx);
+        self.edit(edits, autoindent_mode, true, cx);
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -3193,7 +3207,7 @@ impl Buffer {
             edits.push((range, new_text));
         }
         log::info!("mutating buffer {:?} with {:?}", self.replica_id(), edits);
-        self.edit(edits, None, cx);
+        self.edit(edits, None, true, cx);
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut Context<Self>) {

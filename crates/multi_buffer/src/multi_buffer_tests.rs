@@ -56,7 +56,9 @@ fn test_singleton(cx: &mut App) {
     );
     assert_consistent_line_numbers(&snapshot);
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(1..3, "XXX\n")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(1..3, "XXX\n")], None, true, cx)
+    });
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
     assert_eq!(snapshot.text(), buffer.read(cx).text());
@@ -94,11 +96,11 @@ fn test_remote(cx: &mut App) {
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "a");
 
-    guest_buffer.update(cx, |buffer, cx| buffer.edit([(1..1, "b")], None, cx));
+    guest_buffer.update(cx, |buffer, cx| buffer.edit([(1..1, "b")], None, true, cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "ab");
 
-    guest_buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "c")], None, cx));
+    guest_buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "c")], None, true, cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "abc");
 }
@@ -262,6 +264,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
                 (Point::new(2, 1)..Point::new(2, 3), text),
             ],
             None,
+            true,
             cx,
         );
     });
@@ -569,7 +572,12 @@ async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Insert a newline within an insertion hunk
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
+        multibuffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), "__\n__")],
+            None,
+            true,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -592,7 +600,7 @@ async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Delete the newline before a deleted hunk.
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(5, 4)..Point::new(6, 0), "")], None, cx);
+        multibuffer.edit([(Point::new(5, 4)..Point::new(6, 0), "")], None, true, cx);
     });
     assert_new_snapshot(
         &multibuffer,
@@ -634,7 +642,7 @@ async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     // Cannot (yet) insert at the beginning of a deleted hunk.
     // (because it would put the newline in the wrong place)
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(6, 0)..Point::new(6, 0), "\n")], None, cx);
+        multibuffer.edit([(Point::new(6, 0)..Point::new(6, 0), "\n")], None, true, cx);
     });
     assert_new_snapshot(
         &multibuffer,
@@ -657,7 +665,12 @@ async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     // Replace a range that ends in a deleted hunk.
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.edit([(Point::new(5, 2)..Point::new(6, 2), "fty-")], None, cx);
+        multibuffer.edit(
+            [(Point::new(5, 2)..Point::new(6, 2), "fty-")],
+            None,
+            true,
+            cx,
+        );
     });
     assert_new_snapshot(
         &multibuffer,
@@ -994,7 +1007,7 @@ async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     });
 
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "a\nb\nc")], None, cx);
+        buffer.edit([(0..0, "a\nb\nc")], None, true, cx);
         diff.update(cx, |diff, cx| {
             diff.recalculate_diff_sync(&buffer.text_snapshot(), cx);
         });
@@ -1024,8 +1037,8 @@ fn test_singleton_multibuffer_anchors(cx: &mut App) {
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
     let old_snapshot = multibuffer.read(cx).snapshot(cx);
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "X")], None, cx);
-        buffer.edit([(5..5, "Y")], None, cx);
+        buffer.edit([(0..0, "X")], None, true, cx);
+        buffer.edit([(5..5, "Y")], None, true, cx);
     });
     let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
@@ -1094,12 +1107,12 @@ fn test_multibuffer_anchors(cx: &mut App) {
     );
 
     buffer_1.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "W")], None, cx);
-        buffer.edit([(5..5, "X")], None, cx);
+        buffer.edit([(0..0, "W")], None, true, cx);
+        buffer.edit([(5..5, "X")], None, true, cx);
     });
     buffer_2.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "Y")], None, cx);
-        buffer.edit([(6..6, "Z")], None, cx);
+        buffer.edit([(0..0, "Y")], None, true, cx);
+        buffer.edit([(6..6, "Z")], None, true, cx);
     });
     let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
@@ -1176,7 +1189,9 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
 
     // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
     // Add an excerpt from buffer 1 that spans this new insertion.
-    buffer_1.update(cx, |buffer, cx| buffer.edit([(4..4, "123")], None, cx));
+    buffer_1.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "123")], None, true, cx)
+    });
     let excerpt_id_1 = multibuffer.update(cx, |multibuffer, cx| {
         multibuffer
             .push_excerpts(buffer_1.clone(), [ExcerptRange::new(0..7)], cx)
@@ -1740,7 +1755,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
         },
     );
 
-    buf1.update(cx, |buffer, cx| buffer.edit([(0..5, "")], None, cx));
+    buf1.update(cx, |buffer, cx| buffer.edit([(0..5, "")], None, true, cx));
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.set_excerpts_for_path(
@@ -3417,6 +3432,7 @@ fn test_history(cx: &mut App) {
                 (Point::new(1, 0)..Point::new(1, 0), "A"),
             ],
             None,
+            true,
             cx,
         );
         multibuffer.edit(
@@ -3425,6 +3441,7 @@ fn test_history(cx: &mut App) {
                 (Point::new(1, 1)..Point::new(1, 1), "B"),
             ],
             None,
+            true,
             cx,
         );
         multibuffer.end_transaction_at(now, cx);
@@ -3445,6 +3462,7 @@ fn test_history(cx: &mut App) {
         multibuffer.edit(
             [(MultiBufferOffset(2)..MultiBufferOffset(2), "C")],
             None,
+            true,
             cx,
         );
         multibuffer.end_transaction_at(now, cx);
@@ -3453,12 +3471,12 @@ fn test_history(cx: &mut App) {
         // Edit buffer 1 independently
         buffer_1.update(cx, |buffer_1, cx| {
             buffer_1.start_transaction_at(now);
-            buffer_1.edit([(3..3, "D")], None, cx);
+            buffer_1.edit([(3..3, "D")], None, true, cx);
             buffer_1.end_transaction_at(now, cx);
 
             now += 2 * group_interval;
             buffer_1.start_transaction_at(now);
-            buffer_1.edit([(4..4, "E")], None, cx);
+            buffer_1.edit([(4..4, "E")], None, true, cx);
             buffer_1.end_transaction_at(now, cx);
         });
         assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");
@@ -3502,6 +3520,7 @@ fn test_history(cx: &mut App) {
         multibuffer.edit(
             [(MultiBufferOffset(0)..MultiBufferOffset(0), "X")],
             None,
+            true,
             cx,
         );
         multibuffer.end_transaction_at(now, cx);

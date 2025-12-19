@@ -77,7 +77,7 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
     );
 
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
+        buffer.edit([(0..0, "1"), (1..1, "2")], None, true, cx)
     });
     assert_eq!(
         messages(&text_thread, cx),
@@ -117,7 +117,7 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
     );
 
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
+        buffer.edit([(4..4, "C"), (5..5, "D")], None, true, cx)
     });
     assert_eq!(
         messages(&text_thread, cx),
@@ -130,7 +130,7 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
     );
 
     // Deleting across message boundaries merges the messages.
-    buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
+    buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, true, cx));
     assert_eq!(
         messages(&text_thread, cx),
         vec![
@@ -202,7 +202,7 @@ fn test_message_splitting(cx: &mut App) {
     );
 
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, cx)
+        buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, true, cx)
     });
 
     let (_, message_2) =
@@ -305,20 +305,26 @@ fn test_messages_for_offsets(cx: &mut App) {
         vec![(message_1.id, Role::User, 0..0)]
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "aaa")], None, true, cx)
+    });
     let message_2 = text_thread
         .update(cx, |text_thread, cx| {
             text_thread.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbb")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "bbb")], None, true, cx)
+    });
 
     let message_3 = text_thread
         .update(cx, |text_thread, cx| {
             text_thread.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "ccc")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(8..8, "ccc")], None, true, cx)
+    });
 
     assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc");
     assert_eq!(
@@ -452,7 +458,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     // Insert a slash command
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
+        buffer.edit([(0..0, "/file src/lib.rs")], None, true, cx);
     });
     assert_text_and_context_ranges(
         &buffer,
@@ -466,7 +472,12 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     // Edit the argument of the slash command.
     buffer.update(cx, |buffer, cx| {
         let edit_offset = buffer.text().find("lib.rs").unwrap();
-        buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
+        buffer.edit(
+            [(edit_offset..edit_offset + "lib".len(), "main")],
+            None,
+            true,
+            cx,
+        );
     });
     assert_text_and_context_ranges(
         &buffer,
@@ -483,6 +494,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         buffer.edit(
             [(edit_offset..edit_offset + "/file".len(), "/unknown")],
             None,
+            true,
             cx,
         );
     });
@@ -691,7 +703,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             .unwrap()
     });
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "a"), (1..1, "b\nc")], None, cx);
+        buffer.edit([(0..0, "a"), (1..1, "b\nc")], None, true, cx);
         buffer.finalize_last_transaction();
     });
     let _message_3 = text_thread.update(cx, |text_thread, cx| {
@@ -855,6 +867,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         buffer.edit(
                             [(offset..offset, format!("\n{}\n", command_text))],
                             None,
+                            true,
                             cx,
                         );
                         offset + 1..offset + 1 + command_text.len()
@@ -1063,20 +1076,26 @@ fn test_mark_cache_anchors(cx: &mut App) {
         "Empty messages should not have any cache anchors."
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "aaa")], None, true, cx)
+    });
     let message_2 = text_thread
         .update(cx, |text_thread, cx| {
             text_thread.insert_message_after(message_1.id, Role::User, MessageStatus::Pending, cx)
         })
         .unwrap();
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbbbbbb")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "bbbbbbb")], None, true, cx)
+    });
     let message_3 = text_thread
         .update(cx, |text_thread, cx| {
             text_thread.insert_message_after(message_2.id, Role::User, MessageStatus::Pending, cx)
         })
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.edit([(12..12, "cccccc")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(12..12, "cccccc")], None, true, cx)
+    });
 
     text_thread.update(cx, |text_thread, cx| {
         text_thread.mark_cache_anchors(cache_configuration, false, cx)
@@ -1147,7 +1166,9 @@ fn test_mark_cache_anchors(cx: &mut App) {
         "All user messages prior to anchor should be marked as cached."
     );
 
-    buffer.update(cx, |buffer, cx| buffer.edit([(14..14, "d")], None, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(14..14, "d")], None, true, cx)
+    });
     text_thread.update(cx, |text_thread, cx| {
         text_thread.mark_cache_anchors(cache_configuration, false, cx)
     });
@@ -1166,7 +1187,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
         ],
         "Modifying a message should invalidate it's cache but leave previous messages."
     );
-    buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "e")], None, cx));
+    buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "e")], None, true, cx));
     text_thread.update(cx, |text_thread, cx| {
         text_thread.mark_cache_anchors(cache_configuration, false, cx)
     });

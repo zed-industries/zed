@@ -1966,7 +1966,7 @@ fn open_local_file(
                         && buffer.read(cx).is_empty()
                     {
                         buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(0..0, initial_contents)], None, cx)
+                            buffer.edit([(0..0, initial_contents)], None, true, cx)
                         });
                     }
                 })

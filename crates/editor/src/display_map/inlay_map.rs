@@ -1446,6 +1446,7 @@ mod tests {
                     (MultiBufferOffset(4)..MultiBufferOffset(4), "z"),
                 ],
                 None,
+                true,
                 cx,
             )
         });
@@ -1460,6 +1461,7 @@ mod tests {
             buffer.edit(
                 [(MultiBufferOffset(4)..MultiBufferOffset(5), "D")],
                 None,
+                true,
                 cx,
             )
         });
@@ -1497,6 +1499,7 @@ mod tests {
             buffer.edit(
                 [(MultiBufferOffset(3)..MultiBufferOffset(3), "JKL")],
                 None,
+                true,
                 cx,
             )
         });

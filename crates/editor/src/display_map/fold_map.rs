@@ -1715,6 +1715,7 @@ mod tests {
                     (Point::new(2, 3)..Point::new(2, 3), "123"),
                 ],
                 None,
+                true,
                 cx,
             );
             buffer.snapshot(cx)
@@ -1739,7 +1740,12 @@ mod tests {
         );
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 6)..Point::new(4, 3), "456")], None, cx);
+            buffer.edit(
+                [(Point::new(2, 6)..Point::new(4, 3), "456")],
+                None,
+                true,
+                cx,
+            );
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =
@@ -1831,6 +1837,7 @@ mod tests {
                 buffer.edit(
                     [(MultiBufferOffset(0)..MultiBufferOffset(1), "12345")],
                     None,
+                    true,
                     cx,
                 );
                 buffer.snapshot(cx)
@@ -1877,7 +1884,7 @@ mod tests {
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
+            buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, true, cx);
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =

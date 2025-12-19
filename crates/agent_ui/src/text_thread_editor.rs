@@ -3404,7 +3404,7 @@ mod tests {
             loop {
                 if role == message_1.role {
                     text_thread.buffer().update(cx, |buffer, cx| {
-                        buffer.edit([(message_1.offset_range, text)], None, cx);
+                        buffer.edit([(message_1.offset_range, text)], None, true, cx);
                     });
                     break;
                 }
@@ -3420,7 +3420,7 @@ mod tests {
                 let message = text_thread.messages(cx).last().unwrap();
                 last_message_id = message.id;
                 text_thread.buffer().update(cx, |buffer, cx| {
-                    buffer.edit([(message.offset_range, text)], None, cx);
+                    buffer.edit([(message.offset_range, text)], None, true, cx);
                 })
             }
 

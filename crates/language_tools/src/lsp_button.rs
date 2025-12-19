@@ -331,6 +331,7 @@ impl LanguageServerState {
                                                 ),
                                             )],
                                             None,
+                                            true,
                                             cx,
                                         );
                                         buffer.set_capability(language::Capability::ReadOnly, cx);

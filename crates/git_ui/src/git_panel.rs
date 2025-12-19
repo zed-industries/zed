@@ -1408,7 +1408,12 @@ impl GitPanel {
                         format!("\n{}\n", file_path_str)
                     };
 
-                    buffer.edit([(insert_position..insert_position, new_entry)], None, cx);
+                    buffer.edit(
+                        [(insert_position..insert_position, new_entry)],
+                        None,
+                        true,
+                        cx,
+                    );
                     should_save = true;
                 })?;
 
@@ -2147,7 +2152,7 @@ impl GitPanel {
                     this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                         let start = buffer.anchor_before(0);
                         let end = buffer.anchor_after(buffer.len());
-                        buffer.edit([(start..end, message)], None, cx);
+                        buffer.edit([(start..end, message)], None, true, cx);
                     });
                 })
                 .log_err();
@@ -2724,7 +2729,7 @@ impl GitPanel {
                             this.update(cx, |this, cx| {
                                 this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                                     let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                                    buffer.edit([(insert_position..insert_position, "\n")], None,true,  cx)
                                 });
                             })?;
                         }
@@ -2735,7 +2740,7 @@ impl GitPanel {
                                     this.update(cx, |this, cx| {
                                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                                             let insert_position = buffer.anchor_before(buffer.len());
-                                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                                            buffer.edit([(insert_position..insert_position, text)], None, true, cx);
                                         });
                                     })?;
                                 }
@@ -5233,7 +5238,7 @@ impl GitPanel {
             self.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
-                buffer.edit([(start..end, message)], None, cx);
+                buffer.edit([(start..end, message)], None, true, cx);
             });
         }
 
@@ -6695,7 +6700,7 @@ mod tests {
             panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
-                buffer.edit([(start..end, "Initial commit message")], None, cx);
+                buffer.edit([(start..end, "Initial commit message")], None, true, cx);
             });
 
             panel.set_amend_pending(true, cx);
@@ -6712,7 +6717,7 @@ mod tests {
             panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
-                buffer.edit([(start..end, "")], None, cx);
+                buffer.edit([(start..end, "")], None, true, cx);
             });
 
             panel.set_amend_pending(true, cx);
@@ -6721,7 +6726,7 @@ mod tests {
             panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
-                buffer.edit([(start..end, "Previous commit message")], None, cx);
+                buffer.edit([(start..end, "Previous commit message")], None, true, cx);
             });
 
             panel.set_amend_pending(false, cx);

@@ -2590,7 +2590,7 @@ mod tests {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
+                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), true, cx);
             };
 
             // indent after "def():"
@@ -2637,6 +2637,7 @@ mod tests {
             buffer.edit(
                 [(argument_ix..argument_ix + 1, "")],
                 Some(AutoindentMode::EachLine),
+                true,
                 cx,
             );
             assert_eq!(
@@ -2656,6 +2657,7 @@ mod tests {
             buffer.edit(
                 [(end_whitespace_ix..buffer.len(), "")],
                 Some(AutoindentMode::EachLine),
+                true,
                 cx,
             );
             assert_eq!(
@@ -2672,7 +2674,7 @@ mod tests {
 
             // reset to a for loop statement
             let statement = "for i in range(10):\n  print(i)\n";
-            buffer.edit([(0..buffer.len(), statement)], None, cx);
+            buffer.edit([(0..buffer.len(), statement)], None, true, cx);
 
             // insert single line comment after each line
             let eol_ixs = statement
@@ -2684,14 +2686,14 @@ mod tests {
                 .enumerate()
                 .map(|(i, &eol_ix)| (eol_ix..eol_ix, format!(" # comment {}", i + 1)))
                 .collect::<Vec<(std::ops::Range<usize>, String)>>();
-            buffer.edit(editions, Some(AutoindentMode::EachLine), cx);
+            buffer.edit(editions, Some(AutoindentMode::EachLine), true, cx);
             assert_eq!(
                 buffer.text(),
                 "for i in range(10): # comment 1\n  print(i) # comment 2\n"
             );
 
             // reset to a simple if statement
-            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
+            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, true, cx);
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);

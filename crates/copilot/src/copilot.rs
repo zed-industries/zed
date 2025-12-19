@@ -1248,7 +1248,9 @@ mod tests {
             }
         );
 
-        buffer_1.update(cx, |buffer, cx| buffer.edit([(5..5, " world")], None, cx));
+        buffer_1.update(cx, |buffer, cx| {
+            buffer.edit([(5..5, " world")], None, true, cx)
+        });
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidChangeTextDocument>()
                 .await,

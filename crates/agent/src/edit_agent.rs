@@ -345,7 +345,7 @@ impl EditAgent {
                 // user made it.
                 let (min_edit_start, max_edit_end) = cx.update(|cx| {
                     let (min_edit_start, max_edit_end) = buffer.update(cx, |buffer, cx| {
-                        buffer.edit(edits.iter().cloned(), None, cx);
+                        buffer.edit(edits.iter().cloned(), None, true, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
                                 edits.iter().map(|(range, _)| &range.end),
