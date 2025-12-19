@@ -4890,7 +4890,7 @@ impl Editor {
                                 let mut new_text = String::new();
                                 new_text.extend(reduced_indent.chars());
                                 new_text.push_str(continuation);
-                                (row_start, new_text, false)
+                                (row_start, new_text, true)
                             }
                             NewlineConfig::Newline {
                                 additional_indent,
