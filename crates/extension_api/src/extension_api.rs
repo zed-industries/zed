@@ -29,26 +29,6 @@ pub use wit::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
     },
-    zed::extension::llm_provider::{
-        CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
-        CompletionRequest as LlmCompletionRequest, CustomModelConfig as LlmCustomModelConfig,
-        DeviceFlowPromptInfo as LlmDeviceFlowPromptInfo, ImageData as LlmImageData,
-        MessageContent as LlmMessageContent, MessageRole as LlmMessageRole,
-        ModelCapabilities as LlmModelCapabilities, ModelInfo as LlmModelInfo,
-        OauthWebAuthConfig as LlmOauthWebAuthConfig, OauthWebAuthResult as LlmOauthWebAuthResult,
-        ProviderInfo as LlmProviderInfo, ProviderSettings as LlmProviderSettings,
-        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
-        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
-        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
-        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
-        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
-        ToolUseJsonParseError as LlmToolUseJsonParseError,
-        delete_credential as llm_delete_credential, get_credential as llm_get_credential,
-        get_env_var as llm_get_env_var, get_provider_settings as llm_get_provider_settings,
-        oauth_open_browser as llm_oauth_open_browser,
-        oauth_send_http_request as llm_oauth_send_http_request,
-        oauth_start_web_auth as llm_oauth_start_web_auth, store_credential as llm_store_credential,
-    },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
@@ -278,93 +258,6 @@ pub trait Extension: Send + Sync {
         _build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         Err("`run_dap_locator` not implemented".to_string())
-    }
-
-    /// Returns information about language model providers offered by this extension.
-    fn llm_providers(&self) -> Vec<LlmProviderInfo> {
-        Vec::new()
-    }
-
-    /// Returns the models available for a provider.
-    fn llm_provider_models(&self, _provider_id: &str) -> Result<Vec<LlmModelInfo>, String> {
-        Ok(Vec::new())
-    }
-
-    /// Returns markdown content to display in the provider's settings UI.
-    /// This can include setup instructions, links to documentation, etc.
-    fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
-        None
-    }
-
-    /// Check if the provider is authenticated.
-    fn llm_provider_is_authenticated(&self, _provider_id: &str) -> bool {
-        false
-    }
-
-    /// Start an OAuth device flow sign-in.
-    /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
-    /// Returns information needed to display the device flow prompt modal to the user.
-    fn llm_provider_start_device_flow_sign_in(
-        &mut self,
-        _provider_id: &str,
-    ) -> Result<LlmDeviceFlowPromptInfo, String> {
-        Err("`llm_provider_start_device_flow_sign_in` not implemented".to_string())
-    }
-
-    /// Poll for device flow sign-in completion.
-    /// This is called after llm_provider_start_device_flow_sign_in returns the user code.
-    /// The extension should poll the OAuth provider until the user authorizes or the flow times out.
-    fn llm_provider_poll_device_flow_sign_in(&mut self, _provider_id: &str) -> Result<(), String> {
-        Err("`llm_provider_poll_device_flow_sign_in` not implemented".to_string())
-    }
-
-    /// Reset credentials for the provider.
-    fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
-        Err("`llm_provider_reset_credentials` not implemented".to_string())
-    }
-
-    /// Count tokens for a request.
-    fn llm_count_tokens(
-        &self,
-        _provider_id: &str,
-        _model_id: &str,
-        _request: &LlmCompletionRequest,
-    ) -> Result<u64, String> {
-        Err("`llm_count_tokens` not implemented".to_string())
-    }
-
-    /// Start streaming a completion from the model.
-    /// Returns a stream ID that can be used with `llm_stream_completion_next` and `llm_stream_completion_close`.
-    fn llm_stream_completion_start(
-        &mut self,
-        _provider_id: &str,
-        _model_id: &str,
-        _request: &LlmCompletionRequest,
-    ) -> Result<String, String> {
-        Err("`llm_stream_completion_start` not implemented".to_string())
-    }
-
-    /// Get the next event from a completion stream.
-    /// Returns `Ok(None)` when the stream is complete.
-    fn llm_stream_completion_next(
-        &mut self,
-        _stream_id: &str,
-    ) -> Result<Option<LlmCompletionEvent>, String> {
-        Err("`llm_stream_completion_next` not implemented".to_string())
-    }
-
-    /// Close a completion stream and release its resources.
-    fn llm_stream_completion_close(&mut self, _stream_id: &str) {
-        // Default implementation does nothing
-    }
-
-    /// Get cache configuration for a model (if prompt caching is supported).
-    fn llm_cache_configuration(
-        &self,
-        _provider_id: &str,
-        _model_id: &str,
-    ) -> Option<LlmCacheConfiguration> {
-        None
     }
 }
 
@@ -623,67 +516,6 @@ impl wit::Guest for Component {
         build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         extension().run_dap_locator(locator_name, build_task)
-    }
-
-    fn llm_providers() -> Vec<LlmProviderInfo> {
-        extension().llm_providers()
-    }
-
-    fn llm_provider_models(provider_id: String) -> Result<Vec<LlmModelInfo>, String> {
-        extension().llm_provider_models(&provider_id)
-    }
-
-    fn llm_provider_settings_markdown(provider_id: String) -> Option<String> {
-        extension().llm_provider_settings_markdown(&provider_id)
-    }
-
-    fn llm_provider_is_authenticated(provider_id: String) -> bool {
-        extension().llm_provider_is_authenticated(&provider_id)
-    }
-
-    fn llm_provider_start_device_flow_sign_in(
-        provider_id: String,
-    ) -> Result<LlmDeviceFlowPromptInfo, String> {
-        extension().llm_provider_start_device_flow_sign_in(&provider_id)
-    }
-
-    fn llm_provider_poll_device_flow_sign_in(provider_id: String) -> Result<(), String> {
-        extension().llm_provider_poll_device_flow_sign_in(&provider_id)
-    }
-
-    fn llm_provider_reset_credentials(provider_id: String) -> Result<(), String> {
-        extension().llm_provider_reset_credentials(&provider_id)
-    }
-
-    fn llm_count_tokens(
-        provider_id: String,
-        model_id: String,
-        request: LlmCompletionRequest,
-    ) -> Result<u64, String> {
-        extension().llm_count_tokens(&provider_id, &model_id, &request)
-    }
-
-    fn llm_stream_completion_start(
-        provider_id: String,
-        model_id: String,
-        request: LlmCompletionRequest,
-    ) -> Result<String, String> {
-        extension().llm_stream_completion_start(&provider_id, &model_id, &request)
-    }
-
-    fn llm_stream_completion_next(stream_id: String) -> Result<Option<LlmCompletionEvent>, String> {
-        extension().llm_stream_completion_next(&stream_id)
-    }
-
-    fn llm_stream_completion_close(stream_id: String) {
-        extension().llm_stream_completion_close(&stream_id)
-    }
-
-    fn llm_cache_configuration(
-        provider_id: String,
-        model_id: String,
-    ) -> Option<LlmCacheConfiguration> {
-        extension().llm_cache_configuration(&provider_id, &model_id)
     }
 }
 
