@@ -1,7 +1,7 @@
 name: "Close Stale Issues"
 on:
   schedule:
-    - cron: "0 8 31 DEC *"
+    - cron: "0 2 * * 5"
   workflow_dispatch:
     inputs:
       debug-only:
