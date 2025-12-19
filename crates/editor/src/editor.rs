@@ -4836,7 +4836,12 @@ impl Editor {
                                     return None;
                                 }
 
-                                return list_delimiter_for_newline(&start_point, &buffer, language);
+                                return list_delimiter_for_newline(
+                                    &start_point,
+                                    &buffer,
+                                    language,
+                                    &mut newline_formatting,
+                                );
                             });
 
                             (
@@ -4847,42 +4852,57 @@ impl Editor {
                             (None, NewlineFormatting::default())
                         };
 
-                        let capacity_for_delimiter =
-                            delimiter.as_deref().map(str::len).unwrap_or_default();
-                        let mut new_text = String::with_capacity(
-                            1 + capacity_for_delimiter
-                                + existing_indent.len as usize
-                                + newline_formatting.indent_on_newline.len as usize
-                                + newline_formatting.indent_on_extra_newline.len as usize,
-                        );
-                        new_text.push('\n');
-                        new_text.extend(existing_indent.chars());
-                        new_text.extend(newline_formatting.indent_on_newline.chars());
-
-                        if let Some(delimiter) = &delimiter {
-                            new_text.push_str(delimiter);
-                        }
-
-                        if newline_formatting.insert_extra_newline {
+                        let (edit_start, new_text) = if let Some(action) =
+                            &newline_formatting.list_line_action
+                        {
+                            let row_start = buffer.point_to_offset(Point::new(start_point.row, 0));
+                            match action {
+                                ListLineAction::ClearLine => (row_start, String::new()),
+                                ListLineAction::UnindentLine(continuation) => {
+                                    let tab_size = language_scope
+                                        .as_ref()
+                                        .map(|_| multi_buffer.language_settings(cx).tab_size)
+                                        .unwrap_or(NonZeroU32::new(4).unwrap());
+                                    let tab_size_indent = IndentSize::spaces(tab_size.get());
+                                    let reduced_indent =
+                                        existing_indent.with_delta(Ordering::Less, tab_size_indent);
+                                    let mut new_text = String::new();
+                                    new_text.extend(reduced_indent.chars());
+                                    new_text.push_str(continuation);
+                                    (row_start, new_text)
+                                }
+                            }
+                        } else {
+                            let capacity_for_delimiter =
+                                delimiter.as_deref().map(str::len).unwrap_or_default();
+                            let mut new_text = String::with_capacity(
+                                1 + capacity_for_delimiter
+                                    + existing_indent.len as usize
+                                    + newline_formatting.indent_on_newline.len as usize
+                                    + newline_formatting.indent_on_extra_newline.len as usize,
+                            );
                             new_text.push('\n');
                             new_text.extend(existing_indent.chars());
-                            new_text.extend(newline_formatting.indent_on_extra_newline.chars());
-                        }
+                            new_text.extend(newline_formatting.indent_on_newline.chars());
 
-                        // let adjusted_start = if list_marker_chars_to_delete > 0 {
-                        //     let row_start = buffer.point_to_offset(Point::new(start_point.row, 0));
-                        //     let indent_offset = existing_indent.len as usize;
-                        //     row_start + indent_offset
-                        // } else {
-                        //     start
-                        // };
+                            if let Some(delimiter) = &delimiter {
+                                new_text.push_str(delimiter);
+                            }
+
+                            if newline_formatting.insert_extra_newline {
+                                new_text.push('\n');
+                                new_text.extend(existing_indent.chars());
+                                new_text.extend(newline_formatting.indent_on_extra_newline.chars());
+                            }
+
+                            (start, new_text)
+                        };
 
                         let anchor = buffer.anchor_after(end);
                         let new_selection = selection.map(|_| anchor);
                         (
                             (
-                                (start..end, new_text),
-                                // (adjusted_start..end, new_text),
+                                (edit_start..end, new_text),
                                 newline_formatting.prevent_auto_indent,
                             ),
                             (newline_formatting.insert_extra_newline, new_selection),
@@ -23477,6 +23497,7 @@ fn list_delimiter_for_newline(
     start_point: &Point,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
+    newline_formatting: &mut NewlineFormatting,
 ) -> Option<Arc<str>> {
     let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
@@ -23506,13 +23527,22 @@ fn list_delimiter_for_newline(
                 }
             })
             .max_by_key(|len| *len)?;
+        let end_of_prefix = num_of_whitespaces + prefix_len;
         let has_content_after_marker = snapshot
             .chars_for_range(range.clone())
-            .skip(num_of_whitespaces + prefix_len)
+            .skip(end_of_prefix)
             .any(|c| !c.is_whitespace());
         if has_content_after_marker {
             Some(continuation.clone())
         } else {
+            if start_point.column as usize == end_of_prefix {
+                if num_of_whitespaces == 0 {
+                    newline_formatting.list_line_action = Some(ListLineAction::ClearLine);
+                } else {
+                    newline_formatting.list_line_action =
+                        Some(ListLineAction::UnindentLine(continuation.clone()));
+                }
+            }
             None
         }
     });
@@ -23566,12 +23596,19 @@ fn list_delimiter_for_newline(
     None
 }
 
+#[derive(Debug)]
+enum ListLineAction {
+    ClearLine,
+    UnindentLine(Arc<str>),
+}
+
 #[derive(Debug, Default)]
 struct NewlineFormatting {
     insert_extra_newline: bool,
     indent_on_newline: IndentSize,
     indent_on_extra_newline: IndentSize,
     prevent_auto_indent: bool,
+    list_line_action: Option<ListLineAction>,
 }
 
 impl NewlineFormatting {
@@ -23589,6 +23626,7 @@ impl NewlineFormatting {
             indent_on_newline: IndentSize::spaces(0),
             indent_on_extra_newline: IndentSize::spaces(0),
             prevent_auto_indent: false,
+            list_line_action: None,
         }
     }
 
