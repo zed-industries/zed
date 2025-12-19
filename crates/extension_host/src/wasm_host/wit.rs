@@ -16,7 +16,7 @@ use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 
-use crate::wasm_host::wit::since_v0_8_0::dap::StartDebuggingRequestArgumentsRequest;
+use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
@@ -33,19 +33,6 @@ pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range, SlashCommand,
     zed::extension::context_server::ContextServerConfiguration,
-    zed::extension::llm_provider::{
-        CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
-        CompletionRequest as LlmCompletionRequest, DeviceFlowPromptInfo as LlmDeviceFlowPromptInfo,
-        ImageData as LlmImageData, MessageContent as LlmMessageContent,
-        MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
-        ModelInfo as LlmModelInfo, ProviderInfo as LlmProviderInfo,
-        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
-        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
-        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
-        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
-        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
-        ToolUseJsonParseError as LlmToolUseJsonParseError,
-    },
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
@@ -1020,20 +1007,6 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<DebugAdapterBinary, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                let dap_binary = ext
-                    .call_get_dap_binary(
-                        store,
-                        &adapter_name,
-                        &task.try_into()?,
-                        user_installed_path.as_ref().and_then(|p| p.to_str()),
-                        resource,
-                    )
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(dap_binary))
-            }
             Extension::V0_6_0(ext) => {
                 let dap_binary = ext
                     .call_get_dap_binary(
@@ -1059,16 +1032,6 @@ impl Extension {
         config: serde_json::Value,
     ) -> Result<Result<StartDebuggingRequestArgumentsRequest, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                let config =
-                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
-                let result = ext
-                    .call_dap_request_kind(store, &adapter_name, &config)
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(result))
-            }
             Extension::V0_6_0(ext) => {
                 let config =
                     serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
@@ -1089,15 +1052,6 @@ impl Extension {
         config: ZedDebugConfig,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                let config = config.into();
-                let result = ext
-                    .call_dap_config_to_scenario(store, &config)
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(result.try_into()?))
-            }
             Extension::V0_6_0(ext) => {
                 let config = config.into();
                 let dap_binary = ext
@@ -1120,20 +1074,6 @@ impl Extension {
         debug_adapter_name: String,
     ) -> Result<Option<DebugScenario>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                let build_config_template = build_config_template.into();
-                let result = ext
-                    .call_dap_locator_create_scenario(
-                        store,
-                        &locator_name,
-                        &build_config_template,
-                        &resolved_label,
-                        &debug_adapter_name,
-                    )
-                    .await?;
-
-                Ok(result.map(TryInto::try_into).transpose()?)
-            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = build_config_template.into();
                 let dap_binary = ext
@@ -1159,15 +1099,6 @@ impl Extension {
         resolved_build_task: SpawnInTerminal,
     ) -> Result<Result<DebugRequest, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                let build_config_template = resolved_build_task.try_into()?;
-                let dap_request = ext
-                    .call_run_dap_locator(store, &locator_name, &build_config_template)
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(dap_request.into()))
-            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
@@ -1178,174 +1109,6 @@ impl Extension {
                 Ok(Ok(dap_request.into()))
             }
             _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
-        }
-    }
-
-    pub async fn call_llm_providers(
-        &self,
-        store: &mut Store<WasmState>,
-    ) -> Result<Vec<latest::llm_provider::ProviderInfo>> {
-        match self {
-            Extension::V0_8_0(ext) => ext.call_llm_providers(store).await,
-            _ => Ok(Vec::new()),
-        }
-    }
-
-    pub async fn call_llm_provider_models(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<Result<Vec<latest::llm_provider::ModelInfo>, String>> {
-        match self {
-            Extension::V0_8_0(ext) => ext.call_llm_provider_models(store, provider_id).await,
-            _ => anyhow::bail!("`llm_provider_models` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_provider_settings_markdown(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<Option<String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_settings_markdown(store, provider_id)
-                    .await
-            }
-            _ => Ok(None),
-        }
-    }
-
-    pub async fn call_llm_provider_is_authenticated(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<bool> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_is_authenticated(store, provider_id)
-                    .await
-            }
-            _ => Ok(false),
-        }
-    }
-
-    pub async fn call_llm_provider_start_device_flow_sign_in(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<Result<LlmDeviceFlowPromptInfo, String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_start_device_flow_sign_in(store, provider_id)
-                    .await
-            }
-            _ => {
-                anyhow::bail!(
-                    "`llm_provider_start_device_flow_sign_in` not available prior to v0.8.0"
-                )
-            }
-        }
-    }
-
-    pub async fn call_llm_provider_poll_device_flow_sign_in(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<Result<(), String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_poll_device_flow_sign_in(store, provider_id)
-                    .await
-            }
-            _ => {
-                anyhow::bail!(
-                    "`llm_provider_poll_device_flow_sign_in` not available prior to v0.8.0"
-                )
-            }
-        }
-    }
-
-    pub async fn call_llm_provider_reset_credentials(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-    ) -> Result<Result<(), String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_reset_credentials(store, provider_id)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_provider_reset_credentials` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_count_tokens(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-        model_id: &str,
-        request: &latest::llm_provider::CompletionRequest,
-    ) -> Result<Result<u64, String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_count_tokens(store, provider_id, model_id, request)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_count_tokens` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_stream_completion_start(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-        model_id: &str,
-        request: &latest::llm_provider::CompletionRequest,
-    ) -> Result<Result<String, String>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_stream_completion_start(store, provider_id, model_id, request)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_stream_completion_start` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_stream_completion_next(
-        &self,
-        store: &mut Store<WasmState>,
-        stream_id: &str,
-    ) -> Result<Result<Option<latest::llm_provider::CompletionEvent>, String>> {
-        match self {
-            Extension::V0_8_0(ext) => ext.call_llm_stream_completion_next(store, stream_id).await,
-            _ => anyhow::bail!("`llm_stream_completion_next` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_stream_completion_close(
-        &self,
-        store: &mut Store<WasmState>,
-        stream_id: &str,
-    ) -> Result<()> {
-        match self {
-            Extension::V0_8_0(ext) => ext.call_llm_stream_completion_close(store, stream_id).await,
-            _ => anyhow::bail!("`llm_stream_completion_close` not available prior to v0.8.0"),
-        }
-    }
-
-    pub async fn call_llm_cache_configuration(
-        &self,
-        store: &mut Store<WasmState>,
-        provider_id: &str,
-        model_id: &str,
-    ) -> Result<Option<latest::llm_provider::CacheConfiguration>> {
-        match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_llm_cache_configuration(store, provider_id, model_id)
-                    .await
-            }
-            _ => Ok(None),
         }
     }
 }
