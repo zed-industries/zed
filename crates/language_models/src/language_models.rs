@@ -8,17 +8,15 @@ use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod extension;
-mod google_ai_api_key;
 pub mod provider;
 mod settings;
 
 pub use crate::extension::init_proxy as init_extension_proxy;
-pub use crate::google_ai_api_key::api_key_for_gemini_cli;
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
-use crate::provider::google::GoogleLanguageModelProvider;
+pub use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
