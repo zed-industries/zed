@@ -729,10 +729,6 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
-        &self.prompt_store
-    }
-
     pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
         &self.history_store
     }
@@ -765,6 +761,16 @@ impl AgentPanel {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
         }
+    }
+
+    /// Returns a reference to the history store used by this panel.
+    pub fn history_store(&self) -> &Entity<agent::HistoryStore> {
+        &self.history_store
+    }
+
+    /// Returns a reference to the prompt store if available.
+    pub fn prompt_store(&self) -> Option<&Entity<PromptStore>> {
+        self.prompt_store.as_ref()
     }
 
     fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {

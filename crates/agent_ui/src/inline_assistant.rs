@@ -262,7 +262,7 @@ impl InlineAssistant {
         };
         let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
+        let prompt_store = agent_panel.prompt_store().cloned();
         let thread_store = agent_panel.thread_store().clone();
 
         let handle_assist =

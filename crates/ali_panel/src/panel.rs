@@ -2,19 +2,26 @@
 //!
 //! A bottom-docked panel that provides always-on access to Ali,
 //! the Chief of Staff who orchestrates all Convergio agents.
+//! This panel embeds a full chat interface directly in the bottom dock.
 
 use crate::AliPanelSettings;
-use agent_ui::{ExternalAgent, NewExternalAgentThread};
+use agent::HistoryStore;
+use agent_servers::CustomAgentServer;
+use agent_ui::acp::AcpThreadView;
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use fs::Fs;
 use gpui::{
-    actions, div, prelude::*, Action, App, AsyncWindowContext, Context, Entity,
+    actions, div, prelude::*, Action, AnyView, App, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels,
     Render, Styled, Subscription, WeakEntity, Window,
 };
+use project::Project;
+use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
-use ui::{prelude::*, Button, ButtonStyle, Icon, IconName, IconSize, Label};
+use std::rc::Rc;
+use std::sync::Arc;
+use ui::{prelude::*, Icon, IconName, IconSize, Label};
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -29,15 +36,8 @@ actions!(
     [
         ToggleFocus,
         InvokeAli,
-        SendToAli,
     ]
 );
-
-#[derive(Clone, Debug)]
-pub struct ActiveAgent {
-    pub name: String,
-    pub status: String,
-}
 
 #[derive(Serialize, Deserialize)]
 struct SerializedAliPanel {
@@ -47,10 +47,13 @@ struct SerializedAliPanel {
 pub struct AliPanel {
     focus_handle: FocusHandle,
     height: Option<Pixels>,
-    input_editor: Entity<Editor>,
-    active_agents: Vec<ActiveAgent>,
-    is_expanded: bool,
-    _input_subscription: Subscription,
+    thread_view: Option<Entity<AcpThreadView>>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
+    fs: Arc<dyn Fs>,
+    _subscription: Option<Subscription>,
 }
 
 pub fn init(cx: &mut App) {
@@ -61,59 +64,55 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<AliPanel>(window, cx);
         });
-
-        // InvokeAli opens a new Ali chat thread
-        workspace.register_action(|_workspace, _: &InvokeAli, window, cx| {
-            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-                name: ALI_SERVER_NAME.into()
-            });
-            window.dispatch_action(action.boxed_clone(), cx);
-        });
     })
     .detach();
 }
 
 impl AliPanel {
-    pub fn new(_workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: &Workspace,
+        project: Entity<Project>,
+        history_store: Entity<HistoryStore>,
+        prompt_store: Option<Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
+        let weak_workspace = workspace.weak_handle();
 
-        let input_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Ask Ali anything... (Enter to chat)", window, cx);
-            editor
+        // Create the Ali thread view immediately
+        let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
+
+        // Try to find an existing thread for Ali
+        let resume_thread = history_store.read(cx).thread_by_agent_name(ALI_SERVER_NAME).cloned();
+
+        let thread_view = cx.new(|cx| {
+            AcpThreadView::new(
+                server,
+                resume_thread,
+                None,
+                weak_workspace.clone(),
+                project.clone(),
+                history_store.clone(),
+                prompt_store.clone(),
+                true, // focus
+                window,
+                cx,
+            )
         });
-
-        // Subscribe to editor events
-        let subscription = cx.subscribe(&input_editor, |_this, _editor, event: &editor::EditorEvent, _cx| {
-            if let editor::EditorEvent::BufferEdited { .. } = event {
-                // Input changed - could show preview here
-            }
-        });
-
-        // Active agents will be populated when agents are actually in use
-        let active_agents = Vec::new();
 
         Self {
             focus_handle,
             height: None,
-            input_editor,
-            active_agents,
-            is_expanded: false,
-            _input_subscription: subscription,
+            thread_view: Some(thread_view),
+            workspace: weak_workspace,
+            project,
+            history_store,
+            prompt_store,
+            fs,
+            _subscription: None,
         }
-    }
-
-    fn send_to_ali(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.input_editor.read(cx).text(cx);
-        if !text.is_empty() {
-            log::info!("Sending to Ali: {}", text);
-            // Clear the input
-            self.input_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-            });
-        }
-        // Open Ali chat
-        self.open_ali_chat(window, cx);
     }
 
     pub async fn load(
@@ -121,8 +120,20 @@ impl AliPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         workspace.update_in(&mut cx, |workspace, window, cx| {
-            cx.new(|cx| AliPanel::new(workspace, window, cx))
-        })
+            let project = workspace.project().clone();
+            let fs = workspace.app_state().fs.clone();
+
+            // Get history store from AgentPanel (required)
+            let agent_panel = workspace
+                .panel::<agent_ui::AgentPanel>(cx)
+                .ok_or_else(|| anyhow::anyhow!("AgentPanel must be registered before AliPanel"))?;
+            let history_store = agent_panel.read(cx).history_store().clone();
+
+            // Get prompt store if available
+            let prompt_store = agent_panel.read(cx).prompt_store().cloned();
+
+            Ok(cx.new(|cx| AliPanel::new(workspace, project, history_store, prompt_store, fs, window, cx)))
+        })?
     }
 
     fn serialize(&self, cx: &mut Context<Self>) {
@@ -140,22 +151,7 @@ impl AliPanel {
             .detach();
     }
 
-    fn toggle_expand(&mut self, cx: &mut Context<Self>) {
-        self.is_expanded = !self.is_expanded;
-        cx.notify();
-    }
-
-    fn open_ali_chat(&self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("Opening Ali Command Center chat");
-        let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-            name: ALI_SERVER_NAME.into()
-        });
-        window.dispatch_action(action.boxed_clone(), cx);
-    }
-
-    fn render_status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let active_count = self.active_agents.len();
-
+    fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -180,97 +176,18 @@ impl AliPanel {
                             .size(LabelSize::Small)
                             .weight(gpui::FontWeight::BOLD)
                     )
-                    .child(
-                        Label::new(format!("({} agents active)", active_count))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                    )
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Button::new("expand", if self.is_expanded { "Collapse" } else { "Expand" })
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_expand(cx);
-                            }))
-                    )
-                    .child(
-                        Button::new("open-chat", "Open Chat")
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_ali_chat(window, cx);
-                            }))
-                    )
-            )
-    }
-
-    fn render_agents_status(&self, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .px_3()
-            .py_2()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .children(
-                self.active_agents.iter().map(|agent| {
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(cx.theme().colors().surface_background)
-                        .child(
-                            div()
-                                .w_2()
-                                .h_2()
-                                .rounded_full()
-                                .bg(cx.theme().status().success) // Green dot for active
-                        )
-                        .child(
-                            Label::new(agent.name.clone())
-                                .size(LabelSize::Small)
-                                .weight(gpui::FontWeight::MEDIUM)
-                        )
-                        .child(
-                            Label::new(format!(": {}", agent.status))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                        )
-                })
-            )
-    }
-
-    fn render_input_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Icon::new(IconName::ArrowRight)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .child(self.input_editor.clone())
             )
     }
 }
 
 impl Focusable for AliPanel {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        // Delegate focus to the thread view if it exists
+        if let Some(thread_view) = &self.thread_view {
+            thread_view.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
@@ -330,26 +247,34 @@ impl Panel for AliPanel {
 }
 
 impl Render for AliPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("ali-panel")
             .key_context("AliPanel")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &SendToAli, window, cx| {
-                this.send_to_ali(window, cx);
-            }))
-            // Handle Enter key from input editor (menu::Confirm is dispatched by single_line editor)
-            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                this.send_to_ali(window, cx);
-            }))
             .size_full()
             .flex()
             .flex_col()
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_status_bar(cx))
-            .when(self.is_expanded || !self.active_agents.is_empty(), |this| {
-                this.child(self.render_agents_status(cx))
-            })
-            .child(self.render_input_bar(window, cx))
+            .child(self.render_header(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .map(|this| {
+                        if let Some(thread_view) = &self.thread_view {
+                            this.child(thread_view.clone())
+                        } else {
+                            this.child(
+                                div()
+                                    .size_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(Label::new("Loading Ali...").color(Color::Muted))
+                            )
+                        }
+                    })
+            )
     }
 }
