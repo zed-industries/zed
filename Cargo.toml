@@ -33,8 +33,10 @@ members = [
     "crates/cloud_api_client",
     "crates/cloud_api_types",
     "crates/cloud_llm_client",
+    "crates/ali_panel",
     "crates/collab",
     "crates/collab_ui",
+    "crates/convergio_panel",
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
@@ -269,7 +271,9 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
+ali_panel = { path = "crates/ali_panel" }
 collab_ui = { path = "crates/collab_ui" }
+convergio_panel = { path = "crates/convergio_panel" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }

@@ -525,6 +525,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ali_panel"
+version = "0.1.0"
+dependencies = [
+ "agent_ui",
+ "anyhow",
+ "collections",
+ "db",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "aliasable"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3641,6 +3663,32 @@ dependencies = [
  "terminal",
  "url",
  "util",
+]
+
+[[package]]
+name = "convergio_panel"
+version = "0.1.0"
+dependencies = [
+ "agent_ui",
+ "anyhow",
+ "collections",
+ "db",
+ "editor",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "log",
+ "menu",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -20613,6 +20661,7 @@ dependencies = [
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",
+ "ali_panel",
  "anyhow",
  "ashpd 0.11.0",
  "askpass",
@@ -20633,6 +20682,7 @@ dependencies = [
  "collections",
  "command_palette",
  "component",
+ "convergio_panel",
  "copilot",
  "crashes",
  "dap",

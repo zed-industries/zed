@@ -136,10 +136,24 @@ pub struct NewThread;
 /// Creates a new external agent conversation thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
+#[serde(default)]
 pub struct NewExternalAgentThread {
     /// Which agent to use for the conversation.
-    agent: Option<ExternalAgent>,
+    pub agent: Option<ExternalAgent>,
+    /// Optional session ID to resume an existing conversation.
+    pub resume_session_id: Option<String>,
+}
+
+impl NewExternalAgentThread {
+    /// Creates a new action with the specified agent.
+    pub fn with_agent(agent: ExternalAgent) -> Self {
+        Self { agent: Some(agent), resume_session_id: None }
+    }
+
+    /// Creates a new action to resume an existing conversation.
+    pub fn resume(agent: ExternalAgent, session_id: String) -> Self {
+        Self { agent: Some(agent), resume_session_id: Some(session_id) }
+    }
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]

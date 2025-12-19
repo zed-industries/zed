@@ -129,7 +129,12 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.external_thread(action.agent.clone(), None, None, window, cx)
+                            // Check if we should resume an existing thread
+                            let resume_thread = action.resume_session_id.as_ref().and_then(|session_id| {
+                                let session_id = agent_client_protocol::SessionId::new(session_id.clone());
+                                panel.history_store.read(cx).thread_from_session_id(&session_id).cloned()
+                            });
+                            panel.external_thread(action.agent.clone(), resume_thread, None, window, cx)
                         });
                     }
                 })
@@ -2065,7 +2070,7 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Zed Agent")
                                     .when(is_agent_selected(AgentType::NativeAgent) | is_agent_selected(AgentType::TextThread) , |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread::default()))
                                     })
                                     .icon(IconName::ZedAgent)
                                     .icon_color(Color::Muted)
@@ -2121,7 +2126,7 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Claude Code")
                                     .when(is_agent_selected(AgentType::ClaudeCode), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread::default()))
                                     })
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
@@ -2150,7 +2155,7 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Codex CLI")
                                     .when(is_agent_selected(AgentType::Codex), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread::default()))
                                     })
                                     .icon(IconName::AiOpenAi)
                                     .disabled(is_via_collab)
@@ -2179,7 +2184,7 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Gemini CLI")
                                     .when(is_agent_selected(AgentType::Gemini), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread::default()))
                                     })
                                     .icon(IconName::AiGemini)
                                     .icon_color(Color::Muted)
@@ -2236,7 +2241,7 @@ impl AgentPanel {
                                                 name: agent_name.0.clone(),
                                             }),
                                             |this| {
-                                                this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                                this.action(Box::new(NewExternalAgentThread::default()))
                                             },
                                         )
                                         .icon_color(Color::Muted)
