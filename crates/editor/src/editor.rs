@@ -4311,6 +4311,7 @@ impl Editor {
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
+        let mut has_adjacent_edits = false;
         let mut in_adjacent_group = false;
 
         let mut regions = self
@@ -4608,6 +4609,10 @@ impl Editor {
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
 
+            if next_is_adjacent {
+                has_adjacent_edits = true;
+            }
+
             in_adjacent_group = next_is_adjacent;
         }
 
@@ -4623,7 +4628,11 @@ impl Editor {
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                if has_adjacent_edits {
+                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                } else {
+                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                }
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
