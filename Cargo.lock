@@ -7392,6 +7392,7 @@ dependencies = [
  "stacksafe",
  "strum 0.27.2",
  "sum_tree",
+ "swash",
  "taffy",
  "thiserror 2.0.17",
  "unicode-segmentation",

@@ -34,6 +34,10 @@ impl BladeContext {
         );
         Ok(Self { gpu })
     }
+
+    pub fn supports_dual_source_blending(&self) -> bool {
+        self.gpu.capabilities().dual_source_blending
+    }
 }
 
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {

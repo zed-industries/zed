@@ -1220,6 +1220,20 @@ impl PlatformWindow for WaylandWindow {
         update_window(state);
     }
 
+    fn is_subpixel_rendering_enabled(&self) -> bool {
+        if self.borrow().background_appearance != WindowBackgroundAppearance::Opaque {
+            return false;
+        }
+
+        let client = self.borrow().client.get_client();
+        let state = client.borrow();
+        state
+            .common
+            .subpixel_render_enabled
+            .get()
+            .unwrap_or_else(|| state.gpu_context.supports_dual_source_blending())
+    }
+
     fn minimize(&self) {
         if let Some(toplevel) = self.borrow().surface_state.toplevel() {
             toplevel.set_minimized();
@@ -1293,7 +1307,8 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        let opaque = state.background_appearance == WindowBackgroundAppearance::Opaque;
+        state.renderer.draw(scene, opaque);
     }
 
     fn completed_frame(&self) {
