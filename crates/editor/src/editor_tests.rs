@@ -25,8 +25,7 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, OrderedListConfig, Override, Point,
-    TaskListConfig,
+    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
     },
@@ -29452,18 +29451,7 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
     });
 
-    let markdown_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            task_list: Some(TaskListConfig {
-                prefixes: vec!["- [ ] ".into(), "- [x] ".into()],
-                continuation: "- [ ] ".into(),
-            }),
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
-
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
 
@@ -29557,15 +29545,7 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
     });
 
-    let markdown_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            unordered_list: vec!["- ".into(), "* ".into(), "+ ".into()],
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
-
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
 
@@ -29668,18 +29648,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
         settings.defaults.tab_size = Some(2.try_into().unwrap());
     });
 
-    let markdown_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            ordered_list: vec![OrderedListConfig {
-                pattern: r"(\d+)\. ".to_string(),
-                format: "{1}. ".to_string(),
-            }],
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
-
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
 
