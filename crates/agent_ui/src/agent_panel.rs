@@ -133,6 +133,15 @@ pub fn init(cx: &mut App) {
                             let resume_thread = action.resume_session_id.as_ref().and_then(|session_id| {
                                 let session_id = agent_client_protocol::SessionId::new(session_id.clone());
                                 panel.history_store.read(cx).thread_from_session_id(&session_id).cloned()
+                            }).or_else(|| {
+                                // If no explicit session_id, try to find by agent name
+                                if let Some(crate::ExternalAgent::Custom { name }) = &action.agent {
+                                    // Extract agent display name from server name (e.g., "Convergio-Ali" -> "Ali")
+                                    let agent_name = name.strip_prefix("Convergio-").unwrap_or(name.as_ref());
+                                    panel.history_store.read(cx).thread_by_agent_name(agent_name).cloned()
+                                } else {
+                                    None
+                                }
                             });
                             panel.external_thread(action.agent.clone(), resume_thread, None, window, cx)
                         });

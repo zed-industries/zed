@@ -859,7 +859,20 @@ impl AcpThreadView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
-            ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
+            ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => {
+                // Show agent name for Convergio agents, otherwise keep "New Thread"
+                let agent_name = self.agent.name();
+                if agent_name.starts_with("Convergio-") {
+                    // Remove "Convergio-" prefix and show just the agent name
+                    agent_name.as_ref()
+                        .strip_prefix("Convergio-")
+                        .unwrap_or(agent_name.as_ref())
+                        .to_string()
+                        .into()
+                } else {
+                    "New Thread".into()
+                }
+            }
             ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
@@ -946,8 +959,14 @@ impl AcpThreadView {
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
+                    let agent_name = self.agent.name();
+                    let default_title = if agent_name.starts_with("Convergio-") {
+                        agent_name.strip_prefix("Convergio-").unwrap_or(&agent_name).to_string()
+                    } else {
+                        "New Thread".to_string()
+                    };
                     title_editor.update(cx, |editor, cx| {
-                        editor.set_text("New Thread", window, cx);
+                        editor.set_text(default_title, window, cx);
                     });
                 }
             }

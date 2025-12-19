@@ -163,6 +163,15 @@ impl HistoryStore {
         self.threads.iter().find(|thread| &thread.id == session_id)
     }
 
+    /// Find the most recent thread whose title contains the given agent name
+    pub fn thread_by_agent_name(&self, agent_name: &str) -> Option<&DbThreadMetadata> {
+        // Threads are sorted by updated_at descending, so first match is most recent
+        self.threads.iter().find(|thread| {
+            thread.title.contains(agent_name) ||
+            thread.title.to_lowercase().contains(&agent_name.to_lowercase())
+        })
+    }
+
     pub fn load_thread(
         &mut self,
         id: acp::SessionId,

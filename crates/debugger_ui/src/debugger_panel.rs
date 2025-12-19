@@ -149,27 +149,25 @@ impl DebugPanel {
         &self.project
     }
 
-    pub fn load(
+    pub async fn load(
         workspace: WeakEntity<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| {
-                let debug_panel = DebugPanel::new(workspace, window, cx);
+        mut cx: AsyncWindowContext,
+    ) -> Result<Entity<Self>> {
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            let debug_panel = DebugPanel::new(workspace, window, cx);
 
-                workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
-                    workspace.project().read(cx).breakpoint_store().update(
-                        cx,
-                        |breakpoint_store, cx| {
-                            breakpoint_store.clear_breakpoints(cx);
-                        },
-                    )
-                });
+            workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
+                workspace.project().read(cx).breakpoint_store().update(
+                    cx,
+                    |breakpoint_store, cx| {
+                        breakpoint_store.clear_breakpoints(cx);
+                    },
+                )
+            });
 
-                workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
+            workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
 
-                debug_panel
-            })
+            debug_panel
         })
     }
 
