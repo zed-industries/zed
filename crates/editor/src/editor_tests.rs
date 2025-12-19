@@ -25,7 +25,7 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
+    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point, TaskListConfig,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
     },
@@ -29447,11 +29447,17 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = Some(2.try_into().unwrap());
+    });
 
     let markdown_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Markdown".into(),
+            task_list: Some(TaskListConfig {
+                prefixes: vec!["- [ ] ".into(), "- [x] ".into()],
+                continuation: "- [ ] ".into(),
+            }),
             ..LanguageConfig::default()
         },
         None,
@@ -29495,21 +29501,16 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ]  ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        - [ ]
+    cx.assert_editor_state(
+        indoc! {"
+        - [ ]$$
         ˇ
-    "});
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
 
-    // Case 5: Adding newline with cursor right after prefix, removes marker
-    cx.set_state(indoc! {"
-        - [ ] ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇ
-    "});
-
-    // Case 6: Adding newline with content adds marker preserving indentation
+    // Case 5: Adding newline with content adds marker preserving indentation
     cx.set_state(indoc! {"
         - [ ] task
           - [ ] indentedˇ
@@ -29521,15 +29522,31 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
           - [ ] ˇ
     "});
 
-    // Case 7: Adding newline with cursor right after prefix, unindents
+    // Case 6: Adding newline with cursor right after prefix, unindents
     cx.set_state(indoc! {"
         - [ ] task
-          - [ ] ˇ
+          - [ ] sub task
+            - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
         - [ ] task
+          - [ ] sub task
+          - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+
+    // Case 7: Adding newline with cursor right after prefix, removes marker
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
         - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [ ] task
+          - [ ] sub task
+        ˇ
     "});
 }
 
