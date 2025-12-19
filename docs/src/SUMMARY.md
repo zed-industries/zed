@@ -39,6 +39,7 @@
   - [Outline Panel](./outline-panel.md)
   - [Tab Switcher](./tab-switcher.md)
 - [Running & Testing](./running-testing.md)
+  - [Terminal](./terminal.md)
   - [Tasks](./tasks.md)
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)

@@ -64,7 +64,7 @@ Zed uses three font settings for different contexts:
 | ---------------------- | ------------------ |
 | `buffer_font_family`   | Editor text        |
 | `ui_font_family`       | Interface elements |
-| `terminal.font_family` | Terminal           |
+| `terminal.font_family` | [Terminal](./terminal.md)           |
 
 Example configuration:
 
