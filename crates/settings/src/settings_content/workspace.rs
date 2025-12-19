@@ -15,6 +15,10 @@ use crate::{
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePaneModifiers>,
+    /// Whether to enable subpixel (ClearType-style) text rendering.
+    ///
+    /// Default: platform_default
+    pub subpixel_text_rendering: Option<SubpixelTextRendering>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -543,6 +547,31 @@ pub enum OnLastWindowClosed {
     PlatformDefault,
     /// Quit the application the last window is closed
     QuitApp,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SubpixelTextRendering {
+    /// Use platform default behavior.
+    #[default]
+    PlatformDefault,
+    /// Always enable subpixel (ClearType) text rendering.
+    Yes,
+    /// Always disable subpixel (ClearType) text rendering.
+    No,
 }
 
 impl OnLastWindowClosed {

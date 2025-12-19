@@ -45,6 +45,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Cell<Bounds<Pixels>>,
     pub border_offset: WindowBorderOffset,
     pub appearance: Cell<WindowAppearance>,
+    pub background_appearance: Cell<WindowBackgroundAppearance>,
     pub scale_factor: Cell<f32>,
     pub restore_from_minimized: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
 
@@ -84,6 +85,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) parent_hwnd: Option<HWND>,
+    pub(crate) subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 impl WindowsWindowState {
@@ -135,6 +137,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds: Cell::new(fullscreen_restore_bounds),
             border_offset,
             appearance: Cell::new(appearance),
+            background_appearance: Cell::new(WindowBackgroundAppearance::Opaque),
             scale_factor: Cell::new(scale_factor),
             restore_from_minimized: Cell::new(restore_from_minimized),
             min_size,
@@ -243,6 +246,7 @@ impl WindowsWindowInner {
             platform_window_handle: context.platform_window_handle,
             system_settings: WindowsSystemSettings::new(context.display),
             parent_hwnd: context.parent_hwnd,
+            subpixel_render_enabled: context.subpixel_render_enabled.clone(),
         }))
     }
 
@@ -371,6 +375,7 @@ struct WindowCreateContext {
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     parent_hwnd: Option<HWND>,
+    subpixel_render_enabled: Rc<Cell<Option<bool>>>,
 }
 
 impl WindowsWindow {
@@ -391,6 +396,7 @@ impl WindowsWindow {
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
+            subpixel_render_enabled,
         } = creation_info;
         register_window_class(icon);
         let parent_hwnd = if params.kind == WindowKind::Dialog {
@@ -442,9 +448,6 @@ impl WindowsWindow {
 
             (dwexstyle, dwstyle)
         };
-        if !disable_direct_composition {
-            dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
-        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -473,6 +476,7 @@ impl WindowsWindow {
             directx_devices,
             invalidate_devices,
             parent_hwnd,
+            subpixel_render_enabled,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -795,7 +799,20 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
+        self.state.background_appearance.set(background_appearance);
         let hwnd = self.0.hwnd;
+
+        unsafe {
+            let mut ex_style = get_window_long(hwnd, GWL_EXSTYLE) as u32;
+
+            if background_appearance != WindowBackgroundAppearance::Opaque {
+                ex_style |= WS_EX_NOREDIRECTIONBITMAP.0;
+            } else {
+                ex_style &= !WS_EX_NOREDIRECTIONBITMAP.0;
+            }
+
+            set_window_long(hwnd, GWL_EXSTYLE, ex_style as isize);
+        }
 
         // using Dwm APIs for Mica and MicaAlt backdrops.
         // others follow the set_window_composition_attribute approach
@@ -929,6 +946,16 @@ impl PlatformWindow for WindowsWindow {
         };
 
         self.0.update_ime_position(self.0.hwnd, caret_position);
+    }
+
+    fn is_subpixel_rendering_enabled(&self) -> bool {
+        if self.state.background_appearance.get() != WindowBackgroundAppearance::Opaque {
+            return false;
+        }
+        self.0
+            .subpixel_render_enabled
+            .get()
+            .unwrap_or(self.0.system_settings.subpixel_rendering.get())
     }
 }
 

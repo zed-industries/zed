@@ -282,6 +282,8 @@ pub(crate) trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+
+    fn set_subpixel_rendering_enabled(&self, _enabled: Option<bool>) {}
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -570,6 +572,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
+
+    fn is_subpixel_rendering_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not
@@ -821,15 +827,9 @@ impl AtlasKey {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
                     AtlasTextureKind::Polychrome
+                } else if params.subpixel_rendering {
+                    AtlasTextureKind::Subpixel
                 } else {
-                    #[cfg(target_os = "windows")]
-                    if crate::ENABLE_SUBPIXEL_TEXT_RENDERING {
-                        AtlasTextureKind::Subpixel
-                    } else {
-                        AtlasTextureKind::Monochrome
-                    }
-
-                    #[cfg(not(target_os = "windows"))]
                     AtlasTextureKind::Monochrome
                 }
             }

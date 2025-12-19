@@ -678,6 +678,13 @@ fn main() {
                         .ok();
                 }
 
+                let enabled = match WorkspaceSettings::get_global(cx).subpixel_text_rendering {
+                    settings::SubpixelTextRendering::PlatformDefault => None,
+                    settings::SubpixelTextRendering::Yes => Some(true),
+                    settings::SubpixelTextRendering::No => Some(false),
+                };
+                cx.set_subpixel_rendering_enabled(enabled);
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);

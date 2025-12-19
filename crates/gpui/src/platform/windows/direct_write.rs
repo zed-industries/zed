@@ -1,6 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-pub(crate) const ENABLE_SUBPIXEL_TEXT_RENDERING: bool = true;
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -760,7 +759,7 @@ impl DirectWriteState {
             m => m,
         };
 
-        let antialias_mode = if ENABLE_SUBPIXEL_TEXT_RENDERING {
+        let antialias_mode = if params.subpixel_rendering {
             DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
         } else {
             DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE
@@ -784,7 +783,7 @@ impl DirectWriteState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let texture_type = if ENABLE_SUBPIXEL_TEXT_RENDERING {
+        let texture_type = if params.subpixel_rendering {
             DWRITE_TEXTURE_CLEARTYPE_3x1
         } else {
             DWRITE_TEXTURE_ALIASED_1x1
@@ -852,7 +851,7 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
-        if !ENABLE_SUBPIXEL_TEXT_RENDERING {
+        if !params.subpixel_rendering {
             let mut bitmap_data =
                 vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
 

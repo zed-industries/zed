@@ -3493,6 +3493,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Subpixel Text Rendering",
+                    description: "Whether to enable subpixel (ClearType-style) text rendering.",
+                    field: Box::new(SettingField {
+                        json_path: Some("subpixel_text_rendering"),
+                        pick: |settings_content| {
+                            settings_content.workspace.subpixel_text_rendering.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.subpixel_text_rendering = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Pane Modifiers"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inactive Opacity",

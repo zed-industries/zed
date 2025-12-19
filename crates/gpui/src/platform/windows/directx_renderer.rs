@@ -1539,8 +1539,8 @@ pub(crate) mod shader_resources {
                     ShaderTarget::Fragment => MONOCHROME_SPRITE_FRAGMENT_BYTES,
                 },
                 ShaderModule::SubpixelSprite => match target {
-                    ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
-                    ShaderTarget::Fragment => MONOCHROME_SPRITE_SUBPIXEL_FRAGMENT_BYTES,
+                    ShaderTarget::Vertex => SUBPIXEL_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => SUBPIXEL_SPRITE_FRAGMENT_BYTES,
                 },
                 ShaderModule::PolychromeSprite => match target {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
