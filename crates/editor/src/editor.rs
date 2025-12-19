@@ -744,6 +744,12 @@ type BackgroundHighlight = (
 );
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
+#[derive(Clone, Debug)]
+pub struct BeamJumpHighlight {
+    pub range: Range<MultiBufferOffset>,
+    pub label: Option<SharedString>,
+}
+
 #[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
@@ -1186,6 +1192,7 @@ pub struct Editor {
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    beam_jump_highlights: Vec<BeamJumpHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -2378,6 +2385,7 @@ impl Editor {
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
             gutter_highlights: HashMap::default(),
+            beam_jump_highlights: Vec::new(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -23120,6 +23128,40 @@ impl Editor {
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut Context<Self>) {
         self.clear_background_highlights::<SearchWithinRange>(cx);
+    }
+
+    pub fn set_beam_jump_highlights(
+        &mut self,
+        mut highlights: Vec<BeamJumpHighlight>,
+        cx: &mut Context<Self>,
+    ) {
+        highlights.sort_by_key(|highlight| highlight.range.start);
+        self.beam_jump_highlights = highlights;
+        cx.notify();
+    }
+
+    pub fn clear_beam_jump_highlights(&mut self, cx: &mut Context<Self>) {
+        if !self.beam_jump_highlights.is_empty() {
+            self.beam_jump_highlights.clear();
+            cx.notify();
+        }
+    }
+
+    pub fn beam_jump_highlights_in_range(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> &[BeamJumpHighlight] {
+        if self.beam_jump_highlights.is_empty() {
+            return &[];
+        }
+
+        let start_ix = self
+            .beam_jump_highlights
+            .partition_point(|highlight| highlight.range.end <= range.start);
+        let end_ix = self
+            .beam_jump_highlights
+            .partition_point(|highlight| highlight.range.start < range.end);
+        &self.beam_jump_highlights[start_ix..end_ix]
     }
 
     pub fn highlight_background<T: 'static>(

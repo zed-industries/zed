@@ -10,11 +10,12 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{f64, ops::Range};
+use std::{f64, ops::Range, sync::Arc};
 use workspace::searchable::Direction;
 
 use crate::{
     Vim,
+    beam_jump::BeamJumpDirection,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -126,6 +127,12 @@ pub enum Motion {
         first_char: char,
         second_char: char,
         smartcase: bool,
+    },
+    BeamJumpFind {
+        pattern: Arc<str>,
+        direction: BeamJumpDirection,
+        smartcase: bool,
+        search_range: Option<Range<MultiBufferOffset>>,
     },
     RepeatFind {
         last_find: Box<Motion>,
@@ -817,6 +824,7 @@ impl Motion {
             | FindBackward { .. }
             | Sneak { .. }
             | SneakBackward { .. }
+            | BeamJumpFind { .. }
             | Jump { .. }
             | ZedSearchResult { .. } => MotionKind::Exclusive,
             RepeatFind { last_find: motion } | RepeatFindReversed { last_find: motion } => {
@@ -885,6 +893,7 @@ impl Motion {
             | SentenceForward
             | Sneak { .. }
             | SneakBackward { .. }
+            | BeamJumpFind { .. }
             | StartOfDocument
             | StartOfParagraph
             | UnmatchedBackward { .. }
@@ -934,6 +943,7 @@ impl Motion {
             | FindBackward { .. }
             | Sneak { .. }
             | SneakBackward { .. }
+            | BeamJumpFind { .. }
             | RepeatFindReversed { .. }
             | WindowTop
             | WindowMiddle
@@ -1102,6 +1112,23 @@ impl Motion {
                 return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
                     .map(|new_point| (new_point, SelectionGoal::None));
             }
+            BeamJumpFind {
+                pattern,
+                direction,
+                smartcase,
+                search_range,
+            } => {
+                return beam_jump_find(
+                    map,
+                    point,
+                    pattern.as_ref(),
+                    *direction,
+                    times,
+                    *smartcase,
+                    search_range.as_ref(),
+                )
+                .map(|new_point| (new_point, SelectionGoal::None));
+            }
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
                 Motion::FindForward {
@@ -1165,6 +1192,36 @@ impl Motion {
                             second_char,
                             times + 1,
                             smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::BeamJumpFind {
+                    ref pattern,
+                    direction,
+                    smartcase,
+                    ref search_range,
+                } => {
+                    let mut new_point = beam_jump_find(
+                        map,
+                        point,
+                        pattern.as_ref(),
+                        direction,
+                        times,
+                        smartcase,
+                        search_range.as_ref(),
+                    );
+                    if new_point == Some(point) {
+                        new_point = beam_jump_find(
+                            map,
+                            point,
+                            pattern.as_ref(),
+                            direction,
+                            times + 1,
+                            smartcase,
+                            search_range.as_ref(),
                         );
                     }
 
@@ -1237,6 +1294,37 @@ impl Motion {
                     if new_point == Some(point) {
                         new_point =
                             sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::BeamJumpFind {
+                    ref pattern,
+                    direction,
+                    smartcase,
+                    ref search_range,
+                } => {
+                    let direction = reverse_beam_jump_direction(direction);
+                    let mut new_point = beam_jump_find(
+                        map,
+                        point,
+                        pattern.as_ref(),
+                        direction,
+                        times,
+                        smartcase,
+                        search_range.as_ref(),
+                    );
+                    if new_point == Some(point) {
+                        new_point = beam_jump_find(
+                            map,
+                            point,
+                            pattern.as_ref(),
+                            direction,
+                            times + 1,
+                            smartcase,
+                            search_range.as_ref(),
+                        );
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
@@ -2769,6 +2857,31 @@ pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     }
 }
 
+fn match_pattern_at(
+    buffer: &editor::MultiBufferSnapshot,
+    start: MultiBufferOffset,
+    pattern: &[char],
+    smartcase: bool,
+) -> Option<(MultiBufferOffset, MultiBufferOffset)> {
+    let mut offset = start;
+    let mut last_char_start = offset;
+
+    for &target in pattern {
+        let Some(ch) = buffer.chars_at(offset).next() else {
+            return None;
+        };
+
+        if !is_character_match(target, ch, smartcase) {
+            return None;
+        }
+
+        last_char_start = offset;
+        offset += ch.len_utf8();
+    }
+
+    Some((offset, last_char_start))
+}
+
 fn sneak(
     map: &DisplaySnapshot,
     from: DisplayPoint,
@@ -2835,6 +2948,151 @@ fn sneak_backward(
     } else {
         None
     }
+}
+
+fn reverse_beam_jump_direction(direction: BeamJumpDirection) -> BeamJumpDirection {
+    match direction {
+        BeamJumpDirection::Forward => BeamJumpDirection::Backward,
+        BeamJumpDirection::Backward => BeamJumpDirection::Forward,
+    }
+}
+
+fn beam_jump_find(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    pattern: &str,
+    direction: BeamJumpDirection,
+    times: usize,
+    smartcase: bool,
+    search_range: Option<&Range<MultiBufferOffset>>,
+) -> Option<DisplayPoint> {
+    match direction {
+        BeamJumpDirection::Forward => {
+            beam_jump_find_forward(map, from, pattern, times, smartcase, search_range)
+        }
+        BeamJumpDirection::Backward => {
+            beam_jump_find_backward(map, from, pattern, times, smartcase, search_range)
+        }
+    }
+}
+
+fn beam_jump_find_forward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    pattern: &str,
+    times: usize,
+    smartcase: bool,
+    search_range: Option<&Range<MultiBufferOffset>>,
+) -> Option<DisplayPoint> {
+    let pattern: Vec<char> = pattern.chars().collect();
+    if pattern.is_empty() {
+        return None;
+    }
+
+    let buffer = map.buffer_snapshot();
+    let buffer_end = buffer.len();
+    let range_start = search_range.map_or(MultiBufferOffset(0), |range| range.start);
+    let mut range_end = search_range.map_or(buffer_end, |range| range.end);
+    if range_end > buffer_end {
+        range_end = buffer_end;
+    }
+
+    let mut search_start = movement::right(map, from).to_offset(map, Bias::Right);
+    if search_start < range_start {
+        search_start = range_start;
+    }
+    if search_start >= range_end {
+        return None;
+    }
+    let mut found_start = None;
+
+    for _ in 0..times {
+        found_start = None;
+
+        let mut offset = search_start;
+        while offset < range_end {
+            if let Some((match_end, _)) = match_pattern_at(buffer, offset, &pattern, smartcase) {
+                if match_end <= range_end {
+                    found_start = Some(offset);
+                    search_start = match_end;
+                }
+                break;
+            }
+
+            let Some(ch) = buffer.chars_at(offset).next() else {
+                break;
+            };
+            offset += ch.len_utf8();
+        }
+
+        if found_start.is_none() {
+            break;
+        }
+    }
+
+    found_start.map(|offset| offset.to_display_point(map))
+}
+
+fn beam_jump_find_backward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    pattern: &str,
+    times: usize,
+    smartcase: bool,
+    search_range: Option<&Range<MultiBufferOffset>>,
+) -> Option<DisplayPoint> {
+    let pattern: Vec<char> = pattern.chars().collect();
+    if pattern.is_empty() {
+        return None;
+    }
+
+    let buffer = map.buffer_snapshot();
+    let buffer_end = buffer.len();
+    let range_start = search_range.map_or(MultiBufferOffset(0), |range| range.start);
+    let mut range_end = search_range.map_or(buffer_end, |range| range.end);
+    if range_end > buffer_end {
+        range_end = buffer_end;
+    }
+
+    let mut search_end = from.to_offset(map, Bias::Left);
+    if search_end > range_end {
+        search_end = range_end;
+    }
+    if search_end <= range_start {
+        return None;
+    }
+    let mut found_start = None;
+
+    for _ in 0..times {
+        found_start = None;
+
+        let mut candidate_start = search_end;
+        while candidate_start > range_start {
+            let Some(prev_ch) = buffer.reversed_chars_at(candidate_start).next() else {
+                break;
+            };
+            candidate_start -= prev_ch.len_utf8();
+            if candidate_start < range_start {
+                break;
+            }
+
+            if let Some((match_end, last_char_start)) =
+                match_pattern_at(buffer, candidate_start, &pattern, smartcase)
+            {
+                if match_end <= search_end {
+                    found_start = Some(candidate_start);
+                    search_end = last_char_start;
+                    break;
+                }
+            }
+        }
+
+        if found_start.is_none() {
+            break;
+        }
+    }
+
+    found_start.map(|offset| offset.to_display_point(map))
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
