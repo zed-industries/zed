@@ -511,16 +511,16 @@ impl ToolbarItemView for BufferSearchBar {
                         }
 
                         cx.defer_in(window, |this, window, cx| {
-                            if let Some(text) =
-                                cx.read_from_find_pasteboard().and_then(|p| p.text())
+                            if let Some(item) = cx.read_from_find_pasteboard()
+                                && let Some(text) = item.text()
                             {
-                                drop(this.search(
-                                    &text,
-                                    Some(this.search_options),
-                                    true,
-                                    window,
-                                    cx,
-                                ));
+                                let search_options = item
+                                    .metadata()
+                                    .and_then(|m| m.parse().ok())
+                                    .and_then(SearchOptions::from_bits)
+                                    .unwrap_or(this.search_options);
+
+                                drop(this.search(&text, Some(search_options), true, window, cx));
                             }
                         });
                     }),
@@ -1307,6 +1307,7 @@ impl BufferSearchBar {
                     }
                     .into()
                 };
+                let used_search_options = self.search_options;
 
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
@@ -1319,8 +1320,9 @@ impl BufferSearchBar {
 
                     this.update_in(cx, |this, window, cx| {
                         #[cfg(target_os = "macos")]
-                        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string(
+                        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string_with_metadata(
                             query_text.clone(),
+                            used_search_options.bits().to_string(),
                         ));
 
                         if let Some(active_searchable_item) =
