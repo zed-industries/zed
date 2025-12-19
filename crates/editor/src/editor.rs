@@ -23591,16 +23591,45 @@ fn list_delimiter_for_newline(
         return Some(task_delimeter);
     };
 
-    // Check for unordered lists
-    // for marker in &unordered {
-    //     if content_after_whitespace.starts_with(marker.as_ref()) {
-    //         let rest = &content_after_whitespace[marker.len()..];
-    //         if rest.trim().is_empty() {
-    //             return Some((None, marker.len()));
-    //         }
-    //         return Some((Some(format!("{}{}", leading_whitespace, marker).into()), 0));
-    //     }
-    // }
+    let unordered_list_delimiter = maybe!({
+        let unordered_markers = language.unordered_list();
+        if unordered_markers.is_empty() {
+            return None;
+        }
+        let max_marker_len = unordered_markers.iter().map(|m| m.len()).max()?;
+        let marker_candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_marker_len)
+            .collect();
+        let marker = unordered_markers
+            .iter()
+            .find(|marker| marker_candidate.starts_with(marker.as_ref()))?;
+        let marker_len = marker.len();
+        let end_of_marker = num_of_whitespaces + marker_len;
+        let has_content_after_marker = snapshot
+            .chars_for_range(range.clone())
+            .skip(end_of_marker)
+            .any(|c| !c.is_whitespace());
+        if has_content_after_marker {
+            Some(marker.clone())
+        } else {
+            if start_point.column as usize == end_of_marker {
+                if num_of_whitespaces == 0 {
+                    *newline_config = NewlineConfig::ClearCurrentLine;
+                } else {
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: marker.clone(),
+                    };
+                }
+            }
+            None
+        }
+    });
+
+    if let Some(unordered_list_delimiter) = unordered_list_delimiter {
+        return Some(unordered_list_delimiter);
+    };
 
     // // Check for ordered lists
     // for ordered_config in &ordered {
