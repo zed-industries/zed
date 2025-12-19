@@ -1,3 +1,47 @@
+# Convergio Studio
+
+**Convergio-enhanced Zed: AI-first editor with 54 specialized agents**
+
+This is a fork of [Zed](https://github.com/zed-industries/zed) with the **Convergio Agent Panel** - a multi-agent AI system directly integrated into your editor.
+
+## Convergio Features
+
+- **54 Specialized AI Agents** organized in 14 categories (Leadership, Technology, Security, Product, etc.)
+- **Ali - Your AI Chief of Staff** with persistent memory across all conversations
+- **Agent Packs** for different workflows: Enterprise (all 54), Startup (6 core), Developer (6 tech), Minimal (Ali only)
+- **Session Persistence** - conversations resume exactly where you left off
+- **Keyboard Navigation** - full accessibility with arrow keys and vim bindings
+
+## Quick Start
+
+1. Build from source (requires Rust):
+   ```bash
+   cargo build --release -p zed
+   ```
+
+2. Configure your agent server in `~/.config/zed/settings.json`:
+   ```json
+   {
+     "agent": {
+       "custom_agent_servers": {
+         "Convergio-Ali": {
+           "command": "convergio-acp",
+           "args": ["--agent", "ali"]
+         }
+       }
+     }
+   }
+   ```
+
+3. Open the Convergio Panel (right dock) and start chatting with agents!
+
+## Requirements
+
+- **convergio-acp**: The Convergio ACP server ([ConvergioCLI](https://github.com/Roberdan/ConvergioCLI))
+- Anthropic API key configured in Convergio
+
+---
+
 # Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
