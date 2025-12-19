@@ -4618,7 +4618,7 @@ impl EditorElement {
                 });
                 let number = relative_number
                     .filter(|&delta| delta != 0)
-                    .map(|delta| delta.abs() as u32)
+                    .map(|delta| delta.unsigned_abs() as u32)
                     .unwrap_or(start_point.row + 1);
                 let color = cx.theme().colors().editor_line_number;
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)

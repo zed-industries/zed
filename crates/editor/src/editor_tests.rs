@@ -28778,7 +28778,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
                 relative_number,
                 snapshot
                     .relative_line_delta(display_row, base_display_row)
-                    .abs() as u32,
+                    .unsigned_abs() as u32,
             );
         }
 
@@ -28804,7 +28804,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
                 relative_number,
                 snapshot
                     .relative_wrapped_line_delta(display_row, base_display_row)
-                    .abs() as u32,
+                    .unsigned_abs() as u32,
             );
         }
     });
