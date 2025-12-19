@@ -818,11 +818,6 @@ pub trait LanguageModelProvider: 'static {
     fn icon(&self) -> IconOrSvg {
         IconOrSvg::default()
     }
-    /// Returns the path to an external SVG icon for this provider, if any.
-    /// When present, this takes precedence over `icon()`.
-    fn icon_path(&self) -> Option<SharedString> {
-        None
-    }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
