@@ -1204,6 +1204,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     utility_panes: UtilityPaneState,
+    next_modal_placement: Option<ModalPlacement>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1620,6 +1621,7 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             utility_panes: UtilityPaneState::default(),
+            next_modal_placement: None,
         }
     }
 
@@ -6326,12 +6328,25 @@ impl Workspace {
         self.modal_layer.read(cx).active_modal()
     }
 
+    pub fn is_modal_open<V: 'static>(&self, cx: &App) -> bool {
+        self.modal_layer.read(cx).active_modal::<V>().is_some()
+    }
+
+    pub fn set_next_modal_placement(&mut self, placement: ModalPlacement) {
+        self.next_modal_placement = Some(placement);
+    }
+
+    fn take_next_modal_placement(&mut self) -> ModalPlacement {
+        self.next_modal_placement.take().unwrap_or_default()
+    }
+
     pub fn toggle_modal<V: ModalView, B>(&mut self, window: &mut Window, cx: &mut App, build: B)
     where
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
+        let placement = self.take_next_modal_placement();
         self.modal_layer.update(cx, |modal_layer, cx| {
-            modal_layer.toggle_modal(window, cx, build)
+            modal_layer.toggle_modal_with_placement(window, cx, placement, build)
         })
     }
 
