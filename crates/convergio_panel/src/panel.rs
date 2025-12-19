@@ -143,7 +143,7 @@ impl ConvergioAgent {
     fn all_agents() -> Vec<Self> {
         vec![
             // Leadership & Orchestration
-            Self::new("ali", "Ali - Chief of Staff", "Master orchestrator, coordinates all agents", IconName::ZedAgent, AgentCategory::Leadership, vec!["orchestration", "coordination", "strategy"]),
+            Self::new("ali", "Ali - Chief of Staff", "Master orchestrator, coordinates all agents", IconName::ConvergioAli, AgentCategory::Leadership, vec!["orchestration", "coordination", "strategy"]),
             Self::new("satya-board-of-directors", "Satya - Board", "System-thinking strategist, transformation", IconName::Star, AgentCategory::Leadership, vec!["strategy", "transformation", "leadership"]),
 
             // Finance & Business
@@ -900,7 +900,7 @@ impl Panel for ConvergioPanel {
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         ConvergioPanelSettings::get_global(cx)
             .button
-            .then_some(IconName::UserGroup)
+            .then_some(IconName::Convergio)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {

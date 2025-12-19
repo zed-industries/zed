@@ -1,0 +1,10 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- Ali: Chief of Staff - conductor/star representing leadership and orchestration -->
+    <!-- Star shape for leadership -->
+    <path d="M8 1L9.5 5.5H14L10.5 8.5L12 13L8 10L4 13L5.5 8.5L2 5.5H6.5L8 1Z" stroke="black" stroke-width="1.2" stroke-linejoin="round"/>
+    <!-- Small dots around representing coordinated agents -->
+    <circle cx="2" cy="2" r="0.8" fill="black"/>
+    <circle cx="14" cy="2" r="0.8" fill="black"/>
+    <circle cx="2" cy="14" r="0.8" fill="black"/>
+    <circle cx="14" cy="14" r="0.8" fill="black"/>
+</svg>

@@ -528,16 +528,20 @@ dependencies = [
 name = "ali_panel"
 version = "0.1.0"
 dependencies = [
+ "agent",
+ "agent_servers",
  "agent_ui",
  "anyhow",
  "collections",
  "db",
  "editor",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "log",
  "menu",
  "project",
+ "prompt_store",
  "serde",
  "serde_json",
  "settings",

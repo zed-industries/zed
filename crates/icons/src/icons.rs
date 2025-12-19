@@ -68,6 +68,8 @@ pub enum IconName {
     Cog,
     Command,
     Control,
+    Convergio,
+    ConvergioAli,
     Copilot,
     CopilotDisabled,
     CopilotError,

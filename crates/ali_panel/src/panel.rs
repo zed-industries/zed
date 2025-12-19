@@ -230,7 +230,7 @@ impl Panel for AliPanel {
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         AliPanelSettings::get_global(cx)
             .button
-            .then_some(IconName::Ai)
+            .then_some(IconName::ConvergioAli)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
