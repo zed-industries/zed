@@ -4666,14 +4666,6 @@ impl Editor {
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-            for (a, _) in new_selections.iter() {
-                println!(
-                    "{:?} {:?}",
-                    a.start,
-                    a.start.to_offset(map.buffer_snapshot())
-                );
-            }
-
             let new_selections = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
                 new_anchor_selections,
                 &map,
