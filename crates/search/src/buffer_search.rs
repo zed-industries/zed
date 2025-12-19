@@ -944,14 +944,15 @@ impl BufferSearchBar {
             });
             self.set_search_options(options, cx);
             self.clear_matches(window, cx);
+            #[cfg(target_os = "macos")]
             self.update_find_pasteboard(cx);
             cx.notify();
         }
         self.update_matches(!updated, add_to_history, window, cx)
     }
 
+    #[cfg(target_os = "macos")]
     pub fn update_find_pasteboard(&mut self, cx: &mut App) {
-        #[cfg(target_os = "macos")]
         cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string_with_metadata(
             self.query(cx),
             self.search_options.bits().to_string(),
@@ -1148,6 +1149,7 @@ impl BufferSearchBar {
                     if search.await.is_ok() {
                         this.update_in(cx, |this, window, cx| {
                             this.activate_current_match(window, cx);
+                            #[cfg(target_os = "macos")]
                             this.update_find_pasteboard(cx);
                         })?;
                     }
