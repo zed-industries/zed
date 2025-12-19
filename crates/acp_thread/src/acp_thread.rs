@@ -2205,7 +2205,7 @@ impl AcpThread {
                 });
 
                 let format_on_save = buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, true, cx);
+                    buffer.edit(edits, None, cx);
 
                     let settings = language::language_settings::language_settings(
                         buffer.language().map(|l| l.name()),
@@ -2802,7 +2802,7 @@ mod tests {
         });
         read_file_rx.await.ok();
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "zero\n".to_string())], None, true, cx);
+            buffer.edit([(0..0, "zero\n".to_string())], None, cx);
         });
         cx.run_until_parked();
         assert_eq!(

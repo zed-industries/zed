@@ -164,7 +164,7 @@ async fn test_sharing_an_ssh_remote_project(
     buffer_b.update(cx_b, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
-        buffer.edit([(ix..ix + 1, "100")], None, true, cx);
+        buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
     executor.run_until_parked();

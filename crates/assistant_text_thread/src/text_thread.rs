@@ -1688,7 +1688,6 @@ impl TextThread {
                         insertion,
                     )],
                     None,
-                    true,
                     cx,
                 );
                 let first_transaction = buffer.end_transaction(cx).unwrap();
@@ -1759,12 +1758,7 @@ impl TextThread {
                                 this.buffer.update(cx, |buffer, cx| {
                                     let insert_point = insert_position.to_point(buffer);
                                     if insert_point.column > 0 {
-                                        buffer.edit(
-                                            [(insert_point..insert_point, "\n")],
-                                            None,
-                                            true,
-                                            cx,
-                                        );
+                                        buffer.edit([(insert_point..insert_point, "\n")], None, cx);
                                     }
 
                                     pending_section_stack.push(PendingSection {
@@ -1785,7 +1779,6 @@ impl TextThread {
                                     buffer.edit(
                                         [(insert_position..insert_position, text)],
                                         None,
-                                        true,
                                         cx,
                                     )
                                 });
@@ -1866,7 +1859,7 @@ impl TextThread {
                             }
                         }
 
-                        buffer.edit(deletions, None, true, cx);
+                        buffer.edit(deletions, None, cx);
 
                         if let Some(deletion_transaction) = buffer.end_transaction(cx) {
                             buffer.merge_transactions(deletion_transaction, first_transaction);
@@ -2107,7 +2100,6 @@ impl TextThread {
                                                     chunk,
                                                 )],
                                                 None,
-                                                true,
                                                 cx,
                                             );
                                             let end = buffer
@@ -2122,7 +2114,6 @@ impl TextThread {
                                             buffer.edit(
                                                 [(insertion_position..insertion_position, chunk)],
                                                 None,
-                                                true,
                                                 cx,
                                             );
                                         }
@@ -2146,7 +2137,6 @@ impl TextThread {
                                                 chunk,
                                             )],
                                             None,
-                                            true,
                                             cx,
                                         );
                                     }
@@ -2468,7 +2458,7 @@ impl TextThread {
         cx: &mut Context<Self>,
     ) -> MessageAnchor {
         let start = self.buffer.update(cx, |buffer, cx| {
-            buffer.edit([(offset..offset, "\n")], None, true, cx);
+            buffer.edit([(offset..offset, "\n")], None, cx);
             buffer.anchor_before(offset + 1)
         });
 
@@ -2566,7 +2556,7 @@ impl TextThread {
                 }
             } else {
                 self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit([(range.end..range.end, "\n")], None, true, cx);
+                    buffer.edit([(range.end..range.end, "\n")], None, cx);
                 });
                 edited_buffer = true;
                 MessageAnchor {
@@ -2616,7 +2606,7 @@ impl TextThread {
                         }
                     } else {
                         self.buffer.update(cx, |buffer, cx| {
-                            buffer.edit([(range.start..range.start, "\n")], None, true, cx)
+                            buffer.edit([(range.start..range.start, "\n")], None, cx)
                         });
                         edited_buffer = true;
                         MessageAnchor {

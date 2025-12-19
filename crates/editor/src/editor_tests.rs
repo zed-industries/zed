@@ -259,13 +259,11 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
             buffer.edit(
                 [(MultiBufferOffset(0)..MultiBufferOffset(1), "a")],
                 None,
-                true,
                 cx,
             );
             buffer.edit(
                 [(MultiBufferOffset(1)..MultiBufferOffset(1), "b")],
                 None,
-                true,
                 cx,
             );
             buffer.end_transaction_at(now, cx);
@@ -1493,7 +1491,6 @@ fn test_move_cursor(cx: &mut TestAppContext) {
                 (Point::new(1, 1)..Point::new(1, 1), "\t"),
             ],
             None,
-            true,
             cx,
         );
     });
@@ -3212,7 +3209,6 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
                     (Point::new(4, 2)..Point::new(6, 0), ""),
                 ],
                 None,
-                true,
                 cx,
             );
             assert_eq!(
@@ -3746,7 +3742,6 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
                     (MultiBufferOffset(18)..MultiBufferOffset(21), ""),
                 ],
                 None,
-                true,
                 cx,
             );
             assert_eq!(buffer.read(cx).text(), "a(), b(), c()".unindent());
@@ -4611,7 +4606,6 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
                     (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
                 ],
                 None,
-                true,
                 cx,
             )
         });
@@ -12943,7 +12937,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 
         editor.buffer.update(cx, |buffer, cx| {
             let ix = buffer.len(cx);
-            buffer.edit([(ix..ix, "edited\n")], None, true, cx);
+            buffer.edit([(ix..ix, "edited\n")], None, cx);
         });
     });
 
@@ -28382,9 +28376,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
 
     let fake_language_server = fake_servers.next().await.unwrap();
 
-    buffer1.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "hello!")], None, true, cx)
-    });
+    buffer1.update(cx, |buffer, cx| buffer.edit([(0..0, "hello!")], None, cx));
 
     let save = editor.update_in(cx, |editor, window, cx| {
         assert!(editor.is_dirty(cx));
@@ -28415,9 +28407,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
 
     start_edit_rx.await.unwrap();
     buffer2
-        .update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "world!")], None, true, cx)
-        })
+        .update(cx, |buffer, cx| buffer.edit([(0..0, "world!")], None, cx))
         .unwrap();
 
     done_edit_tx.send(()).unwrap();
@@ -29109,7 +29099,7 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         for buffer_id in buffer_ids.iter() {
             let buffer = mb.buffer(*buffer_id).unwrap();
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, true, cx);
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
             });
         }
     });
@@ -29160,7 +29150,7 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         for buffer_id in buffer_ids.iter() {
             let buffer = mb.buffer(*buffer_id).unwrap();
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, true, cx);
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
             });
         }
     });

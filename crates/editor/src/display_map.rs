@@ -2114,7 +2114,7 @@ pub mod tests {
 
             let ix = MultiBufferOffset(snapshot.buffer_snapshot().text().find("seven").unwrap());
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(ix..ix, "and ")], None, true, cx);
+                buffer.edit([(ix..ix, "and ")], None, cx);
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -2175,7 +2175,6 @@ pub mod tests {
                     ),
                 ],
                 None,
-                true,
                 cx,
             )
         });
@@ -2256,7 +2255,6 @@ pub mod tests {
             buffer.edit(
                 [(MultiBufferOffset(1)..MultiBufferOffset(1), "b")],
                 None,
-                true,
                 cx,
             );
         });

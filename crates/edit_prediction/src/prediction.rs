@@ -170,7 +170,7 @@ mod tests {
                 vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -190,7 +190,7 @@ mod tests {
                 vec![(2..5, "REM".into()), (9..11, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -200,7 +200,7 @@ mod tests {
                 vec![(3..3, "EM".into()), (7..9, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -210,7 +210,7 @@ mod tests {
                 vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -220,7 +220,7 @@ mod tests {
                 vec![(9..11, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -230,7 +230,7 @@ mod tests {
                 vec![(4..4, "M".into()), (8..10, "".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
             assert_eq!(
                 from_prediction_edits(
                     &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
@@ -240,7 +240,7 @@ mod tests {
                 vec![(4..4, "M".into())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, true, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
             assert_eq!(prediction.interpolate(&buffer.read(cx).snapshot()), None);
         })
     }

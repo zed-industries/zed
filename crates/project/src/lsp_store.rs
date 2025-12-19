@@ -1724,7 +1724,7 @@ impl LocalLspStore {
                         formatting_transaction_id,
                         cx,
                         |buffer, cx| {
-                            buffer.edit(edits, None, true, cx);
+                            buffer.edit(edits, None, cx);
                         },
                     )?;
                 }
@@ -1954,7 +1954,7 @@ impl LocalLspStore {
                                         "Applying edits {edits:?}. Content: {:?}",
                                         buffer.text()
                                     );
-                                    buffer.edit(edits, None, true, cx);
+                                    buffer.edit(edits, None, cx);
                                     zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                                 },
                             )?;
@@ -2971,7 +2971,7 @@ impl LocalLspStore {
             buffer.finalize_last_transaction();
             buffer.start_transaction();
             for (range, text) in edits {
-                buffer.edit([(range, text)], None, true, cx);
+                buffer.edit([(range, text)], None, cx);
             }
 
             if buffer.end_transaction(cx).is_some() {
@@ -3274,7 +3274,7 @@ impl LocalLspStore {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], None, true, cx);
+                            buffer.edit([(range, text)], None, cx);
                         }
 
                         buffer.end_transaction(cx).and_then(|transaction_id| {
@@ -6796,7 +6796,7 @@ impl LspStore {
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
                             if !has_overlap {
-                                buffer.edit([(range, text)], None, true, cx);
+                                buffer.edit([(range, text)], None, cx);
                             }
                         }
 

@@ -22,10 +22,10 @@ mod tests {
         cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
-            buffer.edit([(0..0, "int main() {}")], None, true, cx);
+            buffer.edit([(0..0, "int main() {}")], None, cx);
 
             let ix = buffer.len() - 1;
-            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), true, cx);
+            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(
                 buffer.text(),
                 "int main() {\n  \n}",
@@ -64,7 +64,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(
@@ -80,7 +79,7 @@ mod tests {
             );
 
             let ix = buffer.len() - 4;
-            buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), true, cx);
+            buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(
                 buffer.text(),
                 r#"
@@ -94,12 +93,7 @@ mod tests {
                 "field expression (.c) should be indented further than the statement body"
             );
 
-            buffer.edit(
-                [(0..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                true,
-                cx,
-            );
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -112,7 +106,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(
@@ -127,12 +120,7 @@ mod tests {
                 "single-line if/else without braces should align at the same level"
             );
 
-            buffer.edit(
-                [(0..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                true,
-                cx,
-            );
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -147,7 +135,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(
@@ -164,12 +151,7 @@ mod tests {
                 "multi-line if/else without braces should indent statement bodies"
             );
 
-            buffer.edit(
-                [(0..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                true,
-                cx,
-            );
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -183,7 +165,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(
@@ -199,12 +180,7 @@ mod tests {
                 "nested if statements without braces should indent properly"
             );
 
-            buffer.edit(
-                [(0..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                true,
-                cx,
-            );
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -221,7 +197,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(
@@ -240,12 +215,7 @@ mod tests {
                 "else-if chains should align all conditions at same level with indented bodies"
             );
 
-            buffer.edit(
-                [(0..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                true,
-                cx,
-            );
+            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
             buffer.edit(
                 [(
                     0..0,
@@ -260,7 +230,6 @@ mod tests {
                     .unindent(),
                 )],
                 Some(AutoindentMode::EachLine),
-                true,
                 cx,
             );
             assert_eq!(

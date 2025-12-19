@@ -109,7 +109,7 @@ pub async fn apply_diff(
 
                 let edits = mem::take(&mut edits);
                 buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, true, cx);
+                    buffer.edit(edits, None, cx);
                 })?;
             }
         }
