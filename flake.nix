@@ -24,7 +24,7 @@
       imports = [
         ./nix/modules/overlays.nix
         ./nix/modules/packages.nix
-        ./nix/modules/devshells.nix
+        ./nix/modules/partitions.nix
       ];
     };
 
