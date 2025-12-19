@@ -8,7 +8,6 @@ world extension {
     import platform;
     import process;
     import nodejs;
-    import llm-provider;
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
@@ -16,11 +15,6 @@ world extension {
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
-    use llm-provider.{
-        provider-info, model-info, completion-request,
-        cache-configuration, completion-event, token-usage,
-        device-flow-prompt-info
-    };
 
     /// Initializes the extension.
     export init-extension: func();
@@ -170,73 +164,4 @@ world extension {
     export dap-config-to-scenario: func(config: debug-config) -> result<debug-scenario, string>;
     export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
     export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
-
-    /// Returns information about language model providers offered by this extension.
-    export llm-providers: func() -> list<provider-info>;
-
-    /// Returns the models available for a provider.
-    export llm-provider-models: func(provider-id: string) -> result<list<model-info>, string>;
-
-    /// Returns markdown content to display in the provider's settings UI.
-    /// This can include setup instructions, links to documentation, etc.
-    export llm-provider-settings-markdown: func(provider-id: string) -> option<string>;
-
-    /// Check if the provider is authenticated.
-    export llm-provider-is-authenticated: func(provider-id: string) -> bool;
-
-    /// Start an OAuth device flow sign-in.
-    /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
-    ///
-    /// The device flow works as follows:
-    /// 1. Extension requests a device code from the OAuth provider
-    /// 2. Extension returns prompt info including user code and verification URL
-    /// 3. Host displays a modal with the prompt info
-    /// 4. Host calls llm-provider-poll-device-flow-sign-in
-    /// 5. Extension polls for the access token while user authorizes in browser
-    /// 6. Once authorized, extension stores the credential and returns success
-    ///
-    /// Returns information needed to display the device flow prompt modal.
-    export llm-provider-start-device-flow-sign-in: func(provider-id: string) -> result<device-flow-prompt-info, string>;
-
-    /// Poll for device flow sign-in completion.
-    /// This is called after llm-provider-start-device-flow-sign-in returns the user code.
-    /// The extension should poll the OAuth provider until the user authorizes or the flow times out.
-    /// Returns Ok(()) on successful authentication, or an error message on failure.
-    export llm-provider-poll-device-flow-sign-in: func(provider-id: string) -> result<_, string>;
-
-    /// Reset credentials for the provider.
-    export llm-provider-reset-credentials: func(provider-id: string) -> result<_, string>;
-
-    /// Count tokens for a request.
-    export llm-count-tokens: func(
-        provider-id: string,
-        model-id: string,
-        request: completion-request
-    ) -> result<u64, string>;
-
-    /// Start streaming a completion from the model.
-    /// Returns a stream ID that can be used with llm-stream-next and llm-stream-close.
-    export llm-stream-completion-start: func(
-        provider-id: string,
-        model-id: string,
-        request: completion-request
-    ) -> result<string, string>;
-
-    /// Get the next event from a completion stream.
-    /// Returns None when the stream is complete.
-    export llm-stream-completion-next: func(
-        stream-id: string
-    ) -> result<option<completion-event>, string>;
-
-    /// Close a completion stream and release its resources.
-    export llm-stream-completion-close: func(
-        stream-id: string
-    );
-
-    /// Get cache configuration for a model (if prompt caching is supported).
-    export llm-cache-configuration: func(
-        provider-id: string,
-        model-id: string
-    ) -> option<cache-configuration>;
-
 }

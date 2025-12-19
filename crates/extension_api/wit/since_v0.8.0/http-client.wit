@@ -51,25 +51,8 @@ interface http-client {
         body: list<u8>,
     }
 
-    /// An HTTP response that includes the status code.
-    ///
-    /// Used by `fetch-fallible` which returns responses for all status codes
-    /// rather than treating some status codes as errors.
-    record http-response-with-status {
-        /// The HTTP status code.
-        status: u16,
-        /// The response headers.
-        headers: list<tuple<string, string>>,
-        /// The response body.
-        body: list<u8>,
-    }
-
     /// Performs an HTTP request and returns the response.
-    /// Returns an error if the response status is 4xx or 5xx.
     fetch: func(req: http-request) -> result<http-response, string>;
-
-    /// Performs an HTTP request and returns the response regardless of its status code.
-    fetch-fallible: func(req: http-request) -> result<http-response-with-status, string>;
 
     /// An HTTP response stream.
     resource http-response-stream {
