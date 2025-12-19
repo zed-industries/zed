@@ -31,8 +31,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::{Shell, ShellKind},
-    shell_builder::ShellBuilder,
+    shell::ShellKind,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -1375,8 +1374,6 @@ fn build_command(
     } else {
         write!(exec, "{ssh_shell} -l")?;
     };
-    let (command, command_args) = ShellBuilder::new(&Shell::Program(ssh_shell.to_owned()), false)
-        .build(Some(exec.clone()), &[]);
 
     let mut args = Vec::new();
     args.extend(ssh_args);
@@ -1387,8 +1384,7 @@ fn build_command(
     }
 
     args.push("-t".into());
-    args.push(command);
-    args.extend(command_args);
+    args.push(exec);
 
     Ok(CommandTemplate {
         program: "ssh".into(),
@@ -1428,9 +1424,6 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
-                "/bin/fish",
-                "-i",
-                "-c",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1463,9 +1456,6 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
-                "/bin/fish",
-                "-i",
-                "-c",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );
