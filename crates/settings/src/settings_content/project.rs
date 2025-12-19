@@ -322,12 +322,28 @@ pub struct GitSettings {
     pub path_style: Option<GitPathStyle>,
 }
 
+/// Global controls for enabling or disabling git integration features.
+///
+/// These settings provide a centralized way to control git integration,
+/// rather than having to configure each feature individually.
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct GitEnabledSettings {
+    /// Master switch to disable all git integration features.
+    /// When true, all git features are disabled regardless of other settings.
+    ///
+    /// Default: false
     pub disable_git: Option<bool>,
+    /// Whether to show git status indicators (modified, added, deleted)
+    /// in the project panel, outline panel, and tabs.
+    ///
+    /// Default: true
     pub enable_status: Option<bool>,
+    /// Whether to show git diff information, including gutter diff
+    /// indicators and scrollbar diff markers.
+    ///
+    /// Default: true
     pub enable_diff: Option<bool>,
 }
 

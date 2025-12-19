@@ -365,6 +365,27 @@ pub struct GitSettings {
     pub path_style: GitPathStyle,
 }
 
+impl GitSettings {
+    /// Returns whether git status indicators should be shown.
+    /// This includes status in the project panel, outline panel, and tabs.
+    pub fn is_status_enabled(&self) -> bool {
+        self.enabled.status
+    }
+
+    /// Returns whether git diff features should be shown.
+    /// This includes gutter diff indicators and scrollbar diff markers.
+    pub fn is_diff_enabled(&self) -> bool {
+        self.enabled.diff
+    }
+
+    /// Returns whether the git gutter should be shown.
+    /// This checks both the global diff setting and the gutter-specific setting.
+    pub fn is_gutter_enabled(&self) -> bool {
+        self.is_diff_enabled()
+            && matches!(self.git_gutter, settings::GitGutterSetting::TrackedFiles)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct GitEnabledSettings {
     /// Whether git integration is enabled for showing git status.

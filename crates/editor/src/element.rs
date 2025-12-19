@@ -64,10 +64,7 @@ use project::{
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
-use settings::{
-    GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
-    Settings,
-};
+use settings::{GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring, Settings};
 use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
@@ -2204,8 +2201,8 @@ impl EditorElement {
             .display_diff_hunks_for_rows(display_rows, folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
-        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
-        if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+        let git_settings = &ProjectSettings::get_global(cx).git;
+        if git_settings.is_gutter_enabled() {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds =
@@ -6469,12 +6466,7 @@ impl EditorElement {
             .position_map
             .snapshot
             .show_git_diff_gutter
-            .unwrap_or_else(|| {
-                matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
-                )
-            });
+            .unwrap_or_else(|| ProjectSettings::get_global(cx).git.is_gutter_enabled());
         if show_git_gutter {
             Self::paint_gutter_diff_hunks(layout, window, cx)
         }

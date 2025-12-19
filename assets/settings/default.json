@@ -1319,15 +1319,17 @@
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
-  // Git gutter behavior configuration.
+  // Git integration settings.
   "git": {
-    // Global switch to enable or disable all git integration features.
-    // If set to true, disables all git integration features.
-    // If set to false, individual git integration features below will be independently enabled or disabled.
+    // Master switch to disable all git integration features.
+    // When true, all git features are disabled regardless of other settings.
+    // When false (default), individual features are controlled by their respective settings.
     "disable_git": false,
-    // Whether to enable git status tracking.
+    // Whether to show git status indicators (modified, added, deleted) in the
+    // project panel, outline panel, and tabs.
     "enable_status": true,
-    // Whether to enable git diff display.
+    // Whether to show git diff information, including gutter diff indicators
+    // and scrollbar diff markers.
     "enable_diff": true,
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
