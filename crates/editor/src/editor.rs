@@ -4323,7 +4323,7 @@ impl Editor {
         let mut clear_linked_edit_ranges = false;
         let mut all_selections_read_only = true;
         let mut in_adjacent_group = false;
-        let mut contains_ajacent_edits = false;
+        let mut contains_adjacent_edits = false;
 
         let mut regions = self
             .selections_with_autoclose_regions(selections, &snapshot)
@@ -4618,7 +4618,7 @@ impl Editor {
             }
 
             if next_is_adjacent {
-                contains_ajacent_edits = true;
+                contains_adjacent_edits = true;
             }
 
             new_selections.push((selection.map(|_| anchor), 0));
@@ -4645,7 +4645,7 @@ impl Editor {
                 buffer.edit(
                     edits,
                     this.autoindent_mode.clone(),
-                    !contains_ajacent_edits,
+                    !contains_adjacent_edits,
                     cx,
                 );
             });
@@ -4663,7 +4663,7 @@ impl Editor {
                         })
                         .sorted_by_key(|(range, _)| range.start);
 
-                    buffer.edit(edits, None, !contains_ajacent_edits, cx);
+                    buffer.edit(edits, None, !contains_adjacent_edits, cx);
                 })
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
