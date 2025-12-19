@@ -5,7 +5,7 @@ use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint, language_settings::all_language_settings,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
 use language_models::MistralLanguageModelProvider;
 use mistral::CODESTRAL_API_URL;
