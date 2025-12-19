@@ -174,13 +174,37 @@ When opening a remote project there are three relevant settings locations:
 
 Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
 
-Depending on the kind of setting you want to make, which settings file you should use:
+Which settings file you should use depends on the kind of setting you want to make:
 
 - Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use, etc.
-- Server settings should be used for things that affect the server: paths to language servers, etc.
+- Server settings should be used for things that affect the server: paths to language servers, proxy settings, etc.
 - Local settings should be used for things that affect the UI: font size, etc.
 
 In addition any extensions you have installed locally will be propagated to the remote server. This means that language servers, etc. will run correctly.
+
+## Proxy Configuration
+
+The remote server will not use your local machine's proxy configuration because they may be under different network policies. If your remote server requires a proxy to access the internet, you must configure it on the remote server itself.
+
+In most cases, your remote server will already have proxy environment variables configured. Zed will automatically use them when downloading language servers, communicating with LLM models, etc.
+
+If needed, you can set these environment variables in the server's shell configuration (e.g., `~/.bashrc`):
+
+```bash
+export http_proxy="http://proxy.example.com:8080"
+export https_proxy="http://proxy.example.com:8080"
+export no_proxy="localhost,127.0.0.1"
+```
+
+Alternatively, you can configure the proxy in the remote machine's `~/.config/zed/settings.json` (Linux) or `~/.zed/settings.json` (macOS):
+
+```json
+{
+  "proxy": "http://proxy.example.com:8080"
+}
+```
+
+See the [proxy documentation](./configuring-zed.md#network-proxy) for supported proxy types and additional configuration options.
 
 ## Initializing the remote server
 

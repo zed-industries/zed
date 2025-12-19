@@ -3,5 +3,5 @@
 // For a full list of overridable settings, and general information on settings,
 // see the documentation: https://zed.dev/docs/configuring-zed#settings-files
 {
-  "lsp": {}
+  "lsp": {},
 }

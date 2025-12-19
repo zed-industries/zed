@@ -24,7 +24,7 @@ use rpc::{
 
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -376,6 +376,8 @@ impl LocalBufferStore {
 
         let text = buffer.as_rope().clone();
         let line_ending = buffer.line_ending();
+        let encoding = buffer.encoding();
+        let has_bom = buffer.has_bom();
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
@@ -387,7 +389,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path, text, line_ending, cx)
+            worktree.write_file(path, text, line_ending, encoding, has_bom, cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -620,9 +622,7 @@ impl LocalBufferStore {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
             let path = path.clone();
-            let buffer = match load_file.await.with_context(|| {
-                format!("Could not open path: {}", path.display(PathStyle::local()))
-            }) {
+            let buffer = match load_file.await {
                 Ok(loaded) => {
                     let reservation = cx.reserve_entity::<Buffer>()?;
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
@@ -632,7 +632,11 @@ impl LocalBufferStore {
                         })
                         .await;
                     cx.insert_entity(reservation, |_| {
-                        Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
+                        let mut buffer =
+                            Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite);
+                        buffer.set_encoding(loaded.encoding);
+                        buffer.set_has_bom(loaded.has_bom);
+                        buffer
                     })?
                 }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
@@ -1129,7 +1133,7 @@ impl BufferStore {
                     })
                     .log_err();
             }
-            BufferEvent::LanguageChanged => {}
+            BufferEvent::LanguageChanged(_) => {}
             _ => {}
         }
     }

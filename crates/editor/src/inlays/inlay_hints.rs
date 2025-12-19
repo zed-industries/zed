@@ -291,7 +291,7 @@ impl Editor {
             }),
         };
 
-        let mut visible_excerpts = self.visible_excerpts(cx);
+        let mut visible_excerpts = self.visible_excerpts(true, cx);
         let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
@@ -584,8 +584,11 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) =
-                    hovered_hint.position.buffer_id.and_then(|buffer_id| {
+                if let Some(ResolvedHint::Resolved(cached_hint)) = hovered_hint
+                    .position
+                    .text_anchor
+                    .buffer_id
+                    .and_then(|buffer_id| {
                         lsp_store.update(cx, |lsp_store, cx| {
                             lsp_store.resolved_hint(buffer_id, hovered_hint.id, cx)
                         })
@@ -757,7 +760,7 @@ impl Editor {
         let visible_inlay_hint_ids = self
             .visible_inlay_hints(cx)
             .iter()
-            .filter(|inlay| inlay.position.buffer_id == Some(buffer_id))
+            .filter(|inlay| inlay.position.text_anchor.buffer_id == Some(buffer_id))
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
@@ -858,9 +861,13 @@ impl Editor {
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay.position.buffer_id.is_none_or(|buffer_id| {
-                            invalidate_hints_for_buffers.contains(&buffer_id)
-                        })
+                        inlay
+                            .position
+                            .text_anchor
+                            .buffer_id
+                            .is_none_or(|buffer_id| {
+                                invalidate_hints_for_buffers.contains(&buffer_id)
+                            })
                     })
                     .map(|inlay| inlay.id),
             );
@@ -2204,7 +2211,7 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| editor.visible_excerpts(cx))
+            .update(cx, |editor, _window, cx| editor.visible_excerpts(true, cx))
             .unwrap();
         assert_eq!(
             ranges.len(),

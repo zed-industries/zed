@@ -229,7 +229,7 @@ impl MemoryView {
                 rows
             },
         )
-        .track_scroll(view_state.scroll_handle)
+        .track_scroll(&view_state.scroll_handle)
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let mut view_state = this.view_state();
@@ -403,7 +403,7 @@ impl MemoryView {
                 this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
-            self.query_editor.focus_handle(cx).focus(window);
+            self.query_editor.focus_handle(cx).focus(window, cx);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
@@ -921,7 +921,7 @@ impl Render for MemoryView {
                     }))
                     .custom_scrollbars(
                         ui::Scrollbars::new(ui::ScrollAxes::Both)
-                            .tracked_scroll_handle(self.view_state_handle.clone())
+                            .tracked_scroll_handle(&self.view_state_handle)
                             .with_track_along(
                                 ui::ScrollAxes::Both,
                                 cx.theme().colors().panel_background,

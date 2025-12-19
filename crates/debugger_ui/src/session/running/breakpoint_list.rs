@@ -310,7 +310,7 @@ impl BreakpointList {
 
     fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.input.focus_handle(cx).contains_focused(window, cx) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.strip_mode.is_some() {
             self.strip_mode.take();
             cx.notify();
@@ -364,9 +364,9 @@ impl BreakpointList {
                         }
                     }
                 }
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             } else {
-                handle.focus(window);
+                handle.focus(window, cx);
             }
 
             return;
@@ -575,7 +575,7 @@ impl BreakpointList {
         )
         .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
         .with_width_from_item(self.max_width_index)
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .flex_1()
     }
 
@@ -627,7 +627,7 @@ impl BreakpointList {
                 .on_click({
                     let focus_handle = focus_handle.clone();
                     move |_, window, cx| {
-                        focus_handle.focus(window);
+                        focus_handle.focus(window, cx);
                         window.dispatch_action(ToggleEnableBreakpoint.boxed_clone(), cx)
                     }
                 }),
@@ -654,7 +654,7 @@ impl BreakpointList {
                     )
                     .on_click({
                         move |_, window, cx| {
-                            focus_handle.focus(window);
+                            focus_handle.focus(window, cx);
                             window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
                         }
                     }),
@@ -776,7 +776,7 @@ impl Render for BreakpointList {
             .child(self.render_list(cx))
             .custom_scrollbars(
                 ui::Scrollbars::new(ScrollAxes::Both)
-                    .tracked_scroll_handle(self.scroll_handle.clone())
+                    .tracked_scroll_handle(&self.scroll_handle)
                     .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
                     .tracked_entity(cx.entity_id()),
                 window,

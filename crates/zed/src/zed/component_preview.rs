@@ -161,7 +161,7 @@ impl ComponentPreview {
         component_preview.update_component_list(cx);
 
         let focus_handle = component_preview.filter_editor.read(cx).focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Ok(component_preview)
     }
@@ -627,7 +627,7 @@ impl Render for ComponentPreview {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.nav_scroll_handle.clone())
+                        .track_scroll(&self.nav_scroll_handle)
                         .p_2p5()
                         .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
                         .h_full()
@@ -653,10 +653,8 @@ impl Render for ComponentPreview {
             )
             .child(
                 v_flex()
-                    .id("content-area")
                     .flex_1()
                     .size_full()
-                    .overflow_y_scroll()
                     .child(
                         div()
                             .p_2()
@@ -665,14 +663,18 @@ impl Render for ComponentPreview {
                             .border_color(cx.theme().colors().border)
                             .child(self.filter_editor.clone()),
                     )
-                    .child(match active_page {
-                        PreviewPage::AllComponents => {
-                            self.render_all_components(cx).into_any_element()
-                        }
-                        PreviewPage::Component(id) => self
-                            .render_component_page(&id, window, cx)
-                            .into_any_element(),
-                    }),
+                    .child(
+                        div().id("content-area").flex_1().overflow_y_scroll().child(
+                            match active_page {
+                                PreviewPage::AllComponents => {
+                                    self.render_all_components(cx).into_any_element()
+                                }
+                                PreviewPage::Component(id) => self
+                                    .render_component_page(&id, window, cx)
+                                    .into_any_element(),
+                            },
+                        ),
+                    ),
             )
     }
 }
@@ -768,7 +770,7 @@ impl Item for ComponentPreview {
         self.workspace_id = workspace.database_id();
 
         let focus_handle = self.filter_editor.read(cx).focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
     }
 }
 

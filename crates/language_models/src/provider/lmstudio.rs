@@ -10,7 +10,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
@@ -20,11 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
+use ui::{ButtonLike, Indicator, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::ui::InstructionListItem;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -176,8 +175,8 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiLmStudio
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -686,12 +685,14 @@ impl Render for ConfigurationView {
                 .child(
                     v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
                         List::new()
-                            .child(InstructionListItem::text_only(
+                            .child(ListBulletItem::new(
                                 "LM Studio needs to be running with at least one model downloaded.",
                             ))
-                            .child(InstructionListItem::text_only(
-                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
-                            )),
+                            .child(
+                                ListBulletItem::new("")
+                                    .child(Label::new("To get your first model, try running"))
+                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
+                            ),
                     ),
                 )
                 .child(

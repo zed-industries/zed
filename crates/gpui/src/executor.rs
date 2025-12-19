@@ -1,6 +1,7 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
+use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
+use parking_lot::{Condvar, Mutex};
 use smol::prelude::*;
 use std::{
     fmt::Debug,
@@ -44,6 +45,52 @@ pub struct ForegroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
+}
+
+/// Realtime task priority
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RealtimePriority {
+    /// Audio task
+    Audio,
+    /// Other realtime task
+    #[default]
+    Other,
+}
+
+/// Task priority
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Priority {
+    /// Realtime priority
+    ///
+    /// Spawning a task with this priority will spin it off on a separate thread dedicated just to that task.
+    Realtime(RealtimePriority),
+    /// High priority
+    ///
+    /// Only use for tasks that are critical to the user experience / responsiveness of the editor.
+    High,
+    /// Medium priority, probably suits most of your use cases.
+    #[default]
+    Medium,
+    /// Low priority
+    ///
+    /// Prioritize this for background work that can come in large quantities
+    /// to not starve the executor of resources for high priority tasks
+    Low,
+}
+
+impl Priority {
+    #[allow(dead_code)]
+    pub(crate) const fn probability(&self) -> u32 {
+        match self {
+            // realtime priorities are not considered for probability scheduling
+            Priority::Realtime(_) => 0,
+            Priority::High => 60,
+            Priority::Medium => 30,
+            Priority::Low => 10,
+        }
+    }
 }
 
 /// Task is a primitive that allows work to happen in the background.
@@ -151,7 +198,77 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        self.spawn_internal::<R>(Box::pin(future), None)
+        self.spawn_with_priority(Priority::default(), future)
+    }
+
+    /// Enqueues the given future to be run to completion on a background thread.
+    #[track_caller]
+    pub fn spawn_with_priority<R>(
+        &self,
+        priority: Priority,
+        future: impl Future<Output = R> + Send + 'static,
+    ) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.spawn_internal::<R>(Box::pin(future), None, priority)
+    }
+
+    /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
+    ///
+    /// This allows to spawn background work that borrows from its scope. Note that the supplied future will run to
+    /// completion before the current task is resumed, even if the current task is slated for cancellation.
+    pub async fn await_on_background<R>(&self, future: impl Future<Output = R> + Send) -> R
+    where
+        R: Send,
+    {
+        // We need to ensure that cancellation of the parent task does not drop the environment
+        // before the our own task has completed or got cancelled.
+        struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
+
+        impl Drop for NotifyOnDrop<'_> {
+            fn drop(&mut self) {
+                *self.0.1.lock() = true;
+                self.0.0.notify_all();
+            }
+        }
+
+        struct WaitOnDrop<'a>(&'a (Condvar, Mutex<bool>));
+
+        impl Drop for WaitOnDrop<'_> {
+            fn drop(&mut self) {
+                let mut done = self.0.1.lock();
+                if !*done {
+                    self.0.0.wait(&mut done);
+                }
+            }
+        }
+
+        let dispatcher = self.dispatcher.clone();
+        let location = core::panic::Location::caller();
+
+        let pair = &(Condvar::new(), Mutex::new(false));
+        let _wait_guard = WaitOnDrop(pair);
+
+        let (runnable, task) = unsafe {
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn_unchecked(
+                    move |_| async {
+                        let _notify_guard = NotifyOnDrop(pair);
+                        future.await
+                    },
+                    move |runnable| {
+                        dispatcher.dispatch(
+                            RunnableVariant::Meta(runnable),
+                            None,
+                            Priority::default(),
+                        )
+                    },
+                )
+        };
+        runnable.schedule();
+        task.await
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -165,7 +282,7 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        self.spawn_internal::<R>(Box::pin(future), Some(label))
+        self.spawn_internal::<R>(Box::pin(future), Some(label), Priority::default())
     }
 
     #[track_caller]
@@ -173,15 +290,65 @@ impl BackgroundExecutor {
         &self,
         future: AnyFuture<R>,
         label: Option<TaskLabel>,
+        #[cfg_attr(
+            target_os = "windows",
+            expect(
+                unused_variables,
+                reason = "Multi priority scheduler is broken on windows"
+            )
+        )]
+        priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        let location = core::panic::Location::caller();
-        let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
-            .spawn(
-                move |_| future,
-                move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), label),
+        #[cfg(target_os = "windows")]
+        let priority = Priority::Medium; // multi-prio scheduler is broken on windows
+
+        let (runnable, task) = if let Priority::Realtime(realtime) = priority {
+            let location = core::panic::Location::caller();
+            let (mut tx, rx) = flume::bounded::<Runnable<RunnableMeta>>(1);
+
+            dispatcher.spawn_realtime(
+                realtime,
+                Box::new(move || {
+                    while let Ok(runnable) = rx.recv() {
+                        let start = Instant::now();
+                        let location = runnable.metadata().location;
+                        let mut timing = TaskTiming {
+                            location,
+                            start,
+                            end: None,
+                        };
+                        profiler::add_task_timing(timing);
+
+                        runnable.run();
+
+                        let end = Instant::now();
+                        timing.end = Some(end);
+                        profiler::add_task_timing(timing);
+                    }
+                }),
             );
+
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn(
+                    move |_| future,
+                    move |runnable| {
+                        let _ = tx.send(runnable);
+                    },
+                )
+        } else {
+            let location = core::panic::Location::caller();
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn(
+                    move |_| future,
+                    move |runnable| {
+                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
+                    },
+                )
+        };
+
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -354,11 +521,28 @@ impl BackgroundExecutor {
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new(self.clone());
+        let mut scope = Scope::new(self.clone(), Priority::default());
         (scheduler)(&mut scope);
         let spawned = mem::take(&mut scope.futures)
             .into_iter()
-            .map(|f| self.spawn(f))
+            .map(|f| self.spawn_with_priority(scope.priority, f))
+            .collect::<Vec<_>>();
+        for task in spawned {
+            task.await;
+        }
+    }
+
+    /// Scoped lets you start a number of tasks and waits
+    /// for all of them to complete before returning.
+    pub async fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
+    where
+        F: FnOnce(&mut Scope<'scope>),
+    {
+        let mut scope = Scope::new(self.clone(), priority);
+        (scheduler)(&mut scope);
+        let spawned = mem::take(&mut scope.futures)
+            .into_iter()
+            .map(|f| self.spawn_with_priority(scope.priority, f))
             .collect::<Vec<_>>();
         for task in spawned {
             task.await;
@@ -497,6 +681,19 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
+        self.spawn_with_priority(Priority::default(), future)
+    }
+
+    /// Enqueues the given Task to run on the main thread at some point in the future.
+    #[track_caller]
+    pub fn spawn_with_priority<R>(
+        &self,
+        priority: Priority,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
         let dispatcher = self.dispatcher.clone();
         let location = core::panic::Location::caller();
 
@@ -505,16 +702,19 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
+            priority: Priority,
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
-                move |runnable| dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable)),
+                move |runnable| {
+                    dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
+                },
                 RunnableMeta { location },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future), location)
+        inner::<R>(dispatcher, Box::pin(future), location, priority)
     }
 }
 
@@ -590,6 +790,7 @@ where
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
+    priority: Priority,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -597,10 +798,11 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new(executor: BackgroundExecutor) -> Self {
+    fn new(executor: BackgroundExecutor, priority: Priority) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             executor,
+            priority,
             tx: Some(tx),
             rx,
             futures: Default::default(),

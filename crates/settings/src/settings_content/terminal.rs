@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use collections::HashMap;
-use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
+use gpui::{AbsoluteLength, FontFeatures, FontWeight, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -96,8 +96,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub font_weight: Option<f32>,
+    pub font_weight: Option<FontWeight>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
     ///

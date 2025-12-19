@@ -32,6 +32,7 @@ async-trait.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
+encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -48,6 +49,7 @@ rand = { workspace = true, optional = true }
 regex.workspace = true
 rpc.workspace = true
 schemars.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
