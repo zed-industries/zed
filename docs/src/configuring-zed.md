@@ -2667,6 +2667,9 @@ These values take in the same options as the root-level settings with the same n
 ```json [settings]
 {
   "language_models": {
+    "anthropic": {
+      "api_url": "https://api.anthropic.com"
+    },
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"
     },
