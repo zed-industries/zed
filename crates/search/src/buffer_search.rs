@@ -1307,6 +1307,8 @@ impl BufferSearchBar {
                     }
                     .into()
                 };
+
+                #[cfg(target_os = "macos")]
                 let used_search_options = self.search_options;
 
                 self.active_search = Some(query.clone());
