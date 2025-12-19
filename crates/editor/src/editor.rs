@@ -23598,7 +23598,7 @@ fn list_delimiter_for_newline(
             let end_of_prefix = num_of_whitespaces + prefix.len();
             let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
             let has_content_after_marker = snapshot
-                .chars_for_range(range.clone())
+                .chars_for_range(range)
                 .skip(end_of_prefix)
                 .any(|c| !c.is_whitespace());
 
@@ -23639,7 +23639,7 @@ fn list_delimiter_for_newline(
             let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
 
             let has_content_after_marker = snapshot
-                .chars_for_range(range.clone())
+                .chars_for_range(range)
                 .skip(end_of_prefix)
                 .any(|c| !c.is_whitespace());
 
@@ -23720,7 +23720,7 @@ fn list_prefix_end_column(
     }
 
     let candidate: String = snapshot
-        .chars_for_range(range.clone())
+        .chars_for_range(range)
         .skip(num_of_whitespaces)
         .take(ORDERED_LIST_MAX_MARKER_LEN)
         .collect();
