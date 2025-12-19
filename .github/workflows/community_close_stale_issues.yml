@@ -13,12 +13,13 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           stale-issue-message: >
-            Hi there! 👋
-
-            We're working to clean up our issue tracker by closing older bugs that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and it will be kept open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, it will close automatically in 14 days.
+            Hi there!
+            Zed development moves fast and a significant number of bugs become outdated.
+            If you can reproduce this bug on the latest stable Zed, please let us know by leaving a comment with the Zed version.
+            If the bug doesn't appear for you anymore, feel free to close the issue yourself; otherwise, the bot will close it in a couple of weeks.
 
             Thanks for your help!
-          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
+          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please leave a comment with your Zed version so that we can reopen the issue."
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
