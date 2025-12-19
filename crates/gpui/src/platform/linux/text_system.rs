@@ -6,8 +6,8 @@ use crate::{
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
-    Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
-    FontSystem, ShapeBuffer, ShapeLine, SwashCache,
+    Attrs, AttrsList, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
+    FontSystem, ShapeBuffer, ShapeLine,
 };
 
 use itertools::Itertools;
@@ -18,6 +18,10 @@ use pathfinder_geometry::{
 };
 use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
+use swash::{
+    scale::{Render, ScaleContext, Source, StrikeWith},
+    zeno::{Format, Transform, Vector},
+};
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
 
@@ -34,9 +38,9 @@ impl FontKey {
 }
 
 struct CosmicTextSystemState {
-    swash_cache: SwashCache,
     font_system: FontSystem,
     scratch: ShapeBuffer,
+    swash_scale_context: ScaleContext,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
@@ -57,8 +61,8 @@ impl CosmicTextSystem {
 
         Self(RwLock::new(CosmicTextSystemState {
             font_system,
-            swash_cache: SwashCache::new(),
             scratch: ShapeBuffer::default(),
+            swash_scale_context: ScaleContext::new(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
         }))
@@ -273,26 +277,7 @@ impl CosmicTextSystemState {
     }
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let font = &self.loaded_fonts[params.font_id.0].font;
-        let subpixel_shift = point(
-            params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
-            params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
-        );
-        let image = self
-            .swash_cache
-            .get_image(
-                &mut self.font_system,
-                CacheKey::new(
-                    font.id(),
-                    params.glyph_id.0 as u16,
-                    (params.font_size * params.scale_factor).into(),
-                    (subpixel_shift.x, subpixel_shift.y.trunc()),
-                    cosmic_text::CacheKeyFlags::empty(),
-                )
-                .0,
-            )
-            .clone()
-            .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
+        let image = self.render_glyph_image(params)?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
@@ -307,38 +292,72 @@ impl CosmicTextSystemState {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             anyhow::bail!("glyph bounds are empty");
-        } else {
-            let bitmap_size = glyph_bounds.size;
-            let font = &self.loaded_fonts[params.font_id.0].font;
-            let subpixel_shift = point(
-                params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
-                params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
-            );
-            let mut image = self
-                .swash_cache
-                .get_image(
-                    &mut self.font_system,
-                    CacheKey::new(
-                        font.id(),
-                        params.glyph_id.0 as u16,
-                        (params.font_size * params.scale_factor).into(),
-                        (subpixel_shift.x, subpixel_shift.y.trunc()),
-                        cosmic_text::CacheKeyFlags::empty(),
-                    )
-                    .0,
-                )
-                .clone()
-                .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
+        }
 
-            if params.is_emoji {
+        let mut image = self.render_glyph_image(params)?;
+        let bitmap_size = glyph_bounds.size;
+        match image.content {
+            swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
                 // Convert from RGBA to BGRA.
                 for pixel in image.data.chunks_exact_mut(4) {
                     pixel.swap(0, 2);
                 }
+                Ok((bitmap_size, image.data))
             }
-
-            Ok((bitmap_size, image.data))
+            swash::scale::image::Content::Mask => Ok((bitmap_size, image.data)),
         }
+    }
+
+    fn render_glyph_image(
+        &mut self,
+        params: &RenderGlyphParams,
+    ) -> Result<swash::scale::image::Image> {
+        let loaded_font = &self.loaded_fonts[params.font_id.0];
+        let font_ref = loaded_font.font.as_swash();
+        let pixel_size = params.font_size.0;
+
+        let subpixel_offset = Vector::new(
+            params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
+            params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
+        );
+
+        let mut scaler = self
+            .swash_scale_context
+            .builder(font_ref)
+            .size(pixel_size)
+            .hint(true)
+            .build();
+
+        let sources: &[Source] = if params.is_emoji {
+            &[
+                Source::ColorOutline(0),
+                Source::ColorBitmap(StrikeWith::BestFit),
+                Source::Outline,
+            ]
+        } else {
+            &[Source::Outline]
+        };
+
+        let mut renderer = Render::new(sources);
+        renderer.transform(Some(Transform {
+            xx: params.scale_factor,
+            xy: 0.0,
+            yx: 0.0,
+            yy: params.scale_factor,
+            x: 0.0,
+            y: 0.0,
+        }));
+
+        if params.subpixel_rendering {
+            renderer.format(Format::Subpixel).offset(subpixel_offset);
+        } else {
+            renderer.format(Format::Alpha).offset(subpixel_offset);
+        }
+
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
+        renderer
+            .render(&mut scaler, glyph_id)
+            .with_context(|| format!("unable to render glyph via swash for {params:?}"))
     }
 
     /// This is used when cosmic_text has chosen a fallback font instead of using the requested
