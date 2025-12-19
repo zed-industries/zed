@@ -21,6 +21,7 @@ editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
+menu.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -10,7 +10,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, prelude::*, Action, App, AsyncWindowContext, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, KeyBinding, ParentElement, Pixels,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels,
     Render, Styled, Subscription, WeakEntity, Window,
 };
 use serde::{Deserialize, Serialize};
@@ -55,11 +55,6 @@ pub struct AliPanel {
 
 pub fn init(cx: &mut App) {
     AliPanelSettings::register(cx);
-
-    // Bind Enter key in Ali panel input to send message
-    cx.bind_keys([
-        KeyBinding::new("enter", SendToAli, Some("Editor && AliPanel")),
-    ]);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         // ToggleFocus should toggle the AliPanel in the bottom dock
@@ -341,6 +336,10 @@ impl Render for AliPanel {
             .key_context("AliPanel")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &SendToAli, window, cx| {
+                this.send_to_ali(window, cx);
+            }))
+            // Handle Enter key from input editor (menu::Confirm is dispatched by single_line editor)
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                 this.send_to_ali(window, cx);
             }))
             .size_full()
