@@ -10458,9 +10458,7 @@ impl Editor {
                 let settings = buffer.language_settings_at(cursor, cx);
                 if settings.indent_list_on_tab {
                     if let Some(language) = snapshot.language_scope_at(Point::new(cursor.row, 0)) {
-                        if let Some(_) =
-                            list_prefix_end_column(MultiBufferRow(cursor.row), &snapshot, &language)
-                        {
+                        if is_list_prefix_row(MultiBufferRow(cursor.row), &snapshot, &language) {
                             row_delta = Self::indent_selection(
                                 buffer, &snapshot, selection, &mut edits, row_delta, cx,
                             );
@@ -23669,12 +23667,14 @@ fn list_delimiter_for_newline(
     None
 }
 
-fn list_prefix_end_column(
+fn is_list_prefix_row(
     row: MultiBufferRow,
     buffer: &MultiBufferSnapshot,
     language: &LanguageScope,
-) -> Option<u32> {
-    let (snapshot, range) = buffer.buffer_line_for_row(row)?;
+) -> bool {
+    let Some((snapshot, range)) = buffer.buffer_line_for_row(row) else {
+        return false;
+    };
 
     let num_of_whitespaces = snapshot
         .chars_for_range(range.clone())
@@ -23697,48 +23697,40 @@ fn list_prefix_end_column(
         .iter()
         .map(|marker| marker.as_ref())
         .collect();
-
     let all_prefixes: Vec<_> = task_list_prefixes
         .into_iter()
         .chain(unordered_list_markers)
         .collect();
-
     if let Some(max_prefix_len) = all_prefixes.iter().map(|p| p.len()).max() {
         let candidate: String = snapshot
             .chars_for_range(range.clone())
             .skip(num_of_whitespaces)
             .take(max_prefix_len)
             .collect();
-
-        if let Some(prefix) = all_prefixes
+        if all_prefixes
             .iter()
-            .filter(|prefix| candidate.starts_with(*prefix))
-            .max_by_key(|prefix| prefix.len())
+            .any(|prefix| candidate.starts_with(*prefix))
         {
-            return Some((num_of_whitespaces + prefix.trim_end().len()) as u32);
+            return true;
         }
     }
 
-    let candidate: String = snapshot
+    let ordered_list_candidate: String = snapshot
         .chars_for_range(range)
         .skip(num_of_whitespaces)
         .take(ORDERED_LIST_MAX_MARKER_LEN)
         .collect();
-
     for ordered_config in language.ordered_list() {
         let regex = match Regex::new(&ordered_config.pattern) {
             Ok(r) => r,
             Err(_) => continue,
         };
-
-        if let Some(captures) = regex.captures(&candidate) {
-            let full_match = captures.get(0)?;
-            let marker_text = full_match.as_str();
-            return Some((num_of_whitespaces + marker_text.trim_end().len()) as u32);
+        if let Some(captures) = regex.captures(&ordered_list_candidate) {
+            return captures.get(0).is_some();
         }
     }
 
-    None
+    false
 }
 
 #[derive(Debug)]
