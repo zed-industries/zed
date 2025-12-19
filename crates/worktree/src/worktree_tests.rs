@@ -1,5 +1,5 @@
 use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use encoding_rs;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
