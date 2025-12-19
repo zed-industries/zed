@@ -7338,15 +7338,15 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_before = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         for label in pane_labels {
-            add_labeled_item(&pane, label, false, cx);
+            add_labeled_item(&pane_before, label, false, cx);
         }
-        pane.update_in(cx, |pane, window, cx| {
+        pane_before.update_in(cx, |pane, window, cx| {
             pane.split(direction, operation, window, cx)
         });
         cx.executor().run_until_parked();
-        let new_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_after = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let num_labels = pane_labels.len();
         let last_as_active = format!("{}*", String::from(pane_labels[num_labels - 1]));
@@ -7354,22 +7354,21 @@ mod tests {
         // check labels for all split operations
         match operation {
             SplitMode::EmptyPane => {
-                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
-                assert_item_labels(&new_pane, [], cx);
+                assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&pane_after, [], cx);
             }
             SplitMode::ClonePane => {
-                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
-                assert_item_labels(&new_pane, [&last_as_active], cx);
+                assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&pane_after, [&last_as_active], cx);
             }
             SplitMode::MovePane => {
                 if num_labels == 1 {
-                    // TODO check split direction reversed
-                    // assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
-                    assert_item_labels(&new_pane, [], cx);
+                    assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
+                    assert_item_labels(&pane_after, [], cx);
                 } else {
                     let head = &pane_labels[..(num_labels - 1)];
-                    assert_item_labels_active_index(&pane, &head, head.len() - 1, cx);
-                    assert_item_labels(&new_pane, [&last_as_active], cx);
+                    assert_item_labels_active_index(&pane_before, &head, head.len() - 1, cx);
+                    assert_item_labels(&pane_after, [&last_as_active], cx);
                 }
             }
         }
@@ -7383,9 +7382,11 @@ mod tests {
         // expected ids depends on split direction
         let expected_ids = match direction {
             SplitDirection::Right | SplitDirection::Down => {
-                [&pane.entity_id(), &new_pane.entity_id()]
+                [&pane_before.entity_id(), &pane_after.entity_id()]
             }
-            SplitDirection::Left | SplitDirection::Up => [&new_pane.entity_id(), &pane.entity_id()],
+            SplitDirection::Left | SplitDirection::Up => {
+                [&pane_after.entity_id(), &pane_before.entity_id()]
+            }
         };
 
         // check pane axes for all operations
@@ -7394,12 +7395,12 @@ mod tests {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
             SplitMode::MovePane => {
-                if num_labels > 1 {
-                    assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+                let expected_ids = if num_labels == 1 {
+                    [expected_ids[1], expected_ids[0]]
                 } else {
-                    let expected_ids = [expected_ids[1], expected_ids[0]];
-                    assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
-                }
+                    expected_ids
+                };
+                assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
         }
     }
