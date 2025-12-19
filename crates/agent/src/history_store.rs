@@ -163,12 +163,19 @@ impl HistoryStore {
         self.threads.iter().find(|thread| &thread.id == session_id)
     }
 
-    /// Find the most recent thread whose title contains the given agent name
+    /// Find the most recent thread for a given agent server name
     pub fn thread_by_agent_name(&self, agent_name: &str) -> Option<&DbThreadMetadata> {
         // Threads are sorted by updated_at descending, so first match is most recent
+        // First, try to find by the dedicated agent_name field (more reliable)
         self.threads.iter().find(|thread| {
-            thread.title.contains(agent_name) ||
-            thread.title.to_lowercase().contains(&agent_name.to_lowercase())
+            if let Some(ref stored_agent_name) = thread.agent_name {
+                stored_agent_name.as_ref() == agent_name ||
+                stored_agent_name.to_lowercase() == agent_name.to_lowercase()
+            } else {
+                // Fallback: search in title for backward compatibility
+                thread.title.contains(agent_name) ||
+                thread.title.to_lowercase().contains(&agent_name.to_lowercase())
+            }
         })
     }
 
@@ -181,6 +188,21 @@ impl HistoryStore {
         cx.background_spawn(async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.load_thread(id).await
+        })
+    }
+
+    /// Save an ACP thread to the database (used by Convergio agents)
+    pub fn save_acp_thread(
+        &mut self,
+        id: acp::SessionId,
+        thread: DbThread,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.save_thread(id, thread).await?;
+            this.update(cx, |this, cx| this.reload(cx))
         })
     }
 

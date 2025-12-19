@@ -29,6 +29,10 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    /// The name of the agent server that created this thread (e.g., "Convergio-Ali")
+    /// Used to find threads by agent for conversation persistence
+    #[serde(default)]
+    pub agent_name: Option<SharedString>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +54,9 @@ pub struct DbThread {
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
+    /// The name of the agent server that created this thread (e.g., "Convergio-Ali")
+    #[serde(default)]
+    pub agent_name: Option<SharedString>,
 }
 
 impl DbThread {
@@ -209,6 +216,7 @@ impl DbThread {
             model: thread.model,
             completion_mode: thread.completion_mode,
             profile: thread.profile,
+            agent_name: None, // Legacy threads don't have agent_name
         })
     }
 }
@@ -306,6 +314,13 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
+        // Migration: Add agent_name column for Convergio agent persistence
+        // This allows finding existing conversations by agent name
+        connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN agent_name TEXT
+        "})
+        .ok(); // Ignore error if column already exists
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -330,6 +345,7 @@ impl ThreadsDatabase {
 
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
+        let agent_name = thread.agent_name.as_ref().map(|s| s.to_string());
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -341,11 +357,11 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, Option<String>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data, agent_name) VALUES (?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((id.0, title, updated_at, data_type, data, agent_name))?;
 
         Ok(())
     }
@@ -357,18 +373,19 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select =
-                connection.select_bound::<(), (Arc<str>, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+                connection.select_bound::<(), (Arc<str>, String, String, Option<String>)>(indoc! {"
+                SELECT id, summary, updated_at, agent_name FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, summary, updated_at) in rows {
+            for (id, summary, updated_at, agent_name) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    agent_name: agent_name.map(|s| s.into()),
                 });
             }
 

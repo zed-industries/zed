@@ -5,7 +5,7 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use agent::{DbThread, DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
@@ -548,6 +548,7 @@ impl AcpThreadView {
                 .downcast::<agent::NativeAgentConnection>()
                 && let Some(resume) = resume_thread.clone()
             {
+                // Native agents support true thread resume
                 cx.update(|_, cx| {
                     native_agent
                         .0
@@ -555,6 +556,15 @@ impl AcpThreadView {
                 })
                 .log_err()
             } else {
+                // For ACP agents (including Convergio), we cannot resume threads because
+                // the ACP protocol doesn't support session resume yet.
+                // TODO: Add session resume support to ACP protocol (session/new with optional session_id)
+                if let Some(resume) = resume_thread.clone() {
+                    log::info!(
+                        "Found existing thread {} for ACP agent, but ACP resume not yet supported. Creating new session.",
+                        resume.id.0
+                    );
+                }
                 let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
                 cx.update(|_, cx| {
                     connection
@@ -900,6 +910,42 @@ impl AcpThreadView {
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
+    }
+
+    /// Save thread metadata for conversation persistence (Convergio agents)
+    fn save_thread_metadata(&self, thread: &Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = thread.read(cx).session_id().clone();
+        let title = thread.read(cx).title();
+        let agent_name = self.agent.name();
+
+        // Only save for Convergio agents
+        if !agent_name.starts_with("Convergio-") {
+            return;
+        }
+
+        log::info!("Saving Convergio thread: {} with session {} for agent {}", title, session_id.0, agent_name);
+
+        // Create a minimal DbThread just for metadata storage
+        // agent_name is stored to enable finding threads by agent for conversation persistence
+        let db_thread = DbThread {
+            title: title.clone(),
+            messages: vec![],
+            updated_at: chrono::Utc::now(),
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: Default::default(),
+            model: None,
+            completion_mode: None,
+            profile: None,
+            agent_name: Some(agent_name.clone()),
+        };
+
+        // Use HistoryStore to save the thread
+        self.history_store.update(cx, |store, cx| {
+            store.save_acp_thread(session_id.clone(), db_thread, cx).detach_and_log_err(cx);
+        });
+        log::info!("Convergio thread save initiated for session {} (agent: {})", session_id.0, agent_name);
     }
 
     pub fn expand_message_editor(
@@ -1465,6 +1511,8 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+                // Save thread metadata for conversation persistence (Convergio)
+                self.save_thread_metadata(thread, cx);
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
@@ -4820,6 +4868,7 @@ impl AcpThreadView {
                                     id,
                                     title: name.into(),
                                     updated_at: Default::default(),
+                                    agent_name: None,
                                 },
                                 window,
                                 cx,

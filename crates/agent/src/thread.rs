@@ -885,6 +885,7 @@ impl Thread {
             }),
             completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
+            agent_name: None, // Native Zed threads don't have agent_name
         };
 
         cx.background_spawn(async move {
