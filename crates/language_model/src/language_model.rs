@@ -844,7 +844,6 @@ pub trait LanguageModelProvider: 'static {
 pub enum ConfigurationViewTargetAgent {
     #[default]
     ZedAgent,
-    EditPrediction,
     Other(SharedString),
 }
 
