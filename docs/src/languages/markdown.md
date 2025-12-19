@@ -35,13 +35,13 @@ Zed supports using Prettier to automatically re-format Markdown documents. You c
 
 ### List Continuation
 
-When you press Enter at the end of a markdown list item, Zed will automatically continue the list on the next line. This works for:
+Zed automatically continues lists when you press Enter at the end of a list item. Supported list types:
 
-- Unordered lists using `-`, `*`, or `+` markers
-- Ordered lists with auto-incrementing numbers
+- Unordered lists (`-`, `*`, or `+` markers)
+- Ordered lists (numbers are auto-incremented)
 - Task lists (`- [ ]` and `- [x]`)
 
-If you press Enter on an empty list item (just the marker with no content), the list marker will be removed and you'll exit the list.
+Pressing Enter on an empty list item removes the marker and exits the list.
 
 To disable this behavior:
 
@@ -49,6 +49,20 @@ To disable this behavior:
   "languages": {
     "Markdown": {
       "extend_list_on_newline": false
+    }
+  },
+```
+
+### List Indentation
+
+Zed indents list items when you press Tab while the cursor is on a line containing only a list marker. This allows you to quickly create nested lists.
+
+To disable this behavior:
+
+```json [settings]
+  "languages": {
+    "Markdown": {
+      "indent_list_on_tab": false
     }
   },
 ```

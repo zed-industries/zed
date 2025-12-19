@@ -1587,8 +1587,18 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 ## Extend List On Newline
 
-- Description: Whether to continue markdown lists (unordered, ordered, and task lists) when pressing Enter at the end of a list item. Pressing Enter on an empty list item will remove the marker and exit the list.
+- Description: Whether to continue lists when pressing Enter at the end of a list item. Supports unordered, ordered, and task lists. Pressing Enter on an empty list item removes the marker and exits the list.
 - Setting: `extend_list_on_newline`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Indent List On Tab
+
+- Description: Whether to indent list items when pressing Tab on a line containing only a list marker. This enables quick creation of nested lists.
+- Setting: `indent_list_on_tab`
 - Default: `true`
 
 **Options**
