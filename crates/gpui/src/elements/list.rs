@@ -254,6 +254,22 @@ impl ListState {
         self.splice(0..old_count, element_count);
     }
 
+    /// Remeasure all items without changing scroll position.
+    ///
+    /// Use this when item heights may have changed (e.g., font size changes)
+    /// but the number and identity of items remains the same.
+    pub fn remeasure(&self) {
+        let state = &mut *self.0.borrow_mut();
+        let items = state.items.clone();
+        state.measuring_behavior.reset();
+
+        let new_items = items.cursor::<Count>(()).map(|item| ListItem::Unmeasured {
+            focus_handle: item.focus_handle(),
+        });
+
+        state.items = SumTree::from_iter(new_items, ());
+    }
+
     /// The number of items in this list.
     pub fn item_count(&self) -> usize {
         self.0.borrow().items.summary().count

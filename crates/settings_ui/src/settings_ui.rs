@@ -1389,8 +1389,8 @@ impl SettingsWindow {
             // size.
             let new_ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
             if new_ui_font_size != ui_font_size {
+                this.list_state.remeasure();
                 ui_font_size = new_ui_font_size;
-                this.list_state.clone().measure_all();
             }
 
             cx.notify();
