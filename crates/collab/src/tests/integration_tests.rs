@@ -6745,10 +6745,11 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Split pane to the right
-    pane.update(cx, |pane, cx| {
+    pane.update_in(cx, |pane, window, cx| {
         pane.split(
             workspace::SplitDirection::Right,
             workspace::SplitMode::default(),
+            window,
             cx,
         );
     });
