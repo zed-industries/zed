@@ -6,8 +6,7 @@ use crate::{
 use gpui::{Bounds, Context, Pixels, Window};
 use language::Point;
 use multi_buffer::{Anchor, ToPoint};
-use std::{cmp, ops::RangeBounds};
-use text::Bias;
+use std::cmp;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
