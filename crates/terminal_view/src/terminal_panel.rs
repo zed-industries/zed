@@ -939,7 +939,6 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
-        let reveal_target = spawn_task.reveal_target;
         let task_workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             let project = terminal_panel.update(cx, |this, cx| {
@@ -953,6 +952,14 @@ impl TerminalPanel {
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
                 terminal_to_replace.set_terminal(new_terminal.clone(), window, cx);
+            })?;
+
+            let reveal_target = terminal_panel.update(cx, |panel, _| {
+                if panel.center.panes().iter().any(|p| **p == task_pane) {
+                    RevealTarget::Dock
+                } else {
+                    RevealTarget::Center
+                }
             })?;
 
             match reveal {
