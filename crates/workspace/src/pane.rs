@@ -1846,6 +1846,7 @@ impl Pane {
             }
 
             for item_to_close in items_to_close {
+                let mut should_close = true;
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
                     workspace.update(cx, |workspace, cx| {
@@ -1861,7 +1862,7 @@ impl Pane {
                     {
                         Ok(success) => {
                             if !success {
-                                break;
+                                should_close = false;
                             }
                         }
                         Err(err) => {
@@ -1880,23 +1881,25 @@ impl Pane {
                             })?;
                             match answer.await {
                                 Ok(0) => {}
-                                Ok(1..) | Err(_) => break,
+                                Ok(1..) | Err(_) => should_close = false,
                             }
                         }
                     }
                 }
 
                 // Remove the item from the pane.
-                pane.update_in(cx, |pane, window, cx| {
-                    pane.remove_item(
-                        item_to_close.item_id(),
-                        false,
-                        pane.close_pane_if_empty,
-                        window,
-                        cx,
-                    );
-                })
-                .ok();
+                if should_close {
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.remove_item(
+                            item_to_close.item_id(),
+                            false,
+                            pane.close_pane_if_empty,
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+                }
             }
 
             pane.update(cx, |_, cx| cx.notify()).ok();
@@ -6614,6 +6617,60 @@ mod tests {
         cx.simulate_prompt_answer("Discard all");
         save.await.unwrap();
         assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(1, "A.txt", cx))
+        });
+        add_labeled_item(&pane, "B", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(2, "B.txt", cx))
+        });
+        add_labeled_item(&pane, "C", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(3, "C.txt", cx))
+        });
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Discard all");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "Clean1", false, cx);
+        add_labeled_item(&pane, "Dirty", true, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(1, "Dirty.txt", cx))
+        });
+        add_labeled_item(&pane, "Clean2", false, cx);
+        assert_item_labels(&pane, ["Clean1", "Dirty^", "Clean2*"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["Dirty*^"], cx);
     }
 
     #[gpui::test]
