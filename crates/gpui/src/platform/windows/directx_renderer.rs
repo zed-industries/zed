@@ -182,7 +182,7 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    fn pre_draw(&self) -> Result<()> {
+    fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
         let resources = self.resources.as_ref().expect("resources missing");
         let device_context = &self
             .devices
@@ -205,7 +205,7 @@ impl DirectXRenderer {
                     .render_target_view
                     .as_ref()
                     .context("missing render target view")?,
-                &[0.0; 4],
+                clear_color,
             );
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
@@ -300,13 +300,20 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+    pub(crate) fn draw(
+        &mut self,
+        scene: &Scene,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
         if self.skip_draws {
             // skip drawing this frame, we just recovered from a device lost event
             // and so likely do not have the textures anymore that are required for drawing
             return Ok(());
         }
-        self.pre_draw()?;
+        self.pre_draw(&match background_appearance {
+            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
+            _ => [0.0f32; 4],
+        })?;
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
