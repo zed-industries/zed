@@ -505,8 +505,8 @@ impl ToolbarItemView for BufferSearchBar {
                 self.active_searchable_item_subscriptions = Some([
                     search_event_subscription,
                     cx.on_focus(&item_focus_handle, window, |this, window, cx| {
-                        if this.query_editor_focused {
-                            // no need to read pasteboard since focus came from our query editor
+                        if this.query_editor_focused || this.replacement_editor_focused {
+                            // no need to read pasteboard since focus came from toolbar
                             return;
                         }
 
@@ -514,13 +514,21 @@ impl ToolbarItemView for BufferSearchBar {
                             if let Some(item) = cx.read_from_find_pasteboard()
                                 && let Some(text) = item.text()
                             {
-                                let search_options = item
-                                    .metadata()
-                                    .and_then(|m| m.parse().ok())
-                                    .and_then(SearchOptions::from_bits)
-                                    .unwrap_or(this.search_options);
+                                if this.query(cx) != text {
+                                    let search_options = item
+                                        .metadata()
+                                        .and_then(|m| m.parse().ok())
+                                        .and_then(SearchOptions::from_bits)
+                                        .unwrap_or(this.search_options);
 
-                                drop(this.search(&text, Some(search_options), true, window, cx));
+                                    drop(this.search(
+                                        &text,
+                                        Some(search_options),
+                                        true,
+                                        window,
+                                        cx,
+                                    ));
+                                }
                             }
                         });
                     }),
@@ -936,9 +944,18 @@ impl BufferSearchBar {
             });
             self.set_search_options(options, cx);
             self.clear_matches(window, cx);
+            self.update_find_pasteboard(cx);
             cx.notify();
         }
         self.update_matches(!updated, add_to_history, window, cx)
+    }
+
+    pub fn update_find_pasteboard(&mut self, cx: &mut App) {
+        #[cfg(target_os = "macos")]
+        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string_with_metadata(
+            self.query(cx),
+            self.search_options.bits().to_string(),
+        ));
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
@@ -1130,11 +1147,11 @@ impl BufferSearchBar {
                 cx.spawn_in(window, async move |this, cx| {
                     if search.await.is_ok() {
                         this.update_in(cx, |this, window, cx| {
-                            this.activate_current_match(window, cx)
-                        })
-                    } else {
-                        Ok(())
+                            this.activate_current_match(window, cx);
+                            this.update_find_pasteboard(cx);
+                        })?;
                     }
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -1308,9 +1325,6 @@ impl BufferSearchBar {
                     .into()
                 };
 
-                #[cfg(target_os = "macos")]
-                let used_search_options = self.search_options;
-
                 self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
 
@@ -1321,12 +1335,6 @@ impl BufferSearchBar {
                     let matches = matches.await;
 
                     this.update_in(cx, |this, window, cx| {
-                        #[cfg(target_os = "macos")]
-                        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string_with_metadata(
-                            query_text.clone(),
-                            used_search_options.bits().to_string(),
-                        ));
-
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {
