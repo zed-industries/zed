@@ -876,7 +876,9 @@ pub struct Window {
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
-    pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    /// Tracks the timestamp of the most recent input event that triggered a re-render.
+    /// Used to keep presenting frames for 1 second after input to prevent display underclocking.
+    pub(crate) last_notifying_input_timestamp: Rc<Cell<Instant>>,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1047,7 +1049,7 @@ impl Window {
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
-        let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+        let last_notifying_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1075,7 +1077,7 @@ impl Window {
             let active = active.clone();
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
-            let last_input_timestamp = last_input_timestamp.clone();
+            let last_notifying_input_timestamp = last_notifying_input_timestamp.clone();
             move |request_frame_options| {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
@@ -1093,13 +1095,14 @@ impl Window {
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
                     || (active.get()
-                        && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
+                        && last_notifying_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
                                 let arena_clear_needed = window.draw(cx);
+                                print!("D");
                                 window.present();
                                 // drop the arena elements after present to reduce latency
                                 arena_clear_needed.clear();
@@ -1107,10 +1110,14 @@ impl Window {
                             .log_err();
                     })
                 } else if needs_present {
+                    print!("P");
                     handle
                         .update(&mut cx, |_, window, _| window.present())
                         .log_err();
                 }
+
+                use std::io::Write;
+                std::io::stdout().flush().unwrap();
 
                 handle
                     .update(&mut cx, |_, window, _| {
@@ -1299,7 +1306,7 @@ impl Window {
             active,
             hovered,
             needs_present,
-            last_input_timestamp,
+            last_notifying_input_timestamp,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -3679,8 +3686,7 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        self.last_input_timestamp.set(Instant::now());
-
+        let was_dirty = self.invalidator.is_dirty();
         // Track whether this input was keyboard-based for focus-visible styling
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
@@ -3779,6 +3785,10 @@ impl Window {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        }
+
+        if self.invalidator.is_dirty() {
+            self.last_notifying_input_timestamp.set(Instant::now());
         }
 
         DispatchEventResult {
