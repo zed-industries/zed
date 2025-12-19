@@ -265,7 +265,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     );
     languages.register_available_lsp_adapter(
         LanguageServerName("tailwindcss-intellisense-css".into()),
-        tailwindcss_adapter.clone(),
+        tailwindcss_adapter,
     );
     languages.register_available_lsp_adapter(
         LanguageServerName("eslint".into()),
