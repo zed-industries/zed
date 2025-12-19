@@ -2,7 +2,24 @@ mod ollama_edit_prediction_delegate;
 
 pub use ollama_edit_prediction_delegate::OllamaEditPredictionDelegate;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context, Result};
+
+pub const RECOMMENDED_EDIT_PREDICTION_MODELS: [&str; 4] = [
+    "qwen2.5-coder:3b-base",
+    "qwen2.5-coder:7b-base",
+    "qwen2.5-coder:3b",
+    "qwen2.5-coder:7b",
+];
+
+pub fn pick_recommended_edit_prediction_model<'a>(
+    available_models: impl IntoIterator<Item = &'a str>,
+) -> Option<&'static str> {
+    let available: std::collections::HashSet<&str> = available_models.into_iter().collect();
+
+    RECOMMENDED_EDIT_PREDICTION_MODELS
+        .into_iter()
+        .find(|recommended| available.contains(recommended))
+}
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
