@@ -223,6 +223,8 @@ actions!(
         CloseAllDocks,
         /// Toggles all docks.
         ToggleAllDocks,
+        /// Closes the current project (all visible folders).
+        CloseProject,
         /// Closes the current window.
         CloseWindow,
         /// Opens the feedback dialog.
@@ -1287,7 +1289,9 @@ impl Workspace {
                     }
                 }
 
-                project::Event::WorktreeRemoved(_) => {
+                project::Event::WorktreeRemoved(worktree_id) => {
+                    this.close_items_for_worktrees(vec![*worktree_id], window, cx)
+                        .detach_and_log_err(cx);
                     this.update_worktree_data(window, cx);
                 }
 
@@ -2425,6 +2429,136 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn close_project(&mut self, _: &CloseProject, window: &mut Window, cx: &mut Context<Self>) {
+        let worktree_ids: Vec<WorktreeId> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).id())
+            .collect();
+
+        if worktree_ids.is_empty() {
+            return;
+        }
+
+        let items_to_close = self.items_for_worktrees(&worktree_ids, cx);
+        let dirty_items: Vec<_> = items_to_close
+            .iter()
+            .filter(|(_, item)| item.is_dirty(cx))
+            .map(|(pane, item)| (pane.clone(), item.boxed_clone()))
+            .collect();
+
+        let project = self.project.clone();
+
+        cx.spawn_in(window, async move |workspace, cx| {
+            let mut save_intent = SaveIntent::Close;
+
+            if !dirty_items.is_empty() {
+                let answer = workspace.update_in(cx, |_, window, cx| {
+                    let detail = Pane::file_names_for_prompt(
+                        &mut dirty_items.iter().map(|(_, handle)| handle),
+                        cx,
+                    );
+                    window.prompt(
+                        PromptLevel::Warning,
+                        "Do you want to save changes before closing the project?",
+                        Some(&detail),
+                        &["Save all", "Don't Save", "Cancel"],
+                        cx,
+                    )
+                })?;
+
+                match answer.await {
+                    Ok(0) => save_intent = SaveIntent::SaveAll,
+                    Ok(1) => save_intent = SaveIntent::Skip,
+                    _ => return anyhow::Ok(()),
+                }
+            }
+
+            for (pane, item) in dirty_items {
+                if save_intent == SaveIntent::SaveAll {
+                    let project =
+                        workspace.read_with(cx, |workspace, _| workspace.project.clone())?;
+                    if !Pane::save_item(project, &pane, &*item, save_intent, cx).await? {
+                        return anyhow::Ok(());
+                    }
+                }
+            }
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace
+                    .close_items_for_worktrees(worktree_ids.clone(), window, cx)
+                    .detach_and_log_err(cx);
+            })?;
+
+            cx.update(|_, cx| {
+                project.update(cx, |project, cx| {
+                    for worktree_id in worktree_ids {
+                        project.remove_worktree(worktree_id, cx);
+                    }
+                });
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn items_for_worktrees(
+        &self,
+        worktree_ids: &[WorktreeId],
+        cx: &App,
+    ) -> Vec<(WeakEntity<Pane>, Box<dyn ItemHandle>)> {
+        let mut items = Vec::new();
+        for pane in self.panes() {
+            for item in pane.read(cx).items() {
+                if let Some(path) = item.project_path(cx) {
+                    if worktree_ids.contains(&path.worktree_id) {
+                        items.push((pane.downgrade(), item.boxed_clone()));
+                    }
+                }
+            }
+        }
+        items
+    }
+
+    fn close_items_for_worktrees(
+        &mut self,
+        worktree_ids: Vec<WorktreeId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let mut tasks = Vec::new();
+
+        for pane in self.panes() {
+            let item_ids: Vec<EntityId> = pane
+                .read(cx)
+                .items()
+                .filter_map(|item| {
+                    item.project_path(cx)
+                        .filter(|path| worktree_ids.contains(&path.worktree_id))
+                        .map(|_| item.item_id())
+                })
+                .collect();
+
+            if item_ids.is_empty() {
+                continue;
+            }
+
+            let task = pane.update(cx, |pane, cx| {
+                pane.close_items(window, cx, SaveIntent::Skip, |id| item_ids.contains(&id))
+            });
+            tasks.push(task);
+        }
+
+        cx.spawn_in(window, async move |_, _| {
+            for task in tasks {
+                task.await?;
+            }
+            anyhow::Ok(())
+        })
     }
 
     pub fn move_focused_panel_to_next_position(
@@ -5912,6 +6046,7 @@ impl Workspace {
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::close_project))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
@@ -9096,6 +9231,73 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_removing_worktree_closes_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root1", json!({ "one.txt": "" })).await;
+        fs.insert_tree("/root2", json!({ "three.txt": "" })).await;
+
+        let project = Project::test(fs, ["root1".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("root2", true, cx)
+            })
+            .await
+            .unwrap();
+
+        let (root1_id, root2_id) = project.update(cx, |project, cx| {
+            let mut root1_id = None;
+            let mut root2_id = None;
+            for worktree in project.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if worktree.abs_path().ends_with("root1") {
+                    root1_id = Some(worktree.id());
+                } else if worktree.abs_path().ends_with("root2") {
+                    root2_id = Some(worktree.id());
+                }
+            }
+            (root1_id.unwrap(), root2_id.unwrap())
+        });
+
+        let project_item_root1 = cx.update(|_, cx| TestProjectItem::new(1, "one.txt", cx));
+        project_item_root1.update(cx, |item, _| {
+            if let Some(project_path) = &mut item.project_path {
+                project_path.worktree_id = root1_id;
+            }
+        });
+
+        let project_item_root2 = cx.update(|_, cx| TestProjectItem::new(2, "three.txt", cx));
+        project_item_root2.update(cx, |item, _| {
+            if let Some(project_path) = &mut item.project_path {
+                project_path.worktree_id = root2_id;
+            }
+        });
+
+        let item1 = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item_root1]));
+        let item2 = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item_root2]));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
+        });
+
+        project.update(cx, |project, cx| project.remove_worktree(root1_id, cx));
+        cx.executor().run_until_parked();
+
+        pane.read_with(cx, |pane, _| {
+            let item_ids = pane.items().map(|item| item.item_id()).collect::<Vec<_>>();
+            assert_eq!(item_ids.len(), 1);
+            assert!(!item_ids.contains(&item1.item_id()));
+            assert!(item_ids.contains(&item2.item_id()));
+        });
     }
 
     #[gpui::test]
