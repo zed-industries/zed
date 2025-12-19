@@ -389,49 +389,6 @@ pub trait ExtensionContextServerProxy: Send + Sync + 'static {
     fn unregister_context_server(&self, server_id: Arc<str>, cx: &mut App);
 }
 
-/// A function that registers a language model provider with the registry.
-/// This allows extension_host to create the provider (which requires WasmExtension)
-/// and pass a registration closure to the language_models crate.
-pub type LanguageModelProviderRegistration = Box<dyn FnOnce(&mut App) + Send + Sync + 'static>;
-
-pub trait ExtensionLanguageModelProviderProxy: Send + Sync + 'static {
-    /// Register an LLM provider from an extension.
-    /// The `register_fn` closure will be called with the App context and should
-    /// register the provider with the LanguageModelRegistry.
-    fn register_language_model_provider(
-        &self,
-        provider_id: Arc<str>,
-        register_fn: LanguageModelProviderRegistration,
-        cx: &mut App,
-    );
-
-    /// Unregister an LLM provider when an extension is unloaded.
-    fn unregister_language_model_provider(&self, provider_id: Arc<str>, cx: &mut App);
-}
-
-impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
-    fn register_language_model_provider(
-        &self,
-        provider_id: Arc<str>,
-        register_fn: LanguageModelProviderRegistration,
-        cx: &mut App,
-    ) {
-        let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.register_language_model_provider(provider_id, register_fn, cx)
-    }
-
-    fn unregister_language_model_provider(&self, provider_id: Arc<str>, cx: &mut App) {
-        let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.unregister_language_model_provider(provider_id, cx)
-    }
-}
-
 impl ExtensionContextServerProxy for ExtensionHostProxy {
     fn register_context_server(
         &self,
