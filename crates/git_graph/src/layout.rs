@@ -2,7 +2,7 @@
 //!
 //! Assigns lanes/columns to commits to minimize line crossings
 
-use crate::graph::{GitGraph, CommitNode};
+use crate::graph::GitGraph;
 use collections::HashMap;
 use gpui::SharedString;
 

@@ -1,9 +1,9 @@
 //! GPUI rendering for git graph visualization
 
 use crate::graph::{GitGraph, RefType};
-use crate::layout::{EdgeType, GraphLayout};
+use crate::layout::GraphLayout;
 use gpui::{
-    div, prelude::*, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    div, prelude::*, App, Context, EventEmitter, FocusHandle, Focusable,
     Render, SharedString, Window,
 };
 use ui::prelude::*;
@@ -26,10 +26,28 @@ pub fn lane_color(lane: usize) -> gpui::Hsla {
     let r = ((rgb >> 16) & 0xFF) as f32 / 255.0;
     let g = ((rgb >> 8) & 0xFF) as f32 / 255.0;
     let b = (rgb & 0xFF) as f32 / 255.0;
-    gpui::hsla(
-        // Convert RGB to HSL (simplified)
-        0.0, 0.8, 0.6, 1.0
-    )
+
+    // Convert RGB to HSL
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+
+    let (h, s) = if (max - min).abs() < f32::EPSILON {
+        (0.0, 0.0)
+    } else {
+        let d = max - min;
+        let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        let h = if (max - r).abs() < f32::EPSILON {
+            (g - b) / d + if g < b { 6.0 } else { 0.0 }
+        } else if (max - g).abs() < f32::EPSILON {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        (h / 6.0, s)
+    };
+
+    gpui::hsla(h, s, l, 1.0)
 }
 
 /// Events emitted by GitGraphView
@@ -44,7 +62,6 @@ pub struct GitGraphView {
     layout: GraphLayout,
     selected_commit: Option<SharedString>,
     focus_handle: FocusHandle,
-    scroll_offset: f32,
 }
 
 impl GitGraphView {
@@ -55,7 +72,6 @@ impl GitGraphView {
             layout,
             selected_commit: None,
             focus_handle: cx.focus_handle(),
-            scroll_offset: 0.0,
         }
     }
 
@@ -164,7 +180,7 @@ impl GitGraphView {
             )
     }
 
-    fn render_graph_node(&self, _row: usize, lane: usize, cx: &Context<Self>) -> impl IntoElement {
+    fn render_graph_node(&self, _row: usize, lane: usize, _cx: &Context<Self>) -> impl IntoElement {
         let x = self.layout.lane_x(lane);
         let color = lane_color(lane);
 
