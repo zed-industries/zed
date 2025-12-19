@@ -1,7 +1,7 @@
-use ::extension::{
+use collections::HashMap;
+use extension::{
     ExtensionHostProxy, ExtensionLanguageModelProviderProxy, LanguageModelProviderRegistration,
 };
-use collections::HashMap;
 use gpui::{App, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use std::sync::{Arc, LazyLock};
@@ -59,7 +59,6 @@ pub fn init_proxy(cx: &mut App) {
     let proxy = ExtensionHostProxy::default_global(cx);
     let registry = LanguageModelRegistry::global(cx);
 
-    // Set the function that determines which built-in providers should be hidden
     registry.update(cx, |registry, _cx| {
         registry.set_builtin_provider_hiding_fn(Box::new(extension_for_builtin_provider));
     });
