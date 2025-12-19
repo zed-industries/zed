@@ -701,8 +701,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         let Some(worktree) = project.visible_worktrees(cx).next() else {
                             return;
                         };
-                        let Ok(path) =
-                            RelPath::new(Path::new(&action.filename), PathStyle::local())
+                        let path_style = worktree.read(cx).path_style();
+                        let Some(path) =
+                            RelPath::new(Path::new(&action.filename), path_style).log_err()
                         else {
                             return;
                         };
@@ -719,6 +720,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     text.push_str(
                         &task
                             .await
+                            .log_err()
                             .map(|loaded_file| loaded_file.text)
                             .unwrap_or_default(),
                     );
