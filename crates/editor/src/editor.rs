@@ -4883,10 +4883,7 @@ impl Editor {
                             NewlineConfig::UnindentCurrentLine { continuation } => {
                                 let row_start =
                                     buffer.point_to_offset(Point::new(start_point.row, 0));
-                                let tab_size = language_scope
-                                    .as_ref()
-                                    .map(|_| multi_buffer.language_settings(cx).tab_size)
-                                    .unwrap_or(NonZeroU32::new(4).unwrap());
+                                let tab_size = buffer.language_settings_at(start, cx).tab_size;
                                 let tab_size_indent = IndentSize::spaces(tab_size.get());
                                 let reduced_indent =
                                     existing_indent.with_delta(Ordering::Less, tab_size_indent);
