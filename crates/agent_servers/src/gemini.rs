@@ -5,7 +5,7 @@ use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
-use language_models::api_key_for_gemini_cli;
+use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
 
 #[derive(Clone)]
@@ -37,7 +37,11 @@ impl AgentServer for Gemini {
         cx.spawn(async move |cx| {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
 
-            if let Some(api_key) = cx.update(api_key_for_gemini_cli)?.await.ok() {
+            if let Some(api_key) = cx
+                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)?
+                .await
+                .ok()
+            {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
             let (command, root_dir, login) = store
