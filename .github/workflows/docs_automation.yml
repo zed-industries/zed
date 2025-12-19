@@ -39,7 +39,7 @@ jobs:
       - name: Install Droid CLI
         id: install-droid
         run: |
-          curl -fsSL https://cli.factory.ai/install.sh | bash
+          curl -fsSL https://app.factory.ai/cli | sh
           echo "${HOME}/.factory/bin" >> "$GITHUB_PATH"
           echo "DROID_BIN=${HOME}/.factory/bin/droid" >> "$GITHUB_ENV"
           # Verify installation
