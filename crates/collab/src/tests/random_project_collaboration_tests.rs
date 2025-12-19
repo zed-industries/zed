@@ -741,6 +741,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             (start..end, text)
                         }),
                         None,
+                        true,
                         cx,
                     );
                 });

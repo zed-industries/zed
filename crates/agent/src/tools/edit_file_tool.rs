@@ -2196,7 +2196,7 @@ mod tests {
         // Make an in-memory edit to the buffer (making it dirty)
         buffer.update(cx, |buffer, cx| {
             let end_point = buffer.max_point();
-            buffer.edit([(end_point..end_point, " added text")], None, cx);
+            buffer.edit([(end_point..end_point, " added text")], None, true, cx);
         });
 
         // Verify buffer is dirty

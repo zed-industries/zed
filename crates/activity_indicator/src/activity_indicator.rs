@@ -243,6 +243,7 @@ impl ActivityIndicator {
                         buffer.edit(
                             [(0..0, format!("Language server {server_name}:\n\n{status}"))],
                             None,
+                            true,
                             cx,
                         );
                         buffer.set_capability(language::Capability::ReadOnly, cx);

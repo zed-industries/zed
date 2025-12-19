@@ -94,7 +94,7 @@ fn view_release_notes_locally(
                                 project.create_local_buffer("", markdown, false, cx)
                             });
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, body.release_notes)], None, cx)
+                                buffer.edit([(0..0, body.release_notes)], None, true, cx)
                             });
                             let language_registry = project.read(cx).languages().clone();
 

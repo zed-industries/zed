@@ -569,7 +569,7 @@ pub(crate) fn handle_from(
 
             buffer
                 .update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
+                    buffer.edit(edits, None, true, cx);
                 })
                 .ok()?;
 

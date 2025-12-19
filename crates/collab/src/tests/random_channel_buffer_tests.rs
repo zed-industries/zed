@@ -209,6 +209,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                                 (start..end, text)
                             }),
                             None,
+                            true,
                             cx,
                         );
                     });

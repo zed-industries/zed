@@ -77,6 +77,7 @@ impl EditorBlock {
                             "\n",
                         )],
                         None,
+                        true,
                         cx,
                     )
                 });

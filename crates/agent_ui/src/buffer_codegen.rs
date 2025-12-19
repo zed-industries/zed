@@ -974,7 +974,7 @@ impl CodegenAlternative {
             // Avoid grouping agent edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
-            buffer.edit(edits, None, cx);
+            buffer.edit(edits, None, true, cx);
             buffer.end_transaction(cx)
         });
 

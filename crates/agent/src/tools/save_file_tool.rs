@@ -246,7 +246,7 @@ mod tests {
             .await
             .unwrap();
         dirty_buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..buffer.len(), "in memory: dirty\n")], None, cx);
+            buffer.edit([(0..buffer.len(), "in memory: dirty\n")], None, true, cx);
         });
         assert!(
             dirty_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
