@@ -367,6 +367,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub extend_list_on_newline: Option<bool>,
+    /// Whether to indent list items when pressing tab after a list marker.
+    ///
+    /// Default: true
+    pub indent_list_on_tab: Option<bool>,
     /// Inlay hint related settings.
     pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,

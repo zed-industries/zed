@@ -29942,15 +29942,11 @@ async fn test_tab_list_indent(cx: &mut TestAppContext) {
     "};
     cx.assert_editor_state(expected);
 
-    // Case 8: Cursor at start of list item, moves the cursor when "extend_list_on_newline" is false
+    // Case 8: Cursor at start of list item, moves the cursor when "indent_list_on_tab" is false
     cx.update_editor(|_, _, cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings
-                    .project
-                    .all_languages
-                    .defaults
-                    .extend_list_on_newline = Some(false);
+                settings.project.all_languages.defaults.indent_list_on_tab = Some(false);
             });
         });
     });

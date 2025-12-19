@@ -10456,7 +10456,7 @@ impl Editor {
             if selection.is_empty() {
                 let cursor = selection.head();
                 let settings = buffer.language_settings_at(cursor, cx);
-                if settings.extend_list_on_newline {
+                if settings.indent_list_on_tab {
                     if let Some(language) = snapshot.language_scope_at(Point::new(cursor.row, 0)) {
                         if let Some(_) =
                             list_prefix_end_column(MultiBufferRow(cursor.row), &snapshot, &language)
