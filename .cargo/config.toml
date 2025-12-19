@@ -1,6 +1,15 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
+# Use sccache for faster rebuilds
+rustc-wrapper = "sccache"
+# Use all available CPU cores
+jobs = 14
+
+[target.aarch64-apple-darwin]
+# Use ld64.lld for faster linking on Apple Silicon
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"]
 
 [alias]
 xtask = "run --package xtask --"
