@@ -599,7 +599,7 @@ impl PickerDelegate for OpenPathDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let candidate = self.get_entry(self.selected_index)?;
         let path_style = self.path_style;
