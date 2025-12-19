@@ -216,6 +216,7 @@ impl VercelLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                false, // Vercel AI SDK doesn't use codex models
             );
             let response = request.await?;
             Ok(response)

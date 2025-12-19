@@ -17,7 +17,7 @@ use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use crate::provider::open_ai::{OpenAiEventMapper, OpenAiResponsesEventMapper, into_open_ai};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -207,6 +207,7 @@ impl OpenAiCompatibleLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
+        let is_codex = self.model.name.contains("codex");
 
         let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
@@ -229,6 +230,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                is_codex,
             );
             let response = request.await?;
             Ok(response)
@@ -335,10 +337,16 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             self.max_output_tokens(),
             None,
         );
+        let is_codex = self.model.name.contains("codex");
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            if is_codex {
+                let mapper = OpenAiResponsesEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            } else {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
         }
         .boxed()
     }
