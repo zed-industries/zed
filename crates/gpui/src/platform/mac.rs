@@ -22,7 +22,6 @@ use metal_renderer as renderer;
 #[cfg(feature = "macos-blade")]
 use crate::platform::blade as renderer;
 
-
 #[cfg(feature = "font-kit")]
 mod open_type;
 

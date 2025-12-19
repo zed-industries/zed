@@ -110,7 +110,7 @@ pub struct BufferSearchBar {
     #[cfg(target_os = "macos")]
     active_searchable_item_subscriptions: Option<[Subscription; 3]>,
     #[cfg(not(target_os = "macos"))]
-    active_searchable_item_subscription: Option<Subscription>,
+    active_searchable_item_subscriptions: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
     pending_search: Option<Task<()>>,
@@ -526,7 +526,7 @@ impl ToolbarItemView for BufferSearchBar {
             }
             #[cfg(not(target_os = "macos"))]
             {
-                self.active_searchable_item_subscription = Some(search_event_subscription);
+                self.active_searchable_item_subscriptions = Some(search_event_subscription);
             }
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
