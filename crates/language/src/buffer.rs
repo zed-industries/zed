@@ -415,6 +415,9 @@ pub enum DiskState {
     Present { mtime: MTime },
     /// Deleted file that was previously present.
     Deleted,
+    /// An old version of a file that was previously present
+    /// usually from a version control system. e.g. A git blob
+    Historic { was_deleted: bool },
 }
 
 impl DiskState {
@@ -424,6 +427,7 @@ impl DiskState {
             DiskState::New => None,
             DiskState::Present { mtime } => Some(mtime),
             DiskState::Deleted => None,
+            DiskState::Historic { .. } => None,
         }
     }
 
@@ -432,6 +436,16 @@ impl DiskState {
             DiskState::New => false,
             DiskState::Present { .. } => true,
             DiskState::Deleted => false,
+            DiskState::Historic { .. } => false,
+        }
+    }
+
+    /// Returns true if this state represents a deleted file.
+    pub fn is_deleted(&self) -> bool {
+        match self {
+            DiskState::Deleted => true,
+            DiskState::Historic { was_deleted } => *was_deleted,
+            _ => false,
         }
     }
 }
@@ -2215,6 +2229,7 @@ impl Buffer {
                 None => true,
             },
             DiskState::Deleted => false,
+            DiskState::Historic { .. } => false,
         }
     }
 

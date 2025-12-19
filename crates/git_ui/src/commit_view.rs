@@ -697,10 +697,8 @@ impl language::File for GitBlob {
     }
 
     fn disk_state(&self) -> DiskState {
-        if self.is_deleted {
-            DiskState::Deleted
-        } else {
-            DiskState::New
+        DiskState::Historic {
+            was_deleted: self.is_deleted,
         }
     }
 
