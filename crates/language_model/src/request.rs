@@ -166,11 +166,8 @@ impl LanguageModelImage {
                 let new_w = ((w as f32) * 0.85).round().max(1.0) as u32;
                 let new_h = ((h as f32) * 0.85).round().max(1.0) as u32;
 
-                processed_image = processed_image.resize(
-                    new_w,
-                    new_h,
-                    image::imageops::FilterType::Triangle,
-                );
+                processed_image =
+                    processed_image.resize(new_w, new_h, image::imageops::FilterType::Triangle);
                 encoded_png = encode_png_bytes(&processed_image).log_err()?;
             }
 
@@ -210,8 +207,6 @@ impl LanguageModelImage {
         format!("data:image/png;base64,{}", self.source)
     }
 }
-
-
 
 fn encode_png_bytes(image: &image::DynamicImage) -> Result<Vec<u8>> {
     let mut png = Vec::new();
@@ -476,8 +471,8 @@ mod tests {
     }
 
     fn png_dimensions(png_bytes: &[u8]) -> (u32, u32) {
-        let decoder = image::codecs::png::PngDecoder::new(Cursor::new(png_bytes))
-            .expect("png should decode");
+        let decoder =
+            image::codecs::png::PngDecoder::new(Cursor::new(png_bytes)).expect("png should decode");
         decoder.dimensions()
     }
 

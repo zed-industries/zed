@@ -718,8 +718,9 @@ mod tests {
             let mut txn = db_env.write_txn().unwrap();
             // Create the metadata.v2 database with raw bytes so we can write
             // an incompatible key format.
-            let metadata_db: Database<heed::types::Bytes, heed::types::Bytes> =
-                db_env.create_database(&mut txn, Some("metadata.v2")).unwrap();
+            let metadata_db: Database<heed::types::Bytes, heed::types::Bytes> = db_env
+                .create_database(&mut txn, Some("metadata.v2"))
+                .unwrap();
 
             // Write an incompatible PromptId key: `{"kind":"CommitMessage"}`
             // This is the old/branch format that current code can't decode.
@@ -759,7 +760,9 @@ mod tests {
             "Valid records should still be loaded after skipping bad ones"
         );
         assert_eq!(
-            metadata.as_ref().and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            metadata
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
             Some("Good Record"),
             "Valid record should have correct title"
         );
