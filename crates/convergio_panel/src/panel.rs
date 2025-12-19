@@ -9,9 +9,10 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions, div, prelude::*, Action, App, AsyncWindowContext, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, KeyContext, ParentElement, Pixels,
     Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -381,6 +382,73 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+impl ConvergioPanel {
+    // Keyboard navigation: select next agent (↓, j)
+    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let filtered_count = self.filtered_agents().len();
+        if filtered_count == 0 {
+            return;
+        }
+
+        self.selected_index = Some(match self.selected_index {
+            Some(ix) => (ix + 1).min(filtered_count - 1),
+            None => 0,
+        });
+        cx.notify();
+    }
+
+    // Keyboard navigation: select previous agent (↑, k)
+    fn select_previous(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+        let filtered_count = self.filtered_agents().len();
+        if filtered_count == 0 {
+            return;
+        }
+
+        self.selected_index = Some(match self.selected_index {
+            Some(ix) => ix.saturating_sub(1),
+            None => 0,
+        });
+        cx.notify();
+    }
+
+    // Keyboard navigation: select first agent (gg, Home)
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.filtered_agents().is_empty() {
+            self.selected_index = Some(0);
+            cx.notify();
+        }
+    }
+
+    // Keyboard navigation: select last agent (G, End)
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.filtered_agents().len();
+        if count > 0 {
+            self.selected_index = Some(count - 1);
+            cx.notify();
+        }
+    }
+
+    // Keyboard navigation: confirm selection (Enter)
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.selected_index {
+            let filtered = self.filtered_agents();
+            if let Some(agent) = filtered.get(ix) {
+                let agent_name = agent.name.clone();
+                let server_name = agent.server_name.clone();
+                self.open_agent_thread(&agent_name, &server_name, window, cx);
+            }
+        }
+    }
+
+    // Provide key context for keyboard bindings
+    fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
+        let mut context = KeyContext::new_with_defaults();
+        context.add("ConvergioPanel");
+        context.add("menu");
+        context
+    }
 }
 
 impl ConvergioPanel {
@@ -898,16 +966,20 @@ impl ConvergioPanel {
             })
     }
 
-    fn render_agent(&self, agent: &ConvergioAgent, global_ix: usize, cx: &Context<Self>) -> impl IntoElement {
+    fn render_agent(&self, agent: &ConvergioAgent, global_ix: usize, is_panel_focused: bool, cx: &Context<Self>) -> impl IntoElement {
         let is_selected = self.selected_index == Some(global_ix);
         let is_active = self.active_agents.contains(&agent.name);
         let agent_name = agent.name.clone();
         let server_name = agent.server_name.clone();
+        // Show focus ring when selected via keyboard navigation
+        let show_focus_ring = is_selected && is_panel_focused;
 
         ListItem::new(global_ix)
             .inset(true)
             .spacing(ui::ListItemSpacing::Sparse)
             .toggle_state(is_selected)
+            // Accessibility: outlined focus ring for keyboard navigation
+            .when(show_focus_ring, |this| this.outlined())
             .start_slot(
                 div()
                     .pl_4()
@@ -1151,6 +1223,8 @@ impl Render for ConvergioPanel {
         }
 
         let mut global_ix = 0usize;
+        // Accessibility: track if panel has keyboard focus for focus ring display
+        let is_panel_focused = self.focus_handle.is_focused(window);
 
         div()
             .id("convergio-panel")
@@ -1158,6 +1232,14 @@ impl Render for ConvergioPanel {
             .flex()
             .flex_col()
             .bg(cx.theme().colors().panel_background)
+            // Accessibility: keyboard navigation support
+            .track_focus(&self.focus_handle(cx))
+            .key_context(self.dispatch_context(window, cx))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
             .child(
                 div()
                     .p_2()
@@ -1197,7 +1279,7 @@ impl Render for ConvergioPanel {
                                     agents_in_cat
                                         .into_iter()
                                         .map(|agent| {
-                                            let element = self.render_agent(agent, global_ix, cx);
+                                            let element = self.render_agent(agent, global_ix, is_panel_focused, cx);
                                             global_ix += 1;
                                             element.into_any_element()
                                         })
