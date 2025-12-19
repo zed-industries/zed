@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    Action, App, Bounds, CursorStyle, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter,
-    Focusable, HitboxBehavior, PromptLevel, Subscription, Task, TextStyle, TitlebarOptions,
-    WindowBounds, WindowHandle, WindowOptions, actions, canvas, point, size, transparent_black,
+    App, Bounds, CursorStyle, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
+    HitboxBehavior, PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, actions, canvas, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
