@@ -3,7 +3,10 @@ use crate::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
+    search_bar::{
+        ActionButtonState, MAX_STRETCH_LINES, input_base_styles, render_action_button,
+        render_text_input,
+    },
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -875,7 +878,7 @@ impl ProjectSearchView {
         }));
 
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, MAX_STRETCH_LINES, window, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_text(query_text, window, cx);
             editor
@@ -898,7 +901,7 @@ impl ProjectSearchView {
             }),
         );
         let replacement_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, MAX_STRETCH_LINES, window, cx);
             editor.set_placeholder_text("Replace in project…", window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
@@ -2084,30 +2087,44 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
-            .child(render_text_input(&search.query_editor, color_override, cx))
+            .flex_1()
             .child(
                 h_flex()
                     .gap_1()
-                    .child(SearchOption::CaseSensitive.as_button(
-                        search.search_options,
-                        SearchSource::Project(cx),
-                        focus_handle.clone(),
-                    ))
-                    .child(SearchOption::WholeWord.as_button(
-                        search.search_options,
-                        SearchSource::Project(cx),
-                        focus_handle.clone(),
-                    ))
-                    .child(SearchOption::Regex.as_button(
-                        search.search_options,
-                        SearchSource::Project(cx),
-                        focus_handle.clone(),
-                    )),
+                    .items_start()
+                    .w_full()
+                    .child(div().flex_1().child(render_text_input(
+                        &search.query_editor,
+                        color_override,
+                        cx,
+                    )))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(SearchOption::CaseSensitive.as_button(
+                                search.search_options,
+                                SearchSource::Project(cx),
+                                focus_handle.clone(),
+                            ))
+                            .child(SearchOption::WholeWord.as_button(
+                                search.search_options,
+                                SearchSource::Project(cx),
+                                focus_handle.clone(),
+                            ))
+                            .child(SearchOption::Regex.as_button(
+                                search.search_options,
+                                SearchSource::Project(cx),
+                                focus_handle.clone(),
+                            )),
+                    ),
             );
 
         let matches_column = h_flex()
             .ml_1()
             .pl_1p5()
+            .h_8()
+            .items_center()
             .border_l_1()
             .border_color(theme_colors.border_variant)
             .child(render_action_button(
@@ -2195,42 +2212,45 @@ impl Render for ProjectSearchBar {
             .child(matches_column);
 
         let search_line = h_flex()
-            .w_full()
             .gap_2()
+            .items_start()
             .child(query_column)
             .child(mode_column);
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(InputPanel::Replacement)
-                .child(render_text_input(&search.replacement_editor, None, cx));
-
-            let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
-
-            let replace_actions = h_flex()
-                .min_w_64()
-                .gap_1()
-                .child(render_action_button(
-                    "project-search-replace-button",
-                    IconName::ReplaceNext,
-                    Default::default(),
-                    "Replace Next Match",
-                    &ReplaceNext,
-                    focus_handle.clone(),
-                ))
-                .child(render_action_button(
-                    "project-search-replace-button",
-                    IconName::ReplaceAll,
-                    Default::default(),
-                    "Replace All Matches",
-                    &ReplaceAll,
-                    focus_handle,
-                ));
-
             h_flex()
-                .w_full()
                 .gap_2()
-                .child(replace_column)
-                .child(replace_actions)
+                .items_start()
+                .child(
+                    input_base_styles(InputPanel::Replacement).child(render_text_input(
+                        &search.replacement_editor,
+                        None,
+                        cx,
+                    )),
+                )
+                .child(
+                    h_flex()
+                        .min_w_64()
+                        .gap_1()
+                        .h_8()
+                        .items_center()
+                        .child(render_action_button(
+                            "project-search-replace-button",
+                            IconName::ReplaceNext,
+                            Default::default(),
+                            "Replace Next Match",
+                            &ReplaceNext,
+                            search.replacement_editor.read(cx).focus_handle(cx),
+                        ))
+                        .child(render_action_button(
+                            "project-search-replace-button",
+                            IconName::ReplaceAll,
+                            Default::default(),
+                            "Replace All Matches",
+                            &ReplaceAll,
+                            search.replacement_editor.read(cx).focus_handle(cx),
+                        )),
+                )
         });
 
         let filter_line = search.filters_enabled.then(|| {
@@ -2253,6 +2273,8 @@ impl Render for ProjectSearchBar {
             let mode_column = h_flex()
                 .gap_1()
                 .min_w_64()
+                .h_8()
+                .items_center()
                 .child(
                     IconButton::new("project-search-opened-only", IconName::FolderSearch)
                         .shape(IconButtonShape::Square)
@@ -2268,8 +2290,8 @@ impl Render for ProjectSearchBar {
                     focus_handle.clone(),
                 ));
             h_flex()
-                .w_full()
                 .gap_2()
+                .items_start()
                 .child(
                     h_flex()
                         .gap_2()

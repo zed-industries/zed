@@ -4,7 +4,10 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
-    search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
+    search_bar::{
+        ActionButtonState, MAX_STRETCH_LINES, input_base_styles, render_action_button,
+        render_text_input,
+    },
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -156,7 +159,9 @@ impl Render for BufferSearchBar {
         });
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with…", window, cx);
+            if editor.placeholder_text(cx).is_none() {
+                editor.set_placeholder_text("Replace with…", window, cx);
+            }
         });
 
         let mut color_override = None;
@@ -194,44 +199,55 @@ impl Render for BufferSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles =
-            |border_color| input_base_styles(border_color, |div| div.w(input_width));
-
-        let query_column = input_base_styles(query_border)
+        let query_column = input_base_styles(query_border, |div| div.w(input_width))
             .id("editor-scroll")
             .track_scroll(&self.editor_scroll_handle)
-            .child(render_text_input(&self.query_editor, color_override, cx))
-            .when(!hide_inline_icons, |div| {
-                div.child(
-                    h_flex()
-                        .gap_1()
-                        .when(case, |div| {
-                            div.child(SearchOption::CaseSensitive.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        })
-                        .when(word, |div| {
-                            div.child(SearchOption::WholeWord.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        })
-                        .when(regex, |div| {
-                            div.child(SearchOption::Regex.as_button(
-                                self.search_options,
-                                SearchSource::Buffer,
-                                focus_handle.clone(),
-                            ))
-                        }),
-                )
-            });
+            .flex_1()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_start()
+                    .w_full()
+                    .child(div().flex_1().child(render_text_input(
+                        &self.query_editor,
+                        color_override,
+                        cx,
+                    )))
+                    .when(!hide_inline_icons, |div| {
+                        div.child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .when(case, |div| {
+                                    div.child(SearchOption::CaseSensitive.as_button(
+                                        self.search_options,
+                                        SearchSource::Buffer,
+                                        focus_handle.clone(),
+                                    ))
+                                })
+                                .when(word, |div| {
+                                    div.child(SearchOption::WholeWord.as_button(
+                                        self.search_options,
+                                        SearchSource::Buffer,
+                                        focus_handle.clone(),
+                                    ))
+                                })
+                                .when(regex, |div| {
+                                    div.child(SearchOption::Regex.as_button(
+                                        self.search_options,
+                                        SearchSource::Buffer,
+                                        focus_handle.clone(),
+                                    ))
+                                }),
+                        )
+                    }),
+            );
 
         let mode_column = h_flex()
             .gap_1()
             .min_w_64()
+            .h_8()
+            .items_center()
             .when(replacement, |this| {
                 this.child(render_action_button(
                     "buffer-search-bar-toggle",
@@ -331,45 +347,46 @@ impl Render for BufferSearchBar {
             });
 
         let search_line = h_flex()
-            .w_full()
             .gap_2()
+            .items_start()
             .when(find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
             .child(query_column)
             .child(mode_column);
 
-        let replace_line =
-            should_show_replace_input.then(|| {
-                let replace_column = input_base_styles(replacement_border)
-                    .child(render_text_input(&self.replacement_editor, None, cx));
-                let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
-
-                let replace_actions = h_flex()
-                    .min_w_64()
-                    .gap_1()
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceNext,
-                        Default::default(),
-                        "Replace Next Match",
-                        &ReplaceNext,
-                        focus_handle.clone(),
-                    ))
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceAll,
-                        Default::default(),
-                        "Replace All Matches",
-                        &ReplaceAll,
-                        focus_handle,
-                    ));
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(replace_column)
-                    .child(replace_actions)
-            });
+        let replace_line = should_show_replace_input.then(|| {
+            h_flex()
+                .gap_2()
+                .items_start()
+                .child(
+                    input_base_styles(replacement_border, |div| div.w(input_width))
+                        .child(render_text_input(&self.replacement_editor, None, cx)),
+                )
+                .child(
+                    h_flex()
+                        .min_w_64()
+                        .gap_1()
+                        .h_8()
+                        .items_center()
+                        .child(render_action_button(
+                            "buffer-search-replace-button",
+                            IconName::ReplaceNext,
+                            Default::default(),
+                            "Replace Next Match",
+                            &ReplaceNext,
+                            self.replacement_editor.read(cx).focus_handle(cx),
+                        ))
+                        .child(render_action_button(
+                            "buffer-search-replace-button",
+                            IconName::ReplaceAll,
+                            Default::default(),
+                            "Replace All Matches",
+                            &ReplaceAll,
+                            self.replacement_editor.read(cx).focus_handle(cx),
+                        )),
+                )
+        });
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -390,14 +407,22 @@ impl Render for BufferSearchBar {
                 .relative()
                 .child(search_line)
                 .when(!narrow_mode && !find_in_results, |div| {
-                    div.child(h_flex().absolute().right_0().child(render_action_button(
-                        "buffer-search",
-                        IconName::Close,
-                        Default::default(),
-                        "Close Search Bar",
-                        &Dismiss,
-                        focus_handle.clone(),
-                    )))
+                    div.child(
+                        h_flex()
+                            .absolute()
+                            .right_0()
+                            .top_0()
+                            .h_8()
+                            .items_center()
+                            .child(render_action_button(
+                                "buffer-search",
+                                IconName::Close,
+                                Default::default(),
+                                "Close Search Bar",
+                                &Dismiss,
+                                focus_handle.clone(),
+                            )),
+                    )
                     .w_full()
                 });
         v_flex()
@@ -615,13 +640,17 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, MAX_STRETCH_LINES, window, cx);
             editor.set_use_autoclose(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let replacement_editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(1, MAX_STRETCH_LINES, window, cx);
+            editor.set_use_autoclose(false);
+            editor
+        });
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
