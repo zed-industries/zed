@@ -291,8 +291,7 @@ impl UTType {
         Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
     }
 
-    // todo! remove pub
-    pub fn inner(&self) -> *const Object {
+    fn inner(&self) -> *const Object {
         self.0
     }
 
