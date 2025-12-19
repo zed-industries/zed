@@ -121,8 +121,8 @@ use language::{
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, OffsetRangeExt,
-    OutlineItem, Point, Runnable, Selection, SelectionGoal, TextObject, TransactionId,
-    TreeSitterOptions, WordsQuery,
+    OutlineItem, Point, Runnable, Selection, SelectionGoal, TaskListConfig, TextObject,
+    TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -4788,76 +4788,64 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        let (comment_delimiter, doc_delimiter, newline_formatting) =
-                            if let Some(language) = &language_scope {
-                                let mut newline_formatting =
-                                    NewlineFormatting::new(&buffer, start..end, language);
+                        let (delimiter, newline_formatting) = if let Some(language) =
+                            &language_scope
+                        {
+                            let mut newline_formatting =
+                                NewlineFormatting::new(&buffer, start..end, language);
 
-                                // Comment extension on newline is allowed only for cursor selections
-                                let comment_delimiter = maybe!({
-                                    if !selection_is_empty {
-                                        return None;
-                                    }
+                            let comment_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
 
-                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
-                                    {
-                                        return None;
-                                    }
+                                if !multi_buffer.language_settings(cx).extend_comment_on_newline {
+                                    return None;
+                                }
 
-                                    return comment_delimiter_for_newline(
-                                        &start_point,
-                                        &buffer,
-                                        language,
-                                    );
-                                });
+                                return comment_delimiter_for_newline(
+                                    &start_point,
+                                    &buffer,
+                                    language,
+                                );
+                            });
 
-                                let doc_delimiter = maybe!({
-                                    if !selection_is_empty {
-                                        return None;
-                                    }
+                            let doc_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
 
-                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
-                                    {
-                                        return None;
-                                    }
+                                if !multi_buffer.language_settings(cx).extend_comment_on_newline {
+                                    return None;
+                                }
 
-                                    return documentation_delimiter_for_newline(
-                                        &start_point,
-                                        &buffer,
-                                        language,
-                                        &mut newline_formatting,
-                                    );
-                                });
+                                return documentation_delimiter_for_newline(
+                                    &start_point,
+                                    &buffer,
+                                    language,
+                                    &mut newline_formatting,
+                                );
+                            });
 
-                                (comment_delimiter, doc_delimiter, newline_formatting)
-                            } else {
-                                (None, None, NewlineFormatting::default())
-                            };
+                            let list_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
 
-                        let (list_continuation, list_marker_chars_to_delete) = maybe!({
-                            if !selection_is_empty {
-                                return None;
-                            }
+                                if !multi_buffer.language_settings(cx).extend_list_on_newline {
+                                    return None;
+                                }
 
-                            if !multi_buffer.language_settings(cx).extend_list_on_newline {
-                                return None;
-                            }
+                                return list_delimiter_for_newline(&start_point, &buffer, language);
+                            });
 
-                            let language_name =
-                                language_scope.as_ref().map(|scope| scope.language_name());
-                            if !language_name
-                                .as_ref()
-                                .is_some_and(|name| name.as_ref() == "Markdown")
-                            {
-                                return None;
-                            }
-
-                            detect_markdown_list_continuation(&buffer, start_point)
-                        })
-                        .unwrap_or((None, 0));
-
-                        let prevent_auto_indent = doc_delimiter.is_some();
-                        let delimiter = comment_delimiter.or(doc_delimiter).or(list_continuation);
+                            (
+                                comment_delimiter.or(doc_delimiter).or(list_delimiter),
+                                newline_formatting,
+                            )
+                        } else {
+                            (None, NewlineFormatting::default())
+                        };
 
                         let capacity_for_delimiter =
                             delimiter.as_deref().map(str::len).unwrap_or_default();
@@ -4881,18 +4869,22 @@ impl Editor {
                             new_text.extend(newline_formatting.indent_on_extra_newline.chars());
                         }
 
-                        let adjusted_start = if list_marker_chars_to_delete > 0 {
-                            let row_start = buffer.point_to_offset(Point::new(start_point.row, 0));
-                            let indent_offset = existing_indent.len as usize;
-                            row_start + indent_offset
-                        } else {
-                            start
-                        };
+                        // let adjusted_start = if list_marker_chars_to_delete > 0 {
+                        //     let row_start = buffer.point_to_offset(Point::new(start_point.row, 0));
+                        //     let indent_offset = existing_indent.len as usize;
+                        //     row_start + indent_offset
+                        // } else {
+                        //     start
+                        // };
 
                         let anchor = buffer.anchor_after(end);
                         let new_selection = selection.map(|_| anchor);
                         (
-                            ((adjusted_start..end, new_text), prevent_auto_indent),
+                            (
+                                (start..end, new_text),
+                                // (adjusted_start..end, new_text),
+                                newline_formatting.prevent_auto_indent,
+                            ),
                             (newline_formatting.insert_extra_newline, new_selection),
                         )
                     })
@@ -23474,10 +23466,104 @@ fn documentation_delimiter_for_newline(
         if cursor_is_after_start_tag {
             newline_formatting.indent_on_newline.len = *len;
         }
+        newline_formatting.prevent_auto_indent = true;
         Some(delimiter.clone())
     } else {
         None
     }
+}
+
+fn list_delimiter_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> Option<Arc<str>> {
+    let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+
+    let task_delimeter = maybe!({
+        let TaskListConfig {
+            prefixes,
+            continuation,
+        } = language.task_list()?;
+        let max_prefix_len = prefixes.iter().map(|p| p.len()).max()?;
+        let task_candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_prefix_len)
+            .collect();
+        let prefix_len = prefixes
+            .iter()
+            .filter_map(|prefix| {
+                if task_candidate.starts_with(prefix.as_ref()) {
+                    Some(prefix.len())
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|len| *len)?;
+        let has_content_after_marker = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces + prefix_len)
+            .any(|c| !c.is_whitespace());
+        if has_content_after_marker {
+            Some(continuation.clone())
+        } else {
+            None
+        }
+    });
+
+    if let Some(task_delimeter) = task_delimeter {
+        return Some(task_delimeter);
+    };
+
+    // Check for unordered lists
+    // for marker in &unordered {
+    //     if content_after_whitespace.starts_with(marker.as_ref()) {
+    //         let rest = &content_after_whitespace[marker.len()..];
+    //         if rest.trim().is_empty() {
+    //             return Some((None, marker.len()));
+    //         }
+    //         return Some((Some(format!("{}{}", leading_whitespace, marker).into()), 0));
+    //     }
+    // }
+
+    // // Check for ordered lists
+    // for ordered_config in &ordered {
+    //     let pattern_with_rest = format!("^{}(.*)", ordered_config.pattern);
+    //     let regex = match Regex::new(&pattern_with_rest) {
+    //         Ok(r) => r,
+    //         Err(_) => continue,
+    //     };
+
+    //     if let Some(captures) = regex.captures(content_after_whitespace) {
+    //         // The last capture group is the content after the marker
+    //         let content_after_marker = captures.get(captures.len() - 1)?.as_str();
+    //         let marker_text = captures.get(0)?.as_str();
+    //         let marker_len = marker_text.len() - content_after_marker.len();
+
+    //         if content_after_marker.trim().is_empty() {
+    //             return Some((None, marker_len));
+    //         }
+
+    //         // Get the first capture group (the number) and increment it
+    //         let number: u32 = captures.get(1)?.as_str().parse().ok()?;
+    //         let continuation = ordered_config
+    //             .format
+    //             .replace("{1}", &(number + 1).to_string());
+
+    //         return Some((
+    //             Some(format!("{}{}", leading_whitespace, continuation).into()),
+    //             0,
+    //         ));
+    //     }
+    // }
+
+    None
 }
 
 #[derive(Debug, Default)]
@@ -23485,6 +23571,7 @@ struct NewlineFormatting {
     insert_extra_newline: bool,
     indent_on_newline: IndentSize,
     indent_on_extra_newline: IndentSize,
+    prevent_auto_indent: bool,
 }
 
 impl NewlineFormatting {
@@ -23501,6 +23588,7 @@ impl NewlineFormatting {
             ) || Self::insert_extra_newline_tree_sitter(buffer, range),
             indent_on_newline: IndentSize::spaces(0),
             indent_on_extra_newline: IndentSize::spaces(0),
+            prevent_auto_indent: false,
         }
     }
 
@@ -23575,69 +23663,6 @@ impl NewlineFormatting {
                 .chain(buffer.chars_for_range(range.end.0..pair.close_range.start))
                 .all(|c| c.is_whitespace() && c != '\n')
     }
-}
-
-fn detect_markdown_list_continuation(
-    buffer: &MultiBufferSnapshot,
-    cursor_position: Point,
-) -> Option<(Option<Arc<str>>, usize)> {
-    let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(cursor_position.row))?;
-
-    let line_content: String = snapshot.chars_for_range(range).collect();
-
-    let leading_whitespace: String = line_content
-        .chars()
-        .take_while(|c| c.is_whitespace())
-        .collect();
-
-    let content_after_whitespace = &line_content[leading_whitespace.len()..];
-
-    // Check for task lists first (before unordered lists) since they start with "- " too
-    // Match both "- [x] text" and "- [x]text" (with or without space after bracket)
-    if content_after_whitespace.starts_with("- [x]")
-        || content_after_whitespace.starts_with("- [ ]")
-    {
-        let has_space_after_bracket = content_after_whitespace.starts_with("- [x] ")
-            || content_after_whitespace.starts_with("- [ ] ");
-
-        let marker_len = if has_space_after_bracket { 6 } else { 5 };
-        let content_after_marker = &content_after_whitespace[marker_len..];
-
-        if content_after_marker.trim().is_empty() {
-            return Some((None, marker_len));
-        }
-        return Some((Some(format!("{}- [ ] ", leading_whitespace).into()), 0));
-    }
-
-    // Check for unordered lists
-    if let Some(rest) = content_after_whitespace
-        .strip_prefix("- ")
-        .or_else(|| content_after_whitespace.strip_prefix("* "))
-        .or_else(|| content_after_whitespace.strip_prefix("+ "))
-    {
-        if rest.trim().is_empty() {
-            return Some((None, 2));
-        }
-        let marker = content_after_whitespace.chars().next()?;
-        return Some((Some(format!("{}{} ", leading_whitespace, marker).into()), 0));
-    }
-
-    let ordered_list_regex = Regex::new(r"^(\d+)\.\s+(.*)").ok()?;
-    if let Some(captures) = ordered_list_regex.captures(content_after_whitespace) {
-        let content_after_marker = captures.get(2)?.as_str();
-        let marker_text = captures.get(0)?.as_str();
-        let marker_len = marker_text.len();
-        if content_after_marker.trim().is_empty() {
-            return Some((None, marker_len));
-        }
-        let number: u32 = captures.get(1)?.as_str().parse().ok()?;
-        return Some((
-            Some(format!("{}{}. ", leading_whitespace, number + 1).into()),
-            0,
-        ));
-    }
-
-    None
 }
 
 fn update_uncommitted_diff_for_buffer(

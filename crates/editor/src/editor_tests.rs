@@ -29445,7 +29445,8 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
     cx.assert_editor_state(after);
 }
 
-async fn test_newline_markdown_lists(cx: &mut TestAppContext) {
+#[gpui::test]
+async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let markdown_language = Arc::new(Language::new(
@@ -29459,188 +29460,76 @@ async fn test_newline_markdown_lists(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
 
+    // Case 1: Adding newline after (whitespace + prefix + any non-whitespace) adds marker
     cx.set_state(indoc! {"
-        - Item 1ˇ
+        - [ ] taskˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-        - Item 1
-        - ˇ
-    "});
-
-    cx.set_state(indoc! {"
-        * Item 1ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        * Item 1
-        * ˇ
-    "});
-
-    cx.set_state(indoc! {"
-        + Item 1ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        + Item 1
-        + ˇ
-    "});
-
-    cx.set_state(indoc! {"
-        1. Item 1ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        1. Item 1
-        2. ˇ
-    "});
-
-    cx.set_state(indoc! {"
-        5. Item 5ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        5. Item 5
-        6. ˇ
-    "});
-
-    cx.set_state(indoc! {"
-        - [ ] Unchecked taskˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        - [ ] Unchecked task
+        - [ ] task
         - [ ] ˇ
     "});
 
+    // Case 2: Works with checked task items too
     cx.set_state(indoc! {"
-        - [x] Checked taskˇ
+        - [x] completed taskˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-        - [x] Checked task
+        - [x] completed task
         - [ ] ˇ
     "});
 
+    // Case 3: Cursor position doesn't matter - content after marker is what counts
     cx.set_state(indoc! {"
-        - ˇ
+        - [ ] taˇsk
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-
-        ˇ
+        - [ ] ta
+        - [ ] ˇsk
     "});
 
+    // Case 4: Adding newline after (whitespace + prefix + some whitespace) does NOT add marker
     cx.set_state(indoc! {"
-        1. ˇ
+        - [ ]  ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-
+        - [ ]
         ˇ
     "});
 
+    // Case 5: Adding newline with cursor right after prefix, removes marker
     cx.set_state(indoc! {"
         - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-
         ˇ
     "});
 
+    // Case 6: Adding newline with content adds marker preserving indentation
     cx.set_state(indoc! {"
-          - Indented itemˇ
+        - [ ] task
+          - [ ] indentedˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-          - Indented item
-          - ˇ
+        - [ ] task
+          - [ ] indented
+          - [ ] ˇ
     "});
 
+    // Case 7: Adding newline with cursor right after prefix, unindents
     cx.set_state(indoc! {"
-          1. Indented ordered itemˇ
+        - [ ] task
+          - [ ] ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
-          1. Indented ordered item
-          2. ˇ
-    "});
-
-    // Test task list without space after bracket (- [x]text format)
-    cx.set_state(indoc! {"
-        - [x]No space after bracketˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        - [x]No space after bracket
+        - [ ] task
         - [ ] ˇ
-    "});
-
-    // Test that non-empty selection doesn't trigger list continuation
-    cx.set_state(indoc! {"
-        - «Item 1ˇ»
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state("- \nˇ\n");
-
-    // Test cursor in middle of line - list continuation still applies
-    cx.set_state(indoc! {"
-        - Item ˇ1
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state("- Item \n- ˇ1\n");
-
-    // Test that non-Markdown languages don't get list continuation even with setting enabled
-    let mut cx = EditorTestContext::new(&mut cx.cx).await;
-    cx.update_buffer(|buffer, cx| {
-        buffer.set_language(
-            Some(Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Rust".into(),
-                    ..LanguageConfig::default()
-                },
-                None,
-            ))),
-            cx,
-        )
-    });
-
-    cx.set_state(indoc! {"
-        - Item 1ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        - Item 1
-        ˇ
-    "});
-
-    // Test that setting disabled prevents list continuation in Markdown
-    update_test_language_settings(&mut cx.cx, |settings| {
-        settings.defaults.extend_list_on_newline = Some(false);
-    });
-
-    let mut cx = EditorTestContext::new(&mut cx.cx).await;
-    cx.update_buffer(|buffer, cx| {
-        buffer.set_language(
-            Some(Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Markdown".into(),
-                    ..LanguageConfig::default()
-                },
-                None,
-            ))),
-            cx,
-        )
-    });
-
-    cx.set_state(indoc! {"
-        - Item 1ˇ
-    "});
-    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
-    cx.assert_editor_state(indoc! {"
-        - Item 1
-        ˇ
     "});
 }
 

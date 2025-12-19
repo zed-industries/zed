@@ -827,6 +827,15 @@ pub struct LanguageConfig {
     /// Delimiters and configuration for recognizing and formatting documentation comments.
     #[serde(default, alias = "documentation")]
     pub documentation_comment: Option<BlockCommentConfig>,
+    /// List markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    #[serde(default)]
+    pub unordered_list: Vec<Arc<str>>,
+    /// Configuration for ordered lists with auto-incrementing numbers on newline (e.g., `1. ` becomes `2. `).
+    #[serde(default)]
+    pub ordered_list: Vec<OrderedListConfig>,
+    /// Configuration for task lists where multiple markers map to a single continuation prefix (e.g., `- [x] ` continues as `- [ ] `).
+    #[serde(default)]
+    pub task_list: Option<TaskListConfig>,
     /// A list of additional regex patterns that should be treated as prefixes
     /// for creating boundaries during rewrapping, ensuring content from one
     /// prefixed section doesn't merge with another (e.g., markdown list items).
@@ -896,6 +905,24 @@ pub struct DecreaseIndentConfig {
     pub pattern: Option<Regex>,
     #[serde(default)]
     pub valid_after: Vec<String>,
+}
+
+/// Configuration for continuing ordered lists with auto-incrementing numbers.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct OrderedListConfig {
+    /// A regex pattern with a capture group for the number portion (e.g., `(\\d+)\\. `).
+    pub pattern: String,
+    /// A format string where `{1}` is replaced with the incremented number (e.g., `{1}. `).
+    pub format: String,
+}
+
+/// Configuration for continuing task lists on newline.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+pub struct TaskListConfig {
+    /// The list markers to match (e.g., `- [ ] `, `- [x] `).
+    pub prefixes: Vec<Arc<str>>,
+    /// The marker to insert when continuing the list on a new line (e.g., `- [ ] `).
+    pub continuation: Arc<str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -1068,6 +1095,9 @@ impl Default for LanguageConfig {
             line_comments: Default::default(),
             block_comment: Default::default(),
             documentation_comment: Default::default(),
+            unordered_list: Default::default(),
+            ordered_list: Default::default(),
+            task_list: Default::default(),
             rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -2151,6 +2181,21 @@ impl LanguageScope {
     /// Config for documentation-style block comments for this language.
     pub fn documentation_comment(&self) -> Option<&BlockCommentConfig> {
         self.language.config.documentation_comment.as_ref()
+    }
+
+    /// Returns list markers that are inserted unchanged on newline (e.g., `- `, `* `, `+ `).
+    pub fn unordered_list(&self) -> &[Arc<str>] {
+        &self.language.config.unordered_list
+    }
+
+    /// Returns configuration for ordered lists with auto-incrementing numbers (e.g., `1. ` becomes `2. `).
+    pub fn ordered_list(&self) -> &[OrderedListConfig] {
+        &self.language.config.ordered_list
+    }
+
+    /// Returns configuration for task list continuation, if any (e.g., `- [x] ` continues as `- [ ] `).
+    pub fn task_list(&self) -> Option<&TaskListConfig> {
+        self.language.config.task_list.as_ref()
     }
 
     /// Returns additional regex patterns that act as prefix markers for creating
