@@ -1615,8 +1615,12 @@ impl CodeActionsMenu {
             window.text_style().font(),
             window.text_style().font_size.to_pixels(window.rem_size()),
         );
-        let is_truncated =
-            line_wrapper.should_truncate_line(&label, CODE_ACTION_MENU_MAX_WIDTH, "…");
+        let is_truncated = line_wrapper.should_truncate_line(
+            &label,
+            CODE_ACTION_MENU_MAX_WIDTH,
+            "…",
+            gpui::TruncateFrom::End,
+        );
 
         if is_truncated.is_none() {
             return None;
