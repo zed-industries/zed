@@ -228,13 +228,28 @@ pub enum Event {
     Focus,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+enum CommitEditorState {
+    Commit {
+        amend_pending: bool,
+        signoff_enabled: bool,
+    },
+    Stash,
+}
+impl Default for CommitEditorState {
+    fn default() -> Self {
+        Self::Commit {
+            amend_pending: false,
+            signoff_enabled: false,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedGitPanel {
     width: Option<Pixels>,
     #[serde(default)]
-    amend_pending: bool,
-    #[serde(default)]
-    signoff_enabled: bool,
+    editor_state: CommitEditorState,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -595,9 +610,8 @@ pub struct GitPanel {
     changes_count: usize,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
-    amend_pending: bool,
     original_commit_message: Option<String>,
-    signoff_enabled: bool,
+    editor_state: CommitEditorState,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -761,9 +775,8 @@ impl GitPanel {
                 new_staged_count: 0,
                 changes_count: 0,
                 pending_commit: None,
-                amend_pending: false,
+                editor_state: CommitEditorState::default(),
                 original_commit_message: None,
-                signoff_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
@@ -869,8 +882,7 @@ impl GitPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        let amend_pending = self.amend_pending;
-        let signoff_enabled = self.signoff_enabled;
+        let editor_state = self.editor_state;
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
             cx.background_executor()
@@ -896,8 +908,7 @@ impl GitPanel {
                             serialization_key,
                             serde_json::to_string(&SerializedGitPanel {
                                 width,
-                                amend_pending,
-                                signoff_enabled,
+                                editor_state,
                             })?,
                         )
                         .await?;
@@ -2064,7 +2075,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.amend_pending {
+        if self.amend_pending() {
             return false;
         }
 
@@ -2072,7 +2083,7 @@ impl GitPanel {
             self.commit_changes(
                 CommitOptions {
                     amend: false,
-                    signoff: self.signoff_enabled,
+                    signoff: self.signoff_enabled(),
                 },
                 window,
                 cx,
@@ -2103,7 +2114,7 @@ impl GitPanel {
     ) -> bool {
         if commit_editor_focus_handle.contains_focused(window, cx) {
             if self.head_commit(cx).is_some() {
-                if !self.amend_pending {
+                if !self.amend_pending() {
                     self.set_amend_pending(true, cx);
                     self.load_last_commit_message(cx);
 
@@ -2112,7 +2123,7 @@ impl GitPanel {
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
-                            signoff: self.signoff_enabled,
+                            signoff: self.signoff_enabled(),
                         },
                         window,
                         cx,
@@ -4033,7 +4044,7 @@ impl GitPanel {
                 let git_panel = cx.entity();
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
-                let signoff = self.signoff_enabled;
+                let signoff = self.signoff_enabled();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -4075,7 +4086,8 @@ impl GitPanel {
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
-        } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
+        } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending()
+        {
             (false, "No changes to commit")
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
@@ -4089,7 +4101,7 @@ impl GitPanel {
     }
 
     pub fn commit_button_title(&self) -> &'static str {
-        if self.amend_pending {
+        if self.amend_pending() {
             if self.has_staged_changes() {
                 "Amend"
             } else if self.has_tracked_changes() {
@@ -4337,7 +4349,7 @@ impl GitPanel {
         let title = self.commit_button_title();
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
-        let signoff = self.signoff_enabled;
+        let signoff = self.signoff_enabled();
 
         let label_color = if self.pending_commit.is_some() {
             Color::Disabled
@@ -5291,21 +5303,29 @@ impl GitPanel {
     }
 
     pub fn amend_pending(&self) -> bool {
-        self.amend_pending
+        matches!(
+            self.editor_state,
+            CommitEditorState::Commit {
+                amend_pending: true,
+                ..
+            }
+        )
     }
 
     /// Sets the pending amend state, ensuring that the original commit message
     /// is either saved, when `value` is `true` and there's no pending amend, or
     /// restored, when `value` is `false` and there's a pending amend.
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
-        if value && !self.amend_pending {
+        let current_amend_pending = self.amend_pending();
+
+        if value && !current_amend_pending {
             let current_message = self.commit_message_buffer(cx).read(cx).text();
             self.original_commit_message = if current_message.trim().is_empty() {
                 None
             } else {
                 Some(current_message)
             };
-        } else if !value && self.amend_pending {
+        } else if !value && current_amend_pending {
             let message = self.original_commit_message.take().unwrap_or_default();
             self.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
@@ -5314,17 +5334,38 @@ impl GitPanel {
             });
         }
 
-        self.amend_pending = value;
+        if let CommitEditorState::Commit {
+            signoff_enabled, ..
+        } = self.editor_state
+        {
+            self.editor_state = CommitEditorState::Commit {
+                amend_pending: value,
+                signoff_enabled,
+            };
+        }
+
         self.serialize(cx);
         cx.notify();
     }
 
     pub fn signoff_enabled(&self) -> bool {
-        self.signoff_enabled
+        matches!(
+            self.editor_state,
+            CommitEditorState::Commit {
+                signoff_enabled: true,
+                ..
+            }
+        )
     }
 
     pub fn set_signoff_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
-        self.signoff_enabled = value;
+        if let CommitEditorState::Commit { amend_pending, .. } = self.editor_state {
+            self.editor_state = CommitEditorState::Commit {
+                amend_pending,
+                signoff_enabled: value,
+            };
+        }
+
         self.serialize(cx);
         cx.notify();
     }
@@ -5335,7 +5376,7 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_signoff_enabled(!self.signoff_enabled, cx);
+        self.set_signoff_enabled(!self.signoff_enabled(), cx);
     }
 
     pub async fn load(
@@ -5366,8 +5407,7 @@ impl GitPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
-                    panel.amend_pending = serialized_panel.amend_pending;
-                    panel.signoff_enabled = serialized_panel.signoff_enabled;
+                    panel.editor_state = serialized_panel.editor_state;
                     cx.notify();
                 })
             }
@@ -5412,8 +5452,9 @@ impl GitPanel {
     }
 
     pub(crate) fn toggle_amend_pending(&mut self, cx: &mut Context<Self>) {
-        self.set_amend_pending(!self.amend_pending, cx);
-        if self.amend_pending {
+        let current_amend_pending = self.amend_pending();
+        self.set_amend_pending(!current_amend_pending, cx);
+        if self.amend_pending() {
             self.load_last_commit_message(cx);
         }
     }
@@ -5497,10 +5538,10 @@ impl Render for GitPanel {
                         }
                     })
                     .children(self.render_footer(window, cx))
-                    .when(self.amend_pending, |this| {
+                    .when(self.amend_pending(), |this| {
                         this.child(self.render_pending_amend(cx))
                     })
-                    .when(!self.amend_pending, |this| {
+                    .when(!self.amend_pending(), |this| {
                         this.children(self.render_previous_commit(cx))
                     })
                     .into_any_element(),
