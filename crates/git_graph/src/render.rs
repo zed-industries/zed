@@ -3,9 +3,10 @@
 use crate::graph::{GitGraph, RefType};
 use crate::layout::GraphLayout;
 use gpui::{
-    actions, div, prelude::*, App, Context, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, SharedString, Window,
+    actions, div, prelude::*, uniform_list, App, Context, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Render, ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
+use std::ops::Range;
 use menu::{Confirm, SelectNext, SelectPrevious};
 use ui::prelude::*;
 
@@ -66,6 +67,7 @@ pub struct GitGraphView {
     selected_commit: Option<SharedString>,
     selected_index: Option<usize>,
     focus_handle: FocusHandle,
+    scroll_handle: UniformListScrollHandle,
 }
 
 impl GitGraphView {
@@ -77,6 +79,7 @@ impl GitGraphView {
             selected_commit: None,
             selected_index: None,
             focus_handle: cx.focus_handle(),
+            scroll_handle: UniformListScrollHandle::new(),
         }
     }
 
@@ -86,6 +89,13 @@ impl GitGraphView {
         self.selected_commit = None;
         self.selected_index = None;
         cx.notify();
+    }
+
+    /// Scroll to ensure the selected commit is visible
+    fn scroll_to_selected(&self) {
+        if let Some(index) = self.selected_index {
+            self.scroll_handle.scroll_to_item(index, ScrollStrategy::Nearest);
+        }
     }
 
     pub fn select_commit(&mut self, sha: SharedString, cx: &mut Context<Self>) {
@@ -110,6 +120,7 @@ impl GitGraphView {
             self.selected_commit = Some(sha.clone());
             cx.emit(GitGraphEvent::CommitSelected(sha.clone()));
         }
+        self.scroll_to_selected();
         cx.notify();
     }
 
@@ -127,6 +138,7 @@ impl GitGraphView {
             self.selected_commit = Some(sha.clone());
             cx.emit(GitGraphEvent::CommitSelected(sha.clone()));
         }
+        self.scroll_to_selected();
         cx.notify();
     }
 
@@ -328,16 +340,23 @@ impl Render for GitGraphView {
                     )
             )
             .child(
-                // Graph content
-                div()
-                    .id("git-graph-content")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .children(
-                        self.graph.ordered_commits.iter().enumerate().map(|(row, sha)| {
-                            self.render_commit_row(row, sha, cx).into_any_element()
-                        })
-                    )
+                // Graph content - virtualized for performance
+                uniform_list(
+                    "git-graph-commits",
+                    self.graph.ordered_commits.len(),
+                    cx.processor(move |this, range: Range<usize>, _window, cx| {
+                        range.map(|row| {
+                            if let Some(sha) = this.graph.ordered_commits.get(row) {
+                                this.render_commit_row(row, sha, cx).into_any_element()
+                            } else {
+                                div().h(px(this.layout.row_height)).into_any_element()
+                            }
+                        }).collect()
+                    }),
+                )
+                .flex_1()
+                .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                .track_scroll(&self.scroll_handle)
             )
     }
 }
