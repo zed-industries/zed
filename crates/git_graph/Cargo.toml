@@ -1,0 +1,25 @@
+[package]
+name = "git_graph"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "git_graph"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+git.workspace = true
+gpui.workspace = true
+serde.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
