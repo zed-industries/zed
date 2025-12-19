@@ -20266,6 +20266,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "worktree_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "settings",
+ "worktree",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
