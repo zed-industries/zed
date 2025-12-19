@@ -17,7 +17,7 @@ use project::{
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
-use std::{any::TypeId, borrow::Cow, sync::Arc};
+use std::{any::TypeId, borrow::Cow, sync::Arc, time::Duration};
 use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
 use workspace::{
@@ -86,6 +86,9 @@ pub struct LspLogView {
     project: Entity<Project>,
     focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
+    pending_log_append: String,
+    pending_long_message_offsets: Vec<(usize, usize)>,
+    pending_log_task: Option<Task<()>>,
 }
 
 pub struct LspLogToolbarItemView {
@@ -226,41 +229,7 @@ impl LspLogView {
                     if log_view.current_server_id == Some(*id)
                         && LogKind::from_server_log_type(kind) == log_view.active_entry_kind
                     {
-                        log_view.editor.update(cx, |editor, cx| {
-                            editor.set_read_only(false);
-                            let last_offset = editor.buffer().read(cx).len(cx);
-                            let newest_cursor_is_at_end = editor
-                                .selections
-                                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
-                                .start
-                                >= last_offset;
-                            editor.edit(
-                                vec![
-                                    (last_offset..last_offset, text.as_str()),
-                                    (last_offset..last_offset, "\n"),
-                                ],
-                                cx,
-                            );
-                            if text.len() > 1024 {
-                                let b = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
-                                let fold_offset =
-                                    b.as_rope().ceil_char_boundary(last_offset.0 + 1024);
-                                editor.fold_ranges(
-                                    vec![
-                                        MultiBufferOffset(fold_offset)
-                                            ..MultiBufferOffset(b.as_rope().len()),
-                                    ],
-                                    false,
-                                    window,
-                                    cx,
-                                );
-                            }
-
-                            if newest_cursor_is_at_end {
-                                editor.request_autoscroll(Autoscroll::bottom(), cx);
-                            }
-                            editor.set_read_only(true);
-                        });
+                        log_view.queue_log_append(text, window, cx);
                     }
                 }
             },
@@ -298,6 +267,9 @@ impl LspLogView {
                 events_subscriptions,
                 focus_subscription,
             ],
+            pending_log_append: String::new(),
+            pending_long_message_offsets: Vec::new(),
+            pending_log_task: None,
         };
         if let Some(server_id) = server_id {
             lsp_log_view.show_logs_for_server(server_id, window, cx);
@@ -442,6 +414,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_pending_log_append();
         let typ = self
             .log_store
             .read(cx)
@@ -472,12 +445,13 @@ impl LspLogView {
     }
 
     fn update_log_level(
-        &self,
+        &mut self,
         server_id: LanguageServerId,
         level: MessageType,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_pending_log_append();
         let log_contents = self.log_store.update(cx, |this, _| {
             if let Some(state) = this.get_language_server_state(server_id) {
                 state.log_level = level;
@@ -503,6 +477,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_pending_log_append();
         let trace_level = self
             .log_store
             .update(cx, |log_store, _| {
@@ -537,6 +512,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_pending_log_append();
         self.toggle_rpc_trace_for_server(server_id, true, window, cx);
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
@@ -624,12 +600,82 @@ impl LspLogView {
         }
     }
 
+    fn queue_log_append(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let offset = self.pending_log_append.len();
+        self.pending_log_append.push_str(text);
+        self.pending_log_append.push('\n');
+        if text.len() > 1024 {
+            self.pending_long_message_offsets.push((offset, text.len()));
+        }
+        if self.pending_log_task.is_some() {
+            return;
+        }
+        let task = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update_in(cx, |view, window, cx| {
+                    view.flush_pending_log_append(window, cx);
+                })
+                .ok();
+            }
+        });
+        self.pending_log_task = Some(task);
+    }
+
+    fn flush_pending_log_append(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_log_append.is_empty() {
+            self.pending_log_task = None;
+            return;
+        }
+        let pending_text = std::mem::take(&mut self.pending_log_append);
+        let long_offsets = std::mem::take(&mut self.pending_long_message_offsets);
+        self.pending_log_task = None;
+        self.editor.update(cx, |editor, cx| {
+            editor.set_read_only(false);
+            let last_offset = editor.buffer().read(cx).len(cx);
+            let newest_cursor_is_at_end = editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .start
+                >= last_offset;
+            editor.edit(vec![(last_offset..last_offset, pending_text.as_str())], cx);
+            if !long_offsets.is_empty() {
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                let mut ranges = Vec::with_capacity(long_offsets.len());
+                for (rel, message_len) in long_offsets {
+                    let fold_start = buffer
+                        .as_rope()
+                        .ceil_char_boundary(last_offset.0 + rel + 1024);
+                    let fold_end = buffer
+                        .as_rope()
+                        .ceil_char_boundary(last_offset.0 + rel + message_len);
+                    ranges.push(MultiBufferOffset(fold_start)..MultiBufferOffset(fold_end));
+                }
+                editor.fold_ranges(ranges, false, window, cx);
+            }
+
+            if newest_cursor_is_at_end {
+                editor.request_autoscroll(Autoscroll::bottom(), cx);
+            }
+            editor.set_read_only(true);
+        });
+    }
+
+    fn clear_pending_log_append(&mut self) {
+        self.pending_log_append.clear();
+        self.pending_long_message_offsets.clear();
+        self.pending_log_task = None;
+    }
+
     fn show_server_info(
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_pending_log_append();
         let Some(server_info) = self
             .project
             .read(cx)
