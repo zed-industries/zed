@@ -1317,7 +1317,6 @@ impl Thread {
                 Ok(events) => (events, None),
                 Err(err) => (stream::empty().boxed(), Some(err)),
             };
-
             let mut tool_results = FuturesUnordered::new();
             while let Some(event) = events.next().await {
                 log::trace!("Received completion event: {:?}", event);
@@ -1652,11 +1651,9 @@ impl Thread {
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
-
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
-
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output
