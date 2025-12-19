@@ -16,7 +16,7 @@ use std::{
 };
 use text::ToOffset;
 
-use crate::{OLLAMA_API_URL, get_models, pick_recommended_edit_prediction_model};
+use crate::{OLLAMA_API_URL, get_models};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
@@ -25,6 +25,13 @@ const EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptio
     min_bytes: 525,
     target_before_cursor_over_total_bytes: 0.66,
 };
+
+pub const RECOMMENDED_EDIT_PREDICTION_MODELS: [&str; 4] = [
+    "qwen2.5-coder:3b-base",
+    "qwen2.5-coder:3b",
+    "qwen2.5-coder:7b-base",
+    "qwen2.5-coder:7b",
+];
 
 #[derive(Clone)]
 struct CurrentCompletion {
@@ -80,7 +87,7 @@ impl OllamaEditPredictionDelegate {
             raw: true,
             stream: false,
             options: Some(OllamaGenerateOptions {
-                num_predict: Some(256),
+                num_predict: Some(64),
                 temperature: Some(0.2),
                 stop: Some(get_stop_tokens()),
             }),
@@ -311,11 +318,9 @@ fn format_fim_prompt(model: &str, prefix: &str, suffix: &str) -> String {
         }
         "deepseek-coder" | "deepseek-coder-v2" => {
             // DeepSeek uses special Unicode characters for FIM tokens
-            format!(
-                "<\u{ff5c}fim\u{2581}begin\u{ff5c}>{prefix}<\u{ff5c}fim\u{2581}hole\u{ff5c}>{suffix}<\u{ff5c}fim\u{2581}end\u{ff5c}>"
-            )
+            format!("<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>")
         }
-        "qwen2.5-coder" | "qwen-coder" => {
+        "qwen2.5-coder" | "qwen-coder" | "qwen" => {
             format!("<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>")
         }
         "codegemma" => {
@@ -323,6 +328,9 @@ fn format_fim_prompt(model: &str, prefix: &str, suffix: &str) -> String {
         }
         "codestral" | "mistral" => {
             format!("[SUFFIX]{suffix}[PREFIX]{prefix}")
+        }
+        "glm" | "glm-4" | "glm-4.5" => {
+            format!("<|code_prefix|>{prefix}<|code_suffix|>{suffix}<|code_middle|>")
         }
         _ => {
             format!("<fim_prefix>{prefix}<fim_suffix>{suffix}<fim_middle>")
@@ -401,4 +409,13 @@ struct OllamaGenerateOptions {
 #[derive(Debug, Deserialize)]
 struct OllamaGenerateResponse {
     response: String,
+}
+pub fn pick_recommended_edit_prediction_model<'a>(
+    available_models: impl IntoIterator<Item = &'a str>,
+) -> Option<&'static str> {
+    let available: std::collections::HashSet<&str> = available_models.into_iter().collect();
+
+    RECOMMENDED_EDIT_PREDICTION_MODELS
+        .into_iter()
+        .find(|recommended| available.contains(recommended))
 }
