@@ -4574,10 +4574,21 @@ impl Editor {
                 continue;
             }
 
+            let next_is_adjacent = regions
+                .peek()
+                .is_some_and(|(next, _)| selection.end == next.start);
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let anchor = snapshot.anchor_before(selection.end);
+            let anchor = if in_adjacent_group || next_is_adjacent {
+                // After edits the right bias would shift those anchor to the next visible fragment
+                // but we want to resolve to the previous one
+                snapshot.anchor_before(selection.end)
+            } else {
+                snapshot.anchor_after(selection.end)
+            };
+
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
@@ -4604,12 +4615,7 @@ impl Editor {
                 }
             }
 
-            let next_is_adjacent = regions
-                .peek()
-                .is_some_and(|(next, _)| selection.end == next.start);
-            let delta = !(in_adjacent_group || next_is_adjacent) as usize;
-
-            new_selections.push((selection.map(|_| anchor), delta));
+            new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
         }
 
