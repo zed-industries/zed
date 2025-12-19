@@ -1548,12 +1548,7 @@ impl AcpThreadView {
                 cx.notify();
             }
             AcpThreadEvent::ConfigOptionsUpdated(_) => {
-                // Rebuild selectors when config options change
-                if let Some(config_options_view) = &self.config_options_view {
-                    config_options_view.update(cx, |view, cx| {
-                        view.rebuild_selectors(window, cx);
-                    });
-                }
+                // The watch task in ConfigOptionsView handles rebuilding selectors
                 cx.notify();
             }
         }

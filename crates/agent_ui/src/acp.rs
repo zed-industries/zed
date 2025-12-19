@@ -9,9 +9,6 @@ mod model_selector_popover;
 mod thread_history;
 mod thread_view;
 
-pub use config_option_picker::ConfigOptionPicker;
-pub use config_option_selector::ConfigOptionSelector;
-pub use config_options_view::ConfigOptionsView;
 pub use mode_selector::ModeSelector;
 pub use model_selector::AcpModelSelector;
 pub use model_selector_popover::AcpModelSelectorPopover;

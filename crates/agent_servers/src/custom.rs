@@ -30,7 +30,7 @@ impl AgentServer for CustomAgentServer {
         IconName::Terminal
     }
 
-    fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
+    fn default_mode(&self, cx: &App) -> Option<acp::SessionModeId> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
@@ -68,7 +68,7 @@ impl AgentServer for CustomAgentServer {
         });
     }
 
-    fn default_model(&self, cx: &mut App) -> Option<acp::ModelId> {
+    fn default_model(&self, cx: &App) -> Option<acp::ModelId> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)

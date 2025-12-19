@@ -1,11 +1,11 @@
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use fs::Fs;
-use gpui::{Context, Entity, Window, prelude::*};
+use gpui::{Context, Entity, Task, Window, prelude::*};
 use std::rc::Rc;
 use std::sync::Arc;
 use ui::prelude::*;
+use util::ResultExt as _;
 
 use super::config_option_selector::ConfigOptionSelector;
 
@@ -14,6 +14,7 @@ pub struct ConfigOptionsView {
     selectors: Vec<Entity<ConfigOptionSelector>>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
+    _refresh_task: Task<()>,
 }
 
 impl ConfigOptionsView {
@@ -26,11 +27,24 @@ impl ConfigOptionsView {
     ) -> Self {
         let selectors = Self::build_selectors(&config_options, &agent_server, &fs, window, cx);
 
+        let rx = config_options.watch(cx);
+        let refresh_task = cx.spawn_in(window, async move |this, cx| {
+            if let Some(mut rx) = rx {
+                while let Ok(()) = rx.recv().await {
+                    this.update_in(cx, |this, window, cx| {
+                        this.rebuild_selectors(window, cx);
+                    })
+                    .log_err();
+                }
+            }
+        });
+
         Self {
             config_options,
             selectors,
             agent_server,
             fs,
+            _refresh_task: refresh_task,
         }
     }
 
@@ -62,9 +76,7 @@ impl ConfigOptionsView {
             .collect()
     }
 
-    /// Rebuild selectors when config options change.
-    /// This should be called when a `ConfigOptionsUpdated` event is received.
-    pub fn rebuild_selectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn rebuild_selectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.selectors = Self::build_selectors(
             &self.config_options,
             &self.agent_server,
@@ -73,28 +85,6 @@ impl ConfigOptionsView {
             cx,
         );
         cx.notify();
-    }
-
-    /// Update the config options provider and rebuild selectors.
-    /// This is useful when the session config options are replaced entirely.
-    pub fn update_config_options(
-        &mut self,
-        config_options: Rc<dyn AgentSessionConfigOptions>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.config_options = config_options;
-        self.rebuild_selectors(window, cx);
-    }
-
-    /// Get the current config options
-    pub fn config_options(&self) -> Vec<acp::SessionConfigOption> {
-        self.config_options.config_options()
-    }
-
-    /// Check if there are any config options to display
-    pub fn is_empty(&self) -> bool {
-        self.selectors.is_empty()
     }
 }
 

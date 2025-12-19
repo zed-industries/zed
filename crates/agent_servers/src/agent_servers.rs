@@ -67,7 +67,7 @@ pub trait AgentServer: Send {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 
-    fn default_mode(&self, _cx: &mut App) -> Option<agent_client_protocol::SessionModeId> {
+    fn default_mode(&self, _cx: &App) -> Option<agent_client_protocol::SessionModeId> {
         None
     }
 
@@ -79,7 +79,7 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn default_model(&self, _cx: &mut App) -> Option<agent_client_protocol::ModelId> {
+    fn default_model(&self, _cx: &App) -> Option<agent_client_protocol::ModelId> {
         None
     }
 

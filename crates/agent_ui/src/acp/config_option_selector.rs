@@ -18,11 +18,6 @@ use crate::ui::HoldForDefault;
 
 const PICKER_THRESHOLD: usize = 10;
 
-pub enum MenuHandle {
-    ContextMenu(PopoverMenuHandle<ContextMenu>),
-    Picker(PopoverMenuHandle<ConfigOptionPicker>),
-}
-
 pub struct ConfigOptionSelector {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     config_id: acp::SessionConfigId,
@@ -78,14 +73,6 @@ impl ConfigOptionSelector {
             picker,
             setting_value: false,
             use_picker,
-        }
-    }
-
-    pub fn menu_handle(&self) -> MenuHandle {
-        if self.use_picker {
-            MenuHandle::Picker(self.picker_handle.clone())
-        } else {
-            MenuHandle::ContextMenu(self.context_menu_handle.clone())
         }
     }
 

@@ -145,6 +145,12 @@ pub trait AgentSessionConfigOptions {
         value: acp::SessionConfigValueId,
         cx: &mut App,
     ) -> Task<Result<Vec<acp::SessionConfigOption>>>;
+
+    /// Whenever the config options are updated the receiver will be notified.
+    /// Optional for agents that don't update their config options dynamically.
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        None
+    }
 }
 
 #[derive(Debug)]
