@@ -191,6 +191,9 @@ impl Render for ProfileSelector {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
                         .gap_1()
+                        .child(container().child(Label::new("Toggle Profile Menu")).child(
+                            KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
+                        ))
                         .child(
                             container()
                                 .pb_1()
@@ -203,9 +206,6 @@ impl Render for ProfileSelector {
                                     cx,
                                 )),
                         )
-                        .child(container().child(Label::new("Toggle Profile Menu")).child(
-                            KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
-                        ))
                         .into_any()
                 }
             }),
