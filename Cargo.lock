@@ -5320,6 +5320,7 @@ dependencies = [
  "client",
  "gpui",
  "language",
+ "log",
  "text",
 ]
 

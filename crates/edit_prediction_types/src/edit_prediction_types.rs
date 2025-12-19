@@ -231,6 +231,10 @@ pub enum EditPredictionGranularity {
 }
 /// Returns edits updated based on user edits since the old snapshot. None is returned if any user
 /// edit is not a prefix of a predicted insertion.
+///
+/// This function is intentionally defensive: edit prediction providers may hold onto anchors from
+/// an older snapshot. Converting those anchors to offsets can panic if the buffer version no longer
+/// observes the anchor's timestamp. In that case, we treat the prediction as stale and return None.
 pub fn interpolate_edits(
     old_snapshot: &text::BufferSnapshot,
     new_snapshot: &text::BufferSnapshot,
@@ -241,8 +245,12 @@ pub fn interpolate_edits(
     let mut model_edits = current_edits.iter().peekable();
     for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
         while let Some((model_old_range, _)) = model_edits.peek() {
-            let model_old_range = model_old_range.to_offset(old_snapshot);
-            if model_old_range.end < user_edit.old.start {
+            let Some(model_old_offset_range) = safe_to_offset_range(old_snapshot, model_old_range)
+            else {
+                return None;
+            };
+
+            if model_old_offset_range.end < user_edit.old.start {
                 let (model_old_range, model_new_text) = model_edits.next().unwrap();
                 edits.push((model_old_range.clone(), model_new_text.clone()));
             } else {
@@ -251,7 +259,11 @@ pub fn interpolate_edits(
         }
 
         if let Some((model_old_range, model_new_text)) = model_edits.peek() {
-            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            let Some(model_old_offset_range) = safe_to_offset_range(old_snapshot, model_old_range)
+            else {
+                return None;
+            };
+
             if user_edit.old == model_old_offset_range {
                 let user_new_text = new_snapshot
                     .text_for_range(user_edit.new.clone())
@@ -272,7 +284,38 @@ pub fn interpolate_edits(
         return None;
     }
 
+    // If any remaining edit ranges can't be converted safely, treat the prediction as stale.
+    if model_edits
+        .clone()
+        .any(|(range, _)| safe_to_offset_range(old_snapshot, range).is_none())
+    {
+        return None;
+    }
+
     edits.extend(model_edits.cloned());
 
     if edits.is_empty() { None } else { Some(edits) }
+}
+
+fn safe_to_offset_range(
+    snapshot: &text::BufferSnapshot,
+    range: &Range<Anchor>,
+) -> Option<std::ops::Range<usize>> {
+    // Min/max anchors are always safe to convert.
+    let start_ok = range.start.is_min()
+        || range.start.is_max()
+        || snapshot.version.observed(range.start.timestamp);
+    let end_ok =
+        range.end.is_min() || range.end.is_max() || snapshot.version.observed(range.end.timestamp);
+
+    if start_ok && end_ok {
+        Some(range.to_offset(snapshot))
+    } else {
+        log::debug!(
+            "Dropping stale edit prediction range because anchor timestamps are not observed by snapshot version (start_ok: {}, end_ok: {})",
+            start_ok,
+            end_ok
+        );
+        None
+    }
 }

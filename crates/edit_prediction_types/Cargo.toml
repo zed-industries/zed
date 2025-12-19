@@ -16,3 +16,4 @@ client.workspace = true
 gpui.workspace = true
 language.workspace = true
 text.workspace = true
+log.workspace = true
