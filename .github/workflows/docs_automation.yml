@@ -8,8 +8,12 @@ on:
       - 'extensions/**'
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: 'PR number to analyze (gets full PR diff)'
+        required: false
+        type: string
       trigger_sha:
-        description: 'Commit SHA to analyze (defaults to HEAD)'
+        description: 'Commit SHA to analyze (ignored if pr_number is set)'
         required: false
         type: string
 
@@ -48,17 +52,32 @@ jobs:
       - name: Get changed files
         id: changed
         run: |
-          if [ -n "${{ inputs.trigger_sha }}" ]; then
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            # Get full PR diff
+            echo "Analyzing PR #${{ inputs.pr_number }}"
+            echo "source=pr" >> $GITHUB_OUTPUT
+            echo "ref=${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
+            gh pr diff ${{ inputs.pr_number }} --name-only > /tmp/changed_files.txt
+          elif [ -n "${{ inputs.trigger_sha }}" ]; then
+            # Get single commit diff
             SHA="${{ inputs.trigger_sha }}"
+            echo "Analyzing commit $SHA"
+            echo "source=commit" >> $GITHUB_OUTPUT
+            echo "ref=$SHA" >> $GITHUB_OUTPUT
+            git diff --name-only $SHA^ $SHA > /tmp/changed_files.txt
           else
+            # Default to current commit
             SHA="${{ github.sha }}"
+            echo "Analyzing commit $SHA"
+            echo "source=commit" >> $GITHUB_OUTPUT
+            echo "ref=$SHA" >> $GITHUB_OUTPUT
+            git diff --name-only $SHA^ $SHA > /tmp/changed_files.txt || git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
           fi
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
           
-          # Get list of changed files from the commit
-          git diff --name-only $SHA^ $SHA > /tmp/changed_files.txt || git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
           echo "Changed files:"
           cat /tmp/changed_files.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # Phase 0: Guardrails are loaded via AGENTS.md in each phase
 
@@ -197,7 +216,7 @@ jobs:
 
           $(cat /tmp/phase6-summary.md | head -50)
 
-          Triggered by: ${{ steps.changed.outputs.sha }}
+          Triggered by: ${{ steps.changed.outputs.source }} ${{ steps.changed.outputs.ref }}
 
           Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
           
