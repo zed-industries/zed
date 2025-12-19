@@ -1697,8 +1697,22 @@ impl Workspace {
 
             let toolchains = DB.toolchains(workspace_id).await?;
 
-            for (toolchain, worktree_id, path) in toolchains {
+            for (toolchain, worktree_path, path) in toolchains {
                 let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                })?
+                else {
+                    // We did not find a worktree with a given path, but that's whatever.
+                    continue;
+                };
                 if !app_state.fs.is_file(toolchain_path.as_path()).await {
                     continue;
                 }
@@ -4223,7 +4237,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane.clone();
-        self.active_item_path_changed(window, cx);
+        self.active_item_path_changed(true, window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
@@ -4280,7 +4294,7 @@ impl Workspace {
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(*focus_changed, window, cx);
                     self.update_active_view_for_followers(window, cx);
                 } else if *local {
                     self.set_active_pane(pane, window, cx);
@@ -4296,7 +4310,7 @@ impl Workspace {
             }
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
-                    self.active_item_path_changed(window, cx);
+                    self.active_item_path_changed(false, window, cx);
                 }
                 serialize_workspace = false;
             }
@@ -4465,7 +4479,7 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(window, cx);
+            self.active_item_path_changed(true, window, cx);
         }
         cx.emit(Event::PaneRemoved);
     }
@@ -4719,14 +4733,19 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn active_item_path_changed(
+        &mut self,
+        focus_changed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
         self.project.update(cx, |project, cx| {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if let Some(project_path) = &active_entry {
+        if focus_changed && let Some(project_path) = &active_entry {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
@@ -8212,9 +8231,22 @@ async fn open_remote_project_inner(
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
-    for (toolchain, worktree_id, path) in toolchains {
+    for (toolchain, worktree_path, path) in toolchains {
         project
             .update(cx, |this, cx| {
+                let Some(worktree_id) =
+                    this.find_worktree(&worktree_path, cx)
+                        .and_then(|(worktree, rel_path)| {
+                            if rel_path.is_empty() {
+                                Some(worktree.read(cx).id())
+                            } else {
+                                None
+                            }
+                        })
+                else {
+                    return Task::ready(None);
+                };
+
                 this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
             })?
             .await;

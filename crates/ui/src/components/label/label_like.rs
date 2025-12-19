@@ -88,6 +88,7 @@ pub struct LabelLike {
     underline: bool,
     single_line: bool,
     truncate: bool,
+    truncate_start: bool,
 }
 
 impl Default for LabelLike {
@@ -113,6 +114,7 @@ impl LabelLike {
             underline: false,
             single_line: false,
             truncate: false,
+            truncate_start: false,
         }
     }
 }
@@ -126,6 +128,12 @@ impl LabelLike {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    /// Truncates overflowing text with an ellipsis (`…`) at the start if needed.
+    pub fn truncate_start(mut self) -> Self {
+        self.truncate_start = true;
+        self
+    }
 }
 
 impl LabelCommon for LabelLike {
@@ -169,7 +177,7 @@ impl LabelCommon for LabelLike {
         self
     }
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`…`) at the end if needed.
     fn truncate(mut self) -> Self {
         self.truncate = true;
         self
@@ -234,6 +242,9 @@ impl RenderOnce for LabelLike {
             .when(self.single_line, |this| this.whitespace_nowrap())
             .when(self.truncate, |this| {
                 this.overflow_x_hidden().text_ellipsis()
+            })
+            .when(self.truncate_start, |this| {
+                this.overflow_x_hidden().text_ellipsis_start()
             })
             .text_color(color)
             .font_weight(

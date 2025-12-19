@@ -1,4 +1,4 @@
-use crate::{LabelLike, TruncateLeft, prelude::*};
+use crate::{LabelLike, prelude::*};
 use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.
@@ -33,7 +33,6 @@ use gpui::StyleRefinement;
 pub struct Label {
     base: LabelLike,
     label: SharedString,
-    truncate_path: bool,
 }
 
 impl Label {
@@ -50,7 +49,6 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
-            truncate_path: false,
         }
     }
 
@@ -59,8 +57,9 @@ impl Label {
         self.label = text.into();
     }
 
-    pub fn truncate_path(mut self) -> Self {
-        self.truncate_path = true;
+    /// Truncates the label from the start, keeping the end visible.
+    pub fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
         self
     }
 }
@@ -207,14 +206,7 @@ impl LabelCommon for Label {
 
 impl RenderOnce for Label {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        if self.truncate_path {
-            TruncateLeft::new(self.label)
-                .color(self.base.color)
-                .size(self.base.size)
-                .into_any_element()
-        } else {
-            self.base.child(self.label).into_any_element()
-        }
+        self.base.child(self.label)
     }
 }
 
@@ -270,7 +262,8 @@ impl Component for Label {
                         "Special Cases",
                         vec![
                             single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
-                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+                            single_example("Regular Truncation", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+                            single_example("Start Truncation", div().max_w_24().child(Label::new("zed/crates/ui/src/components/label/truncate/label/label.rs").truncate_start()).into_any_element()),
                         ],
                     ),
                 ])

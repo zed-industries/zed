@@ -447,34 +447,38 @@ impl TitleBar {
             return None;
         }
 
-        Some(
-            Button::new("restricted_mode_trigger", "Restricted Mode")
-                .style(ButtonStyle::Tinted(TintColor::Warning))
-                .label_size(LabelSize::Small)
-                .color(Color::Warning)
-                .icon(IconName::Warning)
-                .icon_color(Color::Warning)
-                .icon_size(IconSize::Small)
-                .icon_position(IconPosition::Start)
-                .tooltip(|_, cx| {
-                    Tooltip::with_meta(
-                        "You're in Restricted Mode",
-                        Some(&ToggleWorktreeSecurity),
-                        "Mark this project as trusted and unlock all features",
-                        cx,
-                    )
+        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
+            .style(ButtonStyle::Tinted(TintColor::Warning))
+            .label_size(LabelSize::Small)
+            .color(Color::Warning)
+            .icon(IconName::Warning)
+            .icon_color(Color::Warning)
+            .icon_size(IconSize::Small)
+            .icon_position(IconPosition::Start)
+            .tooltip(|_, cx| {
+                Tooltip::with_meta(
+                    "You're in Restricted Mode",
+                    Some(&ToggleWorktreeSecurity),
+                    "Mark this project as trusted and unlock all features",
+                    cx,
+                )
+            })
+            .on_click({
+                cx.listener(move |this, _, window, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_worktree_trust_security_modal(true, window, cx)
+                        })
+                        .log_err();
                 })
-                .on_click({
-                    cx.listener(move |this, _, window, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.show_worktree_trust_security_modal(true, window, cx)
-                            })
-                            .log_err();
-                    })
-                })
-                .into_any_element(),
-        )
+            });
+
+        if cfg!(macos_sdk_26) {
+            // Make up for Tahoe's traffic light buttons having less spacing around them
+            Some(div().child(button).ml_0p5().into_any_element())
+        } else {
+            Some(button.into_any_element())
+        }
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

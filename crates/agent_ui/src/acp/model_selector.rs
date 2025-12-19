@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
-use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
+use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
@@ -350,7 +350,11 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         })
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
-                                .when_some(model_info.icon, |this, icon| this.icon(icon))
+                                .map(|this| match &model_info.icon {
+                                    Some(AgentModelIcon::Path(path)) => this.icon_path(path.clone()),
+                                    Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
+                                    None => this,
+                                })
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .when(supports_favorites, |this| {
