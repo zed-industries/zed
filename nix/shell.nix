@@ -15,6 +15,8 @@
   protobuf,
   nodejs_22,
   zig,
+
+  livekit,
 }:
 (mkShell.override { inherit (zed-editor) stdenv; }) {
   inputsFrom = [ zed-editor ];
@@ -33,6 +35,8 @@
     # we'll just put it on `$PATH`:
     nodejs_22
     zig
+
+    livekit
   ];
 
   env =

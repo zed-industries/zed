@@ -17,7 +17,7 @@
       rust-overlay,
       crane,
       ...
-    }:
+    } @ inputs:
     let
       systems = [
         "x86_64-linux"
@@ -51,6 +51,12 @@
       overlays.default = final: _: {
         zed-editor = mkZed final;
       };
+      checks = forAllSystems (pkgs: {
+        simple = (import ./nix/test/simple.nix) {
+          inherit pkgs; 
+          zed = mkZed pkgs;
+        };
+      });
     };
 
   nixConfig = {
