@@ -4315,31 +4315,21 @@ impl Editor {
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
+        let mut adjacent_edits = HashSet::default();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
         let mut all_selections_read_only = true;
+        let mut in_adjacent_group = false;
 
-        for (selection, autoclose_region) in
-            self.selections_with_autoclose_regions(selections, &snapshot)
-        {
-            if snapshot
-                .point_to_buffer_point(selection.head())
-                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
-            {
-                continue;
-            }
-            if snapshot
-                .point_to_buffer_point(selection.tail())
-                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
-            {
-                // note, ideally we'd clip the tail to the closest writeable region towards the head
-                continue;
-            }
-            all_selections_read_only = false;
+        let mut regions = self
+            .selections_with_autoclose_regions(selections, &snapshot)
+            .into_iter()
+            .peekable();
 
+        while let Some((selection, autoclose_region)) = regions.next() {
             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
@@ -4588,7 +4578,7 @@ impl Editor {
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let anchor = snapshot.anchor_after(selection.end);
+            let anchor = snapshot.anchor_before(selection.end);
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
@@ -4615,29 +4605,50 @@ impl Editor {
                 }
             }
 
-            new_selections.push((selection.map(|_| anchor), 0));
+            let next_is_adjacent = regions
+                .peek()
+                .is_some_and(|(next, _)| selection.end == next.start);
+
+            let delta = !(in_adjacent_group || next_is_adjacent) as usize;
+
+            if in_adjacent_group || next_is_adjacent {
+                adjacent_edits.insert(edits.len());
+            }
+
+            new_selections.push((selection.map(|_| anchor), delta));
             edits.push((selection.start..selection.end, text.clone()));
         }
 
         if all_selections_read_only {
             return;
+            in_adjacent_group = next_is_adjacent;
         }
 
+        drop(regions);
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
             if clear_linked_edit_ranges {
                 this.linked_edit_ranges.clear();
             }
+
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                let chunks = edits
+                    .into_iter()
+                    .enumerate()
+                    .chunk_by(|(index, _)| adjacent_edits.contains(&index));
+
+                for (_, chunk) in chunks.into_iter() {
+                    buffer.edit(chunk.map(|(_, e)| e), this.autoindent_mode.clone(), cx);
+                }
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
+
                     let edits = edits
                         .into_iter()
                         .map(|(range, text)| {
@@ -4647,12 +4658,22 @@ impl Editor {
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
+
                     buffer.edit(edits, None, cx);
                 })
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            for (a, _) in new_selections.iter() {
+                println!(
+                    "{:?} {:?}",
+                    a.start,
+                    a.start.to_offset(map.buffer_snapshot())
+                );
+            }
+
             let new_selections = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
                 new_anchor_selections,
                 &map,
