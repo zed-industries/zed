@@ -11628,7 +11628,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    DisplayRow(0),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
