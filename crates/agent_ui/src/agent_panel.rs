@@ -437,7 +437,7 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<AcpThreadHistory>,
-    history_store: Entity<agent::HistoryStore>,
+    pub history_store: Entity<agent::HistoryStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,

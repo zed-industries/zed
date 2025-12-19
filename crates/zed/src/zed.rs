@@ -1096,6 +1096,14 @@ fn register_actions(
         )
         .register_action(
             |workspace: &mut Workspace,
+             _: &ali_panel::ToggleFocus,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                workspace.toggle_panel_focus::<AliPanel>(window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
              _: &zed_actions::agent::ToggleAgentPane,
              window: &mut Window,
              cx: &mut Context<Workspace>| {

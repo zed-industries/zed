@@ -400,49 +400,34 @@ impl ConvergioPanel {
         self.active_agents.insert(agent_name.to_string());
         log::info!("Opening Convergio agent chat: {}", agent_name);
 
-        // Extract the agent display name from server_name (e.g., "Convergio-Ali" -> "Ali")
-        let agent_display_name = server_name.strip_prefix("Convergio-").unwrap_or(agent_name);
+        // Try to find existing thread in history by agent_name
+        let mut found_thread_id: Option<String> = None;
 
-        // Check if we have a saved session for this agent
-        let saved_session_id = self._agent_sessions.get(agent_name).cloned();
+        if let Some(workspace) = self.workspace.upgrade() {
+            if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                // Search by full server name (e.g., "Convergio-Ali") as stored in DB
+                if let Some(thread) = panel.read(cx).history_store.read(cx).thread_by_agent_name(server_name) {
+                    found_thread_id = Some(thread.id.to_string());
+                    log::info!("Found existing thread {} for agent {}", thread.id, server_name);
+                }
+            }
+        }
 
-        // If we have a saved session, try to resume it
-        if let Some(session_id) = saved_session_id {
-            log::info!("Resuming conversation for {} with session {}", agent_name, session_id);
+        if let Some(thread_id) = found_thread_id {
+            // Resume existing conversation
+            log::info!("Resuming thread {} for {}", thread_id, agent_name);
             let action = NewExternalAgentThread::resume(
                 ExternalAgent::Custom { name: server_name.to_string().into() },
-                session_id
+                thread_id
             );
             window.dispatch_action(action.boxed_clone(), cx);
         } else {
-            // No saved session - try to find one in history by title
-            let found_session: Option<String> = None;
-
-            if let Some(workspace) = self.workspace.upgrade() {
-                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                    // Search history for threads with matching agent name in title
-                    agent_panel.read(cx);
-                    // Note: We can't directly access history_store from here
-                    // For now, just log that we tried
-                    log::info!("Looking for existing {} thread in history", agent_display_name);
-                }
-            }
-
-            if let Some(session_id) = found_session {
-                log::info!("Found existing thread for {}, resuming", agent_name);
-                let action = NewExternalAgentThread::resume(
-                    ExternalAgent::Custom { name: server_name.to_string().into() },
-                    session_id
-                );
-                window.dispatch_action(action.boxed_clone(), cx);
-            } else {
-                // Create new thread
-                log::info!("Creating new thread for {}", agent_name);
-                let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-                    name: server_name.to_string().into()
-                });
-                window.dispatch_action(action.boxed_clone(), cx);
-            }
+            // Create new thread
+            log::info!("Creating new thread for {}", agent_name);
+            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
+                name: server_name.to_string().into()
+            });
+            window.dispatch_action(action.boxed_clone(), cx);
         }
         cx.notify();
     }
