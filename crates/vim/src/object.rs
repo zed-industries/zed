@@ -3412,8 +3412,6 @@ mod test {
     async fn test_arrow_function_text_object(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_typescript(cx).await;
 
-        // Test `vaf` on arrow function in variable declaration
-        // Should select the entire declaration including `const foo =`
         cx.set_state(
             indoc! {"
                 const foo = () => {
@@ -3432,7 +3430,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` on arrow function used as callback (should only select the arrow function)
         cx.set_state(
             indoc! {"
                 arr.map(() => {
@@ -3451,7 +3448,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vif` on arrow function (should select only the function body)
         cx.set_state(
             indoc! {"
                 const foo = () => {
@@ -3470,8 +3466,6 @@ mod test {
             Mode::Visual,
         );
 
-        // Test `vaf` on IIFE (immediately invoked function expression)
-        // Should only select the arrow function, not the call expression
         cx.set_state(
             indoc! {"
                 (() => {
@@ -3490,8 +3484,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` on exported arrow function
-        // Should select the declaration but not the export keyword (for now)
         cx.set_state(
             indoc! {"
                 const foo = () => {
@@ -3512,7 +3504,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` with `let` declaration
         cx.set_state(
             indoc! {"
                 let bar = () => {
@@ -3531,7 +3522,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` with `var` declaration
         cx.set_state(
             indoc! {"
                 var baz = () => {
@@ -3550,8 +3540,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` on expression-bodied arrow function in declaration
-        // Note: lexical_declaration node doesn't include trailing semicolon in tree-sitter
         cx.set_state(
             indoc! {"
                 const add = (a, b) => a + ˇb;
@@ -3561,7 +3549,49 @@ mod test {
         cx.simulate_keystrokes("v a f");
         cx.assert_state(
             indoc! {"
-                «ˇconst add = (a, b) => a + b»;
+                «const add = (a, b) => a + b;ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {"
+                const add = ˇ(a, b) => a + b;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «const add = (a, b) => a + b;ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {"
+                const add = (a, b) => a + bˇ;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «const add = (a, b) => a + b;ˇ»
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {"
+                const add = (a, b) =ˇ> a + b;
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {"
+                «const add = (a, b) => a + b;ˇ»
             "},
             Mode::VisualLine,
         );
@@ -3571,7 +3601,6 @@ mod test {
     async fn test_arrow_function_in_jsx(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_tsx(cx).await;
 
-        // Test `vaf` on arrow function in JSX onClick handler (block body)
         cx.set_state(
             indoc! {r#"
                 export const MyComponent = () => {
@@ -3604,7 +3633,6 @@ mod test {
             Mode::VisualLine,
         );
 
-        // Test `vaf` on expression-bodied arrow function in JSX onClick handler
         cx.set_state(
             indoc! {r#"
                 export const MyComponent = () => {
@@ -3623,12 +3651,146 @@ mod test {
                 export const MyComponent = () => {
                   return (
                     <div>
-                      <div onClick={«ˇ() => console.log("clicked")»}>Hello world!</div>
+                      <div onClick={«() => console.log("clicked")ˇ»}>Hello world!</div>
                     </div>
                   );
                 };
             "#},
-            Mode::Visual,
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={ˇ() => console.log("clicked")}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => console.log("clicked")ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() => console.log("clicked"ˇ)}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => console.log("clicked")ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() =ˇ> console.log("clicked")}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => console.log("clicked")ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() => {
+                        console.log("cliˇcked");
+                      }}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => {
+                        console.log("clicked");
+                      }ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
+        );
+
+        cx.set_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={() => fˇoo()}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v a f");
+        cx.assert_state(
+            indoc! {r#"
+                export const MyComponent = () => {
+                  return (
+                    <div>
+                      <div onClick={«() => foo()ˇ»}>Hello world!</div>
+                    </div>
+                  );
+                };
+            "#},
+            Mode::VisualLine,
         );
     }
 }
