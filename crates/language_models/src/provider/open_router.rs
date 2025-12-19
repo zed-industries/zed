@@ -388,6 +388,11 @@ pub fn into_open_router(
     // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
     // in requests - it's an output-only field for them. However, Gemini models require
     // the thought signatures to be echoed back for proper reasoning chain continuity.
+    // Note: OpenRouter's model API provides an `architecture.tokenizer` field (e.g. "Claude",
+    // "Gemini") which could replace this ID prefix check, but since this is the only place
+    // we need this distinction, we're just using this less invasive check instead.
+    // If we ever have a more formal distionction between the models in the future,
+    // we should revise this to use that instead.
     let is_anthropic_model = model.id().starts_with("anthropic/");
 
     let mut messages = Vec::new();
