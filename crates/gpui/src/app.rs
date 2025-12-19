@@ -1925,7 +1925,8 @@ impl App {
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
-    pub fn set_menus(&self, menus: Vec<Menu>) {
+    pub fn set_menus(&self, menus: impl IntoIterator<Item = Menu>) {
+        let menus: Vec<Menu> = menus.into_iter().collect();
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
