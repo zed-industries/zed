@@ -954,9 +954,9 @@ impl ProjectSearchView {
             cx.on_next_frame(window, |this, window, cx| {
                 if this.focus_handle.is_focused(window) {
                     if this.has_matches() {
-                        this.results_editor.focus_handle(cx).focus(window);
+                        this.results_editor.focus_handle(cx).focus(window, cx);
                     } else {
-                        this.query_editor.focus_handle(cx).focus(window);
+                        this.query_editor.focus_handle(cx).focus(window, cx);
                     }
                 }
             });
@@ -1453,7 +1453,7 @@ impl ProjectSearchView {
             query_editor.select_all(&SelectAll, window, cx);
         });
         let editor_handle = self.query_editor.focus_handle(cx);
-        window.focus(&editor_handle);
+        window.focus(&editor_handle, cx);
     }
 
     fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1493,7 +1493,7 @@ impl ProjectSearchView {
             });
         });
         let results_handle = self.results_editor.focus_handle(cx);
-        window.focus(&results_handle);
+        window.focus(&results_handle, cx);
     }
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1750,7 +1750,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.query_editor.focus_handle(cx).focus(window);
+                search_view.query_editor.focus_handle(cx).focus(window, cx);
             });
         }
     }
@@ -1783,7 +1783,7 @@ impl ProjectSearchBar {
                 Direction::Prev => (current_index - 1) % views.len(),
             };
             let next_focus_handle = &views[new_index];
-            window.focus(next_focus_handle);
+            window.focus(next_focus_handle, cx);
             cx.stop_propagation();
         });
     }
@@ -1832,7 +1832,7 @@ impl ProjectSearchBar {
                 } else {
                     this.query_editor.focus_handle(cx)
                 };
-                window.focus(&editor_to_focus);
+                window.focus(&editor_to_focus, cx);
                 cx.notify();
             });
         }
@@ -4352,7 +4352,7 @@ pub mod tests {
         let buffer_search_query = "search bar query";
         buffer_search_bar
             .update_in(&mut cx, |buffer_search_bar, window, cx| {
-                buffer_search_bar.focus_handle(cx).focus(window);
+                buffer_search_bar.focus_handle(cx).focus(window, cx);
                 buffer_search_bar.search(buffer_search_query, None, true, window, cx)
             })
             .await

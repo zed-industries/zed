@@ -712,8 +712,8 @@ mod test {
     #[gpui::test]
     fn test_scroll_strategy_nearest(cx: &mut TestAppContext) {
         use crate::{
-            Context, FocusHandle, ScrollStrategy, UniformListScrollHandle, Window, actions, div,
-            prelude::*, px, uniform_list,
+            Context, FocusHandle, ScrollStrategy, UniformListScrollHandle, Window, div, prelude::*,
+            px, uniform_list,
         };
         use std::ops::Range;
 
@@ -788,7 +788,7 @@ mod test {
 
         let (view, cx) = cx.add_window_view(|window, cx| {
             let focus_handle = cx.focus_handle();
-            window.focus(&focus_handle);
+            window.focus(&focus_handle, cx);
             TestView {
                 scroll_handle: UniformListScrollHandle::new(),
                 index: 0,

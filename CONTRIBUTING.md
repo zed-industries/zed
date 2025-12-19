@@ -15,15 +15,17 @@ with the community to improve the product in ways we haven't thought of (or had 
 
 In particular we love PRs that are:
 
-- Fixes to existing bugs and issues.
-- Small enhancements to existing features, particularly to make them work for more people.
+- Fixing or extending the docs.
+- Fixing bugs.
+- Small enhancements to existing features to make them work for more people (making things work on more platforms/modes/whatever).
 - Small extra features, like keybindings or actions you miss from other editors or extensions.
-- Work towards shipping larger features on our roadmap.
+- Part of a Community Program like [Let's Git Together](https://github.com/zed-industries/zed/issues/41541).
 
 If you're looking for concrete ideas:
 
-- Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
-- Our [public roadmap](https://zed.dev/roadmap) contains a rough outline of our near-term priorities for Zed.
+- [Curated board of issues](https://github.com/orgs/zed-industries/projects/69) suitable for everyone from first-time contributors to seasoned community champions.
+- [Triaged bugs with confirmed steps to reproduce](https://github.com/zed-industries/zed/issues?q=is%3Aissue%20state%3Aopen%20type%3ABug%20label%3Astate%3Areproducible).
+- [Area labels](https://github.com/zed-industries/zed/labels?q=area%3A*) to browse bugs in a specific part of the product you care about (after clicking on an area label, add type:Bug to the search).
 
 ## Sending changes
 
@@ -37,9 +39,17 @@ like, sorry).
 Although we will take a look, we tend to only merge about half the PRs that are
 submitted. If you'd like your PR to have the best chance of being merged:
 
-- Include a clear description of what you're solving, and why it's important to you.
-- Include tests.
-- If it changes the UI, attach screenshots or screen recordings.
+- Make sure the change is **desired**: we're always happy to accept bugfixes,
+  but features should be confirmed with us first if you aim to avoid wasted
+  effort. If there isn't already a GitHub issue for your feature with staff
+  confirmation that we want it, start with a GitHub discussion rather than a PR.
+- Include a clear description of **what you're solving**, and why it's important.
+- Include **tests**.
+- If it changes the UI, attach **screenshots** or screen recordings.
+- Make the PR about **one thing only**, e.g. if it's a bugfix, don't add two
+  features and a refactoring on top of that.
+- Keep AI assistance under your judgement and responsibility: it's unlikely
+  we'll merge a vibe-coded PR that the author doesn't understand.
 
 The internal advice for reviewers is as follows:
 
@@ -50,10 +60,9 @@ The internal advice for reviewers is as follows:
 If you need more feedback from us: the best way is to be responsive to
 Github comments, or to offer up time to pair with us.
 
-If you are making a larger change, or need advice on how to finish the change
-you're making, please open the PR early. We would love to help you get
-things right, and it's often easier to see how to solve a problem before the
-diff gets too big.
+If you need help deciding how to fix a bug, or finish implementing a feature
+that we've agreed we want, please open a PR early so we can discuss how to make
+the change with code in hand.
 
 ## Things we will (probably) not merge
 
@@ -61,11 +70,11 @@ Although there are few hard and fast rules, typically we don't merge:
 
 - Anything that can be provided by an extension. For example a new language, or theme. For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
 - New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
+- Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
 - Giant refactorings.
 - Non-trivial changes with no tests.
 - Stylistic code changes that do not alter any app logic. Reducing allocations, removing `.unwrap()`s, fixing typos is great; making code "more readable" — maybe not so much.
-- Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
-- Anything that seems completely AI generated.
+- Anything that seems AI-generated without understanding the output.
 
 ## Bird's-eye view of Zed
 
