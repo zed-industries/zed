@@ -189,7 +189,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
+use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
@@ -11413,12 +11413,25 @@ impl Editor {
         let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = diff
-            .read(cx)
-            .base_text()
-            .as_rope()
-            .slice(hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0);
+
+        let base_text = diff.read(cx).base_text();
+        let mut base_text_start = hunk.diff_base_byte_range.start.0.to_point(base_text);
         let buffer_snapshot = buffer.snapshot();
+        let mut buffer_start = hunk.buffer_range.start.to_point(&buffer_snapshot);
+        if base_text_start.row > 0
+            && base_text_start.column == 0
+            && buffer_start.row > 0
+            && buffer_start.column == 0
+        {
+            base_text_start.row -= 1;
+            base_text_start.column = base_text.line_len(base_text_start.row);
+            buffer_start.row -= 1;
+            buffer_start.column = buffer.line_len(buffer_start.row);
+        }
+
+        let original_text = diff.read(cx).base_text().as_rope().slice(
+            text::ToOffset::to_offset(&base_text_start, base_text)..hunk.diff_base_byte_range.end.0,
+        );
         let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
         if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
             probe
@@ -11427,7 +11440,13 @@ impl Editor {
                 .cmp(&hunk.buffer_range.start, &buffer_snapshot)
                 .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
         }) {
-            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), original_text));
+            buffer_revert_changes.insert(
+                i,
+                (
+                    buffer_snapshot.anchor_before(buffer_start)..hunk.buffer_range.end,
+                    original_text,
+                ),
+            );
             Some(())
         } else {
             None
