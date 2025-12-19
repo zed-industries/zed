@@ -95,9 +95,12 @@ fn main() {
 
             // Open a real Zed workspace window
             let window_size = size(px(1280.0), px(800.0));
-            // Position window offscreen so it's invisible but still rendered by the compositor
+            // TODO: We'd like to hide this window during tests, but macOS prevents windows
+            // from being positioned fully offscreen. The proper fix is to implement direct
+            // texture capture (reading pixels from Metal texture instead of using ScreenCaptureKit).
+            // See docs/direct-texture-capture-implementation.md for details.
             let bounds = Bounds {
-                origin: point(px(-10000.0), px(-10000.0)),
+                origin: point(px(100.0), px(100.0)),
                 size: window_size,
             };
 
