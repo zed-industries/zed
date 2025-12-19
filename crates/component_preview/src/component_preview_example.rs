@@ -25,7 +25,7 @@ use crate::{ComponentPreview, init};
 /// This initializes the application with minimal required infrastructure
 /// and opens a workspace with the ComponentPreview item.
 pub fn run_component_preview() {
-    actions!(component_preview, [Quit]);
+    actions!(zed, [Quit]);
 
     fn quit(_: &Quit, cx: &mut App) {
         cx.quit();
