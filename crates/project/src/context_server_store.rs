@@ -1376,7 +1376,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(r#"{"context_server_timeout": 90000}"#, cx)
-                    .unwrap();
+                    .expect("Failed to set test user settings");
             });
         });
 
@@ -1397,7 +1397,8 @@ mod tests {
             store.create_context_server(
                 ContextServerId("test-server".into()),
                 Arc::new(ContextServerConfiguration::Http {
-                    url: url::Url::parse("http://localhost:8080").unwrap(),
+                    url: url::Url::parse("http://localhost:8080")
+                        .expect("Failed to parse test URL"),
                     headers: Default::default(),
                     timeout: None, // Should use global timeout of 90 seconds
                 }),
@@ -1422,7 +1423,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store
                     .set_user_settings(r#"{"context_server_timeout": 60000}"#, cx)
-                    .unwrap();
+                    .expect("Failed to set test user settings");
             });
         });
 
@@ -1456,7 +1457,8 @@ mod tests {
             store.create_context_server(
                 ContextServerId("test-server".into()),
                 Arc::new(ContextServerConfiguration::Http {
-                    url: url::Url::parse("http://localhost:8080").unwrap(),
+                    url: url::Url::parse("http://localhost:8080")
+                        .expect("Failed to parse test URL"),
                     headers: Default::default(),
                     timeout: Some(120000), // Override: should use 120 seconds, not global 60
                 }),
