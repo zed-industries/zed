@@ -246,7 +246,7 @@ impl EditorLspTestContext {
                 ]) @function.around
 
                 ; Catch-all for arrow functions in other contexts (callbacks, etc.)
-                (arrow_function) @function.around
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
                 "#})),
             ..Default::default()
         })
@@ -360,7 +360,7 @@ impl EditorLspTestContext {
                 ]) @function.around
 
                 ; Catch-all for arrow functions in other contexts (callbacks, etc.)
-                (arrow_function) @function.around
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
                 "#})),
             ..Default::default()
         })
