@@ -893,7 +893,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        Label::new(text.clone())
+                                        Label::new(text.trim().to_string())
                                             .ml_4()
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),

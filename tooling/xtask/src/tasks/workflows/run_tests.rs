@@ -448,6 +448,7 @@ fn check_docs() -> NamedJob {
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )
             .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(

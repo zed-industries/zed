@@ -4780,7 +4780,6 @@ mod tests {
                 "activity_indicator",
                 "agent",
                 "agents",
-                #[cfg(not(target_os = "macos"))]
                 "app_menu",
                 "assistant",
                 "assistant2",

@@ -353,6 +353,9 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
       shell: bash -euxo pipefail {0}
+    - name: ./script/generate-action-metadata
+      run: ./script/generate-action-metadata
+      shell: bash -euxo pipefail {0}
     - name: run_tests::check_docs::install_mdbook
       uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08
       with:

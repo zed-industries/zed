@@ -5417,6 +5417,12 @@ impl EditorElement {
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
 
+        // Don't show hover popovers when context menu is open to avoid overlap
+        let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
+        if has_context_menu {
+            return;
+        }
+
         let hover_popovers = self.editor.update(cx, |editor, cx| {
             editor.hover_state.render(
                 snapshot,
