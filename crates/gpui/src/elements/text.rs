@@ -372,11 +372,17 @@ impl TextLayout {
                         (None, "".into(), TruncateFrom::End)
                     };
 
+                // Only use cached layout if:
+                // 1. We have a cached size
+                // 2. wrap_width matches (or both are None)
+                // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
+                //    because the previous layout may have been computed without truncation)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && text_layout.size.is_some()
+                    && let Some(size) = text_layout.size
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    && truncate_width.is_none()
                 {
-                    return text_layout.size.unwrap();
+                    return size;
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
