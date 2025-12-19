@@ -7,6 +7,10 @@
       # than ./packages.nix
       mkZed = import ../toolchain.nix { inherit inputs; };
       zed-editor = mkZed pkgs;
+
+      rustBin = inputs.rust-overlay.lib.mkRustBin { } pkgs;
+      rustToolchain = rustBin.fromRustupToolchainFile ../../rust-toolchain.toml;
+
       baseEnv =
         (zed-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
@@ -18,13 +22,11 @@
         inputsFrom = [ zed-editor ];
 
         packages = with pkgs; [
-          rust-analyzer
-          rustup
+          rustToolchain # cargo, rustc, and rust-toolchain.toml components included
           cargo-nextest
           cargo-hakari
           cargo-machete
           cargo-zigbuild
-          nixfmt
           # TODO: package protobuf-language-server for editing zed.proto
           # TODO: add other tools used in our scripts
 
