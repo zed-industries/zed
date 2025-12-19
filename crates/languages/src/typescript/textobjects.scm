@@ -18,11 +18,12 @@
         (_)* @function.inside
         "}")) @function.around
 
-(arrow_function
+((arrow_function
     body: (statement_block
         "{"
         (_)* @function.inside
         "}")) @function.around
+ (#not-has-parent? @function.around variable_declarator))
 
 ; Arrow function in variable declaration - capture the full declaration
 ([
@@ -42,17 +43,23 @@
                     "}"))))
 ]) @function.around
 
+; Arrow function in variable declaration - capture body as @function.inside
+; (for statement blocks, the more specific pattern above captures just the contents)
 ([
     (lexical_declaration
         (variable_declarator
-            value: (arrow_function)))
+            value: (arrow_function
+                body: (_) @function.inside)))
     (variable_declaration
         (variable_declarator
-            value: (arrow_function)))
+            value: (arrow_function
+                body: (_) @function.inside)))
 ]) @function.around
 
 ; Catch-all for arrow functions in other contexts (callbacks, etc.)
-(arrow_function) @function.around
+((arrow_function
+    body: (_) @function.inside) @function.around
+ (#not-has-parent? @function.around variable_declarator))
 (function_signature) @function.around
 
 (generator_function
