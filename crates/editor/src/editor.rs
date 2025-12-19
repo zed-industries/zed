@@ -4315,7 +4315,6 @@ impl Editor {
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
-        let mut adjacent_edits = HashSet::default();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
@@ -4608,12 +4607,7 @@ impl Editor {
             let next_is_adjacent = regions
                 .peek()
                 .is_some_and(|(next, _)| selection.end == next.start);
-
             let delta = !(in_adjacent_group || next_is_adjacent) as usize;
-
-            if in_adjacent_group || next_is_adjacent {
-                adjacent_edits.insert(edits.len());
-            }
 
             new_selections.push((selection.map(|_| anchor), delta));
             edits.push((selection.start..selection.end, text.clone()));
