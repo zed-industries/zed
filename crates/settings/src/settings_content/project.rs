@@ -288,6 +288,11 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    /// Whether or not to enable git integration.
+    ///
+    /// Default: true
+    #[serde(flatten)]
+    pub enabled: Option<GitEnabledSettings>,
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
@@ -315,6 +320,25 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct GitEnabledSettings {
+    pub disable_git: Option<bool>,
+    pub enable_status: Option<bool>,
+    pub enable_diff: Option<bool>,
+}
+
+impl GitEnabledSettings {
+    pub fn is_git_status_enabled(&self) -> bool {
+        !self.disable_git.unwrap_or(false) && self.enable_status.unwrap_or(true)
+    }
+
+    pub fn is_git_diff_enabled(&self) -> bool {
+        !self.disable_git.unwrap_or(false) && self.enable_diff.unwrap_or(true)
+    }
 }
 
 #[derive(

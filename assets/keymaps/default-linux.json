@@ -227,6 +227,7 @@
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-k l": "agent::OpenRulesLibrary",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -293,6 +294,7 @@
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {
@@ -304,6 +306,7 @@
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-shift-v": "agent::PasteRaw",
     },
   },
   {

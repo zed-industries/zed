@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, SharedString, Task,
+    App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Point, ToOffset as _};
@@ -272,14 +272,19 @@ pub const SWEEP_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://autocomplete.sweep.dev");
 pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
 pub static SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP_AI_TOKEN");
-pub static SWEEP_API_KEY: std::sync::OnceLock<Entity<ApiKeyState>> = std::sync::OnceLock::new();
+
+struct GlobalSweepApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalSweepApiKey {}
 
 pub fn sweep_api_token(cx: &mut App) -> Entity<ApiKeyState> {
-    SWEEP_API_KEY
-        .get_or_init(|| {
-            cx.new(|_| ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone()))
-        })
-        .clone()
+    if let Some(global) = cx.try_global::<GlobalSweepApiKey>() {
+        return global.0.clone();
+    }
+    let entity =
+        cx.new(|_| ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone()));
+    cx.set_global(GlobalSweepApiKey(entity.clone()));
+    entity
 }
 
 pub fn load_sweep_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {

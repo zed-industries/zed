@@ -28,6 +28,11 @@ parking_lot.workspace = true
 paths.workspace = true
 rope.workspace = true
 serde.workspace = true
+strum.workspace = true
 text.workspace = true
 util.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
