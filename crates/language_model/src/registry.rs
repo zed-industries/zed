@@ -492,7 +492,6 @@ mod tests {
         registry.update(cx, |registry, cx| {
             registry.register_provider(provider.clone(), cx);
 
-            // Set up a hiding function that hides the fake provider when "fake-extension" is installed
             registry.set_builtin_provider_hiding_fn(Box::new(|id| {
                 if id == "fake" {
                     Some("fake-extension")
@@ -502,21 +501,17 @@ mod tests {
             }));
         });
 
-        // Provider should be visible initially
         let visible = registry.read(cx).visible_providers();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].id(), provider_id);
 
-        // Install the extension
         registry.update(cx, |registry, cx| {
             registry.extension_installed("fake-extension".into(), cx);
         });
 
-        // Provider should now be hidden
         let visible = registry.read(cx).visible_providers();
         assert!(visible.is_empty());
 
-        // But still in providers()
         let all = registry.read(cx).providers();
         assert_eq!(all.len(), 1);
     }
@@ -531,7 +526,6 @@ mod tests {
         registry.update(cx, |registry, cx| {
             registry.register_provider(provider.clone(), cx);
 
-            // Set up hiding function
             registry.set_builtin_provider_hiding_fn(Box::new(|id| {
                 if id == "fake" {
                     Some("fake-extension")
@@ -540,20 +534,16 @@ mod tests {
                 }
             }));
 
-            // Start with extension installed
             registry.extension_installed("fake-extension".into(), cx);
         });
 
-        // Provider should be hidden
         let visible = registry.read(cx).visible_providers();
         assert!(visible.is_empty());
 
-        // Uninstall the extension
         registry.update(cx, |registry, cx| {
             registry.extension_uninstalled("fake-extension", cx);
         });
 
-        // Provider should now be visible again
         let visible = registry.read(cx).visible_providers();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].id(), provider_id);
@@ -564,7 +554,6 @@ mod tests {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, cx| {
-            // Set up hiding function
             registry.set_builtin_provider_hiding_fn(Box::new(|id| {
                 if id == "anthropic" {
                     Some("anthropic")
@@ -575,19 +564,15 @@ mod tests {
                 }
             }));
 
-            // Install only anthropic extension
             registry.extension_installed("anthropic".into(), cx);
         });
 
         let registry_read = registry.read(cx);
 
-        // Anthropic should be hidden
         assert!(registry_read.should_hide_provider(&LanguageModelProviderId("anthropic".into())));
 
-        // OpenAI should not be hidden (extension not installed)
         assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("openai".into())));
 
-        // Unknown provider should not be hidden
         assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("unknown".into())));
     }
 
@@ -609,7 +594,6 @@ mod tests {
             }));
         });
 
-        // Sync with a set containing the extension
         let mut extension_ids = HashSet::default();
         extension_ids.insert(Arc::from("fake-extension"));
 
@@ -617,15 +601,12 @@ mod tests {
             registry.sync_installed_llm_extensions(extension_ids, cx);
         });
 
-        // Provider should be hidden
         assert!(registry.read(cx).visible_providers().is_empty());
 
-        // Sync with empty set
         registry.update(cx, |registry, cx| {
             registry.sync_installed_llm_extensions(HashSet::default(), cx);
         });
 
-        // Provider should be visible again
         assert_eq!(registry.read(cx).visible_providers().len(), 1);
     }
 }
