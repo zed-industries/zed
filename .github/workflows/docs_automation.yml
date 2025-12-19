@@ -202,6 +202,9 @@ jobs:
           # Daily batch branch - one branch per day, multiple commits accumulate
           BRANCH_NAME="docs/auto-update-$(date +%Y-%m-%d)"
           
+          # Stash local changes from phase 5
+          git stash push -m "docs-automation-changes" -- docs/src/
+          
           # Check if branch already exists on remote
           if git ls-remote --exit-code --heads origin "$BRANCH_NAME" > /dev/null 2>&1; then
             echo "Branch $BRANCH_NAME exists, checking out and updating..."
@@ -211,6 +214,9 @@ jobs:
             echo "Creating new branch $BRANCH_NAME..."
             git checkout -b "$BRANCH_NAME"
           fi
+          
+          # Apply stashed changes
+          git stash pop || true
           
           # Stage and commit
           git add docs/src/
