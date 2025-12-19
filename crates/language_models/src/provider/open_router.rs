@@ -370,8 +370,27 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let request = self.stream_completion(request, cx);
+        // Check if this is a ToolResults follow-up request
+        let has_tool_results = request.messages.iter().any(|msg| {
+            msg.content
+                .iter()
+                .any(|c| matches!(c, MessageContent::ToolResult(_)))
+        });
+
+        let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
+
+        // Extra logging to help reproduce/diagnose https://github.com/zed-industries/zed/issues/44032
+        // Dump full request JSON for requests that have tool results.
+        if has_tool_results {
+            if let Ok(json_str) = serde_json::to_string_pretty(&openrouter_request) {
+                eprintln!(
+                    "***DEBUG LOGGING FOR ISSUE*** openrouter_request_json:\n{}",
+                    json_str
+                );
+            }
+        }
+
+        let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))
@@ -387,7 +406,6 @@ pub fn into_open_router(
 ) -> open_router::Request {
     let mut messages = Vec::new();
     for message in request.messages {
-        let reasoning_details = message.reasoning_details.clone();
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
@@ -419,21 +437,17 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant {
-                        tool_calls,
-                        reasoning_details: existing_reasoning,
-                        ..
-                    }) = messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
                     {
                         tool_calls.push(tool_call);
-                        if existing_reasoning.is_none() && reasoning_details.is_some() {
-                            *existing_reasoning = reasoning_details.clone();
-                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
-                            reasoning_details: reasoning_details.clone(),
+                            // Don't include reasoning_details in outbound requests - it's an
+                            // output-only field that OpenRouter provides, not one we should echo back.
+                            reasoning_details: None,
                         });
                     }
                 }

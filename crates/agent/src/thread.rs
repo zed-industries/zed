@@ -1298,9 +1298,22 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
+        let mut request_sequence_number: u64 = 0;
         loop {
+            request_sequence_number += 1;
+
             let request =
                 this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
+
+            // Extra logging to help reproduce/diagnose https://github.com/zed-industries/zed/issues/44032
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** agent_run_turn: request_start seq={} intent={:?} attempt={} model_provider={} model_telemetry_id={}",
+                request_sequence_number,
+                intent,
+                attempt,
+                model.provider_id().to_string(),
+                model.telemetry_id(),
+            );
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -1314,9 +1327,22 @@ impl Thread {
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
             let (mut events, mut error) = match model.stream_completion(request, cx).await {
-                Ok(events) => (events, None),
-                Err(err) => (stream::empty().boxed(), Some(err)),
+                Ok(events) => {
+                    eprintln!(
+                        "***DEBUG LOGGING FOR ISSUE*** agent_run_turn: request_ok seq={} intent={:?} attempt={}",
+                        request_sequence_number, intent, attempt
+                    );
+                    (events, None)
+                }
+                Err(err) => {
+                    eprintln!(
+                        "***DEBUG LOGGING FOR ISSUE*** agent_run_turn: request_err seq={} intent={:?} attempt={} err={}",
+                        request_sequence_number, intent, attempt, err
+                    );
+                    (stream::empty().boxed(), Some(err))
+                }
             };
+
             let mut tool_results = FuturesUnordered::new();
             while let Some(event) = events.next().await {
                 log::trace!("Received completion event: {:?}", event);
@@ -1327,6 +1353,10 @@ impl Thread {
                         })??);
                     }
                     Err(err) => {
+                        eprintln!(
+                            "***DEBUG LOGGING FOR ISSUE*** agent_run_turn: stream_err seq={} intent={:?} attempt={} err={}",
+                            request_sequence_number, intent, attempt, err
+                        );
                         error = Some(err);
                         break;
                     }
@@ -1336,6 +1366,15 @@ impl Thread {
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
+
+                eprintln!(
+                    "***DEBUG LOGGING FOR ISSUE*** agent_run_turn: tool_result seq={} tool_name={} tool_use_id={} is_error={} output_present={}",
+                    request_sequence_number,
+                    tool_result.tool_name,
+                    tool_result.tool_use_id,
+                    tool_result.is_error,
+                    tool_result.output.is_some(),
+                );
 
                 event_stream.update_tool_call_fields(
                     &tool_result.tool_use_id,
@@ -1584,6 +1623,16 @@ impl Thread {
         event_stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
+        // Extra logging to help reproduce/diagnose https://github.com/zed-industries/zed/issues/44032
+        eprintln!(
+            "***DEBUG LOGGING FOR ISSUE*** tool_use_event: received name={} id={} input_complete={} input_len={} has_tool={}",
+            tool_use.name,
+            tool_use.id,
+            tool_use.is_input_complete,
+            tool_use.input.to_string().len(),
+            self.tool(tool_use.name.as_ref()).is_some(),
+        );
+
         cx.notify();
 
         let tool = self.tool(tool_use.name.as_ref());
@@ -1610,6 +1659,14 @@ impl Thread {
         });
 
         if push_new_tool_use {
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** tool_use_event: send_tool_call name={} id={} title={:?} kind={:?} raw_input_len={}",
+                tool_use.name,
+                tool_use.id,
+                title.as_str(),
+                kind,
+                tool_use.input.to_string().len(),
+            );
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
@@ -1621,6 +1678,14 @@ impl Thread {
                 .content
                 .push(AgentMessageContent::ToolUse(tool_use.clone()));
         } else {
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** tool_use_event: update_tool_call_fields name={} id={} title={:?} kind={:?} raw_input_len={}",
+                tool_use.name,
+                tool_use.id,
+                title.as_str(),
+                kind,
+                tool_use.input.to_string().len(),
+            );
             event_stream.update_tool_call_fields(
                 &tool_use.id,
                 acp::ToolCallUpdateFields::new()
@@ -1631,10 +1696,18 @@ impl Thread {
         }
 
         if !tool_use.is_input_complete {
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** tool_use_event: input not complete yet; returning None name={} id={}",
+                tool_use.name, tool_use.id
+            );
             return None;
         }
 
         let Some(tool) = tool else {
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** tool_use_event: tool not found; returning error result name={} id={}",
+                tool_use.name, tool_use.id
+            );
             let content = format!("No tool named {} exists", tool_use.name);
             return Some(Task::ready(LanguageModelToolResult {
                 content: LanguageModelToolResultContent::Text(Arc::from(content)),
@@ -1651,10 +1724,23 @@ impl Thread {
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
+
         let supports_images = self.model().is_some_and(|model| model.supports_images());
+        eprintln!(
+            "***DEBUG LOGGING FOR ISSUE*** tool_use_event: starting tool.run name={} id={} supports_images={}",
+            tool_use.name, tool_use.id, supports_images
+        );
+
+        // Note: we intentionally do not log full raw_input here to avoid leaking secrets.
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
+
         Some(cx.foreground_executor().spawn(async move {
+            eprintln!(
+                "***DEBUG LOGGING FOR ISSUE*** tool_use_event: awaiting tool.run result name={} id={}",
+                tool_use.name, tool_use.id
+            );
+
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output
                     && !supports_images
@@ -1667,20 +1753,40 @@ impl Thread {
             });
 
             match tool_result {
-                Ok(output) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: false,
-                    content: output.llm_output,
-                    output: Some(output.raw_output),
-                },
-                Err(error) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: true,
-                    content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                    output: Some(error.to_string().into()),
-                },
+                Ok(output) => {
+                    eprintln!(
+                        "***DEBUG LOGGING FOR ISSUE*** tool_use_event: tool completed OK name={} id={} llm_output_kind={} raw_output_present={}",
+                        tool_use.name,
+                        tool_use.id,
+                        match &output.llm_output {
+                            LanguageModelToolResultContent::Text(_) => "text",
+                            LanguageModelToolResultContent::Image(_) => "image",
+                        },
+                        true,
+                    );
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: false,
+                        content: output.llm_output,
+                        output: Some(output.raw_output),
+                    }
+                }
+                Err(error) => {
+                    eprintln!(
+                        "***DEBUG LOGGING FOR ISSUE*** tool_use_event: tool completed ERR name={} id={} err={}",
+                        tool_use.name,
+                        tool_use.id,
+                        error
+                    );
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
+                        output: Some(error.to_string().into()),
+                    }
+                }
             }
         }))
     }
@@ -1692,6 +1798,14 @@ impl Thread {
         raw_input: Arc<str>,
         json_parse_error: String,
     ) -> LanguageModelToolResult {
+        eprintln!(
+            "***DEBUG LOGGING FOR ISSUE*** tool_use_json_parse_error: name={} id={} raw_input_len={} err={}",
+            tool_name,
+            tool_use_id,
+            raw_input.len(),
+            json_parse_error
+        );
+
         let tool_output = format!("Error parsing input JSON: {json_parse_error}");
         LanguageModelToolResult {
             tool_use_id,
