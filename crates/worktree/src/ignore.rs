@@ -13,12 +13,22 @@ pub enum IgnoreStackEntry {
     Global {
         ignore: Arc<Gitignore>,
     },
+    RepoExclude {
+        ignore: Arc<Gitignore>,
+        parent: Arc<IgnoreStackEntry>,
+    },
     Some {
         abs_base_path: Arc<Path>,
         ignore: Arc<Gitignore>,
         parent: Arc<IgnoreStackEntry>,
     },
     All,
+}
+
+#[derive(Debug)]
+pub enum IgnoreKind {
+    Gitignore(Arc<Path>),
+    RepoExclude,
 }
 
 impl IgnoreStack {
@@ -43,13 +53,19 @@ impl IgnoreStack {
         }
     }
 
-    pub fn append(self, abs_base_path: Arc<Path>, ignore: Arc<Gitignore>) -> Self {
+    pub fn append(self, kind: IgnoreKind, ignore: Arc<Gitignore>) -> Self {
         let top = match self.top.as_ref() {
             IgnoreStackEntry::All => self.top.clone(),
-            _ => Arc::new(IgnoreStackEntry::Some {
-                abs_base_path,
-                ignore,
-                parent: self.top.clone(),
+            _ => Arc::new(match kind {
+                IgnoreKind::Gitignore(abs_base_path) => IgnoreStackEntry::Some {
+                    abs_base_path,
+                    ignore,
+                    parent: self.top.clone(),
+                },
+                IgnoreKind::RepoExclude => IgnoreStackEntry::RepoExclude {
+                    ignore,
+                    parent: self.top.clone(),
+                },
             }),
         };
         Self {
@@ -80,6 +96,17 @@ impl IgnoreStack {
                 };
                 match ignore.matched(abs_path, is_dir) {
                     ignore::Match::None => false,
+                    ignore::Match::Ignore(_) => true,
+                    ignore::Match::Whitelist(_) => false,
+                }
+            }
+            IgnoreStackEntry::RepoExclude { ignore, parent } => {
+                match ignore.matched(abs_path, is_dir) {
+                    ignore::Match::None => IgnoreStack {
+                        repo_root: self.repo_root.clone(),
+                        top: parent.clone(),
+                    }
+                    .is_abs_path_ignored(abs_path, is_dir),
                     ignore::Match::Ignore(_) => true,
                     ignore::Match::Whitelist(_) => false,
                 }

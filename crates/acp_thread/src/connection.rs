@@ -20,7 +20,7 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
-    fn telemetry_id(&self) -> &'static str;
+    fn telemetry_id(&self) -> SharedString;
 
     fn new_thread(
         self: Rc<Self>,
@@ -197,6 +197,26 @@ pub trait AgentModelSelector: 'static {
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
         None
     }
+
+    /// Returns whether the model picker should render a footer.
+    fn should_render_footer(&self) -> bool {
+        false
+    }
+
+    /// Whether this selector supports the favorites feature.
+    /// Only the native agent uses the model ID format that maps to settings.
+    fn supports_favorites(&self) -> bool {
+        false
+    }
+}
+
+/// Icon for a model in the model selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelIcon {
+    /// A built-in icon from Zed's icon set.
+    Named(IconName),
+    /// Path to a custom SVG icon file.
+    Path(SharedString),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,7 +224,7 @@ pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
-    pub icon: Option<IconName>,
+    pub icon: Option<AgentModelIcon>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -233,6 +253,10 @@ impl AgentModelList {
             AgentModelList::Flat(models) => models.is_empty(),
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
+    }
+
+    pub fn is_flat(&self) -> bool {
+        matches!(self, AgentModelList::Flat(_))
     }
 }
 
@@ -317,8 +341,8 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "stub"
+        fn telemetry_id(&self) -> SharedString {
+            "stub".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -331,7 +355,7 @@ mod test_support {
             _cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
+            let session_id = acp::SessionId::new(self.sessions.lock().len().to_string());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
@@ -340,12 +364,12 @@ mod test_support {
                     project,
                     action_log,
                     session_id.clone(),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                        meta: None,
-                    }),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
                     cx,
                 )
             });
@@ -384,10 +408,7 @@ mod test_support {
                 response_tx.replace(tx);
                 cx.spawn(async move |_| {
                     let stop_reason = rx.await?;
-                    Ok(acp::PromptResponse {
-                        stop_reason,
-                        meta: None,
-                    })
+                    Ok(acp::PromptResponse::new(stop_reason))
                 })
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
@@ -395,7 +416,7 @@ mod test_support {
                     let update = update.clone();
                     let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) =
                         &update
-                        && let Some(options) = self.permission_requests.get(&tool_call.id)
+                        && let Some(options) = self.permission_requests.get(&tool_call.tool_call_id)
                     {
                         Some((tool_call.clone(), options.clone()))
                     } else {
@@ -424,10 +445,7 @@ mod test_support {
 
                 cx.spawn(async move |_| {
                     try_join_all(tasks).await?;
-                    Ok(acp::PromptResponse {
-                        stop_reason: acp::StopReason::EndTurn,
-                        meta: None,
-                    })
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
                 })
             }
         }

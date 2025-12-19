@@ -128,22 +128,21 @@ impl LineWrapper {
         })
     }
 
-    /// Truncate a line of text to the given width with this wrapper's font and font size.
-    pub fn truncate_line<'a>(
+    /// Determines if a line should be truncated based on its width.
+    pub fn should_truncate_line(
         &mut self,
-        line: SharedString,
+        line: &str,
         truncate_width: Pixels,
         truncation_suffix: &str,
-        runs: &'a [TextRun],
-    ) -> (SharedString, Cow<'a, [TextRun]>) {
+    ) -> Option<usize> {
         let mut width = px(0.);
-        let mut suffix_width = truncation_suffix
+        let suffix_width = truncation_suffix
             .chars()
             .map(|c| self.width_for_char(c))
             .fold(px(0.0), |a, x| a + x);
-        let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
-        for (ix, c) in char_indices {
+
+        for (ix, c) in line.char_indices() {
             if width + suffix_width < truncate_width {
                 truncate_ix = ix;
             }
@@ -152,16 +151,32 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
-                let mut runs = runs.to_vec();
-                update_runs_after_truncation(&result, truncation_suffix, &mut runs);
-
-                return (result, Cow::Owned(runs));
+                return Some(truncate_ix);
             }
         }
 
-        (line, Cow::Borrowed(runs))
+        None
+    }
+
+    /// Truncate a line of text to the given width with this wrapper's font and font size.
+    pub fn truncate_line<'a>(
+        &mut self,
+        line: SharedString,
+        truncate_width: Pixels,
+        truncation_suffix: &str,
+        runs: &'a [TextRun],
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
+        if let Some(truncate_ix) =
+            self.should_truncate_line(&line, truncate_width, truncation_suffix)
+        {
+            let result =
+                SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+            let mut runs = runs.to_vec();
+            update_runs_after_truncation(&result, truncation_suffix, &mut runs);
+            (result, Cow::Owned(runs))
+        } else {
+            (line, Cow::Borrowed(runs))
+        }
     }
 
     /// Any character in this list should be treated as a word character,
@@ -182,6 +197,11 @@ impl LineWrapper {
         // Cyrillic for Russian, Ukrainian, etc.
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
+
+        // Vietnamese (https://vietunicode.sourceforge.net/charset/)
+        matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
+        matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
@@ -618,7 +638,12 @@ mod tests {
         #[track_caller]
         fn assert_word(word: &str) {
             for c in word.chars() {
-                assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+                assert!(
+                    LineWrapper::is_word_char(c),
+                    "assertion failed for '{}' (unicode 0x{:x})",
+                    c,
+                    c as u32
+                );
             }
         }
 
@@ -661,6 +686,8 @@ mod tests {
         assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
         // Cyrillic
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
+        // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
+        assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
 
         // non-word characters
         assert_not_word("你好");

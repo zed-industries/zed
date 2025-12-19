@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, RegisterSetting, Settings, ShowDiagnostics,
-    ShowIndentGuides,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
+    ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
@@ -33,6 +33,7 @@ pub struct ProjectPanelSettings {
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
+    pub sort_mode: ProjectPanelSortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -91,7 +92,13 @@ impl Settings for ProjectPanelSettings {
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
             folder_icons: project_panel.folder_icons.unwrap(),
-            git_status: project_panel.git_status.unwrap(),
+            git_status: project_panel.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             indent_size: project_panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
@@ -115,6 +122,9 @@ impl Settings for ProjectPanelSettings {
                     on_drop: auto_open.on_drop.unwrap(),
                 }
             },
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
         }
     }
 }

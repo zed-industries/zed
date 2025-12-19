@@ -7,6 +7,7 @@ use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
+use ztracing::instrument;
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
@@ -42,32 +43,37 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
-        self.excerpts_by_path.keys().cloned()
+    pub fn paths(&self) -> impl Iterator<Item = &PathKey> + '_ {
+        self.excerpts_by_path.keys()
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
         }
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                follower.remove_excerpts_for_path(path, cx);
+            });
+        }
+    }
+
+    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
+        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
+        let snapshot = self.read(cx);
+        let excerpt = snapshot.excerpt(*excerpt_id)?;
+        self.buffer(excerpt.buffer_id)
     }
 
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
         let snapshot = self.read(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::in_buffer(
-            *excerpt_id,
-            excerpt.buffer_id,
-            excerpt.range.context.start,
-        ))
-    }
-
-    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
-        self.excerpts_by_path.keys()
+        Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
+    #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
@@ -182,11 +188,16 @@ impl MultiBuffer {
             };
 
             let ids_to_expand = HashSet::from_iter(ids);
+            let mut excerpt_id_ = None;
             let expanded_ranges = excerpt_ids.iter().filter_map(|excerpt_id| {
                 let excerpt = snapshot.excerpt(*excerpt_id)?;
+                let excerpt_id = excerpt.id;
+                if excerpt_id_.is_none() {
+                    excerpt_id_ = Some(excerpt_id);
+                }
 
                 let mut context = excerpt.range.context.to_point(&excerpt.buffer);
-                if ids_to_expand.contains(excerpt_id) {
+                if ids_to_expand.contains(&excerpt_id) {
                     match direction {
                         ExpandExcerptDirection::Up => {
                             context.start.row = context.start.row.saturating_sub(line_count);
@@ -222,10 +233,10 @@ impl MultiBuffer {
                 }
                 merged_ranges.push(range)
             }
-            let Some(excerpt_id) = excerpt_ids.first() else {
+            let Some(excerpt_id) = excerpt_id_ else {
                 continue;
             };
-            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(*excerpt_id) else {
+            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(excerpt_id) else {
                 continue;
             };
 
@@ -258,7 +269,6 @@ impl MultiBuffer {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
-                    buffer_snapshot.remote_id(),
                     buffer_snapshot.anchor_before(&range.primary.start)
                         ..buffer_snapshot.anchor_after(&range.primary.end),
                 );
@@ -288,7 +298,6 @@ impl MultiBuffer {
             .get(&path)
             .cloned()
             .unwrap_or_default();
-
         let mut new_iter = new.into_iter().peekable();
         let mut existing_iter = existing.into_iter().peekable();
 
@@ -299,7 +308,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
-            // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
+            // todo(lw): is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
             if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
                 last_entry.id.0 + 1
             } else {
@@ -410,15 +419,20 @@ impl MultiBuffer {
         }
 
         self.insert_excerpts_with_ids_after(insert_after, buffer, to_insert, cx);
+        // todo(lw): There is a logic bug somewhere that causes the to_remove vector to be not ordered correctly
+        to_remove.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
         self.remove_excerpts(to_remove, cx);
+
         if excerpt_ids.is_empty() {
             self.excerpts_by_path.remove(&path);
         } else {
             for excerpt_id in &excerpt_ids {
                 self.paths_by_excerpt.insert(*excerpt_id, path.clone());
             }
-            self.excerpts_by_path
-                .insert(path, excerpt_ids.iter().dedup().cloned().collect());
+            let snapshot = &*self.snapshot.get_mut();
+            let mut excerpt_ids: Vec<_> = excerpt_ids.iter().dedup().cloned().collect();
+            excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
+            self.excerpts_by_path.insert(path, excerpt_ids);
         }
 
         (excerpt_ids, added_a_new_excerpt)

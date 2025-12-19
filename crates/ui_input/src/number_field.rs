@@ -476,7 +476,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                         if let Some(previous) =
                                                             previous_focus_handle.as_ref()
                                                         {
-                                                            window.focus(previous);
+                                                            window.focus(previous, cx);
                                                         }
                                                         on_change(&new_value, window, cx);
                                                     };
@@ -485,7 +485,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                             })
                                             .detach();
 
-                                            window.focus(&editor.focus_handle(cx));
+                                            window.focus(&editor.focus_handle(cx), cx);
 
                                             editor
                                         }

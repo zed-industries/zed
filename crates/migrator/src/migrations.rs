@@ -141,3 +141,33 @@ pub(crate) mod m_2025_11_12 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2025_11_20 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2025_11_25 {
+    mod settings;
+
+    pub(crate) use settings::remove_context_server_source;
+}
+
+pub(crate) mod m_2025_12_01 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2025_12_08 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
+}
+
+pub(crate) mod m_2025_12_15 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}

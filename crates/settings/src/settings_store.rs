@@ -25,14 +25,14 @@ use std::{
 use util::{
     ResultExt as _,
     rel_path::RelPath,
-    schemars::{DefaultDenyUnknownFields, replace_subschema},
+    schemars::{AllowTrailingCommas, DefaultDenyUnknownFields, replace_subschema},
 };
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId, fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -247,6 +247,7 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
+    fn clear_local_values(&mut self, root_id: WorktreeId);
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -666,44 +667,31 @@ impl SettingsStore {
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
         let mut migration_status = MigrationStatus::NotNeeded;
-        let settings: SettingsContentType = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}").expect("Empty settings should always be valid")
+        let (settings, parse_status) = if user_settings_content.is_empty() {
+            fallible_options::parse_json("{}")
         } else {
             let migration_res = migrator::migrate_settings(user_settings_content);
-            let content = match &migration_res {
-                Ok(Some(content)) => content,
-                Ok(None) => user_settings_content,
-                Err(_) => user_settings_content,
-            };
-            let parse_result = parse_json_with_comments(content);
-            migration_status = match migration_res {
+            migration_status = match &migration_res {
                 Ok(Some(_)) => MigrationStatus::Succeeded,
                 Ok(None) => MigrationStatus::NotNeeded,
                 Err(err) => MigrationStatus::Failed {
                     error: err.to_string(),
                 },
             };
-            match parse_result {
-                Ok(settings) => settings,
-                Err(err) => {
-                    let result = SettingsParseResult {
-                        parse_status: ParseStatus::Failed {
-                            error: err.to_string(),
-                        },
-                        migration_status,
-                    };
-                    self.file_errors.insert(file, result.clone());
-                    return (None, result);
-                }
-            }
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            fallible_options::parse_json(content)
         };
 
         let result = SettingsParseResult {
-            parse_status: ParseStatus::Success,
+            parse_status,
             migration_status,
         };
         self.file_errors.insert(file, result.clone());
-        return (Some(settings), result);
+        return (settings, result);
     }
 
     pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
@@ -984,6 +972,11 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        self.raw_editorconfig_settings
+            .retain(|(worktree_id, _), _| worktree_id != &root_id);
+        for setting_value in self.setting_values.values_mut() {
+            setting_value.clear_local_values(root_id);
+        }
         self.recompute_values(Some((root_id, RelPath::empty())), cx);
         Ok(())
     }
@@ -1023,6 +1016,7 @@ impl SettingsStore {
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
             .into_generator();
 
         UserSettingsContent::json_schema(&mut generator);
@@ -1349,6 +1343,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             Ok(ix) => self.local_values[ix].2 = value,
             Err(ix) => self.local_values.insert(ix, (root_id, path, value)),
         }
+    }
+
+    fn clear_local_values(&mut self, root_id: WorktreeId) {
+        self.local_values
+            .retain(|(worktree_id, _, _)| *worktree_id != root_id);
     }
 }
 

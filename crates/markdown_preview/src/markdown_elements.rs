@@ -171,10 +171,8 @@ pub struct ParsedMarkdownText {
     pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
-    /// The regions of the various ranges in the Markdown document.
-    pub region_ranges: Vec<Range<usize>>,
     /// The regions of the Markdown document.
-    pub regions: Vec<ParsedRegion>,
+    pub regions: Vec<(Range<usize>, ParsedRegion)>,
 }
 
 /// A run of highlighted Markdown text.

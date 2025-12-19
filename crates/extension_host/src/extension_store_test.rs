@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -165,6 +165,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
+                        language_model_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -196,6 +197,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
+                        language_model_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -307,9 +309,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(
             language_registry.language_names(),
             [
-                LanguageName::new("ERB"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Ruby"),
+                LanguageName::new_static("ERB"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Ruby"),
             ]
         );
         assert_eq!(
@@ -376,6 +378,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
                 debug_locators: Default::default(),
+                language_model_providers: BTreeMap::default(),
             }),
             dev: false,
         },
@@ -463,9 +466,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(
             language_registry.language_names(),
             [
-                LanguageName::new("ERB"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Ruby"),
+                LanguageName::new_static("ERB"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Ruby"),
             ]
         );
         assert_eq!(
@@ -523,7 +526,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            [LanguageName::new("Plain Text")]
+            [LanguageName::new_static("Plain Text")]
         );
         assert_eq!(language_registry.grammar_names(), []);
     });
@@ -705,7 +708,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.register_fake_language_server(
+    let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
             completion_provider: Some(Default::default()),
@@ -866,7 +869,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);

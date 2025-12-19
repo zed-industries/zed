@@ -38,10 +38,11 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -315,6 +316,7 @@ impl SystemWindowTabController {
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
         let current_group = current_group?;
+        // TODO: `.keys()` returns arbitrary order, what does "next" mean?
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let next_idx = (idx + 1) % group_ids.len();
@@ -339,6 +341,7 @@ impl SystemWindowTabController {
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
         let current_group = current_group?;
+        // TODO: `.keys()` returns arbitrary order, what does "previous" mean?
         let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let prev_idx = if idx == 0 {
@@ -360,12 +363,9 @@ impl SystemWindowTabController {
 
     /// Get all tabs in the same window.
     pub fn tabs(&self, id: WindowId) -> Option<&Vec<SystemWindowTab>> {
-        let tab_group = self
-            .tab_groups
-            .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
-
-        self.tab_groups.get(&tab_group)
+        self.tab_groups
+            .values()
+            .find(|tabs| tabs.iter().any(|tab| tab.id == id))
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -440,7 +440,7 @@ impl SystemWindowTabController {
     /// Insert a tab into a tab group.
     pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let Some(tab) = tabs.clone().into_iter().find(|tab| tab.id == id) else {
+        let Some(tab) = tabs.iter().find(|tab| tab.id == id).cloned() else {
             return;
         };
 
@@ -503,16 +503,14 @@ impl SystemWindowTabController {
             return;
         };
 
+        let initial_tabs_len = initial_tabs.len();
         let mut all_tabs = initial_tabs.clone();
-        for tabs in controller.tab_groups.values() {
-            all_tabs.extend(
-                tabs.iter()
-                    .filter(|tab| !initial_tabs.contains(tab))
-                    .cloned(),
-            );
+
+        for (_, mut tabs) in controller.tab_groups.drain() {
+            tabs.retain(|tab| !all_tabs[..initial_tabs_len].contains(tab));
+            all_tabs.extend(tabs);
         }
 
-        controller.tab_groups.clear();
         controller.tab_groups.insert(0, all_tabs);
     }
 
@@ -551,12 +549,39 @@ impl SystemWindowTabController {
     }
 }
 
+pub(crate) enum GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    Test {
+        skip_drawing: bool,
+    },
+    Production,
+}
+
+impl GpuiMode {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> Self {
+        GpuiMode::Test {
+            skip_drawing: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn skip_drawing(&self) -> bool {
+        match self {
+            #[cfg(any(test, feature = "test-support"))]
+            GpuiMode::Test { skip_drawing } => *skip_drawing,
+            GpuiMode::Production => false,
+        }
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -635,6 +660,7 @@ impl App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
+                mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,
@@ -1410,7 +1436,7 @@ impl App {
                 let quit_on_empty = match cx.quit_mode {
                     QuitMode::Explicit => false,
                     QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => !cfg!(macos),
+                    QuitMode::Default => cfg!(not(target_os = "macos")),
                 };
 
                 if quit_on_empty && cx.windows.is_empty() {
@@ -1464,6 +1490,24 @@ impl App {
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
+    }
+
+    /// Spawns the future returned by the given function on the main thread with
+    /// the given priority. The closure will be invoked with [AsyncApp], which
+    /// allows the application state to be accessed across await points.
+    pub fn spawn_with_priority<AsyncFn, R>(&self, priority: Priority, f: AsyncFn) -> Task<R>
+    where
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
+        R: 'static,
+    {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+
+        let mut cx = self.to_async();
+
+        self.foreground_executor
+            .spawn_with_priority(priority, async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1730,7 +1774,10 @@ impl App {
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at
     /// the end of the bubble phase for actions, and so will only be invoked if there are no other
     /// handlers or if they called `cx.propagate()`.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut Self) + 'static,
+    ) -> &mut Self {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -1740,6 +1787,7 @@ impl App {
                     listener(action, cx)
                 }
             }));
+        self
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to
@@ -1849,8 +1897,11 @@ impl App {
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
-                .update(self, |_, window, _| {
-                    window.clear_pending_keystrokes();
+                .update(self, |_, window, cx| {
+                    if window.pending_input_keystrokes().is_some() {
+                        window.clear_pending_keystrokes();
+                        window.pending_input_changed(cx);
+                    }
                 })
                 .ok();
         }
@@ -2399,10 +2450,6 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&Url> {
         None
-    }
-
-    fn type_name(&self) -> &'static str {
-        type_name::<Self>()
     }
 }
 

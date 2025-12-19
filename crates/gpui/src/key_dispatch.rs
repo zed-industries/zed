@@ -121,6 +121,7 @@ pub(crate) struct Replay {
 #[derive(Default, Debug)]
 pub(crate) struct DispatchResult {
     pub(crate) pending: SmallVec<[Keystroke; 1]>,
+    pub(crate) pending_has_binding: bool,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
     pub(crate) context_stack: Vec<KeyContext>,
@@ -461,6 +462,17 @@ impl DispatchTree {
         (bindings, partial, context_stack)
     }
 
+    /// Find the bindings that can follow the current input sequence.
+    pub fn possible_next_bindings_for_input(
+        &self,
+        input: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> Vec<KeyBinding> {
+        self.keymap
+            .borrow()
+            .possible_next_bindings_for_input(input, context_stack)
+    }
+
     /// dispatch_key processes the keystroke
     /// input should be set to the value of `pending` from the previous call to dispatch_key.
     /// This returns three instructions to the input handler:
@@ -480,6 +492,7 @@ impl DispatchTree {
         if pending {
             return DispatchResult {
                 pending: input,
+                pending_has_binding: !bindings.is_empty(),
                 context_stack,
                 ..Default::default()
             };
@@ -608,15 +621,17 @@ impl DispatchTree {
 #[cfg(test)]
 mod tests {
     use crate::{
-        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, Style,
+        self as gpui, AppContext, DispatchResult, Element, ElementId, GlobalElementId,
+        InspectorElementId, Keystroke, LayoutId, Style,
     };
     use core::panic;
+    use smallvec::SmallVec;
     use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
         Action, ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler,
-        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, TestAppContext,
-        UTF16Selection, Window,
+        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription,
+        TestAppContext, UTF16Selection, Window,
     };
 
     #[derive(PartialEq, Eq)]
@@ -674,6 +689,256 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    #[test]
+    fn test_pending_has_binding_state() {
+        let bindings = vec![
+            KeyBinding::new("ctrl-b h", TestAction, None),
+            KeyBinding::new("space", TestAction, Some("ContextA")),
+            KeyBinding::new("space f g", TestAction, Some("ContextB")),
+        ];
+        let keymap = Rc::new(RefCell::new(Keymap::new(bindings)));
+        let mut registry = ActionRegistry::default();
+        registry.load_action::<TestAction>();
+        let mut tree = DispatchTree::new(keymap, Rc::new(registry));
+
+        type DispatchPath = SmallVec<[super::DispatchNodeId; 32]>;
+        fn dispatch(
+            tree: &mut DispatchTree,
+            pending: SmallVec<[Keystroke; 1]>,
+            key: &str,
+            path: &DispatchPath,
+        ) -> DispatchResult {
+            tree.dispatch_key(pending, Keystroke::parse(key).unwrap(), path)
+        }
+
+        let dispatch_path: DispatchPath = SmallVec::new();
+        let result = dispatch(&mut tree, SmallVec::new(), "ctrl-b", &dispatch_path);
+        assert_eq!(result.pending.len(), 1);
+        assert!(!result.pending_has_binding);
+
+        let result = dispatch(&mut tree, result.pending, "h", &dispatch_path);
+        assert_eq!(result.pending.len(), 0);
+        assert_eq!(result.bindings.len(), 1);
+        assert!(!result.pending_has_binding);
+
+        let node_id = tree.push_node();
+        tree.set_key_context(KeyContext::parse("ContextB").unwrap());
+        tree.pop_node();
+
+        let dispatch_path = tree.dispatch_path(node_id);
+        let result = dispatch(&mut tree, SmallVec::new(), "space", &dispatch_path);
+
+        assert_eq!(result.pending.len(), 1);
+        assert!(!result.pending_has_binding);
+    }
+
+    #[crate::test]
+    fn test_pending_input_observers_notified_on_focus_change(cx: &mut TestAppContext) {
+        #[derive(Clone)]
+        struct CustomElement {
+            focus_handle: FocusHandle,
+            text: Rc<RefCell<String>>,
+        }
+
+        impl CustomElement {
+            fn new(cx: &mut Context<Self>) -> Self {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    text: Rc::default(),
+                }
+            }
+        }
+
+        impl Element for CustomElement {
+            type RequestLayoutState = ();
+
+            type PrepaintState = ();
+
+            fn id(&self) -> Option<ElementId> {
+                Some("custom".into())
+            }
+
+            fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+                None
+            }
+
+            fn request_layout(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> (LayoutId, Self::RequestLayoutState) {
+                (window.request_layout(Style::default(), [], cx), ())
+            }
+
+            fn prepaint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> Self::PrepaintState {
+                window.set_focus_handle(&self.focus_handle, cx);
+            }
+
+            fn paint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Self::PrepaintState,
+                window: &mut Window,
+                cx: &mut App,
+            ) {
+                let mut key_context = KeyContext::default();
+                key_context.add("Terminal");
+                window.set_key_context(key_context);
+                window.handle_input(&self.focus_handle, self.clone(), cx);
+                window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+            }
+        }
+
+        impl IntoElement for CustomElement {
+            type Element = Self;
+
+            fn into_element(self) -> Self::Element {
+                self
+            }
+        }
+
+        impl InputHandler for CustomElement {
+            fn selected_text_range(
+                &mut self,
+                _: bool,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<UTF16Selection> {
+                None
+            }
+
+            fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+                None
+            }
+
+            fn text_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<String> {
+                None
+            }
+
+            fn replace_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                text: &str,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(text)
+            }
+
+            fn replace_and_mark_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                new_text: &str,
+                _: Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(new_text)
+            }
+
+            fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+            fn bounds_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<Bounds<Pixels>> {
+                None
+            }
+
+            fn character_index_for_point(
+                &mut self,
+                _: Point<Pixels>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<usize> {
+                None
+            }
+        }
+
+        impl Render for CustomElement {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.clone()
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+        });
+
+        let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+
+        let pending_input_changed_count = Rc::new(RefCell::new(0usize));
+        let pending_input_changed_count_for_observer = pending_input_changed_count.clone();
+
+        struct PendingInputObserver {
+            _subscription: Subscription,
+        }
+
+        let _observer = cx.update(|window, cx| {
+            cx.new(|cx| PendingInputObserver {
+                _subscription: cx.observe_pending_input(window, move |_, _, _| {
+                    *pending_input_changed_count_for_observer.borrow_mut() += 1;
+                }),
+            })
+        });
+
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        cx.simulate_keystrokes("ctrl-b");
+
+        let count_after_pending = Rc::new(RefCell::new(0usize));
+        let count_after_pending_for_assertion = count_after_pending.clone();
+
+        cx.update(|window, cx| {
+            assert!(window.has_pending_keystrokes());
+            *count_after_pending.borrow_mut() = *pending_input_changed_count.borrow();
+            assert!(*count_after_pending.borrow() > 0);
+
+            window.focus(&cx.focus_handle(), cx);
+
+            assert!(!window.has_pending_keystrokes());
+        });
+
+        // Focus-triggered pending-input notifications are deferred to the end of the current
+        // effect cycle, so the observer callback should run after the focus update completes.
+        cx.update(|_, _| {
+            let count_after_focus_change = *pending_input_changed_count.borrow();
+            assert!(count_after_focus_change > *count_after_pending_for_assertion.borrow());
+        });
     }
 
     #[crate::test]
@@ -829,8 +1094,9 @@ mod tests {
             cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
         });
         let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
         cx.update(|window, cx| {
-            window.focus(&test.read(cx).focus_handle);
+            window.focus(&focus_handle, cx);
             window.activate_window();
         });
         cx.simulate_keystrokes("ctrl-b [");

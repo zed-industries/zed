@@ -1,18 +1,18 @@
 use collections::VecDeque;
 use copilot::Copilot;
-use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
+use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
+    App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
+    Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
-use itertools::Itertools;
+use itertools::Itertools as _;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    LanguageServer, LanguageServerBinary, LanguageServerName, LanguageServerSelector, MessageType,
-    SetTraceParams, TraceValue, notification::SetTrace,
+    LanguageServer, LanguageServerName, LanguageServerSelector, MessageType, SetTraceParams,
+    TraceValue, notification::SetTrace,
 };
 use project::{
-    Project,
+    LanguageServerStatus, Project,
     lsp_store::log_store::{self, Event, LanguageServerKind, LogKind, LogStore, Message},
     search::SearchQuery,
 };
@@ -125,7 +125,7 @@ pub fn init(on_headless_host: bool, cx: &mut App) {
                     let server_id = server.server_id();
                     let weak_lsp_store = cx.weak_entity();
                     log_store.copilot_log_subscription =
-                        Some(server.on_notification::<copilot::request::LogMessage, _>(
+                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
                             move |params, cx| {
                                 weak_lsp_store
                                     .update(cx, |lsp_store, cx| {
@@ -231,7 +231,7 @@ impl LspLogView {
                             let last_offset = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end = editor
                                 .selections
-                                .newest::<usize>(&editor.display_snapshot(cx))
+                                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                                 .start
                                 >= last_offset;
                             editor.edit(
@@ -241,13 +241,15 @@ impl LspLogView {
                                 ],
                                 cx,
                             );
-                            if text.len() > 1024
-                                && let Some((fold_offset, _)) =
-                                    text.char_indices().dropping(1024).next()
-                                && fold_offset < text.len()
-                            {
+                            if text.len() > 1024 {
+                                let b = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                                let fold_offset =
+                                    b.as_rope().ceil_char_boundary(last_offset.0 + 1024);
                                 editor.fold_ranges(
-                                    vec![last_offset + fold_offset..last_offset + text.len()],
+                                    vec![
+                                        MultiBufferOffset(fold_offset)
+                                            ..MultiBufferOffset(b.as_rope().len()),
+                                    ],
                                     false,
                                     window,
                                     cx,
@@ -267,7 +269,7 @@ impl LspLogView {
 
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |log_view, window, cx| {
-            window.focus(&log_view.editor.focus_handle(cx));
+            window.focus(&log_view.editor.focus_handle(cx), cx);
         });
 
         cx.on_release(|log_view, cx| {
@@ -328,6 +330,8 @@ impl LspLogView {
         let server_info = format!(
             "* Server: {NAME} (id {ID})
 
+* Version: {VERSION}
+
 * Binary: {BINARY}
 
 * Registered workspace folders:
@@ -336,16 +340,30 @@ impl LspLogView {
 * Capabilities: {CAPABILITIES}
 
 * Configuration: {CONFIGURATION}",
-            NAME = info.name,
+            NAME = info.status.name,
             ID = info.id,
+            VERSION = info
+                .status
+                .server_version
+                .as_ref()
+                .map(|version| version.as_ref())
+                .unwrap_or("Unknown"),
             BINARY = info
+                .status
                 .binary
                 .as_ref()
-                .map_or_else(|| "Unknown".to_string(), |binary| format!("{binary:#?}")),
-            WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
+                .map_or_else(|| "Unknown".to_string(), |binary| format!("{:#?}", binary)),
+            WORKSPACE_FOLDERS = info
+                .status
+                .workspace_folders
+                .iter()
+                .filter_map(|uri| uri.to_file_path().ok())
+                .map(|path| path.to_string_lossy().into_owned())
+                .join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
             CONFIGURATION = info
+                .status
                 .configuration
                 .map(|configuration| serde_json::to_string_pretty(&configuration))
                 .transpose()
@@ -452,7 +470,7 @@ impl LspLogView {
             self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
-        self.editor.read(cx).focus_handle(cx).focus(window);
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
         self.log_store.update(cx, |log_store, cx| {
             let state = log_store.get_language_server_state(server_id)?;
             state.toggled_log_kind = Some(LogKind::Logs);
@@ -484,7 +502,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        self.editor.read(cx).focus_handle(cx).focus(window);
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     fn show_trace_for_server(
@@ -518,7 +536,7 @@ impl LspLogView {
             });
             cx.notify();
         }
-        self.editor.read(cx).focus_handle(cx).focus(window);
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     fn show_rpc_trace_for_server(
@@ -562,7 +580,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        self.editor.read(cx).focus_handle(cx).focus(window);
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     fn toggle_rpc_trace_for_server(
@@ -632,17 +650,12 @@ impl LspLogView {
                     .or_else(move || {
                         let capabilities =
                             lsp_store.lsp_server_capabilities.get(&server_id)?.clone();
-                        let name = lsp_store
-                            .language_server_statuses
-                            .get(&server_id)
-                            .map(|status| status.name.clone())?;
+                        let status = lsp_store.language_server_statuses.get(&server_id)?.clone();
+
                         Some(ServerInfo {
                             id: server_id,
                             capabilities,
-                            binary: None,
-                            name,
-                            workspace_folders: Vec::new(),
-                            configuration: None,
+                            status,
                         })
                     })
             })
@@ -655,7 +668,7 @@ impl LspLogView {
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
-        self.editor.read(cx).focus_handle(cx).focus(window);
+        self.editor.read(cx).focus_handle(cx).focus(window, cx);
         self.log_store.update(cx, |log_store, cx| {
             let state = log_store.get_language_server_state(server_id)?;
             if let Some(log_kind) = state.toggled_log_kind.take() {
@@ -739,7 +752,11 @@ impl Item for LspLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -748,11 +765,11 @@ impl Item for LspLogView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -796,11 +813,13 @@ impl SearchableItem for LspLogView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.update_matches(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.update_matches(matches, active_match_index, window, cx)
+        })
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
@@ -812,13 +831,11 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |e, cx| {
-            e.activate_match(index, matches, collapse, window, cx)
-        })
+        self.editor
+            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
     }
 
     fn select_matches(
@@ -930,7 +947,7 @@ impl Render for LspLogToolbarItemView {
             })
             .collect();
 
-        let log_toolbar_view = cx.entity();
+        let log_toolbar_view = cx.weak_entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)
@@ -959,7 +976,7 @@ impl Render for LspLogToolbarItemView {
                         for (server_id, name, worktree_root, active_entry_kind) in
                             available_language_servers.iter()
                         {
-                            let label = format!("{} ({})", name, worktree_root);
+                            let label = format!("{name} ({worktree_root})");
                             let server_id = *server_id;
                             let active_entry_kind = *active_entry_kind;
                             menu = menu.entry(
@@ -1014,7 +1031,7 @@ impl Render for LspLogToolbarItemView {
                         .icon_color(Color::Muted),
                 )
                 .menu(move |window, cx| {
-                    let log_toolbar_view = log_toolbar_view.clone();
+                    let log_toolbar_view = log_toolbar_view.upgrade()?;
                     let log_view = log_view.clone();
                     Some(ContextMenu::build(window, cx, move |this, window, _| {
                         this.entry(
@@ -1305,7 +1322,7 @@ impl LspLogToolbarItemView {
                     log_view.show_rpc_trace_for_server(id, window, cx);
                     cx.notify();
                 }
-                window.focus(&log_view.focus_handle);
+                window.focus(&log_view.focus_handle, cx);
             });
         }
         cx.notify();
@@ -1315,10 +1332,7 @@ impl LspLogToolbarItemView {
 struct ServerInfo {
     id: LanguageServerId,
     capabilities: lsp::ServerCapabilities,
-    binary: Option<LanguageServerBinary>,
-    name: LanguageServerName,
-    workspace_folders: Vec<String>,
-    configuration: Option<serde_json::Value>,
+    status: LanguageServerStatus,
 }
 
 impl ServerInfo {
@@ -1326,18 +1340,17 @@ impl ServerInfo {
         Self {
             id: server.server_id(),
             capabilities: server.capabilities(),
-            binary: Some(server.binary().clone()),
-            name: server.name(),
-            workspace_folders: server
-                .workspace_folders()
-                .into_iter()
-                .filter_map(|path| {
-                    path.to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned())
-                })
-                .collect::<Vec<_>>(),
-            configuration: Some(server.configuration().clone()),
+            status: LanguageServerStatus {
+                name: server.name(),
+                server_version: server.version(),
+                pending_work: Default::default(),
+                has_pending_diagnostic_updates: false,
+                progress_tokens: Default::default(),
+                worktree: None,
+                binary: Some(server.binary().clone()),
+                configuration: Some(server.configuration().clone()),
+                workspace_folders: server.workspace_folders(),
+            },
         }
     }
 }

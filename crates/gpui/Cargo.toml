@@ -21,7 +21,6 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
-    "rand",
     "util/test-support",
     "http_client/test-support",
     "wayland",
@@ -109,7 +108,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-rand = { optional = true, workspace = true }
+rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
@@ -121,7 +120,7 @@ usvg = { version = "0.45.0", default-features = false }
 util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
-semantic_version.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
@@ -138,6 +137,8 @@ waker-fn = "1.2.0"
 lyon = "1.0"
 libc.workspace = true
 pin-project = "1.1.10"
+circular-buffer.workspace = true
+spin = "0.10.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -156,8 +157,10 @@ media.workspace = true
 objc.workspace = true
 objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
+mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
+flume = "0.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -185,24 +188,24 @@ font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "11052312
     "source-fontconfig-dlopen",
 ], optional = true }
 
-calloop = { version = "0.13.0" }
+calloop = { version = "0.14.3" }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
 
 # Wayland
-calloop-wayland-source = { version = "0.3.0", optional = true }
+calloop-wayland-source = { version = "0.4.1", optional = true }
 wayland-backend = { version = "0.3.3", features = [
     "client_system",
     "dlopen",
 ], optional = true }
-wayland-client = { version = "0.31.2", optional = true }
-wayland-cursor = { version = "0.31.1", optional = true }
-wayland-protocols = { version = "0.31.2", features = [
+wayland-client = { version = "0.31.11", optional = true }
+wayland-cursor = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = [
     "client",
     "staging",
     "unstable",
 ], optional = true }
-wayland-protocols-plasma = { version = "0.2.0", features = [
+wayland-protocols-plasma = { version = "0.3.9", features = [
     "client",
 ], optional = true }
 wayland-protocols-wlr = { version = "0.3.9", features = [
@@ -327,3 +330,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "mouse_pressure"
+path = "examples/mouse_pressure.rs"

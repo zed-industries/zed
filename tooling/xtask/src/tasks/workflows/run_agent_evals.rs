@@ -1,14 +1,17 @@
-use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Use, Workflow, WorkflowDispatch};
+use gh_workflow::{
+    Event, Expression, Job, Run, Schedule, Step, Strategy, Use, Workflow, WorkflowDispatch,
+};
+use serde_json::json;
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
     steps::{self, FluentBuilder as _, NamedJob, named, setup_cargo_config},
-    vars::{self, Input},
+    vars::{self, WorkflowInput},
 };
 
 pub(crate) fn run_agent_evals() -> Workflow {
     let agent_evals = agent_evals();
-    let model_name = Input::string("model_name", None);
+    let model_name = WorkflowInput::string("model_name", None);
 
     named::workflow()
         .on(Event::default().workflow_dispatch(
@@ -29,8 +32,8 @@ pub(crate) fn run_agent_evals() -> Workflow {
 }
 
 pub(crate) fn run_unit_evals() -> Workflow {
-    let model_name = Input::string("model_name", None);
-    let commit_sha = Input::string("commit_sha", None);
+    let model_name = WorkflowInput::string("model_name", None);
+    let commit_sha = WorkflowInput::string("commit_sha", None);
 
     let unit_evals = named::job(unit_evals(Some(&commit_sha)));
 
@@ -41,7 +44,7 @@ pub(crate) fn run_unit_evals() -> Workflow {
                 .add_input(model_name.name, model_name.input())
                 .add_input(commit_sha.name, commit_sha.input()),
         ))
-        .concurrency(vars::one_workflow_per_non_main_branch())
+        .concurrency(vars::allow_concurrent_runs())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("RUST_BACKTRACE", 1))
@@ -114,10 +117,36 @@ fn cron_unit_evals() -> NamedJob {
         "#}))
     }
 
-    named::job(unit_evals(None).add_step(send_failure_to_slack()))
+    named::job(cron_unit_evals_job().add_step(send_failure_to_slack()))
 }
 
-fn unit_evals(commit: Option<&Input>) -> Job {
+const UNIT_EVAL_MODELS: &[&str] = &[
+    "anthropic/claude-sonnet-4-5-latest",
+    "anthropic/claude-opus-4-5-latest",
+    "google/gemini-3-pro",
+    "openai/gpt-5",
+];
+
+fn cron_unit_evals_job() -> Job {
+    let script_step = add_api_keys(steps::script("./script/run-unit-evals"))
+        .add_env(("ZED_AGENT_MODEL", "${{ matrix.model }}"));
+
+    Job::default()
+        .runs_on(runners::LINUX_DEFAULT)
+        .strategy(Strategy::default().fail_fast(false).matrix(json!({
+            "model": UNIT_EVAL_MODELS
+        })))
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(Platform::Linux))
+        .add_step(steps::cache_rust_dependencies_namespace())
+        .map(steps::install_linux_dependencies)
+        .add_step(steps::cargo_install_nextest())
+        .add_step(steps::clear_target_dir_if_large(Platform::Linux))
+        .add_step(script_step)
+        .add_step(steps::cleanup_cargo_config(Platform::Linux))
+}
+
+fn unit_evals(commit: Option<&WorkflowInput>) -> Job {
     let script_step = add_api_keys(steps::script("./script/run-unit-evals"));
 
     Job::default()
@@ -126,7 +155,7 @@ fn unit_evals(commit: Option<&Input>) -> Job {
         .add_step(steps::setup_cargo_config(Platform::Linux))
         .add_step(steps::cache_rust_dependencies_namespace())
         .map(steps::install_linux_dependencies)
-        .add_step(steps::cargo_install_nextest(Platform::Linux))
+        .add_step(steps::cargo_install_nextest())
         .add_step(steps::clear_target_dir_if_large(Platform::Linux))
         .add_step(match commit {
             Some(commit) => script_step.add_env(("UNIT_EVAL_COMMIT", commit)),

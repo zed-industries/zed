@@ -42,6 +42,9 @@ util.workspace = true
 util_macros.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+itertools.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
@@ -49,5 +52,10 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp.workspace = true
+pretty_assertions.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
+

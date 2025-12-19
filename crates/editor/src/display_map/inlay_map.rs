@@ -1,10 +1,20 @@
+//! The inlay map. See the [`display_map`][super] docs for an overview of how the inlay map fits
+//! into the rest of the [`DisplayMap`][super::DisplayMap]. Much of the documentation for this
+//! module generalizes to other layers.
+//!
+//! The core of this module is the [`InlayMap`] struct, which maintains a vec of [`Inlay`]s, and
+//! [`InlaySnapshot`], which holds a sum tree of [`Transform`]s.
+
 use crate::{
     ChunkRenderer, HighlightStyles,
     inlays::{Inlay, InlayContent},
 };
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset};
+use multi_buffer::{
+    MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
+    RowInfo, ToOffset,
+};
 use project::InlayId;
 use std::{
     cmp,
@@ -42,13 +52,14 @@ impl std::ops::Deref for InlaySnapshot {
 
 #[derive(Clone, Debug)]
 enum Transform {
-    Isomorphic(TextSummary),
+    Isomorphic(MBTextSummary),
     Inlay(Inlay),
 }
 
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
+    #[ztracing::instrument(skip_all)]
     fn summary(&self, _: ()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
@@ -56,8 +67,8 @@ impl sum_tree::Item for Transform {
                 output: *summary,
             },
             Transform::Inlay(inlay) => TransformSummary {
-                input: TextSummary::default(),
-                output: inlay.text().summary(),
+                input: MBTextSummary::default(),
+                output: MBTextSummary::from(inlay.text().summary()),
             },
         }
     }
@@ -65,8 +76,10 @@ impl sum_tree::Item for Transform {
 
 #[derive(Clone, Debug, Default)]
 struct TransformSummary {
-    input: TextSummary,
-    output: TextSummary,
+    /// Summary of the text before inlays have been applied.
+    input: MBTextSummary,
+    /// Summary of the text after inlays have been applied.
+    output: MBTextSummary,
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
@@ -75,15 +88,15 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     }
 
     fn add_summary(&mut self, other: &Self) {
-        self.input += &other.input;
-        self.output += &other.output;
+        self.input += other.input;
+        self.output += other.output;
     }
 }
 
 pub type InlayEdit = Edit<InlayOffset>;
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct InlayOffset(pub usize);
+pub struct InlayOffset(pub MultiBufferOffset);
 
 impl Add for InlayOffset {
     type Output = Self;
@@ -94,10 +107,30 @@ impl Add for InlayOffset {
 }
 
 impl Sub for InlayOffset {
-    type Output = Self;
+    type Output = <MultiBufferOffset as Sub>::Output;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
+        self.0 - rhs.0
+    }
+}
+
+impl<T> SubAssign<T> for InlayOffset
+where
+    MultiBufferOffset: SubAssign<T>,
+{
+    fn sub_assign(&mut self, rhs: T) {
+        self.0 -= rhs;
+    }
+}
+
+impl<T> Add<T> for InlayOffset
+where
+    MultiBufferOffset: Add<T, Output = MultiBufferOffset>,
+{
+    type Output = Self;
+
+    fn add(self, rhs: T) -> Self::Output {
+        Self(self.0 + rhs)
     }
 }
 
@@ -107,9 +140,12 @@ impl AddAssign for InlayOffset {
     }
 }
 
-impl SubAssign for InlayOffset {
-    fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
+impl<T> AddAssign<T> for InlayOffset
+where
+    MultiBufferOffset: AddAssign<T>,
+{
+    fn add_assign(&mut self, rhs: T) {
+        self.0 += rhs;
     }
 }
 
@@ -119,7 +155,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        self.0 += &summary.output.len;
+        self.0 += summary.output.len;
     }
 }
 
@@ -152,13 +188,13 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for MultiBufferOffset {
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        *self += &summary.input.len;
+        *self += summary.input.len;
     }
 }
 
@@ -181,7 +217,7 @@ pub struct InlayBufferRows<'a> {
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, usize>>,
+    transforms: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, MultiBufferOffset>>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
@@ -202,6 +238,7 @@ pub struct InlayChunk<'a> {
 }
 
 impl InlayChunks<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right);
 
@@ -222,6 +259,7 @@ impl InlayChunks<'_> {
 impl<'a> Iterator for InlayChunks<'a> {
     type Item = InlayChunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_offset == self.max_output_offset {
             return None;
@@ -248,10 +286,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 // Determine split index handling edge cases
                 let split_index = if desired_bytes >= chunk.text.len() {
                     chunk.text.len()
-                } else if chunk.text.is_char_boundary(desired_bytes) {
-                    desired_bytes
                 } else {
-                    find_next_utf8_boundary(chunk.text, desired_bytes)
+                    chunk.text.ceil_char_boundary(desired_bytes)
                 };
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
@@ -334,12 +370,12 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
                 if let Some((style, highlight)) = inlay_style_and_highlight {
                     let range = &highlight.range;
-                    if offset_in_inlay.0 < range.start {
-                        next_inlay_highlight_endpoint = range.start - offset_in_inlay.0;
-                    } else if offset_in_inlay.0 >= range.end {
+                    if offset_in_inlay < range.start {
+                        next_inlay_highlight_endpoint = range.start - offset_in_inlay;
+                    } else if offset_in_inlay >= range.end {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
-                        next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
+                        next_inlay_highlight_endpoint = range.end - offset_in_inlay;
                         highlight_style = highlight_style
                             .map(|highlight| highlight.highlight(*style))
                             .or_else(|| Some(*style));
@@ -352,7 +388,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end().0)
                         - self.transforms.start().0;
-                    let chunks = inlay.text().chunks_in_range(start.0..end.0);
+                    let chunks = inlay.text().chunks_in_range(start..end);
                     text::ChunkWithBitmaps(chunks)
                 });
                 let ChunkBitmaps {
@@ -373,10 +409,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                         .next()
                         .map(|c| c.len_utf8())
                         .unwrap_or(1)
-                } else if inlay_chunk.is_char_boundary(next_inlay_highlight_endpoint) {
-                    next_inlay_highlight_endpoint
                 } else {
-                    find_next_utf8_boundary(inlay_chunk, next_inlay_highlight_endpoint)
+                    inlay_chunk.ceil_char_boundary(next_inlay_highlight_endpoint)
                 };
 
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
@@ -419,6 +453,7 @@ impl<'a> Iterator for InlayChunks<'a> {
 }
 
 impl InlayBufferRows<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn seek(&mut self, row: u32) {
         let inlay_point = InlayPoint::new(row, 0);
         self.transforms.seek(&inlay_point, Bias::Left);
@@ -443,6 +478,7 @@ impl InlayBufferRows<'_> {
 impl Iterator for InlayBufferRows<'_> {
     type Item = RowInfo;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         let buffer_row = if self.inlay_row == 0 {
             self.buffer_rows.next().unwrap()
@@ -472,6 +508,7 @@ impl InlayPoint {
 }
 
 impl InlayMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
@@ -489,10 +526,11 @@ impl InlayMap {
         )
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn sync(
         &mut self,
         buffer_snapshot: MultiBufferSnapshot,
-        mut buffer_edits: Vec<text::Edit<usize>>,
+        mut buffer_edits: Vec<text::Edit<MultiBufferOffset>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
 
@@ -523,7 +561,7 @@ impl InlayMap {
             let mut new_transforms = SumTree::default();
             let mut cursor = snapshot
                 .transforms
-                .cursor::<Dimensions<usize, InlayOffset>>(());
+                .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), ());
@@ -535,11 +573,9 @@ impl InlayMap {
                 }
 
                 // Remove all the inlays and transforms contained by the edit.
-                let old_start =
-                    cursor.start().1 + InlayOffset(buffer_edit.old.start - cursor.start().0);
+                let old_start = cursor.start().1 + (buffer_edit.old.start - cursor.start().0);
                 cursor.seek(&buffer_edit.old.end, Bias::Right);
-                let old_end =
-                    cursor.start().1 + InlayOffset(buffer_edit.old.end - cursor.start().0);
+                let old_end = cursor.start().1 + (buffer_edit.old.end - cursor.start().0);
 
                 // Push the unchanged prefix.
                 let prefix_start = new_transforms.summary().input.len;
@@ -623,6 +659,7 @@ impl InlayMap {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn splice(
         &mut self,
         to_remove: &[InlayId],
@@ -673,11 +710,13 @@ impl InlayMap {
         (snapshot, edits)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlays.iter()
     }
 
     #[cfg(test)]
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn randomly_mutate(
         &mut self,
         next_inlay_id: &mut usize,
@@ -691,7 +730,10 @@ impl InlayMap {
         let snapshot = &mut self.snapshot;
         for i in 0..rng.random_range(1..=5) {
             if self.inlays.is_empty() || rng.random() {
-                let position = snapshot.buffer.random_byte_range(0, rng).start;
+                let position = snapshot
+                    .buffer
+                    .random_byte_range(MultiBufferOffset(0), rng)
+                    .start;
                 let bias = if rng.random() {
                     Bias::Left
                 } else {
@@ -743,10 +785,13 @@ impl InlayMap {
 }
 
 impl InlaySnapshot {
+    #[ztracing::instrument(skip_all)]
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
-        let (start, _, item) = self
-            .transforms
-            .find::<Dimensions<InlayOffset, InlayPoint, usize>, _>((), &offset, Bias::Right);
+        let (start, _, item) = self.transforms.find::<Dimensions<
+            InlayOffset,
+            InlayPoint,
+            MultiBufferOffset,
+        >, _>((), &offset, Bias::Right);
         let overshoot = offset.0 - start.0.0;
         match item {
             Some(Transform::Isomorphic(_)) => {
@@ -764,14 +809,17 @@ impl InlaySnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn len(&self) -> InlayOffset {
         InlayOffset(self.transforms.summary().output.len)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> InlayPoint {
         InlayPoint(self.transforms.summary().output.lines)
     }
 
+    #[ztracing::instrument(skip_all, fields(point))]
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let (start, _, item) = self
             .transforms
@@ -792,6 +840,7 @@ impl InlaySnapshot {
             None => self.len(),
         }
     }
+    #[ztracing::instrument(skip_all)]
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
         let (start, _, item) =
             self.transforms
@@ -805,22 +854,26 @@ impl InlaySnapshot {
             None => self.buffer.max_point(),
         }
     }
-    pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
-        let (start, _, item) =
-            self.transforms
-                .find::<Dimensions<InlayOffset, usize>, _>((), &offset, Bias::Right);
+    #[ztracing::instrument(skip_all)]
+    pub fn to_buffer_offset(&self, offset: InlayOffset) -> MultiBufferOffset {
+        let (start, _, item) = self
+            .transforms
+            .find::<Dimensions<InlayOffset, MultiBufferOffset>, _>((), &offset, Bias::Right);
         match item {
             Some(Transform::Isomorphic(_)) => {
                 let overshoot = offset - start.0;
-                start.1 + overshoot.0
+                start.1 + overshoot
             }
             Some(Transform::Inlay(_)) => start.1,
             None => self.buffer.len(),
         }
     }
 
-    pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
-        let mut cursor = self.transforms.cursor::<Dimensions<usize, InlayOffset>>(());
+    #[ztracing::instrument(skip_all)]
+    pub fn to_inlay_offset(&self, offset: MultiBufferOffset) -> InlayOffset {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
         cursor.seek(&offset, Bias::Left);
         loop {
             match cursor.item() {
@@ -852,40 +905,22 @@ impl InlaySnapshot {
             }
         }
     }
+
+    #[ztracing::instrument(skip_all)]
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
-        cursor.seek(&point, Bias::Left);
-        loop {
-            match cursor.item() {
-                Some(Transform::Isomorphic(_)) => {
-                    if point == cursor.end().0 {
-                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
-                                break;
-                            } else {
-                                cursor.next();
-                            }
-                        }
-                        return cursor.end().1;
-                    } else {
-                        let overshoot = point - cursor.start().0;
-                        return InlayPoint(cursor.start().1.0 + overshoot);
-                    }
-                }
-                Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
-                        cursor.next();
-                    } else {
-                        return cursor.start().1;
-                    }
-                }
-                None => {
-                    return self.max_point();
-                }
-            }
+        self.inlay_point_cursor().map(point)
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub fn inlay_point_cursor(&self) -> InlayPointCursor<'_> {
+        let cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
+        InlayPointCursor {
+            cursor,
+            transforms: &self.transforms,
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         cursor.seek(&point, Bias::Left);
@@ -977,14 +1012,18 @@ impl InlaySnapshot {
         }
     }
 
-    pub fn text_summary(&self) -> TextSummary {
+    #[ztracing::instrument(skip_all)]
+    pub fn text_summary(&self) -> MBTextSummary {
         self.transforms.summary().output
     }
 
-    pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
-        let mut summary = TextSummary::default();
+    #[ztracing::instrument(skip_all)]
+    pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> MBTextSummary {
+        let mut summary = MBTextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, MultiBufferOffset>>(());
         cursor.seek(&range.start, Bias::Right);
 
         let overshoot = range.start.0 - cursor.start().0.0;
@@ -1000,7 +1039,12 @@ impl InlaySnapshot {
             Some(Transform::Inlay(inlay)) => {
                 let suffix_start = overshoot;
                 let suffix_end = cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0;
-                summary = inlay.text().cursor(suffix_start).summary(suffix_end);
+                summary = MBTextSummary::from(
+                    inlay
+                        .text()
+                        .cursor(suffix_start)
+                        .summary::<TextSummary>(suffix_end),
+                );
                 cursor.next();
             }
             None => {}
@@ -1018,7 +1062,7 @@ impl InlaySnapshot {
                     let prefix_end = prefix_start + overshoot;
                     summary += self
                         .buffer
-                        .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
+                        .text_summary_for_range::<MBTextSummary, _>(prefix_start..prefix_end);
                 }
                 Some(Transform::Inlay(inlay)) => {
                     let prefix_end = overshoot;
@@ -1031,6 +1075,7 @@ impl InlaySnapshot {
         summary
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         let inlay_point = InlayPoint::new(row, 0);
@@ -1058,6 +1103,7 @@ impl InlaySnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: u32) -> u32 {
         let line_start = self.to_offset(InlayPoint::new(row, 0)).0;
         let line_end = if row >= self.max_point().row() {
@@ -1068,13 +1114,16 @@ impl InlaySnapshot {
         (line_end - line_start) as u32
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<InlayOffset>,
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, MultiBufferOffset>>(());
         cursor.seek(&range.start, Bias::Right);
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
@@ -1100,12 +1149,14 @@ impl InlaySnapshot {
     }
 
     #[cfg(test)]
+    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(Default::default()..self.len(), false, Highlights::default())
             .map(|chunk| chunk.chunk.text)
             .collect()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
         #[cfg(any(debug_assertions, feature = "test-support"))]
         {
@@ -1126,8 +1177,54 @@ impl InlaySnapshot {
     }
 }
 
-fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
-    if summary.len == 0 {
+pub struct InlayPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<Point, InlayPoint>>,
+    transforms: &'transforms SumTree<Transform>,
+}
+
+impl InlayPointCursor<'_> {
+    #[ztracing::instrument(skip_all)]
+    pub fn map(&mut self, point: Point) -> InlayPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Left);
+        } else {
+            cursor.seek(&point, Bias::Left);
+        }
+        loop {
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    if point == cursor.end().0 {
+                        while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                            if inlay.position.bias() == Bias::Right {
+                                break;
+                            } else {
+                                cursor.next();
+                            }
+                        }
+                        return cursor.end().1;
+                    } else {
+                        let overshoot = point - cursor.start().0;
+                        return InlayPoint(cursor.start().1.0 + overshoot);
+                    }
+                }
+                Some(Transform::Inlay(inlay)) => {
+                    if inlay.position.bias() == Bias::Left {
+                        cursor.next();
+                    } else {
+                        return cursor.start().1;
+                    }
+                }
+                None => {
+                    return InlayPoint(self.transforms.summary().output.lines);
+                }
+            }
+        }
+    }
+}
+
+fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: MBTextSummary) {
+    if summary.len == MultiBufferOffset(0) {
         return;
     }
 
@@ -1144,31 +1241,6 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     if let Some(summary) = summary {
         sum_tree.push(Transform::Isomorphic(summary), ());
     }
-}
-
-/// Given a byte index that is NOT a UTF-8 boundary, find the next one.
-/// Assumes: 0 < byte_index < text.len() and !text.is_char_boundary(byte_index)
-#[inline(always)]
-fn find_next_utf8_boundary(text: &str, byte_index: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut idx = byte_index + 1;
-
-    // Scan forward until we find a boundary
-    while idx < text.len() {
-        if is_utf8_char_boundary(bytes[idx]) {
-            return idx;
-        }
-        idx += 1;
-    }
-
-    // Hit the end, return the full length
-    text.len()
-}
-
-// Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
-const fn is_utf8_char_boundary(byte: u8) -> bool {
-    // This is bit magic equivalent to: b < 128 || b >= 192
-    (byte as i8) >= -0x40
 }
 
 #[cfg(test)]
@@ -1308,7 +1380,10 @@ mod tests {
             &[],
             vec![Inlay::mock_hint(
                 post_inc(&mut next_inlay_id),
-                buffer.read(cx).snapshot(cx).anchor_after(3),
+                buffer
+                    .read(cx)
+                    .snapshot(cx)
+                    .anchor_after(MultiBufferOffset(3)),
                 "|123|",
             )],
         );
@@ -1364,7 +1439,15 @@ mod tests {
 
         // Edits before or after the inlay should not affect it.
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(2..3, "x"), (3..3, "y"), (4..4, "z")], None, cx)
+            buffer.edit(
+                [
+                    (MultiBufferOffset(2)..MultiBufferOffset(3), "x"),
+                    (MultiBufferOffset(3)..MultiBufferOffset(3), "y"),
+                    (MultiBufferOffset(4)..MultiBufferOffset(4), "z"),
+                ],
+                None,
+                cx,
+            )
         });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
@@ -1373,7 +1456,13 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
         // An edit surrounding the inlay should invalidate it.
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "D")], None, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(MultiBufferOffset(4)..MultiBufferOffset(5), "D")],
+                None,
+                cx,
+            )
+        });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -1385,12 +1474,18 @@ mod tests {
             vec![
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
-                    buffer.read(cx).snapshot(cx).anchor_before(3),
+                    buffer
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_before(MultiBufferOffset(3)),
                     "|123|",
                 ),
                 Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
-                    buffer.read(cx).snapshot(cx).anchor_after(3),
+                    buffer
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_after(MultiBufferOffset(3)),
                     "|456|",
                 ),
             ],
@@ -1398,7 +1493,13 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
 
         // Edits ending where the inlay starts should not move it if it has a left bias.
-        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "JKL")], None, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(MultiBufferOffset(3)..MultiBufferOffset(3), "JKL")],
+                None,
+                cx,
+            )
+        });
         let (inlay_snapshot, _) = inlay_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -1600,17 +1701,26 @@ mod tests {
             vec![
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
-                    buffer.read(cx).snapshot(cx).anchor_before(0),
+                    buffer
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_before(MultiBufferOffset(0)),
                     "|123|\n",
                 ),
                 Inlay::mock_hint(
                     post_inc(&mut next_inlay_id),
-                    buffer.read(cx).snapshot(cx).anchor_before(4),
+                    buffer
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_before(MultiBufferOffset(4)),
                     "|456|",
                 ),
                 Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
-                    buffer.read(cx).snapshot(cx).anchor_before(7),
+                    buffer
+                        .read(cx)
+                        .snapshot(cx)
+                        .anchor_before(MultiBufferOffset(7)),
                     "\n|567|\n",
                 ),
             ],
@@ -1687,7 +1797,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
-                expected_text.replace(*offset..*offset, &inlay.text().to_string());
+                expected_text.replace(offset.0..offset.0, &inlay.text().to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -1710,7 +1820,7 @@ mod tests {
             let mut text_highlights = TextHighlights::default();
             let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
-                .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+                .map(|_| buffer_snapshot.random_byte_range(MultiBufferOffset(0), &mut rng))
                 .collect::<Vec<_>>();
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
@@ -1773,12 +1883,13 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let mut end = rng.random_range(0..=inlay_snapshot.len().0);
+                let mut end = rng.random_range(0..=inlay_snapshot.len().0.0);
                 end = expected_text.clip_offset(end, Bias::Right);
                 let mut start = rng.random_range(0..=end);
                 start = expected_text.clip_offset(start, Bias::Right);
 
-                let range = InlayOffset(start)..InlayOffset(end);
+                let range =
+                    InlayOffset(MultiBufferOffset(start))..InlayOffset(MultiBufferOffset(end));
                 log::info!("calling inlay_snapshot.chunks({range:?})");
                 let actual_text = inlay_snapshot
                     .chunks(
@@ -1800,25 +1911,27 @@ mod tests {
                 );
 
                 assert_eq!(
-                    inlay_snapshot.text_summary_for_range(InlayOffset(start)..InlayOffset(end)),
-                    expected_text.slice(start..end).summary()
+                    inlay_snapshot.text_summary_for_range(
+                        InlayOffset(MultiBufferOffset(start))..InlayOffset(MultiBufferOffset(end))
+                    ),
+                    MBTextSummary::from(expected_text.slice(start..end).summary())
                 );
             }
 
             for edit in inlay_edits {
                 prev_inlay_text.replace_range(
-                    edit.new.start.0..edit.new.start.0 + edit.old_len().0,
-                    &inlay_snapshot.text()[edit.new.start.0..edit.new.end.0],
+                    edit.new.start.0.0..edit.new.start.0.0 + edit.old_len(),
+                    &inlay_snapshot.text()[edit.new.start.0.0..edit.new.end.0.0],
                 );
             }
             assert_eq!(prev_inlay_text, inlay_snapshot.text());
 
             assert_eq!(expected_text.max_point(), inlay_snapshot.max_point().0);
-            assert_eq!(expected_text.len(), inlay_snapshot.len().0);
+            assert_eq!(expected_text.len(), inlay_snapshot.len().0.0);
 
             let mut buffer_point = Point::default();
             let mut inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
-            let mut buffer_chars = buffer_snapshot.chars_at(0);
+            let mut buffer_chars = buffer_snapshot.chars_at(MultiBufferOffset(0));
             loop {
                 // Ensure conversion from buffer coordinates to inlay coordinates
                 // is consistent.
@@ -1959,7 +2072,7 @@ mod tests {
 
         // Get all chunks and verify their bitmaps
         let chunks = snapshot.chunks(
-            InlayOffset(0)..InlayOffset(snapshot.len().0),
+            InlayOffset(MultiBufferOffset(0))..snapshot.len(),
             false,
             Highlights::default(),
         );
@@ -2093,7 +2206,7 @@ mod tests {
         // Collect chunks - this previously would panic
         let chunks: Vec<_> = inlay_snapshot
             .chunks(
-                InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+                InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
                 false,
                 highlights,
             )
@@ -2207,7 +2320,7 @@ mod tests {
 
             let chunks: Vec<_> = inlay_snapshot
                 .chunks(
-                    InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+                    InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
                     false,
                     highlights,
                 )

@@ -14,6 +14,7 @@ disallowed-methods = [
     { path = "std::process::Command::stderr", reason = "`smol::process::Command::from()` does not preserve stdio configuration", replacement = "smol::process::Command::stderr" },
     { path = "serde_json::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892. Use `serde_json::from_slice` instead." },
     { path = "serde_json_lenient::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892, Use `serde_json_lenient::from_slice` instead." },
+    { path = "cocoa::foundation::NSString::alloc", reason = "NSString must be autoreleased to avoid memory leaks. Use `ns_string()` helper instead." },
 ]
 disallowed-types = [
     # { path = "std::collections::HashMap", replacement = "collections::HashMap" },

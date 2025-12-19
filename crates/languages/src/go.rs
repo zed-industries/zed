@@ -73,7 +73,9 @@ impl LspInstaller for GoLspAdapter {
                     delegate.show_notification(NOTIFICATION_MESSAGE, cx);
                 })?
             }
-            anyhow::bail!("cannot install gopls");
+            anyhow::bail!(
+                "Could not install the Go language server `gopls`, because `go` was not found."
+            );
         }
 
         let release =
@@ -654,7 +656,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "\\^{}\\$/\\^{}\\$",
+                        "'^{}$/^{}$'",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
