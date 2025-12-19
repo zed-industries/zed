@@ -1159,6 +1159,34 @@ impl BufferDiff {
         new_index_text
     }
 
+    pub fn stage_or_unstage_all_hunks(
+        &mut self,
+        stage: bool,
+        buffer: &text::BufferSnapshot,
+        file_exists: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .collect::<Vec<_>>();
+        let Some(secondary) = self.secondary_diff.as_ref() else {
+            return;
+        };
+        self.inner.stage_or_unstage_hunks_impl(
+            &secondary.read(cx).inner,
+            stage,
+            &hunks,
+            buffer,
+            file_exists,
+        );
+        if let Some((first, last)) = hunks.first().zip(hunks.last()) {
+            let changed_range = first.buffer_range.start..last.buffer_range.end;
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(changed_range),
+            });
+        }
+    }
+
     pub fn range_to_hunk_range(
         &self,
         range: Range<Anchor>,

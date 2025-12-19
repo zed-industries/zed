@@ -5021,8 +5021,6 @@ name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "command_palette",
- "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -5031,7 +5029,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "zed",
  "zlog",
 ]
 
@@ -12582,6 +12579,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "notifications",
  "pretty_assertions",
  "project",
  "rayon",
@@ -20276,6 +20274,16 @@ dependencies = [
  "text",
  "util",
  "zlog",
+]
+
+[[package]]
+name = "worktree_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "settings",
+ "worktree",
 ]
 
 [[package]]

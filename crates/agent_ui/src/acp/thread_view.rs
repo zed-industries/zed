@@ -2718,7 +2718,7 @@ impl AcpThreadView {
                             ..default_markdown_style(false, true, window, cx)
                         },
                     ))
-                    .tooltip(Tooltip::text("Jump to File"))
+                    .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
                     }))
