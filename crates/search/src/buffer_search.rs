@@ -830,9 +830,7 @@ impl BufferSearchBar {
     #[cfg(target_os = "macos")]
     fn update_find_pasteboard(&self, cx: &mut Context<Self>) {
         let query = self.query(cx);
-        if !query.is_empty() {
-            cx.write_to_find_pasteboard(ClipboardItem::new_string(query));
-        }
+        cx.write_to_find_pasteboard(ClipboardItem::new_string(query));
     }
 
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
@@ -1259,6 +1257,7 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
+        dbg!(&query);
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.query_error = None;
