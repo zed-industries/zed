@@ -61,11 +61,11 @@ use gpui::{
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
-    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
+    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
+    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
@@ -8690,14 +8690,14 @@ impl LspStore {
                 } else {
                     (Arc::<Path>::from(abs_path.as_path()), None)
                 };
-            let (worktree, relative_path) = if let Some(result) =
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                        worktree_store.find_worktree(&worktree_root_target, cx)
-                    })
-                })? {
+            let worktree = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_worktree(&worktree_root_target, cx)
+                })
+            })?;
+            let (worktree, relative_path, source_ws) = if let Some(result) = worktree {
                 let relative_path = known_relative_path.unwrap_or_else(|| result.1.clone());
-                (result.0, relative_path)
+                (result.0, relative_path, None)
             } else {
                 let worktree = lsp_store
                     .update(cx, |lsp_store, cx| {
@@ -8706,7 +8706,8 @@ impl LspStore {
                         })
                     })?
                     .await?;
-                if worktree.read_with(cx, |worktree, _| worktree.is_local())? {
+                let worktree_root = worktree.read_with(cx, |worktree, _| worktree.abs_path())?;
+                let source_ws = if worktree.read_with(cx, |worktree, _| worktree.is_local())? {
                     lsp_store
                         .update(cx, |lsp_store, cx| {
                             if let Some(local) = lsp_store.as_local_mut() {
@@ -8716,29 +8717,56 @@ impl LspStore {
                                     cx,
                                 )
                             }
+                            match lsp_store.language_server_statuses.get(&language_server_id) {
+                                Some(status) => status.worktree,
+                                None => None,
+                            }
                         })
-                        .ok();
-                }
-                let worktree_root = worktree.read_with(cx, |worktree, _| worktree.abs_path())?;
+                        .ok()
+                        .flatten()
+                        .zip(Some(worktree_root.clone()))
+                } else {
+                    None
+                };
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
                     RelPath::new(abs_path.strip_prefix(worktree_root)?, PathStyle::local())?
                         .into_arc()
                 };
-                (worktree, relative_path)
+                (worktree, relative_path, source_ws)
             };
             let project_path = ProjectPath {
                 worktree_id: worktree.read_with(cx, |worktree, _| worktree.id())?,
                 path: relative_path,
             };
-            lsp_store
+            let buffer = lsp_store
                 .update(cx, |lsp_store, cx| {
                     lsp_store.buffer_store().update(cx, |buffer_store, cx| {
                         buffer_store.open_buffer(project_path, cx)
                     })
                 })?
-                .await
+                .await?;
+            // we want to adhere to the read-only settings of the worktree we came from in case we opened an invisible one
+            if let Some((source_ws, worktree_root)) = source_ws {
+                buffer.update(cx, |buffer, cx| {
+                    let settings = WorktreeSettings::get(
+                        Some(
+                            (&ProjectPath {
+                                worktree_id: source_ws,
+                                path: Arc::from(RelPath::empty()),
+                            })
+                                .into(),
+                        ),
+                        cx,
+                    );
+                    let is_read_only = settings.is_std_path_read_only(&worktree_root);
+                    if is_read_only {
+                        buffer.set_capability(Capability::ReadOnly, cx);
+                    }
+                })?;
+            }
+            Ok(buffer)
         })
     }
 

@@ -2786,14 +2786,11 @@ impl Pane {
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .children(
-                        std::iter::once(if let Some(decorated_icon) = decorated_icon {
-                            Some(div().child(decorated_icon.into_any_element()))
-                        } else {
-                            icon.map(|icon| div().child(icon.into_any_element()))
-                        })
-                        .flatten(),
-                    )
+                    .children(if let Some(decorated_icon) = decorated_icon {
+                        Some(div().child(decorated_icon.into_any_element()))
+                    } else {
+                        icon.map(|icon| div().child(icon.into_any_element()))
+                    })
                     .child(label)
                     .id(("pane-tab-content", ix))
                     .map(|this| match tab_tooltip_content {
@@ -2802,6 +2799,15 @@ impl Pane {
                             this.tooltip(move |window, cx| element_fn(window, cx))
                         }
                         None => this,
+                    })
+                    .children(if item.is_read_only(cx) {
+                        Some(
+                            Icon::new(IconName::FileLock)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                    } else {
+                        None
                     }),
             );
 

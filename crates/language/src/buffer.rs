@@ -85,8 +85,17 @@ pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new)
 pub enum Capability {
     /// The buffer is a mutable replica.
     ReadWrite,
+    /// The buffer is a mutable replica, but toggled to read-only.
+    Read,
     /// The buffer is a read-only replica.
     ReadOnly,
+}
+
+impl Capability {
+    /// Returns `true` if the capability is `ReadWrite`.
+    pub fn editable(self) -> bool {
+        matches!(self, Capability::ReadWrite)
+    }
 }
 
 pub type BufferRow = u32;
@@ -188,6 +197,7 @@ pub struct BufferSnapshot {
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
     tree_sitter_data: Arc<TreeSitterData>,
+    pub capability: Capability,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -1062,7 +1072,7 @@ impl Buffer {
 
     /// Whether this buffer can only be read.
     pub fn read_only(&self) -> bool {
-        self.capability == Capability::ReadOnly
+        !self.capability.editable()
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
@@ -1135,6 +1145,7 @@ impl Buffer {
                 tree_sitter_data: Arc::new(tree_sitter_data),
                 language,
                 non_text_state_update_count: 0,
+                capability: Capability::ReadOnly,
             }
         }
     }
@@ -1160,6 +1171,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language: None,
             non_text_state_update_count: 0,
+            capability: Capability::ReadOnly,
         }
     }
 
@@ -1189,6 +1201,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language,
             non_text_state_update_count: 0,
+            capability: Capability::ReadOnly,
         }
     }
 
@@ -1215,6 +1228,7 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            capability: self.capability,
         }
     }
 
@@ -5142,6 +5156,7 @@ impl Clone for BufferSnapshot {
             language: self.language.clone(),
             tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            capability: self.capability,
         }
     }
 }
