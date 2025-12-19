@@ -15,9 +15,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, Focusable,
-    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, Window, actions, div,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
+    Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -830,7 +830,7 @@ impl BufferSearchBar {
     #[cfg(target_os = "macos")]
     fn update_find_pasteboard(&self, cx: &mut Context<Self>) {
         let query = self.query(cx);
-        cx.write_to_find_pasteboard(ClipboardItem::new_string(query));
+        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string(query));
     }
 
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
