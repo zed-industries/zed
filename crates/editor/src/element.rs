@@ -37,22 +37,18 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
-use git::{
-    Oid,
-    blame::{BlameEntry, ParsedCommitMessage},
-    status::FileStatus,
-};
+use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -62,6 +58,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 
+use edit_prediction_types::EditPredictionGranularity;
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -132,6 +129,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
+        cursor_offset: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -152,12 +150,9 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if (cursor_shape == CursorShape::Block || cursor_shape == CursorShape::Hollow)
-            && !range.is_empty()
-            && !selection.reversed
-        {
+        if cursor_offset && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
-                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left)
+                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 && head != map.max_point() {
                 head = map.clip_point(
                     DisplayPoint::new(
@@ -595,8 +590,6 @@ impl EditorElement {
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::signature_help_prev);
         register_action(editor, window, Editor::signature_help_next);
-        register_action(editor, window, Editor::next_edit_prediction);
-        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_edit_prediction);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -605,7 +598,8 @@ impl EditorElement {
         register_action(editor, window, Editor::display_cursor_names);
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
-        register_action(editor, window, Editor::accept_partial_edit_prediction);
+        register_action(editor, window, Editor::accept_next_word_edit_prediction);
+        register_action(editor, window, Editor::accept_next_line_edit_prediction);
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
@@ -1037,6 +1031,28 @@ impl EditorElement {
         }
     }
 
+    fn pressure_click(
+        editor: &mut Editor,
+        event: &MousePressureEvent,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let text_hitbox = &position_map.text_hitbox;
+        let force_click_possible =
+            matches!(editor.prev_pressure_stage, Some(PressureStage::Normal))
+                && event.stage == PressureStage::Force;
+
+        editor.prev_pressure_stage = Some(event.stage);
+
+        if force_click_possible && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(event.position);
+            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
+            cx.stop_propagation();
+        }
+    }
+
     fn mouse_dragged(
         editor: &mut Editor,
         event: &MouseMoveEvent,
@@ -1441,6 +1457,7 @@ impl EditorElement {
                     let layout = SelectionLayout::new(
                         selection,
                         editor.selections.line_mode(),
+                        editor.cursor_offset_on_selection,
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -1487,6 +1504,7 @@ impl EditorElement {
                     let drag_cursor_layout = SelectionLayout::new(
                         drop_cursor.clone(),
                         false,
+                        editor.cursor_offset_on_selection,
                         CursorShape::Bar,
                         &snapshot.display_snapshot,
                         false,
@@ -1550,6 +1568,7 @@ impl EditorElement {
                         .push(SelectionLayout::new(
                             selection.selection,
                             selection.line_mode,
+                            editor.cursor_offset_on_selection,
                             selection.cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1560,6 +1579,8 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+                let cursor_offset_on_selection = editor.cursor_offset_on_selection;
+
                 let layouts = snapshot
                     .buffer_snapshot()
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1567,6 +1588,7 @@ impl EditorElement {
                         SelectionLayout::new(
                             selection,
                             line_mode,
+                            cursor_offset_on_selection,
                             cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -3290,6 +3312,7 @@ impl EditorElement {
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode(),
+                    editor.cursor_offset_on_selection,
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,
@@ -4873,8 +4896,11 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding =
-                            editor.accept_edit_prediction_keybind(false, window, cx);
+                        let accept_binding = editor.accept_edit_prediction_keybind(
+                            EditPredictionGranularity::Full,
+                            window,
+                            cx,
+                        );
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
@@ -5390,6 +5416,12 @@ impl EditorElement {
                 .min(hitbox.size.height / 2.) // Shrink to half of the editor height
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
+
+        // Don't show hover popovers when context menu is open to avoid overlap
+        let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
+        if has_context_menu {
+            return;
+        }
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
             editor.hover_state.render(
@@ -7768,6 +7800,19 @@ impl EditorElement {
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
 
+            move |event: &MousePressureEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    editor.update(cx, |editor, cx| {
+                        Self::pressure_click(editor, &event, &position_map, window, cx);
+                    })
+                }
+            }
+        });
+
+        window.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+
             move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
@@ -9119,6 +9164,15 @@ impl Element for EditorElement {
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
 
+                    // Calculate how much of the editor is clipped by parent containers (e.g., List).
+                    // This allows us to only render lines that are actually visible, which is
+                    // critical for performance when large AutoHeight editors are inside Lists.
+                    let visible_bounds = window.content_mask().bounds;
+                    let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
+                    let clipped_top_in_lines = f64::from(clipped_top / line_height);
+                    let visible_height_in_lines =
+                        f64::from(visible_bounds.size.height / line_height);
+
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
                         snapshot.mode,
@@ -9175,10 +9229,16 @@ impl Element for EditorElement {
                     let mut scroll_position = snapshot.scroll_position();
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
-                    let start_row = DisplayRow(scroll_position.y as u32);
+                    // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
+                    // but we don't modify scroll_position itself since the parent handles positioning.
                     let max_row = snapshot.max_point().row();
+                    let start_row = cmp::min(
+                        DisplayRow((scroll_position.y + clipped_top_in_lines).floor() as u32),
+                        max_row,
+                    );
                     let end_row = cmp::min(
-                        (scroll_position.y + height_in_lines).ceil() as u32,
+                        (scroll_position.y + clipped_top_in_lines + visible_height_in_lines).ceil()
+                            as u32,
                         max_row.next_row().0,
                     );
                     let end_row = DisplayRow(end_row);
@@ -11858,7 +11918,7 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_shape = CursorShape::Block;
+                editor.cursor_offset_on_selection = true;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),

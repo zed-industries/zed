@@ -156,6 +156,10 @@ impl ProjectDiff {
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
+            existing.update(cx, |project_diff, cx| {
+                project_diff.move_to_beginning(window, cx);
+            });
+
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
@@ -365,6 +369,14 @@ impl ProjectDiff {
         })
     }
 
+    fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.primary_editor().update(cx, |editor, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            });
+        });
+    }
+
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
@@ -480,7 +492,7 @@ impl ProjectDiff {
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
         {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
     }
 
@@ -585,10 +597,10 @@ impl ProjectDiff {
                 .focus_handle(cx)
                 .contains_focused(window, cx)
         {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.update(cx, |editor, cx| {
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
             });
         }
         if self.pending_scroll.as_ref() == Some(&path_key) {
@@ -971,7 +983,7 @@ impl Render for ProjectDiff {
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {
-                                        window.focus(&keybinding_focus_handle);
+                                        window.focus(&keybinding_focus_handle, cx);
                                         window.dispatch_action(
                                             Box::new(CloseActiveItem::default()),
                                             cx,
@@ -1141,7 +1153,7 @@ impl ProjectDiffToolbar {
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(project_diff) = self.project_diff(cx) {
-            project_diff.focus_handle(cx).focus(window);
+            project_diff.focus_handle(cx).focus(window, cx);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {

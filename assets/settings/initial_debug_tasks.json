@@ -8,7 +8,7 @@
     "adapter": "Debugpy",
     "program": "$ZED_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$ZED_WORKTREE_ROOT",
   },
   {
     "label": "Debug active JavaScript file",
@@ -16,7 +16,7 @@
     "program": "$ZED_FILE",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",
-    "type": "pwa-node"
+    "type": "pwa-node",
   },
   {
     "label": "JavaScript debug terminal",
@@ -24,6 +24,6 @@
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",
     "console": "integratedTerminal",
-    "type": "pwa-node"
-  }
+    "type": "pwa-node",
+  },
 ]

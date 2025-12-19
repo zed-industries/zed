@@ -7,6 +7,7 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -67,6 +68,8 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
+        /// Cycles through favorited models in the ACP model selector.
+        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Removes all thread history.
@@ -261,12 +264,14 @@ fn update_command_palette_filter(cx: &mut App) {
 
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
-            AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-            PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
+            NextEditPrediction, PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
         };
         let edit_prediction_actions = [
             TypeId::of::<AcceptEditPrediction>(),
-            TypeId::of::<AcceptPartialEditPrediction>(),
+            TypeId::of::<AcceptNextWordEditPrediction>(),
+            TypeId::of::<AcceptNextLineEditPrediction>(),
+            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
@@ -343,7 +348,8 @@ fn init_language_model_settings(cx: &mut App) {
         |_, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            | language_model::Event::RemovedProvider(_)
+            | language_model::Event::ProvidersChanged => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
@@ -455,6 +461,7 @@ mod tests {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models: vec![],
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),

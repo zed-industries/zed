@@ -252,6 +252,7 @@ pub struct Style {
     pub box_shadow: Vec<BoxShadow>,
 
     /// The text style of this element
+    #[refineable]
     pub text: TextStyleRefinement,
 
     /// The mouse cursor style shown when the mouse pointer is over an element.
@@ -263,6 +264,10 @@ pub struct Style {
     /// The grid columns of this element
     /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
+
+    /// The grid columns with min-content minimum sizing.
+    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
+    pub grid_cols_min_content: Option<u16>,
 
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
@@ -771,6 +776,7 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
+            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]
@@ -1467,6 +1473,23 @@ mod tests {
                     }
                 )
             ]
+        );
+    }
+
+    #[perf]
+    fn test_text_style_refinement() {
+        let mut style = Style::default();
+        style.refine(&StyleRefinement::default().text_size(px(20.0)));
+        style.refine(&StyleRefinement::default().font_weight(FontWeight::SEMIBOLD));
+
+        assert_eq!(
+            Some(AbsoluteLength::from(px(20.0))),
+            style.text_style().unwrap().font_size
+        );
+
+        assert_eq!(
+            Some(FontWeight::SEMIBOLD),
+            style.text_style().unwrap().font_weight
         );
     }
 }

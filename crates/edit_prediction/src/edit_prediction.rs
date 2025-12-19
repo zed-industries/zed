@@ -19,6 +19,7 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
@@ -127,15 +128,6 @@ static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
     }
     .to_string()
 });
-static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
-    env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
-        if *USE_OLLAMA {
-            Some("http://localhost:11434/v1/chat/completions".into())
-        } else {
-            None
-        }
-    })
-});
 
 pub struct Zeta2FeatureFlag;
 
@@ -170,6 +162,7 @@ pub struct EditPredictionStore {
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
+    custom_predict_edits_url: Option<Arc<Url>>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -568,6 +561,20 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
+            custom_predict_edits_url: match env::var("ZED_PREDICT_EDITS_URL") {
+                Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
+                Err(_) => {
+                    if *USE_OLLAMA {
+                        Some(
+                            Url::parse("http://localhost:11434/v1/chat/completions")
+                                .unwrap()
+                                .into(),
+                        )
+                    } else {
+                        None
+                    }
+                }
+            },
         };
 
         this.configure_context_retrieval(cx);
@@ -584,6 +591,11 @@ impl EditPredictionStore {
         .detach();
 
         this
+    }
+
+    #[cfg(test)]
+    pub fn set_custom_predict_edits_url(&mut self, url: Url) {
+        self.custom_predict_edits_url = Some(url.into());
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
@@ -1015,8 +1027,13 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+        let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                if self.custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
+                    return;
+                }
+            }
             EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
@@ -1036,12 +1053,15 @@ impl EditPredictionStore {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         cx.spawn(async move |this, cx| {
-            let url = if let Ok(predict_edits_url) = env::var("ZED_ACCEPT_PREDICTION_URL") {
-                http_client::Url::parse(&predict_edits_url)?
+            let (url, require_auth) = if let Some(accept_edits_url) = custom_accept_url {
+                (http_client::Url::parse(&accept_edits_url)?, false)
             } else {
-                client
-                    .http_client()
-                    .build_zed_llm_url("/predict_edits/accept", &[])?
+                (
+                    client
+                        .http_client()
+                        .build_zed_llm_url("/predict_edits/accept", &[])?,
+                    true,
+                )
             };
 
             let response = cx
@@ -1058,6 +1078,7 @@ impl EditPredictionStore {
                     client,
                     llm_token,
                     app_version,
+                    require_auth,
                 ))
                 .await;
 
@@ -1116,6 +1137,7 @@ impl EditPredictionStore {
                 client.clone(),
                 llm_token.clone(),
                 app_version.clone(),
+                true,
             )
             .await;
 
@@ -1161,7 +1183,11 @@ impl EditPredictionStore {
         was_shown: bool,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                if self.custom_predict_edits_url.is_some() {
+                    return;
+                }
+            }
             EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
@@ -1671,13 +1697,9 @@ impl EditPredictionStore {
         #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
         #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
-            http_client::Url::parse(&predict_edits_url)?
-        } else {
-            client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/raw", &[])?
-        };
+        let url = client
+            .http_client()
+            .build_zed_llm_url("/predict_edits/raw", &[])?;
 
         #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {
@@ -1710,6 +1732,7 @@ impl EditPredictionStore {
             client,
             llm_token,
             app_version,
+            true,
         )
         .await?;
 
@@ -1770,23 +1793,34 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
+        require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
         Res: DeserializeOwned,
     {
         let http_client = client.http_client();
-        let mut token = llm_token.acquire(&client).await?;
+
+        let mut token = if require_auth {
+            Some(llm_token.acquire(&client).await?)
+        } else {
+            llm_token.acquire(&client).await.ok()
+        };
         let mut did_retry = false;
 
         loop {
             let request_builder = http_client::Request::builder().method(Method::POST);
 
-            let request = build(
-                request_builder
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", token))
-                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string()),
-            )?;
+            let mut request_builder = request_builder
+                .header("Content-Type", "application/json")
+                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
+
+            // Only add Authorization header if we have a token
+            if let Some(ref token_value) = token {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", token_value));
+            }
+
+            let request = build(request_builder)?;
 
             let mut response = http_client.send(request).await?;
 
@@ -1810,13 +1844,14 @@ impl EditPredictionStore {
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry
+                && token.is_some()
                 && response
                     .headers()
                     .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
                     .is_some()
             {
                 did_retry = true;
-                token = llm_token.refresh(&client).await?;
+                token = Some(llm_token.refresh(&client).await?);
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;

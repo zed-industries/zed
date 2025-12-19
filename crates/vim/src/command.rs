@@ -330,10 +330,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 let Some(range) = range.buffer_range(vim, editor, window, cx).ok() else {
                     return;
                 };
-                let Some((line_ending, text, whole_buffer)) = editor.buffer().update(cx, |multi, cx| {
+                let Some((line_ending, encoding, has_bom, text, whole_buffer)) = editor.buffer().update(cx, |multi, cx| {
                     Some(multi.as_singleton()?.update(cx, |buffer, _| {
                         (
                             buffer.line_ending(),
+                            buffer.encoding(),
+                            buffer.has_bom(),
                             buffer.as_rope().slice_rows(range.start.0..range.end.0 + 1),
                             range.start.0 == 0 && range.end.0 + 1 >= buffer.row_count(),
                         )
@@ -429,7 +431,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                                     return;
                                 };
                                 worktree
-                                    .write_file(path.into_arc(), text.clone(), line_ending, cx)
+                                    .write_file(path.into_arc(), text.clone(), line_ending, encoding, has_bom, cx)
                                     .detach_and_prompt_err("Failed to write lines", window, cx, |_, _, _| None);
                             });
                         })

@@ -1,49 +1,29 @@
-use crate::{Completion, Copilot};
+use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
-use gpui::{App, Context, Entity, EntityId, Task};
-use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
-use settings::Settings;
-use std::{path::Path, time::Duration};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
+use gpui::{App, Context, Entity, Task};
+use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct CopilotEditPredictionDelegate {
-    cycled: bool,
-    buffer_id: Option<EntityId>,
-    completions: Vec<Completion>,
-    active_completion_index: usize,
-    file_extension: Option<String>,
+    completion: Option<(CopilotEditPrediction, EditPreview)>,
     pending_refresh: Option<Task<Result<()>>>,
-    pending_cycling_refresh: Option<Task<Result<()>>>,
     copilot: Entity<Copilot>,
 }
 
 impl CopilotEditPredictionDelegate {
     pub fn new(copilot: Entity<Copilot>) -> Self {
         Self {
-            cycled: false,
-            buffer_id: None,
-            completions: Vec::new(),
-            active_completion_index: 0,
-            file_extension: None,
+            completion: None,
             pending_refresh: None,
-            pending_cycling_refresh: None,
             copilot,
         }
     }
 
-    fn active_completion(&self) -> Option<&Completion> {
-        self.completions.get(self.active_completion_index)
-    }
-
-    fn push_completion(&mut self, new_completion: Completion) {
-        for completion in &self.completions {
-            if completion.text == new_completion.text && completion.range == new_completion.range {
-                return;
-            }
-        }
-        self.completions.push(new_completion);
+    fn active_completion(&self) -> Option<&(CopilotEditPrediction, EditPreview)> {
+        self.completion.as_ref()
     }
 }
 
@@ -64,12 +44,8 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         true
     }
 
-    fn supports_jump_to_edit() -> bool {
-        false
-    }
-
     fn is_refreshing(&self, _cx: &App) -> bool {
-        self.pending_refresh.is_some() && self.completions.is_empty()
+        self.pending_refresh.is_some() && self.completion.is_none()
     }
 
     fn is_enabled(
@@ -102,160 +78,96 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
                 })?
                 .await?;
 
-            this.update(cx, |this, cx| {
-                if !completions.is_empty() {
-                    this.cycled = false;
+            if let Some(mut completion) = completions.into_iter().next()
+                && let Some(trimmed_completion) = cx
+                    .update(|cx| trim_completion(&completion, cx))
+                    .ok()
+                    .flatten()
+            {
+                let preview = buffer
+                    .update(cx, |this, cx| {
+                        this.preview_edits(Arc::from(std::slice::from_ref(&trimmed_completion)), cx)
+                    })?
+                    .await;
+                this.update(cx, |this, cx| {
                     this.pending_refresh = None;
-                    this.pending_cycling_refresh = None;
-                    this.completions.clear();
-                    this.active_completion_index = 0;
-                    this.buffer_id = Some(buffer.entity_id());
-                    this.file_extension = buffer.read(cx).file().and_then(|file| {
-                        Some(
-                            Path::new(file.file_name(cx))
-                                .extension()?
-                                .to_str()?
-                                .to_string(),
-                        )
-                    });
+                    completion.range = trimmed_completion.0;
+                    completion.text = trimmed_completion.1.to_string();
+                    this.completion = Some((completion, preview));
 
-                    for completion in completions {
-                        this.push_completion(completion);
-                    }
                     cx.notify();
-                }
-            })?;
+                })?;
+            }
 
             Ok(())
         }));
     }
 
-    fn cycle(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut Context<Self>,
-    ) {
-        if self.cycled {
-            match direction {
-                Direction::Prev => {
-                    self.active_completion_index = if self.active_completion_index == 0 {
-                        self.completions.len().saturating_sub(1)
-                    } else {
-                        self.active_completion_index - 1
-                    };
-                }
-                Direction::Next => {
-                    if self.completions.is_empty() {
-                        self.active_completion_index = 0
-                    } else {
-                        self.active_completion_index =
-                            (self.active_completion_index + 1) % self.completions.len();
-                    }
-                }
-            }
-
-            cx.notify();
-        } else {
-            let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = Some(cx.spawn(async move |this, cx| {
-                let completions = copilot
-                    .update(cx, |copilot, cx| {
-                        copilot.completions_cycling(&buffer, cursor_position, cx)
-                    })?
-                    .await?;
-
-                this.update(cx, |this, cx| {
-                    this.cycled = true;
-                    this.file_extension = buffer.read(cx).file().and_then(|file| {
-                        Some(
-                            Path::new(file.file_name(cx))
-                                .extension()?
-                                .to_str()?
-                                .to_string(),
-                        )
-                    });
-                    for completion in completions {
-                        this.push_completion(completion);
-                    }
-                    this.cycle(buffer, cursor_position, direction, cx);
-                })?;
-
-                Ok(())
-            }));
-        }
-    }
-
     fn accept(&mut self, cx: &mut Context<Self>) {
-        if let Some(completion) = self.active_completion() {
+        if let Some((completion, _)) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
         }
     }
 
-    fn discard(&mut self, cx: &mut Context<Self>) {
-        let settings = AllLanguageSettings::get_global(cx);
-
-        let copilot_enabled = settings.show_edit_predictions(None, cx);
-
-        if !copilot_enabled {
-            return;
-        }
-
-        self.copilot
-            .update(cx, |copilot, cx| {
-                copilot.discard_completions(&self.completions, cx)
-            })
-            .detach_and_log_err(cx);
-    }
+    fn discard(&mut self, _: &mut Context<Self>) {}
 
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
+        _: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
-        let completion = self.active_completion()?;
-        if Some(buffer_id) != self.buffer_id
+        let (completion, edit_preview) = self.active_completion()?;
+
+        if Some(buffer_id) != Some(completion.buffer.entity_id())
             || !completion.range.start.is_valid(buffer)
             || !completion.range.end.is_valid(buffer)
         {
             return None;
         }
+        let edits = vec![(
+            completion.range.clone(),
+            Arc::from(completion.text.as_ref()),
+        )];
+        let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)
+            .filter(|edits| !edits.is_empty())?;
 
-        let mut completion_range = completion.range.to_offset(buffer);
-        let prefix_len = common_prefix(
-            buffer.chars_for_range(completion_range.clone()),
-            completion.text.chars(),
-        );
-        completion_range.start += prefix_len;
-        let suffix_len = common_prefix(
-            buffer.reversed_chars_for_range(completion_range.clone()),
-            completion.text[prefix_len..].chars().rev(),
-        );
-        completion_range.end = completion_range.end.saturating_sub(suffix_len);
+        Some(EditPrediction::Local {
+            id: None,
+            edits,
+            edit_preview: Some(edit_preview.clone()),
+        })
+    }
+}
 
-        if completion_range.is_empty()
-            && completion_range.start == cursor_position.to_offset(buffer)
-        {
-            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-            if completion_text.trim().is_empty() {
-                None
-            } else {
-                let position = cursor_position.bias_right(buffer);
-                Some(EditPrediction::Local {
-                    id: None,
-                    edits: vec![(position..position, completion_text.into())],
-                    edit_preview: None,
-                })
-            }
-        } else {
-            None
-        }
+fn trim_completion(
+    completion: &CopilotEditPrediction,
+    cx: &mut App,
+) -> Option<(Range<Anchor>, Arc<str>)> {
+    let buffer = completion.buffer.read(cx);
+    let mut completion_range = completion.range.to_offset(buffer);
+    let prefix_len = common_prefix(
+        buffer.chars_for_range(completion_range.clone()),
+        completion.text.chars(),
+    );
+    completion_range.start += prefix_len;
+    let suffix_len = common_prefix(
+        buffer.reversed_chars_for_range(completion_range.clone()),
+        completion.text[prefix_len..].chars().rev(),
+    );
+    completion_range.end = completion_range.end.saturating_sub(suffix_len);
+    let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+    if completion_text.trim().is_empty() {
+        None
+    } else {
+        let completion_range =
+            buffer.anchor_after(completion_range.start)..buffer.anchor_after(completion_range.end);
+
+        Some((completion_range, Arc::from(completion_text)))
     }
 }
 
@@ -269,6 +181,7 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use edit_prediction_types::EditPredictionGranularity;
     use editor::{
         Editor, ExcerptRange, MultiBuffer, MultiBufferOffset, SelectionEffects,
         test::editor_lsp_test_context::EditorLspTestContext,
@@ -281,6 +194,7 @@ mod tests {
         Point,
         language_settings::{CompletionSettingsContent, LspInsertMode, WordsCompletionMode},
     };
+    use lsp::Uri;
     use project::Project;
     use serde_json::json;
     use settings::{AllLanguageSettingsContent, SettingsStore};
@@ -336,12 +250,15 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -382,12 +299,15 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -411,12 +331,15 @@ mod tests {
         // After debouncing, new Copilot completions should be requested.
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "one.copilot2".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -478,45 +401,6 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
         });
-
-        // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
-        cx.update_editor(|editor, window, cx| {
-            editor.set_text("fn foo() {\n  \n}", window, cx);
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
-            });
-        });
-        handle_copilot_completion_request(
-            &copilot_lsp,
-            vec![crate::request::Completion {
-                text: "    let x = 4;".into(),
-                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-                ..Default::default()
-            }],
-            vec![],
-        );
-
-        cx.update_editor(|editor, window, cx| {
-            editor.next_edit_prediction(&Default::default(), window, cx)
-        });
-        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_edit_prediction());
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-            assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
-
-            // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
-            editor.tab(&Default::default(), window, cx);
-            assert!(editor.has_active_edit_prediction());
-            assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-
-            // Using AcceptEditPrediction again accepts the suggestion.
-            editor.accept_edit_prediction(&Default::default(), window, cx);
-            assert!(!editor.has_active_edit_prediction());
-            assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
-            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
-        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -569,25 +453,30 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
+
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
 
             // Accepting next word should accept the non-word and copilot suggestion should be gone
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
+
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
@@ -611,19 +500,22 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "one.123. copilot\n 456".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
             assert_eq!(
@@ -632,7 +524,7 @@ mod tests {
             );
 
             // Accepting next word should accept the next word and copilot suggestion should still exist
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
             assert_eq!(
@@ -641,7 +533,7 @@ mod tests {
             );
 
             // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
             assert_eq!(
@@ -683,15 +575,18 @@ mod tests {
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "two.foo()".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_edit_prediction(&Default::default(), window, cx)
+            editor.show_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -700,15 +595,22 @@ mod tests {
             assert_eq!(editor.text(cx), "one\ntw\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\nt\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\n\nthree\n");
-
             // Deleting across the original suggestion range invalidates it.
             editor.backspace(&Default::default(), window, cx);
             assert!(!editor.has_active_edit_prediction());
@@ -750,7 +652,7 @@ mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             })
             .unwrap();
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
@@ -762,19 +664,22 @@ mod tests {
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "b = 2 + a".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         _ = editor.update(cx, |editor, window, cx| {
             // Ensure copilot suggestions are shown for the first excerpt.
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
-            editor.next_edit_prediction(&Default::default(), window, cx);
+            editor.show_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
@@ -788,12 +693,15 @@ mod tests {
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "d = 4 + c".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         _ = editor.update(cx, |editor, window, cx| {
             // Move to another excerpt, ensuring the suggestion gets cleared.
@@ -870,15 +778,18 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "two.foo()".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_edit_prediction(&Default::default(), window, cx)
+            editor.show_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -900,12 +811,15 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "two.foo()".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -927,12 +841,15 @@ mod tests {
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![crate::request::Completion {
+            vec![crate::request::NextEditSuggestion {
                 text: "two.foo()".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 4)),
-                ..Default::default()
+                command: None,
+                text_document: lsp::VersionedTextDocumentIdentifier {
+                    uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: 0,
+                },
             }],
-            vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -997,7 +914,7 @@ mod tests {
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
-                window.focus(&editor.focus_handle(cx))
+                window.focus(&editor.focus_handle(cx), cx)
             })
             .unwrap();
         let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
@@ -1008,16 +925,20 @@ mod tests {
             .unwrap();
 
         let mut copilot_requests = copilot_lsp
-            .set_request_handler::<crate::request::GetCompletions, _, _>(
+            .set_request_handler::<crate::request::NextEditSuggestions, _, _>(
                 move |_params, _cx| async move {
-                    Ok(crate::request::GetCompletionsResult {
-                        completions: vec![crate::request::Completion {
+                    Ok(crate::request::NextEditSuggestionsResult {
+                        edits: vec![crate::request::NextEditSuggestion {
                             text: "next line".into(),
                             range: lsp::Range::new(
                                 lsp::Position::new(1, 0),
                                 lsp::Position::new(1, 0),
                             ),
-                            ..Default::default()
+                            command: None,
+                            text_document: lsp::VersionedTextDocumentIdentifier {
+                                uri: Uri::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                                version: 0,
+                            },
                         }],
                     })
                 },
@@ -1046,23 +967,14 @@ mod tests {
 
     fn handle_copilot_completion_request(
         lsp: &lsp::FakeLanguageServer,
-        completions: Vec<crate::request::Completion>,
-        completions_cycling: Vec<crate::request::Completion>,
+        completions: Vec<crate::request::NextEditSuggestion>,
     ) {
-        lsp.set_request_handler::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
-            let completions = completions.clone();
-            async move {
-                Ok(crate::request::GetCompletionsResult {
-                    completions: completions.clone(),
-                })
-            }
-        });
-        lsp.set_request_handler::<crate::request::GetCompletionsCycling, _, _>(
+        lsp.set_request_handler::<crate::request::NextEditSuggestions, _, _>(
             move |_params, _cx| {
-                let completions_cycling = completions_cycling.clone();
+                let completions = completions.clone();
                 async move {
-                    Ok(crate::request::GetCompletionsResult {
-                        completions: completions_cycling.clone(),
+                    Ok(crate::request::NextEditSuggestionsResult {
+                        edits: completions.clone(),
                     })
                 }
             },

@@ -331,7 +331,6 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
-
     wit_bindgen::generate!({
         skip: ["init-extension"],
         path: "./wit/since_v0.8.0",
@@ -524,6 +523,12 @@ impl wit::Guest for Component {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct LanguageServerId(String);
 
+impl LanguageServerId {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl AsRef<str> for LanguageServerId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -539,6 +544,12 @@ impl fmt::Display for LanguageServerId {
 /// The ID of a context server.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct ContextServerId(String);
+
+impl ContextServerId {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
 
 impl AsRef<str> for ContextServerId {
     fn as_ref(&self) -> &str {

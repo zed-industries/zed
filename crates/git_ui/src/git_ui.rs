@@ -10,6 +10,7 @@ use ui::{
 };
 
 mod blame_ui;
+pub mod clone;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -817,7 +818,7 @@ impl GitCloneModal {
         });
         let focus_handle = repo_input.focus_handle(cx);
 
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Self {
             panel,

@@ -52,6 +52,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 itertools.workspace = true
+url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }

@@ -436,6 +436,8 @@
     "show_onboarding_banner": true,
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
+    // Whether to show the user menu in the titlebar.
+    "show_user_menu": true,
     // Whether to show the sign in button in the titlebar.
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
@@ -970,6 +972,8 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "restore_file_from_disk": true,
+          "save_file": true,
           "open": true,
           "grep": true,
           "terminal": true,
@@ -1317,6 +1321,14 @@
   "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
+    // Global switch to enable or disable all git integration features.
+    // If set to true, disables all git integration features.
+    // If set to false, individual git integration features below will be independently enabled or disabled.
+    "disable_git": false,
+    // Whether to enable git status tracking.
+    "enable_status": true,
+    // Whether to enable git diff display.
+    "enable_diff": true,
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"
@@ -1701,7 +1713,12 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "JSONC": [
+      "**/.zed/*.json",
+      "**/.vscode/**/*.json",
+      "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
+      "tsconfig*.json",
+    ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
   },
@@ -1933,7 +1950,7 @@
       },
     },
     "Proto": {
-      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."]
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
     },
     "Python": {
       "code_actions_on_format": {
@@ -2058,6 +2075,12 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to skip worktree trust checks.
+    // When trusted, project settings are synchronized automatically,
+    // language and MCP servers are downloaded and started automatically.
+    //
+    // Default: false
+    "trust_all_worktrees": false,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
@@ -2141,6 +2164,13 @@
     // The mode can be one of the following: "normal", "replace", "insert", "visual".
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {},
+  },
+  // Which-key popup settings
+  "which_key": {
+    // Whether to show the which-key popup when holding down key combinations.
+    "enabled": false,
+    // Delay in milliseconds before showing the which-key popup.
+    "delay_ms": 1000,
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
