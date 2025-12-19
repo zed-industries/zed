@@ -40,10 +40,10 @@ jobs:
         id: install-droid
         run: |
           curl -fsSL https://app.factory.ai/cli | sh
-          echo "${HOME}/.factory/bin" >> "$GITHUB_PATH"
-          echo "DROID_BIN=${HOME}/.factory/bin/droid" >> "$GITHUB_ENV"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          echo "DROID_BIN=${HOME}/.local/bin/droid" >> "$GITHUB_ENV"
           # Verify installation
-          "${HOME}/.factory/bin/droid" --version
+          "${HOME}/.local/bin/droid" --version
 
       - name: Setup Node.js (for Prettier)
         uses: actions/setup-node@v4
