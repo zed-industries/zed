@@ -20768,7 +20768,6 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
- "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
