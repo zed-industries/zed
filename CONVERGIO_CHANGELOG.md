@@ -4,7 +4,7 @@ All notable Convergio-specific changes to this project will be documented in thi
 
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - 2025-12-20
+## [0.1.0] - 2025-12-20
 
 ### Added
 
@@ -36,7 +36,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - **Double-click Actions** - activate commits for details
 
 ### Base Editor
-- Based on Zed v0.61
+- Based on Zed v0.219.0
 
 ---
 
@@ -49,4 +49,4 @@ see the upstream [Zed Changelog](https://zed.dev/releases).
 
 | Convergio Version | Zed Base Version | Notes |
 |-------------------|------------------|-------|
-| 1.0.0 | 0.61 | Initial release |
+| 0.1.0 | 0.219.0 | Initial release |
