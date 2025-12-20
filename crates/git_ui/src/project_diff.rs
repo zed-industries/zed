@@ -956,7 +956,7 @@ impl Item for ProjectDiff {
     }
 
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
+        ToolbarItemLocation::Hidden
     }
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {

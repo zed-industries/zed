@@ -125,7 +125,7 @@ impl Render for Toolbar {
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
-                                    .min_h_6()
+                                    .min_h_8()
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()
@@ -135,7 +135,7 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
-                                    .h_6()
+                                    .h_8()
                                     .flex_row_reverse()
                                     .map(|el| {
                                         if has_left_items {

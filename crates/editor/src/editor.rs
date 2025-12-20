@@ -209,7 +209,7 @@ use workspace::{
     ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    searchable::SearchEvent,
+    searchable::{CollapseDirection, SearchEvent},
 };
 
 use crate::{
@@ -1183,7 +1183,7 @@ pub struct Editor {
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
-    pub in_project_search: bool,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -19179,37 +19179,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.buffer.read(cx).is_singleton() {
+        let has_folds = if self.buffer.read(cx).is_singleton() {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let has_folds = display_map
                 .folds_in_range(MultiBufferOffset(0)..display_map.buffer_snapshot().len())
                 .next()
                 .is_some();
-
-            if has_folds {
-                self.unfold_all(&actions::UnfoldAll, window, cx);
-            } else {
-                self.fold_all(&actions::FoldAll, window, cx);
-            }
+            has_folds
         } else {
             let buffer_ids = self.buffer.read(cx).excerpt_buffer_ids();
-            let should_unfold = buffer_ids
+            let has_folds = buffer_ids
                 .iter()
                 .any(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
+            has_folds
+        };
 
-            self.toggle_fold_multiple_buffers = cx.spawn_in(window, async move |editor, cx| {
-                editor
-                    .update_in(cx, |editor, _, cx| {
-                        for buffer_id in buffer_ids {
-                            if should_unfold {
-                                editor.unfold_buffer(buffer_id, cx);
-                            } else {
-                                editor.fold_buffer(buffer_id, cx);
-                            }
-                        }
-                    })
-                    .ok();
-            });
+        if has_folds {
+            self.unfold_all(&actions::UnfoldAll, window, cx);
+        } else {
+            self.fold_all(&actions::FoldAll, window, cx);
         }
     }
 
@@ -19374,6 +19362,9 @@ impl Editor {
                     .ok();
             });
         }
+        cx.emit(SearchEvent::ResultsCollapsedChanged(
+            CollapseDirection::Collapsed,
+        ));
     }
 
     pub fn fold_function_bodies(
@@ -19562,6 +19553,9 @@ impl Editor {
                     .ok();
             });
         }
+        cx.emit(SearchEvent::ResultsCollapsedChanged(
+            CollapseDirection::Expanded,
+        ));
     }
 
     pub fn fold_selected_ranges(

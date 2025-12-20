@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
-    actions::{Backtab, SelectAll, Tab},
+    actions::{Backtab, FoldAll, SelectAll, Tab, ToggleFoldAll, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -43,7 +43,7 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{Direction, SearchableItem, SearchableItemHandle},
+    searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
 actions!(
@@ -763,26 +763,18 @@ impl ProjectSearchView {
     fn toggle_all_search_results(
         &mut self,
         _: &ToggleAllSearchResults,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.results_collapsed = !self.results_collapsed;
-        self.update_results_visibility(cx);
+        self.update_results_visibility(window, cx);
     }
 
-    fn update_results_visibility(&mut self, cx: &mut Context<Self>) {
+    fn update_results_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.results_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let buffer_ids = multibuffer.excerpt_buffer_ids();
-
             if self.results_collapsed {
-                for buffer_id in buffer_ids {
-                    editor.fold_buffer(buffer_id, cx);
-                }
+                editor.unfold_all(&UnfoldAll, window, cx);
             } else {
-                for buffer_id in buffer_ids {
-                    editor.unfold_buffer(buffer_id, cx);
-                }
+                editor.fold_all(&FoldAll, window, cx);
             }
         });
         cx.notify();
@@ -872,6 +864,18 @@ impl ProjectSearchView {
                 cx.emit(ViewEvent::EditorEvent(event.clone()));
             }),
         );
+        subscriptions.push(cx.subscribe(
+            &results_editor,
+            |this, _editor, event: &SearchEvent, _cx| match event {
+                SearchEvent::ResultsCollapsedChanged(collapsed_direction) => {
+                    match collapsed_direction {
+                        CollapseDirection::Collapsed => this.results_collapsed = true,
+                        CollapseDirection::Expanded => this.results_collapsed = false,
+                    }
+                }
+                _ => (),
+            },
+        ));
 
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
