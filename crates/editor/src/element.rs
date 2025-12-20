@@ -4272,11 +4272,7 @@ impl EditorElement {
     ) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
 
-        let element = h_flex()
-            .id("breadcrumb-container")
-            .flex_grow()
-            .overflow_x_scroll()
-            .text_ui(cx);
+        let element = h_flex().id("breadcrumb-container").flex_grow().text_ui(cx);
 
         let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
         let suffix_start_ix = cmp::max(
