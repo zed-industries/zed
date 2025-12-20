@@ -1364,7 +1364,8 @@ impl AgentDiff {
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::ModeUpdated(_)
-            | AcpThreadEvent::HistoryLoaded(_) => {}
+            | AcpThreadEvent::HistoryLoaded(_)
+            | AcpThreadEvent::BackgroundComplete { .. } => {}
         }
     }
 

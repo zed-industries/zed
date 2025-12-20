@@ -376,6 +376,8 @@ pub struct ConvergioPanel {
     _history_subscription: Option<Subscription>,
     // Pending thread opens waiting for history to load (agent_name, server_name)
     pending_thread_opens: Vec<(SharedString, SharedString)>,
+    // Track agents that are currently processing in background
+    processing_agents: HashSet<SharedString>,
 }
 
 pub fn init(cx: &mut App) {
@@ -538,6 +540,7 @@ impl ConvergioPanel {
             history_store,
             _history_subscription: history_subscription,
             pending_thread_opens: Vec::new(),
+            processing_agents: HashSet::default(),
         }
     }
 
@@ -660,6 +663,23 @@ impl ConvergioPanel {
     pub fn store_agent_session(&mut self, agent_name: &str, session_id: String, cx: &mut Context<Self>) {
         self._agent_sessions.insert(agent_name.to_string(), session_id);
         self.save_agent_sessions(cx);
+    }
+
+    /// Mark an agent as currently processing (working in background)
+    pub fn set_agent_processing(&mut self, agent_name: &str, is_processing: bool, cx: &mut Context<Self>) {
+        let name: SharedString = agent_name.to_string().into();
+        if is_processing {
+            self.processing_agents.insert(name);
+        } else {
+            self.processing_agents.remove(&name);
+        }
+        cx.notify();
+    }
+
+    /// Check if an agent is currently processing
+    pub fn is_agent_processing(&self, agent_name: &str) -> bool {
+        let name: SharedString = agent_name.to_string().into();
+        self.processing_agents.contains(&name)
     }
 
     fn save_agent_sessions(&self, cx: &mut Context<Self>) {
@@ -1006,6 +1026,7 @@ impl ConvergioPanel {
     fn render_agent(&self, agent: &ConvergioAgent, global_ix: usize, is_panel_focused: bool, cx: &Context<Self>) -> impl IntoElement {
         let is_selected = self.selected_index == Some(global_ix);
         let is_active = self.active_agents.contains(&agent.name);
+        let is_processing = self.processing_agents.contains(&agent.name);
         let agent_name = agent.name.clone();
         let server_name = agent.server_name.clone();
         // Show focus ring when selected via keyboard navigation
@@ -1023,7 +1044,16 @@ impl ConvergioPanel {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .when(is_active, |this| {
+                    // Show processing indicator when agent is working in background
+                    .when(is_processing, |this| {
+                        this.child(
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning)
+                        )
+                    })
+                    // Show green dot when active but not processing
+                    .when(is_active && !is_processing, |this| {
                         this.child(
                             div()
                                 .w_2()
@@ -1048,7 +1078,16 @@ impl ConvergioPanel {
                             .items_center()
                             .gap_1()
                             .child(Label::new(agent.display_name.clone()).size(LabelSize::Small))
-                            .when(is_active, |this| {
+                            // Show spinning indicator next to name when processing
+                            .when(is_processing, |this| {
+                                this.child(
+                                    Label::new("⟳")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Warning)
+                                )
+                            })
+                            // Show green dot next to name when active but not processing
+                            .when(is_active && !is_processing, |this| {
                                 this.child(
                                     Label::new("●")
                                         .size(LabelSize::XSmall)

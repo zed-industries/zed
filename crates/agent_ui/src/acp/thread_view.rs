@@ -1606,6 +1606,15 @@ impl AcpThreadView {
                 // The connection keeps track of the mode
                 cx.notify();
             }
+            AcpThreadEvent::BackgroundComplete { has_buffered_content, buffered_length } => {
+                // Notify user that background processing is complete
+                let message = if *has_buffered_content {
+                    format!("Background task complete ({} bytes buffered)", buffered_length)
+                } else {
+                    "Background task complete".to_string()
+                };
+                self.notify_with_sound(&message, IconName::Check, window, cx);
+            }
         }
         cx.notify();
     }
