@@ -46,9 +46,9 @@ use gpui::{
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, TextStyleRefinement,
-    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -4084,14 +4084,20 @@ impl EditorElement {
                                             })),
                                     )
                                     .when_some(parent_path, |then, path| {
-                                        // TODO: Swap to use `truncate_start()`
-                                        then.child(Label::new(path).buffer_font(cx).truncate().color(
-                                            if file_status.is_some_and(FileStatus::is_deleted) {
-                                                Color::Custom(colors.text_disabled)
-                                            } else {
-                                                Color::Custom(colors.text_muted)
-                                            },
-                                        ))
+                                        then.child(
+                                            Label::new(path)
+                                                .buffer_font(cx)
+                                                .truncate_start()
+                                                .color(
+                                                    if file_status
+                                                        .is_some_and(FileStatus::is_deleted)
+                                                    {
+                                                        Color::Custom(colors.text_disabled)
+                                                    } else {
+                                                        Color::Custom(colors.text_muted)
+                                                    },
+                                                ),
+                                        )
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
                                         then.child(self.render_breadcrumb_text(
