@@ -2166,8 +2166,7 @@ impl Interactivity {
                 let hovered = hitbox.is_hovered(window);
                 let was_hovered = hover_state
                     .as_ref()
-                    .map(|state| state.borrow().element)
-                    .unwrap_or(false);
+                    .is_some_and(|state| state.borrow().element);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
@@ -2189,8 +2188,7 @@ impl Interactivity {
                     let group_hovered = group_hitbox_id.is_hovered(window);
                     let was_group_hovered = hover_state
                         .as_ref()
-                        .map(|state| state.borrow().group)
-                        .unwrap_or(false);
+                        .is_some_and(|state| state.borrow().group);
                     if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
