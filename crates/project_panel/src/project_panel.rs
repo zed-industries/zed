@@ -30,6 +30,7 @@ use gpui::{
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use panel::PanelHeader;
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -57,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
+    IconDecorationKind, IconName, IconSize, IndentGuideColors, IndentGuideLayout, KeyBinding,
+    Label, LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
@@ -5572,6 +5573,61 @@ impl ProjectPanel {
             })
             .collect()
     }
+
+    fn render_panel_header(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+
+        self.panel_header_container(_window, cx)
+            .pr_2()
+            .child(
+                Label::new("Project")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(div().flex_grow())
+            .child(
+                IconButton::new("select-opened-file", IconName::Crosshair)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Select Opened File",
+                            &workspace::pane::RevealInProjectPanel::default(),
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(active_entry) = this.workspace.upgrade().and_then(|workspace| {
+                            workspace
+                                .read(cx)
+                                .active_item(cx)?
+                                .project_entry_ids(cx)
+                                .first()
+                                .copied()
+                        }) {
+                            this.project.update(cx, |_, cx| {
+                                cx.emit(project::Event::RevealInProjectPanel(active_entry))
+                            });
+                        }
+                    })),
+            )
+            .child(
+                IconButton::new("collapse-all", IconName::ListCollapse)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action("Collapse All", &CollapseAllEntries, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                    })),
+            )
+    }
 }
 
 #[derive(Clone)]
@@ -5613,6 +5669,9 @@ impl Render for ProjectPanel {
         };
 
         let is_local = project.is_local();
+        let is_read_only = project.is_read_only(cx);
+        let is_remote = project.is_remote();
+        let is_via_remote_server = project.is_via_remote_server();
 
         if has_worktree {
             let item_count = self
@@ -5736,7 +5795,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .when(!project.is_read_only(cx), |el| {
+                .when(!is_read_only, |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
@@ -5746,21 +5805,20 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
-                        .when(!project.is_remote(), |el| {
-                            el.on_action(cx.listener(Self::trash))
-                        })
+                        .when(!is_remote, |el| el.on_action(cx.listener(Self::trash)))
                 })
-                .when(project.is_local(), |el| {
+                .when(is_local, |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
-                .when(project.is_via_remote_server(), |el| {
+                .when(is_via_remote_server, |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(self.render_panel_header(window, cx))
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
@@ -6084,7 +6142,7 @@ impl Render for ProjectPanel {
                                         }
                                     }),
                                 )
-                                .when(!project.is_read_only(cx), |el| {
+                                .when(!is_read_only, |el| {
                                     el.on_click(cx.listener(
                                         |this, event: &gpui::ClickEvent, window, cx| {
                                             if event.click_count() > 1
@@ -6322,6 +6380,8 @@ impl Panel for ProjectPanel {
         0
     }
 }
+
+impl PanelHeader for ProjectPanel {}
 
 impl Focusable for ProjectPanel {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
