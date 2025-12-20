@@ -435,7 +435,6 @@ impl RunningMode {
             }),
         };
 
-        let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
         // From spec (on initialization sequence):
         // client sends a setExceptionBreakpoints request if one or more exceptionBreakpointFilters have been defined (or if supportsConfigurationDoneRequest is not true)
         //
@@ -443,8 +442,7 @@ impl RunningMode {
         let should_send_exception_breakpoints = capabilities
             .exception_breakpoint_filters
             .as_ref()
-            .is_some_and(|filters| !filters.is_empty())
-            || !configuration_done_supported;
+            .is_some_and(|filters| !filters.is_empty());
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
             .unwrap_or_default();
@@ -454,9 +452,18 @@ impl RunningMode {
             .exception_breakpoint_filters
             .clone()
             .unwrap_or_default();
+        let capabilities = capabilities.clone();
         let configuration_sequence = cx.spawn({
             async move |session, cx| {
                 let adapter_name = session.read_with(cx, |this, _| this.adapter())?;
+                let configuration_done_supported = if adapter_name.as_ref() == "GDB" {
+                    // Until GDB 17 is officially out and in circulation, as a workaround to misconfigured handling of DAP in GDB,
+                    // we do not use ConfigurationDone for communications.
+                    // See https://github.com/zed-industries/zed/issues/41753
+                    false
+                } else {
+                    ConfigurationDone::is_supported(&capabilities)
+                };
                 let (breakpoint_store, adapter_defaults) =
                     dap_store.read_with(cx, |dap_store, _| {
                         (
@@ -496,7 +503,7 @@ impl RunningMode {
                     }
                 })?;
 
-                if should_send_exception_breakpoints {
+                if should_send_exception_breakpoints || !configuration_done_supported {
                     _ = session.update(cx, |this, _| {
                         filters.retain(|filter| {
                             let is_enabled = if let Some(defaults) = adapter_defaults.as_ref() {
