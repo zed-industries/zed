@@ -845,8 +845,6 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
-        /// Toggles read-only mode for the current buffer.
-        ToggleReadOnly,
     ]
 );
 

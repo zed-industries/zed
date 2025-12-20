@@ -11092,7 +11092,12 @@ impl Editor {
         });
     }
 
-    pub fn toggle_read_only(&mut self, _: &ToggleReadOnly, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_read_only(
+        &mut self,
+        _: &workspace::ToggleReadOnlyFile,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_capability(
