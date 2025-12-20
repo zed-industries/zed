@@ -212,7 +212,7 @@ impl ThreadTimings {
         {
             last_timing.end = timing.end;
         } else {
-            while self.timings.len() >= MAX_TASK_TIMINGS {
+            while self.timings.len() + 1 >= MAX_TASK_TIMINGS {
                 // This should only ever pop one element because it matches the insertion below.
                 self.timings.pop_front();
             }
