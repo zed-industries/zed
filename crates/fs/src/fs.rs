@@ -886,22 +886,25 @@ impl Fs for RealFs {
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = if is_symlink {
             let path_buf = path.to_path_buf();
-            let path_exists = self
+            // Read target metadata, if the target exists
+            match self
                 .executor
-                .spawn(async move {
-                    path_buf
-                        .try_exists()
-                        .with_context(|| format!("checking existence for path {path_buf:?}"))
-                })
-                .await?;
-            if path_exists {
-                let path_buf = path.to_path_buf();
-                self.executor
-                    .spawn(async move { std::fs::metadata(path_buf) })
-                    .await
-                    .with_context(|| "accessing symlink for path {path}")?
-            } else {
-                symlink_metadata
+                .spawn(async move { std::fs::metadata(path_buf) })
+                .await
+            {
+                Ok(target_metadata) => target_metadata,
+                Err(err) => {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        // TODO: Also FilesystemLoop when that's stable
+                        log::warn!(
+                            "Failed to read symlink target metadata for path {path:?}: {err}"
+                        );
+                    }
+                    // For a broken or recursive symlink, return the symlink metadata. (Or
+                    // as edge cases, a symlink into a directory we can't read, which is hard
+                    // to distinguish from just being broken.)
+                    symlink_metadata
+                }
             }
         } else {
             symlink_metadata
