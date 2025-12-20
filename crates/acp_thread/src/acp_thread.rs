@@ -11,6 +11,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
+use serde_json::to_string_pretty;
 use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
@@ -2422,8 +2423,10 @@ fn markdown_for_raw_output(
             )
         })),
         value => Some(cx.new(|cx| {
+            let pretty_json = to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+
             Markdown::new(
-                format!("```json\n{}\n```", value).into(),
+                format!("```json\n{}\n```", pretty_json).into(),
                 Some(language_registry.clone()),
                 None,
                 cx,
