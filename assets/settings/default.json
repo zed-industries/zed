@@ -972,6 +972,8 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "restore_file_from_disk": true,
+          "save_file": true,
           "open": true,
           "grep": true,
           "terminal": true,
@@ -1176,6 +1178,10 @@
   "remove_trailing_whitespace_on_save": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
+  // Whether to continue markdown lists when pressing enter.
+  "extend_list_on_newline": true,
+  // Whether to indent list items when pressing tab after a list marker.
+  "indent_list_on_tab": true,
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
@@ -1319,6 +1325,14 @@
   "hidden_files": ["**/.*"],
   // Git gutter behavior configuration.
   "git": {
+    // Global switch to enable or disable all git integration features.
+    // If set to true, disables all git integration features.
+    // If set to false, individual git integration features below will be independently enabled or disabled.
+    "disable_git": false,
+    // Whether to enable git status tracking.
+    "enable_status": true,
+    // Whether to enable git diff display.
+    "enable_diff": true,
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"
@@ -1703,7 +1717,12 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "JSONC": [
+      "**/.zed/*.json",
+      "**/.vscode/**/*.json",
+      "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
+      "tsconfig*.json",
+    ],
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
   },
@@ -2060,6 +2079,12 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to skip worktree trust checks.
+    // When trusted, project settings are synchronized automatically,
+    // language and MCP servers are downloaded and started automatically.
+    //
+    // Default: false
+    "trust_all_worktrees": false,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
@@ -2143,6 +2168,13 @@
     // The mode can be one of the following: "normal", "replace", "insert", "visual".
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {},
+  },
+  // Which-key popup settings
+  "which_key": {
+    // Whether to show the which-key popup when holding down key combinations.
+    "enabled": false,
+    // Delay in milliseconds before showing the which-key popup.
+    "delay_ms": 1000,
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

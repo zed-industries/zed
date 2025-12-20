@@ -1,5 +1,5 @@
 use crate::{
-    RemoteClientDelegate, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
@@ -70,7 +70,10 @@ impl WslRemoteConnection {
         let mut this = Self {
             connection_options,
             remote_binary_path: None,
-            platform: RemotePlatform { os: "", arch: "" },
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),

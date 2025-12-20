@@ -522,12 +522,16 @@ impl Vim {
                                             selection.start = original_point.to_display_point(map)
                                         }
                                     } else {
-                                        selection.end = movement::saturating_right(
-                                            map,
-                                            original_point.to_display_point(map),
-                                        );
-                                        if original_point.column > 0 {
-                                            selection.reversed = true
+                                        let original_display_point =
+                                            original_point.to_display_point(map);
+                                        if selection.end <= original_display_point {
+                                            selection.end = movement::saturating_right(
+                                                map,
+                                                original_display_point,
+                                            );
+                                            if original_point.column > 0 {
+                                                selection.reversed = true
+                                            }
                                         }
                                     }
                                 }

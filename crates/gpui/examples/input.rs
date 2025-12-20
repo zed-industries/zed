@@ -736,7 +736,7 @@ fn main() {
 
         window
             .update(cx, |view, window, cx| {
-                window.focus(&view.text_input.focus_handle(cx));
+                window.focus(&view.text_input.focus_handle(cx), cx);
                 cx.activate(true);
             })
             .unwrap();
