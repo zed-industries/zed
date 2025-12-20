@@ -3526,6 +3526,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "component_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "component",
+ "db",
+ "fs",
+ "gpui",
+ "language",
+ "log",
+ "node_runtime",
+ "notifications",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "session",
+ "settings",
+ "theme",
+ "ui",
+ "ui_input",
+ "uuid",
+ "workspace",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20643,6 +20670,7 @@ dependencies = [
  "collections",
  "command_palette",
  "component",
+ "component_preview",
  "copilot",
  "crashes",
  "dap",
@@ -20748,7 +20776,6 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
- "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
