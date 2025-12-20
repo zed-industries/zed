@@ -4122,6 +4122,7 @@ mod tests {
                     content: ContentBlock::Empty,
                     chunks: vec!["Injected message (no checkpoint)".into()],
                     checkpoint: None,
+                    indented: false,
                 }),
                 cx,
             );
