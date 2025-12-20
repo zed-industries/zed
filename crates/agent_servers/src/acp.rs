@@ -8,9 +8,23 @@ use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use task::ShellBuilder;
+
+// Re-export HistoricalMessage from acp_thread for use in session/history notification
+pub use acp_thread::HistoricalMessage;
+
+// Convergio custom extension: session/history notification
+// This is sent by the Convergio ACP server when resuming a session with history
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryNotification {
+    pub session_id: String,
+    pub messages: Vec<HistoricalMessage>,
+    #[serde(default)]
+    pub compacted: bool,
+}
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -34,6 +48,8 @@ pub struct AcpConnection {
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    // Convergio: Buffer for session/history notifications that arrive before session is registered
+    pending_history: Rc<RefCell<HashMap<String, SessionHistoryNotification>>>,
     auth_methods: Vec<acp::AuthMethod>,
     agent_capabilities: acp::AgentCapabilities,
     default_mode: Option<acp::SessionModeId>,
@@ -113,6 +129,8 @@ impl AcpConnection {
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        // Convergio: Buffer for session/history notifications that arrive before session is registered
+        let pending_history = Rc::new(RefCell::new(HashMap::default()));
 
         let (release_channel, version) = cx.update(|cx| {
             (
@@ -124,6 +142,7 @@ impl AcpConnection {
 
         let client = ClientDelegate {
             sessions: sessions.clone(),
+            pending_history: pending_history.clone(),
             cx: cx.clone(),
         };
         let (connection, io_task) = acp::ClientSideConnection::new(client, stdin, stdout, {
@@ -214,6 +233,7 @@ impl AcpConnection {
             server_name,
             telemetry_id,
             sessions,
+            pending_history,
             agent_capabilities: response.agent_capabilities,
             default_mode,
             default_model,
@@ -254,6 +274,7 @@ impl AgentConnection for AcpConnection {
         let name = self.server_name.clone();
         let conn = self.connection.clone();
         let sessions = self.sessions.clone();
+        let pending_history = self.pending_history.clone();
         let default_mode = self.default_mode.clone();
         let default_model = self.default_model.clone();
         let cwd = cwd.to_path_buf();
@@ -433,7 +454,20 @@ impl AgentConnection for AcpConnection {
                 session_modes: modes,
                 models,
             };
+            let session_id_str = session_id.to_string();
             sessions.borrow_mut().insert(session_id, session);
+
+            // Convergio: Check for pending session/history notification and process it
+            if let Some(history) = pending_history.borrow_mut().remove(&session_id_str) {
+                log::info!(
+                    "Processing buffered session/history with {} messages for session {}",
+                    history.messages.len(),
+                    session_id_str
+                );
+                thread.update(&mut cx, |thread, cx| {
+                    thread.load_historical_messages(history.messages, cx);
+                })?;
+            }
 
             Ok(thread)
         })
@@ -687,6 +721,8 @@ impl acp_thread::AgentModelSelector for AcpModelSelector {
 
 struct ClientDelegate {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    // Convergio: Buffer for session/history notifications that arrive before session is registered
+    pending_history: Rc<RefCell<HashMap<String, SessionHistoryNotification>>>,
     cx: AsyncApp,
 }
 
@@ -927,8 +963,45 @@ impl acp::Client for ClientDelegate {
         Err(acp::Error::method_not_found())
     }
 
-    async fn ext_notification(&self, _args: acp::ExtNotification) -> Result<(), acp::Error> {
-        Err(acp::Error::method_not_found())
+    async fn ext_notification(&self, args: acp::ExtNotification) -> Result<(), acp::Error> {
+        // Handle Convergio custom extension: session/history
+        if args.method.as_ref() == "session/history" {
+            // Parse the raw params as JSON
+            let params_str = args.params.get();
+            match serde_json::from_str::<SessionHistoryNotification>(params_str) {
+                Ok(history) => {
+                    log::info!(
+                        "Received session/history notification with {} messages for session {}",
+                        history.messages.len(),
+                        history.session_id
+                    );
+
+                    let session_id_str = history.session_id.clone();
+                    let session_id = acp::SessionId::new(history.session_id.clone());
+                    if let Ok(thread) = self.session_thread(&session_id) {
+                        // Session is registered, load history immediately
+                        let _ = thread.update(&mut self.cx.clone(), |thread, cx| {
+                            thread.load_historical_messages(history.messages.clone(), cx);
+                        });
+                    } else {
+                        // Session not yet registered - buffer for later processing
+                        log::info!(
+                            "Session {} not yet registered, buffering {} messages for later",
+                            session_id_str,
+                            history.messages.len()
+                        );
+                        self.pending_history.borrow_mut().insert(session_id_str, history);
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to parse session/history notification: {}", e);
+                }
+            }
+        }
+
+        // Unknown extension notification - ignore silently for compatibility
+        Ok(())
     }
 
     async fn release_terminal(

@@ -37,6 +37,15 @@ use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
+// Convergio extension: Historical messages from session/history notification
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HistoricalMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub timestamp: i64,
+}
+
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
@@ -1310,6 +1319,64 @@ impl AcpThread {
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+    }
+
+    /// Load historical messages from a resumed session (Convergio extension)
+    /// This is called when the ACP server sends a session/history notification
+    pub fn load_historical_messages(&mut self, messages: Vec<HistoricalMessage>, cx: &mut Context<Self>) {
+        if messages.is_empty() {
+            return;
+        }
+
+        let language_registry = self.project.read(cx).languages().clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let message_count = messages.len();
+
+        for msg in messages {
+            // Create a text content block for the historical message
+            let content_chunk = acp::ContentBlock::Text(acp::TextContent::new(msg.content));
+
+            match msg.role.as_str() {
+                "user" => {
+                    // Create a user message entry with the historical content
+                    let content_block = ContentBlock::new(
+                        content_chunk.clone(),
+                        &language_registry,
+                        path_style,
+                        cx,
+                    );
+                    let user_message = UserMessage {
+                        id: None, // Historical messages don't have IDs
+                        content: content_block,
+                        chunks: vec![content_chunk],
+                        checkpoint: None,
+                        indented: false,
+                    };
+                    self.entries.push(AgentThreadEntry::UserMessage(user_message));
+                }
+                "assistant" => {
+                    // Create an assistant message entry with the historical content
+                    let content_block = ContentBlock::new(
+                        content_chunk,
+                        &language_registry,
+                        path_style,
+                        cx,
+                    );
+                    let chunk = AssistantMessageChunk::Message { block: content_block };
+                    let assistant_message = AssistantMessage {
+                        chunks: vec![chunk],
+                        indented: false,
+                    };
+                    self.entries.push(AgentThreadEntry::AssistantMessage(assistant_message));
+                }
+                _ => {}
+            }
+        }
+
+        // Emit event for each historical entry to update the UI
+        for _ in 0..message_count {
+            cx.emit(AcpThreadEvent::NewEntry);
+        }
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
