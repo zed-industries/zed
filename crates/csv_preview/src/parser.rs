@@ -61,18 +61,21 @@ impl CsvPreviewView {
             }
 
             let instant = Instant::now();
-            let contents = view.update(cx, |_, cx| {
+            let buffer_snapshot = view.update(cx, |_, cx| {
                 editor
                     .read(cx)
                     .buffer()
                     .read(cx)
                     .as_singleton()
-                    .map(|b| b.read(cx).text())
-                    .unwrap_or_default()
+                    .map(|b| b.read(cx).text_snapshot())
             })?;
 
+            let Some(buffer_snapshot) = buffer_snapshot else {
+                return Ok(());
+            };
+
             let parsing_task =
-                cx.background_spawn(async move { TableLikeContent::from_str(contents) });
+                cx.background_spawn(async move { TableLikeContent::from_buffer(buffer_snapshot) });
 
             let parsed_csv = parsing_task.await;
 

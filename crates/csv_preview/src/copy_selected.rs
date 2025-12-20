@@ -1,5 +1,5 @@
 use gpui::ClipboardItem;
-use ui::{Context, SharedString, Window};
+use ui::{Context, Window};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use std::collections::BTreeMap;
@@ -38,7 +38,7 @@ impl CsvPreviewView {
             if let Some(row) = (&full_content.rows).get(row_idx.get()) {
                 let cell_content = row
                     .get(col_idx.get())
-                    .map(|s| s.as_ref().to_string())
+                    .map(|s| s.display_value().as_ref().to_string())
                     .unwrap_or_default();
 
                 rows_data
@@ -143,7 +143,7 @@ impl CsvPreviewView {
 }
 
 fn format_as_markdown_table(
-    all_table_headers: &[SharedString],
+    all_table_headers: &[crate::table_cell::TableCell],
     rows_data: &BTreeMap<DataRow, BTreeMap<AnyColumn, String>>,
 ) -> String {
     if rows_data.is_empty() {
@@ -165,7 +165,12 @@ fn format_as_markdown_table(
         .map(|col_idx| {
             all_table_headers
                 .get(col_idx.get())
-                .map(|h| h.as_ref().replace('\n', "<br>").replace('|', "\\|"))
+                .map(|h| {
+                    h.display_value()
+                        .as_ref()
+                        .replace('\n', "<br>")
+                        .replace('|', "\\|")
+                })
                 .unwrap_or_else(|| format!("Col {}", col_idx.get() + 1))
         })
         .collect();

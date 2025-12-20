@@ -1,17 +1,86 @@
-//! Table Cell Rendering
+//! Table Cell Rendering and Position Tracking
 //!
 //! Creates interactive cell elements with mouse event handlers for selection.
+//! Also defines cell position tracking for span-based parsing.
 
 use std::time::Instant;
 
 use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
-use ui::{div, prelude::*};
+use text::{Anchor, BufferId};
+use ui::{SharedString, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
     settings::{FontType, VerticalAlignment},
     types::DisplayCellId,
 };
+
+/// Position of a cell within the source CSV buffer
+#[derive(Clone, Debug)]
+pub struct CellPosition {
+    /// Start anchor of the cell content in the source buffer
+    pub start: Anchor,
+    /// End anchor of the cell content in the source buffer
+    pub end: Anchor,
+    /// The buffer containing this cell
+    pub buffer_id: BufferId,
+}
+
+/// A table cell with its content and position in the source buffer
+#[derive(Clone, Debug)]
+pub struct TableCell {
+    /// Position of this cell in the source buffer (None for non-buffer-backed cells)
+    pub position: Option<CellPosition>,
+    /// Cached display value (for performance)
+    pub cached_value: SharedString,
+    /// Whether this cell is currently being edited
+    pub is_editing: bool,
+}
+
+impl TableCell {
+    /// Create a TableCell with buffer position tracking
+    pub fn from_buffer_position(
+        content: SharedString,
+        start_offset: usize,
+        end_offset: usize,
+        buffer_id: BufferId,
+        buffer_snapshot: &text::BufferSnapshot,
+    ) -> Self {
+        let start_anchor = buffer_snapshot.anchor_before(start_offset);
+        let end_anchor = buffer_snapshot.anchor_after(end_offset);
+
+        Self {
+            position: Some(CellPosition {
+                start: start_anchor,
+                end: end_anchor,
+                buffer_id,
+            }),
+            cached_value: content,
+            is_editing: false,
+        }
+    }
+
+    /// Get the display value for this cell
+    pub fn display_value(&self) -> &SharedString {
+        &self.cached_value
+    }
+
+    /// Update the cached value from the buffer (if position is available)
+    pub fn refresh_from_buffer(&mut self, buffer_snapshot: &text::BufferSnapshot) {
+        if let Some(position) = &self.position {
+            let range = position.start..position.end;
+            self.cached_value = buffer_snapshot
+                .text_for_range(range)
+                .collect::<String>()
+                .into();
+        }
+    }
+
+    /// Check if this cell has buffer position tracking
+    pub fn has_buffer_position(&self) -> bool {
+        self.position.is_some()
+    }
+}
 
 /// Colors for cell borders in different selection states.
 ///

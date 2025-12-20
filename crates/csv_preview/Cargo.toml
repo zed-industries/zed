@@ -16,6 +16,7 @@ ui.workspace = true
 workspace.workspace = true
 log.workspace = true
 derive_more.workspace = true
+text.workspace = true
 
 # Needed to compile fork of `data_table.rs`
 itertools.workspace = true

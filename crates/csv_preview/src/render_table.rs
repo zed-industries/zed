@@ -132,7 +132,7 @@ impl CsvPreviewView {
                 .contents
                 .headers
                 .get(i)
-                .map(|h| h.as_ref().to_string())
+                .map(|h| h.display_value().as_ref().to_string())
                 .unwrap_or_else(|| format!("Col {}", i + 1));
 
             headers.push(self.create_header_element_for_orderables(
@@ -226,7 +226,15 @@ impl CsvPreviewView {
 
         // Remaining columns: actual CSV data
         for col in 0..(COLS - 1) {
-            let cell_content: SharedString = row.get(col).cloned().unwrap_or_else(|| "".into());
+            let Some(table_cell) = row.get(col) else {
+                panic!(
+                    "Bugs in table implementation: Expected a value at column {}",
+                    col
+                );
+            };
+
+            let cell_content = table_cell.display_value().clone();
+            let pos = table_cell.position.as_ref();
 
             // Check if this cell is selected using display coordinates
             let is_selected = this.selection.is_cell_selected(
