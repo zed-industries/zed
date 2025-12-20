@@ -203,6 +203,9 @@ impl ThreadTimings {
         }
     }
 
+    /// If this task is the same as the last task, update the end time of the last task.
+    ///
+    /// Otherwise, add the new task timing to the list.
     fn add_task_timing(&mut self, timing: TaskTiming) {
         if let Some(last_timing) = self.timings.back_mut()
             && last_timing.location == timing.location
@@ -214,6 +217,14 @@ impl ThreadTimings {
                 self.timings.pop_front();
             }
             self.timings.push_back(timing);
+        }
+    }
+
+    /// Set the end time on the last task timing.
+    #[cfg_attr(not(target_os = "macos"), allow(unused))]
+    fn end_last_task(&mut self) {
+        if let Some(last_timing) = self.timings.back_mut() {
+            last_timing.end = Some(Instant::now());
         }
     }
 
@@ -241,4 +252,10 @@ pub(crate) fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
         timings.lock().add_task_timing(timing);
     });
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(unused))]
+pub(crate) fn get_all_thread_task_timings() -> Vec<ThreadTaskTimings> {
+    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskTimings::convert(&global_timings)
 }
