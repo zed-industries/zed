@@ -68,11 +68,11 @@ fn order_indices(
 
         let val_a = row_a
             .get(ordering.col_idx.get())
-            .map(|s| s.as_ref())
+            .map(|s| s.display_value().as_ref())
             .unwrap_or("");
         let val_b = row_b
             .get(ordering.col_idx.get())
-            .map(|s| s.as_ref())
+            .map(|s| s.display_value().as_ref())
             .unwrap_or("");
 
         // Try numeric comparison first, fall back to string comparison
