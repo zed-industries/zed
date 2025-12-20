@@ -427,6 +427,9 @@ pub enum DiskState {
     Present { mtime: MTime },
     /// Deleted file that was previously present.
     Deleted,
+    /// An old version of a file that was previously present
+    /// usually from a version control system. e.g. A git blob
+    Historic { was_deleted: bool },
 }
 
 impl DiskState {
@@ -436,6 +439,7 @@ impl DiskState {
             DiskState::New => None,
             DiskState::Present { mtime } => Some(mtime),
             DiskState::Deleted => None,
+            DiskState::Historic { .. } => None,
         }
     }
 
@@ -444,6 +448,16 @@ impl DiskState {
             DiskState::New => false,
             DiskState::Present { .. } => true,
             DiskState::Deleted => false,
+            DiskState::Historic { .. } => false,
+        }
+    }
+
+    /// Returns true if this state represents a deleted file.
+    pub fn is_deleted(&self) -> bool {
+        match self {
+            DiskState::Deleted => true,
+            DiskState::Historic { was_deleted } => *was_deleted,
+            _ => false,
         }
     }
 }
@@ -1490,19 +1504,23 @@ impl Buffer {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
-            let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
+            let Some((new_mtime, load_bytes_task, encoding)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
-
-                Some((file.disk_state().mtime(), file.load(cx)))
+                Some((
+                    file.disk_state().mtime(),
+                    file.load_bytes(cx),
+                    this.encoding,
+                ))
             })?
             else {
                 return Ok(());
             };
 
-            let new_text = new_text.await?;
-            let diff = this
-                .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
-                .await;
+            let bytes = load_bytes_task.await?;
+            let (cow, _encoding_used, _has_errors) = encoding.decode(&bytes);
+            let new_text = cow.into_owned();
+
+            let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
@@ -2270,6 +2288,7 @@ impl Buffer {
                 None => true,
             },
             DiskState::Deleted => false,
+            DiskState::Historic { .. } => false,
         }
     }
 

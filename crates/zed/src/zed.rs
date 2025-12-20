@@ -1,5 +1,4 @@
 mod app_menus;
-pub mod component_preview;
 pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
@@ -4794,7 +4793,6 @@ mod tests {
                 "activity_indicator",
                 "agent",
                 "agents",
-                #[cfg(not(target_os = "macos"))]
                 "app_menu",
                 "assistant",
                 "assistant2",
