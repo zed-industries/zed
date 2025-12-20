@@ -14,8 +14,6 @@ use gpui::{
 use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
 use ui::prelude::*;
 
-use crate::number_field;
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {
     #[default]
@@ -241,7 +239,7 @@ impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 impl_numeric_stepper_nonzero_int!(NonZero<usize>, usize);
 
 #[derive(IntoElement, RegisterComponent)]
-pub struct NumberField<T: number_field::NumberFieldType = usize> {
+pub struct NumberField<T: NumberFieldType = usize> {
     id: ElementId,
     value: T,
     focus_handle: FocusHandle,
