@@ -1136,7 +1136,7 @@ pub fn prepare_task_for_spawn(
 ) -> SpawnInTerminal {
     let builder = ShellBuilder::new(shell, is_windows);
     let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-    let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
+    let (command, args) = builder.build(task.command.clone(), &task.args);
 
     SpawnInTerminal {
         command_label,
@@ -1928,8 +1928,9 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.terminal.get_or_insert_default().project.shell =
-                        Some(settings::Shell::Program("asdf".to_owned()));
+                    settings.terminal.get_or_insert_default().project.shell = Some(
+                        settings::Shell::Program("/nonexistent/path/to/shell".to_owned()),
+                    );
                 });
             });
         });
