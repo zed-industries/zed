@@ -3496,4 +3496,28 @@ mod tests {
             ]
         );
     }
+
+    #[gpui::test]
+    async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
+        let tempdir = TempDir::new().unwrap();
+        let path = tempdir.path();
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let symlink_path = path.join("symlink");
+        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+        let metadata = fs
+            .metadata(&symlink_path)
+            .await
+            .expect("metadata call succeeds")
+            .expect("metadata returned");
+        assert!(metadata.is_symlink);
+        assert!(!metadata.is_dir);
+        assert!(!metadata.is_fifo);
+        assert!(!metadata.is_executable);
+        // don't care about len or mtime on symlinks?
+    }
 }
