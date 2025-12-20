@@ -2,14 +2,13 @@
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 # Use sccache for faster rebuilds
-rustc-wrapper = "sccache"
+rustc-wrapper = "/opt/homebrew/bin/sccache"
 # Use all available CPU cores
-jobs = 14
+jobs = 10
 
 [target.aarch64-apple-darwin]
-# Use ld64.lld for faster linking on Apple Silicon
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"]
+# Use ld_classic for linking on Apple Silicon
+rustflags = ["-C", "link-arg=-ld_classic"]
 
 [alias]
 xtask = "run --package xtask --"
@@ -27,3 +26,10 @@ rustflags = [
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.release]
+incremental = true

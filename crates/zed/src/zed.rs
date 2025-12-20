@@ -678,6 +678,7 @@ fn initialize_panels(
             }
         }
 
+        // First phase: initialize panels that don't have dependencies
         futures::join!(
             add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
@@ -687,10 +688,12 @@ fn initialize_panels(
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(convergio_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(ali_panel, workspace_handle.clone(), cx.clone()),
             initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
-            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
+            initialize_agents_panel(workspace_handle.clone(), cx.clone()).map(|r| r.log_err())
         );
+
+        // Second phase: AliPanel depends on AgentPanel being ready
+        add_panel_when_ready(ali_panel, workspace_handle, cx.clone()).await;
 
         anyhow::Ok(())
     })

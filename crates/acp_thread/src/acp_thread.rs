@@ -892,6 +892,8 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
+    /// Historical messages loaded from a resumed session (Convergio extension)
+    HistoryLoaded(usize),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1373,10 +1375,9 @@ impl AcpThread {
             }
         }
 
-        // Emit event for each historical entry to update the UI
-        for _ in 0..message_count {
-            cx.emit(AcpThreadEvent::NewEntry);
-        }
+        // Emit a single event with the count of loaded messages
+        // This allows the UI to sync all entries at once instead of one-by-one
+        cx.emit(AcpThreadEvent::HistoryLoaded(message_count));
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {

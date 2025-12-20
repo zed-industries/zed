@@ -1492,6 +1492,26 @@ impl AcpThreadView {
                     .update(cx, |view_state, _cx| view_state.remove(range.clone()));
                 self.list_state.splice(range.clone(), 0);
             }
+            AcpThreadEvent::HistoryLoaded(count) => {
+                // Sync all historical entries from the beginning
+                let len = thread.read(cx).entries().len();
+                self.entry_view_state.update(cx, |view_state, cx| {
+                    for index in 0..len {
+                        view_state.sync_entry(index, thread, window, cx);
+                    }
+                });
+                // Update the list state with focus handles for all entries
+                let focus_handles: Vec<_> = (0..len)
+                    .map(|i| {
+                        self.entry_view_state
+                            .read(cx)
+                            .entry(i)
+                            .and_then(|entry| entry.focus_handle(cx))
+                    })
+                    .collect();
+                self.list_state.splice_focusable(0..0, focus_handles);
+                log::info!("Loaded {} historical messages, synced {} entries", count, len);
+            }
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }

@@ -194,9 +194,10 @@ impl EntryViewState {
     fn set_entry(&mut self, index: usize, entry: Entry) {
         if index == self.entries.len() {
             self.entries.push(entry);
-        } else {
+        } else if index < self.entries.len() {
             self.entries[index] = entry;
         }
+        // If index > len, we skip - this should not happen with proper event handling
     }
 
     pub fn remove(&mut self, range: Range<usize>) {

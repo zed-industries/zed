@@ -21,7 +21,7 @@ use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{prelude::*, Icon, IconName, IconSize, Label};
+use ui::{prelude::*, Button, ButtonLike, Icon, IconName, IconSize, Label, Tooltip};
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -36,6 +36,7 @@ actions!(
     [
         ToggleFocus,
         InvokeAli,
+        NewConversation,
     ]
 );
 
@@ -65,6 +66,15 @@ pub fn init(cx: &mut App) {
         // ToggleFocus should toggle the AliPanel in the bottom dock
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<AliPanel>(window, cx);
+        });
+
+        // NewConversation starts a fresh conversation with Ali
+        workspace.register_action(|workspace, _: &NewConversation, window, cx| {
+            if let Some(panel) = workspace.panel::<AliPanel>(cx) {
+                panel.update(cx, |ali_panel, cx| {
+                    ali_panel.new_conversation(window, cx);
+                });
+            }
         });
     })
     .detach();
@@ -170,6 +180,32 @@ impl AliPanel {
         }
     }
 
+    /// Start a new conversation with Ali (clears current thread)
+    pub fn new_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("Ali panel: Starting new conversation");
+
+        // Create a fresh Ali thread view (no resume)
+        let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
+
+        let new_thread_view = cx.new(|cx| {
+            AcpThreadView::new(
+                server,
+                None, // No resume - start fresh
+                None,
+                self.workspace.clone(),
+                self.project.clone(),
+                self.history_store.clone(),
+                self.prompt_store.clone(),
+                true, // focus the new conversation
+                window,
+                cx,
+            )
+        });
+        self.thread_view = Some(new_thread_view);
+        self.tried_resume = true; // Don't try to resume after this
+        cx.notify();
+    }
+
     pub async fn load(
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
@@ -213,7 +249,8 @@ impl AliPanel {
             .justify_between()
             .px_3()
             .py_1()
-            .bg(cx.theme().colors().title_bar_background)
+            // Terminal-style dark background
+            .bg(gpui::rgb(0x1a1a1a))
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
@@ -222,7 +259,7 @@ impl AliPanel {
                     .items_center()
                     .gap_2()
                     .child(
-                        Icon::new(IconName::ConvergioAli)
+                        Icon::new(IconName::Brain)
                             .size(IconSize::Small)
                             .color(Color::Accent)
                     )
@@ -230,6 +267,24 @@ impl AliPanel {
                         Label::new("ALI - Command Center")
                             .size(LabelSize::Small)
                             .weight(gpui::FontWeight::BOLD)
+                            .color(Color::Success) // Terminal-style green text
+                    )
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("new-conversation", "New")
+                            .icon(IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .icon_position(ui::IconPosition::Start)
+                            .style(ui::ButtonStyle::Subtle)
+                            .tooltip(Tooltip::text("Start a new conversation"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(NewConversation), cx);
+                            })
                     )
             )
     }
@@ -285,7 +340,7 @@ impl Panel for AliPanel {
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         AliPanelSettings::get_global(cx)
             .button
-            .then_some(IconName::ConvergioAli)
+            .then_some(IconName::Brain)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -313,12 +368,14 @@ impl Render for AliPanel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(cx.theme().colors().panel_background)
+            // Terminal-style dark background
+            .bg(gpui::rgb(0x0d0d0d))
             .child(self.render_header(cx))
             .child(
                 div()
                     .flex_1()
                     .overflow_hidden()
+                    .bg(gpui::rgb(0x0d0d0d)) // Consistent terminal background
                     .map(|this| {
                         if let Some(thread_view) = &self.thread_view {
                             this.child(thread_view.clone())
@@ -329,7 +386,10 @@ impl Render for AliPanel {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(Label::new("Loading Ali...").color(Color::Muted))
+                                    .child(
+                                        Label::new("$ Initializing Ali...")
+                                            .color(Color::Success) // Terminal green
+                                    )
                             )
                         }
                     })

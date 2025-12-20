@@ -50,6 +50,7 @@ pub enum IconName {
     Book,
     BookCopy,
     Box,
+    Brain,
     CaseSensitive,
     Chat,
     Check,
