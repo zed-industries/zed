@@ -653,23 +653,66 @@ pub(crate) async fn find_file(
     None
 }
 
-// Tries to capture potentially inlined links, like those found in markdown,
-// e.g. [LinkTitle](link_file.txt)
-// Since files can have parens, we should always return the full string
-// (literally, [LinkTitle](link_file.txt)) as a candidate.
+// Generates candidate file paths by stripping common punctuation wrappers.
+// Handles markdown patterns like [title](path), `path`, (path), as well as
+// partial wrappers where punctuation only appears on one side (e.g. path) or path`).
+// Returns candidates ordered from most-specific (most trimmed) to least-specific (raw).
 fn link_pattern_file_candidates(candidate: &str) -> Vec<(String, Range<usize>)> {
     static MD_LINK_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\(([^)]*)\)").expect("Failed to create REGEX"));
 
+    // Punctuation that commonly wraps file paths in prose/markdown
+    const LEADING_PUNCTUATION: &[char] = &['`', '(', '[', '{', '<', '"', '\''];
+    const TRAILING_PUNCTUATION: &[char] = &[
+        '`', ')', ']', '}', '>', '"', '\'', '.', ',', ':', ';', '!', '?',
+    ];
+
     let candidate_len = candidate.len();
+    let mut candidates = Vec::new();
 
-    let mut candidates = vec![(candidate.to_string(), 0..candidate_len)];
+    // Trim leading and trailing punctuation iteratively
+    let mut start = 0;
+    let mut end = candidate_len;
 
-    if let Some(captures) = MD_LINK_REGEX.captures(candidate) {
-        if let Some(link) = captures.get(1) {
-            candidates.push((link.as_str().to_string(), link.range()));
+    // Trim leading punctuation
+    for ch in candidate.chars() {
+        if LEADING_PUNCTUATION.contains(&ch) {
+            start += ch.len_utf8();
+        } else {
+            break;
         }
     }
+
+    // Trim trailing punctuation
+    for ch in candidate.chars().rev() {
+        if TRAILING_PUNCTUATION.contains(&ch) {
+            end -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    // Add trimmed candidate first (highest priority) if it differs from original
+    if start < end && (start > 0 || end < candidate_len) {
+        candidates.push((candidate[start..end].to_string(), start..end));
+    }
+
+    // Extract markdown link destination: [title](path) or ](path) -> path
+    // This also handles bare (path) wrapping.
+    if let Some(captures) = MD_LINK_REGEX.captures(candidate) {
+        if let Some(link) = captures.get(1) {
+            let link_str = link.as_str().to_string();
+            let link_range = link.range();
+            // Avoid duplicate if punctuation trimming already found this
+            if !candidates.iter().any(|(s, _)| s == &link_str) {
+                candidates.push((link_str, link_range));
+            }
+        }
+    }
+
+    // Always include the raw candidate as fallback (lowest priority)
+    candidates.push((candidate.to_string(), 0..candidate_len));
+
     candidates
 }
 
@@ -1358,54 +1401,98 @@ mod tests {
 
     #[test]
     fn test_link_pattern_file_candidates() {
+        // Full markdown link: [LinkTitle](link_file.txt)
+        // Trimmed strips [ and ), regex extracts link destination, raw is fallback
         let candidates: Vec<String> = link_pattern_file_candidates("[LinkTitle](link_file.txt)")
             .into_iter()
             .map(|(c, _)| c)
             .collect();
         assert_eq!(
             candidates,
-            vec!["[LinkTitle](link_file.txt)", "link_file.txt",]
+            vec![
+                "LinkTitle](link_file.txt",
+                "link_file.txt",
+                "[LinkTitle](link_file.txt)"
+            ]
         );
-        // Link title with spaces in it
+
+        // Link title with spaces (token starts mid-link)
         let candidates: Vec<String> = link_pattern_file_candidates("LinkTitle](link_file.txt)")
             .into_iter()
             .map(|(c, _)| c)
             .collect();
         assert_eq!(
             candidates,
-            vec!["LinkTitle](link_file.txt)", "link_file.txt",]
+            vec![
+                "LinkTitle](link_file.txt",
+                "link_file.txt",
+                "LinkTitle](link_file.txt)"
+            ]
         );
 
-        // Link with spaces
+        // Link with escaped spaces
         let candidates: Vec<String> = link_pattern_file_candidates("LinkTitle](link\\ _file.txt)")
             .into_iter()
             .map(|(c, _)| c)
             .collect();
-
         assert_eq!(
             candidates,
-            vec!["LinkTitle](link\\ _file.txt)", "link\\ _file.txt",]
+            vec![
+                "LinkTitle](link\\ _file.txt",
+                "link\\ _file.txt",
+                "LinkTitle](link\\ _file.txt)"
+            ]
         );
-        //
-        // Square brackets not strictly necessary
+
+        // Bare parentheses: (link_file.txt)
         let candidates: Vec<String> = link_pattern_file_candidates("(link_file.txt)")
             .into_iter()
             .map(|(c, _)| c)
             .collect();
+        assert_eq!(candidates, vec!["link_file.txt", "(link_file.txt)"]);
 
-        assert_eq!(candidates, vec!["(link_file.txt)", "link_file.txt",]);
+        // Trailing paren only: link_file.txt)
+        let candidates: Vec<String> = link_pattern_file_candidates("link_file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["link_file.txt", "link_file.txt)"]);
 
-        // No nesting
+        // Trailing backtick only: link_file.txt`
+        let candidates: Vec<String> = link_pattern_file_candidates("link_file.txt`")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["link_file.txt", "link_file.txt`"]);
+
+        // Wrapped in backticks: `link_file.txt`
+        let candidates: Vec<String> = link_pattern_file_candidates("`link_file.txt`")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["link_file.txt", "`link_file.txt`"]);
+
+        // Trailing period (sentence ending): link_file.txt.
+        let candidates: Vec<String> = link_pattern_file_candidates("link_file.txt.")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["link_file.txt", "link_file.txt."]);
+
+        // Nested parens - regex finds first (...) capturing inner content
         let candidates: Vec<String> =
             link_pattern_file_candidates("LinkTitle](link_(link_file)file.txt)")
                 .into_iter()
                 .map(|(c, _)| c)
                 .collect();
-
         assert_eq!(
             candidates,
-            vec!["LinkTitle](link_(link_file)file.txt)", "link_(link_file",]
-        )
+            vec![
+                "LinkTitle](link_(link_file)file.txt",
+                "link_(link_file",
+                "LinkTitle](link_(link_file)file.txt)"
+            ]
+        );
     }
 
     #[gpui::test]
@@ -1448,6 +1535,12 @@ mod tests {
             (" ˇ\"常\"", Some("常")),
             (" \"ˇ常\"", Some("常")),
             ("ˇ\"常\"", Some("常")),
+            // Backticks (surrounding_filename returns the full token including backticks)
+            ("`fiˇle.txt`", Some("`file.txt`")),
+            ("open `fiˇle.txt` please", Some("`file.txt`")),
+            // Parentheses (surrounding_filename returns the full token including parens)
+            ("(fiˇle.txt)", Some("(file.txt)")),
+            ("open (fiˇle.txt) please", Some("(file.txt)")),
         ];
 
         for (input, expected) in test_cases {
@@ -1502,198 +1595,130 @@ mod tests {
             )
             .await;
 
+        // Base document with {ABS} placeholder for absolute path prefix.
+        // Each test case replaces a specific line to add cursor (ˇ) or highlight («»ˇ) markers.
         #[cfg(not(target_os = "windows"))]
-        cx.set_state(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.ˇ
-            "});
+        const ABS: &str = "/root/dir";
         #[cfg(target_os = "windows")]
-        cx.set_state(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.ˇ
-        "});
+        const ABS: &str = "C:/root/dir";
 
-        // File does not exist
-        #[cfg(not(target_os = "windows"))]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that dˇoes_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that dˇoes_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        // No highlight
-        cx.update_editor(|editor, window, cx| {
-            assert!(
-                editor
-                    .snapshot(window, cx)
-                    .text_highlight_ranges::<HoveredLinkState>()
-                    .unwrap_or_default()
-                    .1
-                    .is_empty()
-            );
-        });
+        let base = format!(
+            "\
+You can't go to a file that does_not_exist.txt.
+Go to file2.rs if you want.
+Or go to ../dir/file2.rs if you want.
+Or go to {ABS}/file2.rs if project is local.
+Or go to {ABS}/file2 if this is a Rust file.
+Or `file2.rs` in backticks.
+Or (file2.rs) in parens.
+Or [link](file2.rs) markdown style.
+A file (named file2.rs) in prose.
+Read with `cat file2.rs` command.
+Sentence ending file2.rs.
+"
+        );
 
-        // Moving the mouse over a file that does exist should highlight it.
-        #[cfg(not(target_os = "windows"))]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to fˇile2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to fˇile2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        cx.set_state(&format!("{base}ˇ"));
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to «file2.rsˇ» if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to «file2.rsˇ» if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        // Test cases: (original_line, cursor_line, highlight_line)
+        // - cursor_line: the line with ˇ to position the mouse
+        // - highlight_line: None = expect no highlight, Some(...) = expect this highlight
+        let test_cases: &[(&str, &str, Option<&str>)] = &[
+            // File does not exist - no highlight
+            ("does_not_exist.txt", "dˇoes_not_exist.txt", None),
+            // Simple filename
+            (
+                "Go to file2.rs if",
+                "Go to fˇile2.rs if",
+                Some("Go to «file2.rsˇ» if"),
+            ),
+            // Relative path
+            (
+                "Or go to ../dir/file2.rs if",
+                "Or go to ../dir/fˇile2.rs if",
+                Some("Or go to «../dir/file2.rsˇ» if"),
+            ),
+            // Absolute path
+            (
+                &format!("Or go to {ABS}/file2.rs if"),
+                &format!("Or go to {ABS}/fiˇle2.rs if"),
+                Some(&format!("Or go to «{ABS}/file2.rsˇ» if")),
+            ),
+            // Path without extension (language suffix added)
+            (
+                &format!("Or go to {ABS}/file2 if"),
+                &format!("Or go to {ABS}/fiˇle2 if"),
+                Some(&format!("Or go to «{ABS}/file2ˇ» if")),
+            ),
+            // Backticks
+            (
+                "Or `file2.rs` in backticks",
+                "Or `fiˇle2.rs` in backticks",
+                Some("Or `«file2.rsˇ»` in backticks"),
+            ),
+            // Parentheses
+            (
+                "Or (file2.rs) in parens",
+                "Or (fiˇle2.rs) in parens",
+                Some("Or («file2.rsˇ») in parens"),
+            ),
+            // Markdown link
+            (
+                "Or [link](file2.rs) markdown",
+                "Or [link](fiˇle2.rs) markdown",
+                Some("Or [link](«file2.rsˇ») markdown"),
+            ),
+            // Partial wrapper: trailing paren in prose like "(named file2.rs)"
+            (
+                "A file (named file2.rs) in",
+                "A file (named fiˇle2.rs) in",
+                Some("A file (named «file2.rsˇ») in"),
+            ),
+            // Partial wrapper: inside code span like "`cat file2.rs`"
+            (
+                "Read with `cat file2.rs` command",
+                "Read with `cat fiˇle2.rs` command",
+                Some("Read with `cat «file2.rsˇ»` command"),
+            ),
+            // Trailing period at end of sentence
+            (
+                "Sentence ending file2.rs.",
+                "Sentence ending fiˇle2.rs.",
+                Some("Sentence ending «file2.rsˇ»."),
+            ),
+        ];
 
-        // Moving the mouse over a relative path that does exist should highlight it
-        #[cfg(not(target_os = "windows"))]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/fˇile2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/fˇile2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+        for (original, cursor_version, highlight_version) in test_cases {
+            let position_text = base.replace(original, cursor_version);
+            let screen_coord = cx.pixel_position(&position_text);
+            cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to «../dir/file2.rsˇ» if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to «../dir/file2.rsˇ» if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
+            if let Some(highlight) = highlight_version {
+                let expected = base.replace(original, highlight);
+                cx.assert_editor_text_highlights::<HoveredLinkState>(&expected);
+            } else {
+                // Expect no highlight
+                cx.update_editor(|editor, window, cx| {
+                    assert!(
+                        editor
+                            .snapshot(window, cx)
+                            .text_highlight_ranges::<HoveredLinkState>()
+                            .unwrap_or_default()
+                            .1
+                            .is_empty(),
+                        "Expected no highlight for cursor at: {}",
+                        cursor_version
+                    );
+                });
+            }
+        }
 
-        // Moving the mouse over an absolute path that does exist should highlight it
-        #[cfg(not(target_os = "windows"))]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/diˇr/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-
-        #[cfg(target_os = "windows")]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/diˇr/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
-
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to «/root/dir/file2.rsˇ» if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to «C:/root/dir/file2.rsˇ» if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.
-        "});
-
-        // Moving the mouse over a path that exists, if we add the language-specific suffix, it should highlight it
-        #[cfg(not(target_os = "windows"))]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/diˇr/file2 if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/diˇr/file2 if this is a Rust file.
-        "});
-
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        #[cfg(not(target_os = "windows"))]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to /root/dir/file2.rs if project is local.
-            Or go to «/root/dir/file2ˇ» if this is a Rust file.
-        "});
-        #[cfg(target_os = "windows")]
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-            Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/dir/file2.rs if project is local.
-            Or go to «C:/root/dir/file2ˇ» if this is a Rust file.
-        "});
-
+        // Test click navigation on markdown link
+        let position_text = base.replace(
+            "Or [link](file2.rs) markdown",
+            "Or [link](fiˇle2.rs) markdown",
+        );
+        let screen_coord = cx.pixel_position(&position_text);
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
