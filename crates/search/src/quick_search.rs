@@ -210,9 +210,10 @@ fn process_file_matches(data: BufferExtractData) -> Option<FileMatchResult> {
     })
 }
 
-const MODAL_HEIGHT: Pixels = px(800.);
-const MODAL_WIDTH: Pixels = px(1400.);
-const LEFT_PANEL_WIDTH: Pixels = px(400.);
+const MIN_MODAL_WIDTH: Pixels = px(800.);
+const MIN_MODAL_HEIGHT: Pixels = px(500.);
+const LEFT_PANEL_RATIO: f32 = 0.30;
+const MIN_LEFT_PANEL_WIDTH: Pixels = px(350.);
 const MAX_PREVIEW_BYTES: usize = 200;
 const PREVIEW_DEBOUNCE_MS: u64 = 50;
 const EDIT_OPEN_DELAY_MS: u64 = 200;
@@ -428,10 +429,9 @@ impl Render for QuickSearchModal {
         let picker = self.picker.clone();
 
         let viewport_size = window.viewport_size();
-        let max_width = viewport_size.width * 0.9;
-        let max_height = viewport_size.height * 0.8;
-        let modal_width = MODAL_WIDTH.min(max_width);
-        let modal_height = MODAL_HEIGHT.min(max_height);
+        let modal_width = (viewport_size.width * 0.8).max(MIN_MODAL_WIDTH);
+        let modal_height = (viewport_size.height * 0.8).max(MIN_MODAL_HEIGHT);
+        let left_panel_width = (modal_width * LEFT_PANEL_RATIO).max(MIN_LEFT_PANEL_WIDTH);
 
         div()
             .id("quick-search-modal")
@@ -453,7 +453,7 @@ impl Render for QuickSearchModal {
                             .overflow_hidden()
                             .child(
                                 v_flex()
-                                    .w(LEFT_PANEL_WIDTH)
+                                    .w(left_panel_width)
                                     .flex_shrink_0()
                                     .h_full()
                                     .min_h_0()
