@@ -3501,6 +3501,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg(unix)]
     async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
         let tempdir = TempDir::new().unwrap();
         let path = tempdir.path();
@@ -3525,6 +3526,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg(unix)]
     async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
         let tempdir = TempDir::new().unwrap();
         let path = tempdir.path();
