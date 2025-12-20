@@ -70,6 +70,7 @@ pub struct MarkdownStyle {
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
+    pub table_columns_min_size: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -91,6 +92,7 @@ impl Default for MarkdownStyle {
             heading_level_styles: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
+            table_columns_min_size: false,
         }
     }
 }
@@ -705,7 +707,7 @@ impl MarkdownElement {
                                 pending: true,
                                 mode,
                             };
-                            window.focus(&markdown.focus_handle);
+                            window.focus(&markdown.focus_handle, cx);
                         }
 
                         window.prevent_default();
@@ -1071,15 +1073,23 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
-                            builder.table_alignments = alignments.clone();
+                            builder.table.start(alignments.clone());
 
+                            let column_count = alignments.len();
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .min_w_0()
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .when(self.style.table_columns_min_size, |this| {
+                                        this.grid_cols_min_content(column_count as u16)
+                                    })
+                                    .when(!self.style.table_columns_min_size, |this| {
+                                        this.grid_cols(column_count as u16)
+                                    })
                                     .size_full()
                                     .mb_2()
-                                    .border_1()
+                                    .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
                                     .overflow_hidden(),
@@ -1088,38 +1098,33 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::TableHead => {
-                            let column_count = builder.table_alignments.len();
-
-                            builder.push_div(
-                                div()
-                                    .grid()
-                                    .grid_cols(column_count as u16)
-                                    .bg(cx.theme().colors().title_bar_background),
-                                range,
-                                markdown_end,
-                            );
+                            builder.table.start_head();
                             builder.push_text_style(TextStyleRefinement {
                                 font_weight: Some(FontWeight::SEMIBOLD),
                                 ..Default::default()
                             });
                         }
                         MarkdownTag::TableRow => {
-                            let column_count = builder.table_alignments.len();
-
-                            builder.push_div(
-                                div().grid().grid_cols(column_count as u16),
-                                range,
-                                markdown_end,
-                            );
+                            builder.table.start_row();
                         }
                         MarkdownTag::TableCell => {
+                            let is_header = builder.table.in_head;
+                            let row_index = builder.table.row_index;
+                            let col_index = builder.table.col_index;
+
                             builder.push_div(
                                 div()
-                                    .min_w_0()
-                                    .border(px(0.5))
+                                    .when(col_index > 0, |this| this.border_l_1())
+                                    .when(row_index > 0, |this| this.border_t_1())
                                     .border_color(cx.theme().colors().border)
                                     .px_1()
-                                    .py_0p5(),
+                                    .py_0p5()
+                                    .when(is_header, |this| {
+                                        this.bg(cx.theme().colors().title_bar_background)
+                                    })
+                                    .when(!is_header && row_index % 2 == 1, |this| {
+                                        this.bg(cx.theme().colors().panel_background)
+                                    }),
                                 range,
                                 markdown_end,
                             );
@@ -1233,17 +1238,18 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
-                        builder.table_alignments.clear();
+                        builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
-                        builder.pop_div();
                         builder.pop_text_style();
+                        builder.table.end_head();
                     }
                     MarkdownTagEnd::TableRow => {
-                        builder.pop_div();
+                        builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
+                        builder.table.end_cell();
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
@@ -1506,6 +1512,50 @@ impl ParentElement for AnyDiv {
     }
 }
 
+#[derive(Default)]
+struct TableState {
+    alignments: Vec<Alignment>,
+    in_head: bool,
+    row_index: usize,
+    col_index: usize,
+}
+
+impl TableState {
+    fn start(&mut self, alignments: Vec<Alignment>) {
+        self.alignments = alignments;
+        self.in_head = false;
+        self.row_index = 0;
+        self.col_index = 0;
+    }
+
+    fn end(&mut self) {
+        self.alignments.clear();
+        self.in_head = false;
+        self.row_index = 0;
+        self.col_index = 0;
+    }
+
+    fn start_head(&mut self) {
+        self.in_head = true;
+    }
+
+    fn end_head(&mut self) {
+        self.in_head = false;
+    }
+
+    fn start_row(&mut self) {
+        self.col_index = 0;
+    }
+
+    fn end_row(&mut self) {
+        self.row_index += 1;
+    }
+
+    fn end_cell(&mut self) {
+        self.col_index += 1;
+    }
+}
+
 struct MarkdownElementBuilder {
     div_stack: Vec<AnyDiv>,
     rendered_lines: Vec<RenderedLine>,
@@ -1517,7 +1567,7 @@ struct MarkdownElementBuilder {
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
-    table_alignments: Vec<Alignment>,
+    table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
 }
 
@@ -1553,7 +1603,7 @@ impl MarkdownElementBuilder {
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
-            table_alignments: Vec::new(),
+            table: TableState::default(),
             syntax_theme,
         }
     }
@@ -1887,7 +1937,7 @@ impl RenderedText {
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
-        let mut ret = vec![];
+        let mut accumulator = String::new();
 
         for line in self.lines.iter() {
             if range.start > line.source_end {
@@ -1912,9 +1962,12 @@ impl RenderedText {
             }
             .min(text.len());
 
-            ret.push(text[start..end].to_string());
+            accumulator.push_str(&text[start..end]);
+            accumulator.push('\n');
         }
-        ret.join("\n")
+        // Remove trailing newline
+        accumulator.pop();
+        accumulator
     }
 
     fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {

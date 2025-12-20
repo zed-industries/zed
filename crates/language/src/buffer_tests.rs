@@ -1142,6 +1142,104 @@ fn test_text_objects(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_text_objects_with_has_parent_predicate(cx: &mut App) {
+    use std::borrow::Cow;
+
+    // Create a language with a custom text_objects query that uses #has-parent?
+    // This query only matches closure_expression when it's inside a call_expression
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        text_objects: Some(Cow::from(indoc! {r#"
+            ; Only match closures that are arguments to function calls
+            (closure_expression) @function.around
+              (#has-parent? @function.around arguments)
+        "#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            fn main() {
+                let standalone = |x| x + 1;
+                let result = foo(|y| y * ˇ2);
+            }"#
+        },
+        false,
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    // Should only match the closure inside foo(), not the standalone closure
+    assert_eq!(matches, &[("|y| y * 2", TextObject::AroundFunction),]);
+}
+
+#[gpui::test]
+fn test_text_objects_with_not_has_parent_predicate(cx: &mut App) {
+    use std::borrow::Cow;
+
+    // Create a language with a custom text_objects query that uses #not-has-parent?
+    // This query only matches closure_expression when it's NOT inside a call_expression
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        text_objects: Some(Cow::from(indoc! {r#"
+            ; Only match closures that are NOT arguments to function calls
+            (closure_expression) @function.around
+              (#not-has-parent? @function.around arguments)
+        "#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            fn main() {
+                let standalone = |x| x +ˇ 1;
+                let result = foo(|y| y * 2);
+            }"#
+        },
+        false,
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    // Should only match the standalone closure, not the one inside foo()
+    assert_eq!(matches, &[("|x| x + 1", TextObject::AroundFunction),]);
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut App) {
     #[track_caller]
     fn assert(selection_text: &'static str, range_markers: Vec<&'static str>, cx: &mut App) {

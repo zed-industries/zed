@@ -40,6 +40,7 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
+encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
@@ -96,6 +97,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
