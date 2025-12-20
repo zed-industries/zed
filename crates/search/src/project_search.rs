@@ -866,14 +866,17 @@ impl ProjectSearchView {
         );
         subscriptions.push(cx.subscribe(
             &results_editor,
-            |this, _editor, event: &SearchEvent, _cx| match event {
-                SearchEvent::ResultsCollapsedChanged(collapsed_direction) => {
-                    match collapsed_direction {
-                        CollapseDirection::Collapsed => this.results_collapsed = true,
-                        CollapseDirection::Expanded => this.results_collapsed = false,
+            |this, _editor, event: &SearchEvent, cx| {
+                match event {
+                    SearchEvent::ResultsCollapsedChanged(collapsed_direction) => {
+                        match collapsed_direction {
+                            CollapseDirection::Collapsed => this.results_collapsed = true,
+                            CollapseDirection::Expanded => this.results_collapsed = false,
+                        }
                     }
-                }
-                _ => (),
+                    _ => (),
+                };
+                cx.notify();
             },
         ));
 
