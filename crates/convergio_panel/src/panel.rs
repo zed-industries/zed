@@ -350,7 +350,7 @@ struct SerializedAgentSessions {
 
 pub struct ConvergioPanel {
     focus_handle: FocusHandle,
-    workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<Workspace>,
     _fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     agents: Vec<ConvergioAgent>,
@@ -522,7 +522,7 @@ impl ConvergioPanel {
 
         Self {
             focus_handle,
-            workspace: workspace_handle,
+            _workspace: workspace_handle,
             _fs: fs,
             width: None,
             agents,

@@ -46,7 +46,8 @@ pub struct BackgroundCompleteNotification {
     pub buffered_length: usize,
 }
 
-// Convergio: Load more history request/response
+// Convergio: Load more history request/response (protocol types for future implementation)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadMoreRequest {
@@ -56,6 +57,7 @@ pub struct LoadMoreRequest {
     pub limit: Option<usize>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadMoreResponse {
@@ -65,7 +67,8 @@ pub struct LoadMoreResponse {
     pub total_count: usize,
 }
 
-// Convergio: Background/foreground request
+// Convergio: Background/foreground request (protocol types for future implementation)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackgroundRequest {
@@ -75,12 +78,14 @@ pub struct BackgroundRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForegroundResponse {
-    pub success: bool,
-    pub is_processing: bool,
+    #[serde(rename = "success")]
+    pub _success: bool,
+    #[serde(rename = "isProcessing")]
+    pub _is_processing: bool,
     #[serde(default)]
     pub buffered_content: Option<String>,
-    #[serde(default)]
-    pub buffered_length: usize,
+    #[serde(default, rename = "bufferedLength")]
+    pub _buffered_length: usize,
 }
 use util::ResultExt as _;
 

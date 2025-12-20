@@ -21,7 +21,7 @@ use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{prelude::*, Button, ButtonLike, Icon, IconName, IconSize, Label, Tooltip};
+use ui::{prelude::*, Button, Icon, IconName, IconSize, Label, Tooltip};
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -53,7 +53,7 @@ pub struct AliPanel {
     project: Entity<Project>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    fs: Arc<dyn Fs>,
+    _fs: Arc<dyn Fs>,
     tried_resume: bool,
     pending_resume_thread: Option<agent::DbThreadMetadata>,
     _history_subscription: Subscription,
@@ -129,7 +129,7 @@ impl AliPanel {
             project,
             history_store,
             prompt_store,
-            fs,
+            _fs: fs,
             tried_resume,
             pending_resume_thread: None,
             _history_subscription: history_subscription,
