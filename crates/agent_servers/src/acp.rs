@@ -7,6 +7,7 @@ use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
+use std::sync::Arc;
 use project::agent_server_store::AgentServerCommand;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
@@ -662,6 +663,83 @@ impl AgentConnection for AcpConnection {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+
+    fn background(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionBackground>> {
+        // Convergio extension: background execution support
+        Some(Rc::new(AcpSessionBackground {
+            session_id: session_id.clone(),
+            connection: self.connection.clone(),
+        }) as _)
+    }
+}
+
+/// Convergio extension: Background execution support
+struct AcpSessionBackground {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+}
+
+impl acp_thread::AgentSessionBackground for AcpSessionBackground {
+    fn set_background(&self, cx: &mut App) -> Task<Result<bool>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            let request = serde_json::json!({
+                "sessionId": session_id.to_string()
+            });
+            let raw_params = serde_json::value::RawValue::from_string(request.to_string())?;
+            let response = connection
+                .ext_method(acp::ExtRequest::new(
+                    "session/background",
+                    Arc::from(raw_params),
+                ))
+                .await?;
+            let result: serde_json::Value = serde_json::from_str(response.0.get())?;
+            Ok(result.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
+        })
+    }
+
+    fn set_foreground(&self, cx: &mut App) -> Task<Result<Option<String>>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            let request = serde_json::json!({
+                "sessionId": session_id.to_string()
+            });
+            let raw_params = serde_json::value::RawValue::from_string(request.to_string())?;
+            let response = connection
+                .ext_method(acp::ExtRequest::new(
+                    "session/foreground",
+                    Arc::from(raw_params),
+                ))
+                .await?;
+            let result: ForegroundResponse = serde_json::from_str(response.0.get())?;
+            Ok(result.buffered_content)
+        })
+    }
+
+    fn is_processing(&self, cx: &mut App) -> Task<Result<bool>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            let request = serde_json::json!({
+                "sessionId": session_id.to_string()
+            });
+            let raw_params = serde_json::value::RawValue::from_string(request.to_string())?;
+            let response = connection
+                .ext_method(acp::ExtRequest::new(
+                    "session/status",
+                    Arc::from(raw_params),
+                ))
+                .await?;
+            let result: serde_json::Value = serde_json::from_str(response.0.get())?;
+            Ok(result.get("isProcessing").and_then(|v| v.as_bool()).unwrap_or(false))
+        })
     }
 }
 

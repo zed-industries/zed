@@ -86,6 +86,15 @@ pub trait AgentConnection {
         None
     }
 
+    /// Convergio extension: Returns background execution support if available
+    fn background(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionBackground>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -123,6 +132,19 @@ pub trait AgentSessionModes {
     fn all_modes(&self) -> Vec<acp::SessionMode>;
 
     fn set_mode(&self, mode: acp::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+}
+
+/// Convergio extension: Background execution support
+/// Allows agents to continue processing when user switches to another agent
+pub trait AgentSessionBackground {
+    /// Put session in background mode (buffers output instead of streaming)
+    fn set_background(&self, cx: &mut App) -> Task<Result<bool>>;
+
+    /// Bring session back to foreground, returns any buffered content
+    fn set_foreground(&self, cx: &mut App) -> Task<Result<Option<String>>>;
+
+    /// Check if session is currently processing
+    fn is_processing(&self, cx: &mut App) -> Task<Result<bool>>;
 }
 
 #[derive(Debug)]
