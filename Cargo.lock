@@ -5225,6 +5225,7 @@ dependencies = [
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
+ "text",
  "thiserror 2.0.17",
  "ui",
  "util",

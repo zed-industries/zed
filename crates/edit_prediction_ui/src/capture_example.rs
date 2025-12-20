@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiffSnapshot;
-use edit_prediction::{EditPredictionStore, example_spec::ExampleSpec, udiff};
+use edit_prediction::{EditPredictionStore, StoredEvent, example_spec::ExampleSpec, udiff};
 use editor::Editor;
 use gpui::{App, Entity, Task, Window, prelude::*};
 use language::ToPoint as _;
@@ -105,13 +105,13 @@ struct FileData {
 async fn collect_file_data(
     project: &Entity<Project>,
     git_store: &Entity<project::git_store::GitStore>,
-    events: &[Arc<zeta_prompt::Event>],
+    events: &[StoredEvent],
     cx: &mut gpui::AsyncApp,
 ) -> Result<Vec<FileData>> {
     let edited_paths: Vec<(ProjectPath, Arc<Path>)> = events
         .iter()
-        .filter_map(|event| {
-            let zeta_prompt::Event::BufferChange { path, .. } = event.as_ref();
+        .filter_map(|stored_event| {
+            let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
             let project_path = project
                 .read_with(cx, |project, cx| project.find_project_path(path, cx))
                 .ok()
@@ -150,7 +150,7 @@ async fn collect_file_data(
 
 fn compute_diffs(
     file_data: Vec<FileData>,
-    mut events: Vec<Arc<zeta_prompt::Event>>,
+    mut events: Vec<StoredEvent>,
     last_event_is_expected_patch: bool,
 ) -> (String, String, String) {
     let mut uncommitted_diff = String::new();
@@ -180,13 +180,13 @@ fn compute_diffs(
     let mut expected_patch = String::new();
 
     if last_event_is_expected_patch {
-        if let Some(event) = events.pop() {
-            zeta_prompt::write_event(&mut expected_patch, &event);
+        if let Some(stored_event) = events.pop() {
+            zeta_prompt::write_event(&mut expected_patch, &stored_event.event);
         }
     }
 
-    for event in &events {
-        zeta_prompt::write_event(&mut edit_history, event);
+    for stored_event in &events {
+        zeta_prompt::write_event(&mut edit_history, &stored_event.event);
         if !edit_history.ends_with('\n') {
             edit_history.push('\n');
         }
@@ -198,19 +198,19 @@ fn compute_diffs(
 fn compute_text_before_edit_history(
     current_text: &str,
     cursor_path: &Path,
-    events: &[Arc<zeta_prompt::Event>],
+    events: &[StoredEvent],
 ) -> Result<String> {
     let mut text = current_text.to_string();
 
-    for event in events.iter().rev() {
-        let zeta_prompt::Event::BufferChange { path, diff, .. } = event.as_ref();
+    for stored_event in events.iter().rev() {
+        let zeta_prompt::Event::BufferChange { path, diff, .. } = stored_event.event.as_ref();
         if path.as_ref() != cursor_path {
             continue;
         }
 
         let full_diff = format!("--- a/file\n+++ b/file\n{diff}");
         let inverted_diff = udiff::invert_diff(&full_diff);
-        text = udiff::apply_diff_to_string(&inverted_diff, &text)
+        text = udiff::apply_diff_at_range(&inverted_diff, &text, &stored_event.edit.new)
             .with_context(|| format!("failed to apply inverted diff for {cursor_path:?}"))?;
     }
 
@@ -458,8 +458,7 @@ mod tests {
                 edit_history: indoc! {"
                     --- a/project/src/main.rs
                     +++ b/project/src/main.rs
-                    @@ -1,9 +1,11 @@
-                     fn main() {
+                    @@ -2,8 +2,10 @@
                          // comment 1
                          one();
                          two();

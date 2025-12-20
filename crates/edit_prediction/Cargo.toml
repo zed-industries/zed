@@ -52,6 +52,7 @@ settings.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
+text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
 util.workspace = true
