@@ -1,8 +1,8 @@
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
 rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
-# Use sccache for faster rebuilds
-rustc-wrapper = "/opt/homebrew/bin/sccache"
+# Use sccache for faster rebuilds (found via PATH for portability)
+rustc-wrapper = "sccache"
 # Use all available CPU cores
 jobs = 10
 
