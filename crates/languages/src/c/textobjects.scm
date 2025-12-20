@@ -23,3 +23,9 @@
         "{"
         [(_) ","?]* @class.inside
         "}")) @class.around
+
+(union_specifier
+    body: (_
+        "{"
+        (_)* @class.inside
+        "}")) @class.around

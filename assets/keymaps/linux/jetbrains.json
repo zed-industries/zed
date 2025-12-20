@@ -13,8 +13,8 @@
       "shift-f8": "debugger::StepOut",
       "f9": "debugger::Continue",
       "shift-f9": "debugger::Start",
-      "alt-shift-f9": "debugger::Start"
-    }
+      "alt-shift-f9": "debugger::Start",
+    },
   },
   {
     "context": "Editor",
@@ -62,28 +62,30 @@
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-f8": "editor::ToggleBreakpoint",
       "ctrl-shift-f8": "editor::EditLogBreakpoint",
-      "ctrl-shift-u": "editor::ToggleCase"
-    }
+      "ctrl-shift-u": "editor::ToggleCase",
+    },
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-f12": "outline::Toggle",
       "ctrl-r": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "ctrl-e": "file_finder::Toggle",
       "ctrl-shift-n": "file_finder::Toggle",
+      "ctrl-alt-n": "file_finder::Toggle",
       "ctrl-g": "go_to_line::Toggle",
       "alt-enter": "editor::ToggleCodeActions",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-q": "editor::Hover",
       "ctrl-p": "editor::ShowSignatureHelp",
-      "ctrl-\\": "assistant::InlineAssist"
-    }
+      "ctrl-\\": "assistant::InlineAssist",
+    },
   },
   {
     "context": "BufferSearchBar",
     "bindings": {
-      "shift-enter": "search::SelectPreviousMatch"
-    }
+      "shift-enter": "search::SelectPreviousMatch",
+    },
   },
   {
     "context": "BufferSearchBar || ProjectSearchBar",
@@ -91,8 +93,8 @@
       "alt-c": "search::ToggleCaseSensitive",
       "alt-e": "search::ToggleSelection",
       "alt-x": "search::ToggleRegex",
-      "alt-w": "search::ToggleWholeWord"
-    }
+      "alt-w": "search::ToggleWholeWord",
+    },
   },
   {
     "context": "Workspace",
@@ -105,8 +107,8 @@
       "ctrl-e": "file_finder::Toggle",
       "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "ctrl-shift-n": "file_finder::Toggle",
-      "ctrl-n": "project_symbols::Toggle",
       "ctrl-alt-n": "file_finder::Toggle",
+      "ctrl-n": "project_symbols::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
@@ -114,8 +116,8 @@
       "alt-1": "project_panel::ToggleFocus",
       "alt-5": "debug_panel::ToggleFocus",
       "alt-6": "diagnostics::Deploy",
-      "alt-7": "outline_panel::ToggleFocus"
-    }
+      "alt-7": "outline_panel::ToggleFocus",
+    },
   },
   {
     "context": "Pane", // this is to override the default Pane mappings to switch tabs
@@ -129,15 +131,15 @@
       "alt-7": "outline_panel::ToggleFocus",
       "alt-8": null, // Services (bottom dock)
       "alt-9": null, // Git History (bottom dock)
-      "alt-0": "git_panel::ToggleFocus"
-    }
+      "alt-0": "git_panel::ToggleFocus",
+    },
   },
   {
     "context": "Workspace || Editor",
     "bindings": {
       "alt-f12": "terminal_panel::Toggle",
-      "ctrl-shift-k": "git::Push"
-    }
+      "ctrl-shift-k": "git::Push",
+    },
   },
   {
     "context": "Pane",
@@ -145,8 +147,8 @@
       "ctrl-alt-left": "pane::GoBack",
       "ctrl-alt-right": "pane::GoForward",
       "alt-left": "pane::ActivatePreviousItem",
-      "alt-right": "pane::ActivateNextItem"
-    }
+      "alt-right": "pane::ActivateNextItem",
+    },
   },
   {
     "context": "ProjectPanel",
@@ -156,8 +158,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "shift-f6": "project_panel::Rename"
-    }
+      "shift-f6": "project_panel::Rename",
+    },
   },
   {
     "context": "Terminal",
@@ -167,8 +169,8 @@
       "ctrl-up": "terminal::ScrollLineUp",
       "ctrl-down": "terminal::ScrollLineDown",
       "shift-pageup": "terminal::ScrollPageUp",
-      "shift-pagedown": "terminal::ScrollPageDown"
-    }
+      "shift-pagedown": "terminal::ScrollPageDown",
+    },
   },
   { "context": "GitPanel", "bindings": { "alt-0": "workspace::CloseActiveDock" } },
   { "context": "ProjectPanel", "bindings": { "alt-1": "workspace::CloseActiveDock" } },
@@ -179,7 +181,7 @@
     "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
     "bindings": {
       "escape": "editor::ToggleFocus",
-      "shift-escape": "workspace::CloseActiveDock"
-    }
-  }
+      "shift-escape": "workspace::CloseActiveDock",
+    },
+  },
 ]

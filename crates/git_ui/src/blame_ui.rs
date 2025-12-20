@@ -3,10 +3,7 @@ use crate::{
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
-use git::{
-    blame::{BlameEntry, ParsedCommitMessage},
-    repository::CommitSummary,
-};
+use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -47,11 +44,13 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
-            CommitAvatar::new(
-                &blame_entry.sha.to_string().into(),
-                details.as_ref().and_then(|it| it.remote.as_ref()),
+            Some(
+                CommitAvatar::new(
+                    &blame_entry.sha.to_string().into(),
+                    details.as_ref().and_then(|it| it.remote.as_ref()),
+                )
+                .render(window, cx),
             )
-            .render(window, cx)
         } else {
             None
         };
@@ -65,7 +64,7 @@ impl BlameRenderer for GitBlameRenderer {
                         .w_full()
                         .gap_2()
                         .justify_between()
-                        .font_family(style.font().family)
+                        .font(style.font())
                         .line_height(style.line_height)
                         .text_color(cx.theme().status().hint)
                         .child(
@@ -264,7 +263,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     .flex_wrap()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border_variant)
-                                    .children(avatar)
+                                    .child(avatar)
                                     .child(author)
                                     .when(!author_email.is_empty(), |this| {
                                         this.child(

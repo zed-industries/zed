@@ -3,10 +3,13 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
-use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
+use git::{
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
+    parse_git_remote_url,
+};
 use gpui::{
-    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
-    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
@@ -21,7 +24,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{Avatar, DiffStat, Tooltip, prelude::*};
+use ui::{DiffStat, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -33,6 +36,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
@@ -65,7 +69,7 @@ struct GitBlob {
     path: RepoPath,
     worktree_id: WorktreeId,
     is_deleted: bool,
-    display_name: Arc<str>,
+    display_name: String,
 }
 
 const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
@@ -239,9 +243,8 @@ impl CommitView {
                     .path
                     .file_name()
                     .map(|name| name.to_string())
-                    .unwrap_or_else(|| file.path.display(PathStyle::Posix).to_string());
-                let display_name: Arc<str> =
-                    Arc::from(format!("{short_sha} - {file_name}").into_boxed_str());
+                    .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
+                let display_name = format!("{short_sha} - {file_name}");
 
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
@@ -318,17 +321,7 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                return Avatar::new(url.to_string())
-                    .size(size)
-                    .into_element()
-                    .into_any();
-            }
-        }
+        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
 
         v_flex()
             .w(size)
@@ -339,10 +332,15 @@ impl CommitView {
             .justify_center()
             .items_center()
             .child(
-                Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Medium)
-                    .into_element(),
+                avatar
+                    .avatar(window, cx)
+                    .map(|a| a.size(size).into_any_element())
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::Person)
+                            .color(Color::Muted)
+                            .size(IconSize::Medium)
+                            .into_any_element()
+                    }),
             )
             .into_any()
     }
@@ -395,14 +393,18 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let github_url = self.remote.as_ref().map(|remote| {
-            format!(
-                "{}/{}/{}/commit/{}",
-                remote.host.base_url(),
-                remote.owner,
-                remote.repo,
-                commit.sha
-            )
+        let remote_info = self.remote.as_ref().map(|remote| {
+            let provider = remote.host.name();
+            let parsed_remote = ParsedGitRemote {
+                owner: remote.owner.as_ref().into(),
+                repo: remote.repo.as_ref().into(),
+            };
+            let params = BuildCommitPermalinkParams { sha: &commit.sha };
+            let url = remote
+                .host
+                .build_commit_permalink(&parsed_remote, params)
+                .to_string();
+            (provider, url)
         });
 
         let (additions, deletions) = self.calculate_changed_lines(cx);
@@ -476,9 +478,14 @@ impl CommitView {
                                     .children(commit_diff_stat),
                             ),
                     )
-                    .children(github_url.map(|url| {
-                        Button::new("view_on_github", "View on GitHub")
-                            .icon(IconName::Github)
+                    .children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
+
+                        Button::new("view_on_provider", format!("View on {}", provider_name))
+                            .icon(icon)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
@@ -647,69 +654,19 @@ impl CommitView {
     }
 }
 
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
-    }
-}
-
 impl language::File for GitBlob {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
         None
     }
 
     fn disk_state(&self) -> DiskState {
-        if self.is_deleted {
-            DiskState::Deleted
-        } else {
-            DiskState::New
+        DiskState::Historic {
+            was_deleted: self.is_deleted,
         }
     }
 
     fn path_style(&self, _: &App) -> PathStyle {
-        PathStyle::Posix
+        PathStyle::local()
     }
 
     fn path(&self) -> &Arc<RelPath> {
@@ -736,45 +693,6 @@ impl language::File for GitBlob {
         false
     }
 }
-
-// No longer needed since metadata buffer is not created
-// impl language::File for CommitMetadataFile {
-//     fn as_local(&self) -> Option<&dyn language::LocalFile> {
-//         None
-//     }
-//
-//     fn disk_state(&self) -> DiskState {
-//         DiskState::New
-//     }
-//
-//     fn path_style(&self, _: &App) -> PathStyle {
-//         PathStyle::Posix
-//     }
-//
-//     fn path(&self) -> &Arc<RelPath> {
-//         &self.title
-//     }
-//
-//     fn full_path(&self, _: &App) -> PathBuf {
-//         self.title.as_std_path().to_path_buf()
-//     }
-//
-//     fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
-//         self.title.file_name().unwrap_or("commit")
-//     }
-//
-//     fn worktree_id(&self, _: &App) -> WorktreeId {
-//         self.worktree_id
-//     }
-//
-//     fn to_proto(&self, _cx: &App) -> language::proto::File {
-//         unimplemented!()
-//     }
-//
-//     fn is_private(&self) -> bool {
-//         false
-//     }
-// }
 
 async fn build_buffer(
     mut text: String,

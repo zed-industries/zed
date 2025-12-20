@@ -89,6 +89,7 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
+    version: Option<SharedString>,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
@@ -314,7 +315,7 @@ pub struct AdapterServerCapabilities {
 
 impl LanguageServer {
     /// Starts a language server process.
-    pub async fn new(
+    pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         server_name: LanguageServerName,
@@ -338,23 +339,19 @@ impl LanguageServer {
             working_dir,
             &binary.arguments
         );
-        let mut server = cx
-            .background_executor()
-            .await_on_background(async {
-                let mut command = util::command::new_smol_command(&binary.path);
-                command
-                    .current_dir(working_dir)
-                    .args(&binary.arguments)
-                    .envs(binary.env.clone().unwrap_or_default())
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true);
-                command
-                    .spawn()
-                    .with_context(|| format!("failed to spawn command {command:?}",))
-            })
-            .await?;
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
+            .current_dir(working_dir)
+            .args(&binary.arguments)
+            .envs(binary.env.clone().unwrap_or_default())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut server = command
+            .spawn()
+            .with_context(|| format!("failed to spawn command {command:?}",))?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
@@ -505,6 +502,7 @@ impl LanguageServer {
             response_handlers,
             io_handlers,
             name: server_name,
+            version: None,
             process_name: binary
                 .path
                 .file_name()
@@ -886,7 +884,9 @@ impl LanguageServer {
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
                     show_message: Some(ShowMessageRequestClientCapabilities {
-                        message_action_item: None,
+                        message_action_item: Some(MessageActionItemCapabilities {
+                            additional_properties_support: Some(true),
+                        }),
                     }),
                     ..WindowClientCapabilities::default()
                 }),
@@ -927,6 +927,7 @@ impl LanguageServer {
                     )
                 })?;
             if let Some(info) = response.server_info {
+                self.version = info.version.map(SharedString::from);
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
@@ -1155,6 +1156,11 @@ impl LanguageServer {
     /// Get the name of the running language server.
     pub fn name(&self) -> LanguageServerName {
         self.name.clone()
+    }
+
+    /// Get the version of the running language server.
+    pub fn version(&self) -> Option<SharedString> {
+        self.version.clone()
     }
 
     pub fn process_name(&self) -> &str {

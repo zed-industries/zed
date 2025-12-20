@@ -227,9 +227,16 @@ impl SanitizedPath {
         #[cfg(not(target_os = "windows"))]
         return unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) };
 
-        // TODO: could avoid allocating here if dunce::simplified results in the same path
         #[cfg(target_os = "windows")]
-        return Self::new(&path).into();
+        {
+            let simplified = dunce::simplified(path.as_ref());
+            if simplified == path.as_ref() {
+                // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+                unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) }
+            } else {
+                Self::unchecked_new(simplified).into()
+            }
+        }
     }
 
     pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
