@@ -391,6 +391,16 @@
             "color": "#5ac1feff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#aad94cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#f07178ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -783,6 +793,16 @@
             "color": "#3b9ee5ff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#6cbf43ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#ff6666ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -1173,6 +1193,16 @@
           },
           "variant": {
             "color": "#72cffeff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#aad94cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#f07178ff",
             "font_style": null,
             "font_weight": null
           }

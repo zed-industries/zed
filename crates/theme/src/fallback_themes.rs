@@ -366,6 +366,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                     ("variable".into(), HighlightStyle::default()),
                     ("variable.special".into(), red.into()),
                     ("variant".into(), HighlightStyle::default()),
+                    ("diff.plus".into(), green.into()),
+                    ("diff.minus".into(), red.into()),
                 ],
             }),
         },
