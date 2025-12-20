@@ -5,8 +5,11 @@ use std::{
     str::FromStr,
 };
 
-use editor::{Editor, EditorStyle};
-use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
+use editor::Editor;
+use gpui::{
+    ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
+    TextStyleRefinement,
+};
 
 use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
 use ui::prelude::*;
@@ -309,6 +312,11 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
+    pub fn mode(self, mode: NumberFieldMode, cx: &mut App) -> Self {
+        self.mode.write(cx, mode);
+        self
+    }
+
     pub fn on_reset(
         mut self,
         on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -451,9 +459,11 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                         |window, cx| {
                                             let previous_focus_handle = window.focused(cx);
                                             let mut editor = Editor::single_line(window, cx);
-                                            let mut style = EditorStyle::default();
-                                            style.text.text_align = gpui::TextAlign::Right;
-                                            editor.set_style(style, window, cx);
+
+                                            editor.set_text_style_refinement(TextStyleRefinement {
+                                                text_align: Some(TextAlign::Center),
+                                                ..Default::default()
+                                            });
 
                                             editor.set_text(format!("{}", self.value), window, cx);
                                             cx.on_focus_out(&editor.focus_handle(cx), window, {
@@ -555,22 +565,36 @@ impl Component for NumberField<usize> {
         Some(
             v_flex()
                 .gap_6()
-                .children(vec![single_example(
-                    "Default Numeric Stepper",
-                    NumberField::new(
-                        "numeric-stepper-component-preview",
-                        *stepper_example.read(cx),
-                        window,
-                        cx,
-                    )
-                    .on_change({
-                        let stepper_example = stepper_example.clone();
-                        move |value, _, cx| stepper_example.write(cx, *value)
-                    })
-                    .min(1.0)
-                    .max(100.0)
-                    .into_any_element(),
-                )])
+                .children(vec![
+                    single_example(
+                        "Default Number Field",
+                        NumberField::new("number-field", *stepper_example.read(cx), window, cx)
+                            .on_change({
+                                let stepper_example = stepper_example.clone();
+                                move |value, _, cx| stepper_example.write(cx, *value)
+                            })
+                            .min(1.0)
+                            .max(100.0)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Read-Only Number Field",
+                        NumberField::new(
+                            "editable-number-field",
+                            *stepper_example.read(cx),
+                            window,
+                            cx,
+                        )
+                        .on_change({
+                            let stepper_example = stepper_example.clone();
+                            move |value, _, cx| stepper_example.write(cx, *value)
+                        })
+                        .min(1.0)
+                        .max(100.0)
+                        .mode(NumberFieldMode::Edit, cx)
+                        .into_any_element(),
+                    ),
+                ])
                 .into_any_element(),
         )
     }
