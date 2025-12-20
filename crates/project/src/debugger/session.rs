@@ -3,11 +3,12 @@ use super::breakpoint_store::{
 };
 use super::dap_command::{
     self, Attach, ConfigurationDone, ContinueCommand, DataBreakpointInfoCommand, DisconnectCommand,
-    EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
-    ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
-    ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand,
-    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    EvaluateCommand, FlutterCallServiceCommand, FlutterHotReloadCommand, FlutterHotRestartCommand,
+    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
+    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
+    SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand,
+    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
+    TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
 use crate::debugger::breakpoint_store::BreakpointSessionState;
@@ -2173,6 +2174,47 @@ impl Session {
     pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) {
         self.request(
             RestartStackFrameCommand { stack_frame_id },
+            Self::empty_response,
+            cx,
+        )
+        .detach();
+    }
+
+    /// Flutter hot reload - injects updated code into the running VM
+    /// without restarting the app (preserves state).
+    pub fn flutter_hot_reload(&mut self, cx: &mut Context<Self>) {
+        self.request(
+            FlutterHotReloadCommand {
+                reason: Some("manual".to_string()),
+            },
+            Self::empty_response,
+            cx,
+        )
+        .detach();
+    }
+
+    /// Flutter hot restart - updates code and performs a full restart
+    /// (does not preserve state).
+    pub fn flutter_hot_restart(&mut self, cx: &mut Context<Self>) {
+        self.request(
+            FlutterHotRestartCommand {
+                reason: Some("manual".to_string()),
+            },
+            Self::empty_response,
+            cx,
+        )
+        .detach();
+    }
+
+    /// Call a Flutter VM service extension (e.g., toggle debug paint).
+    pub fn flutter_call_service(
+        &mut self,
+        method: String,
+        params: Option<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        self.request(
+            FlutterCallServiceCommand { method, params },
             Self::empty_response,
             cx,
         )

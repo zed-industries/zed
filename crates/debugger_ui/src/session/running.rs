@@ -1715,6 +1715,20 @@ impl RunningState {
         });
     }
 
+    /// Flutter hot reload - injects updated code without restarting (preserves state).
+    pub fn flutter_hot_reload(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.flutter_hot_reload(cx);
+        });
+    }
+
+    /// Flutter hot restart - updates code and performs full restart (loses state).
+    pub fn flutter_hot_restart(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.flutter_hot_restart(cx);
+        });
+    }
+
     pub fn pause_thread(&self, cx: &mut Context<Self>) {
         let Some(thread_id) = self.thread_id else {
             return;

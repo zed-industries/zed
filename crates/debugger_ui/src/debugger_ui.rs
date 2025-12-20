@@ -87,6 +87,10 @@ actions!(
         /// When toggled on, only frames from the user's code are shown
         /// When toggled off, all frames are shown
         ToggleUserFrames,
+        /// Flutter: Hot reload - injects updated code without restarting (preserves state).
+        FlutterHotReload,
+        /// Flutter: Hot restart - updates code and performs full restart (loses state).
+        FlutterHotRestart,
     ]
 );
 
@@ -280,16 +284,36 @@ pub fn init(cx: &mut App) {
                             .ok();
                     }
                 })
-                .on_action(move |_: &ToggleUserFrames, _, cx| {
-                    if let Some((thread_status, stack_frame_list)) = active_item
-                        .read_with(cx, |item, cx| {
-                            (item.thread_status(cx), item.stack_frame_list().clone())
-                        })
-                        .ok()
-                    {
-                        stack_frame_list.update(cx, |stack_frame_list, cx| {
-                            stack_frame_list.toggle_frame_filter(thread_status, cx);
-                        })
+                .on_action({
+                    let active_item = active_item.clone();
+                    move |_: &ToggleUserFrames, _, cx| {
+                        if let Some((thread_status, stack_frame_list)) = active_item
+                            .read_with(cx, |item, cx| {
+                                (item.thread_status(cx), item.stack_frame_list().clone())
+                            })
+                            .ok()
+                        {
+                            stack_frame_list.update(cx, |stack_frame_list, cx| {
+                                stack_frame_list.toggle_frame_filter(thread_status, cx);
+                            })
+                        }
+                    }
+                })
+                // Flutter-specific actions (hot reload / hot restart)
+                .on_action({
+                    let active_item = active_item.clone();
+                    move |_: &FlutterHotReload, _, cx| {
+                        active_item
+                            .update(cx, |item, cx| item.flutter_hot_reload(cx))
+                            .ok();
+                    }
+                })
+                .on_action({
+                    let active_item = active_item.clone();
+                    move |_: &FlutterHotRestart, _, cx| {
+                        active_item
+                            .update(cx, |item, cx| item.flutter_hot_restart(cx))
+                            .ok();
                     }
                 })
             });

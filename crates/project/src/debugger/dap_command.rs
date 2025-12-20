@@ -1973,3 +1973,87 @@ impl LocalDapCommand for dap::WriteMemoryArguments {
         Ok(message)
     }
 }
+
+// Flutter-specific DAP commands
+
+/// Hot reload command - injects updated code into the running VM
+/// without restarting the app (preserves state).
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct FlutterHotReloadCommand {
+    /// Reason for the hot reload ("manual" or "save")
+    pub reason: Option<String>,
+}
+
+impl LocalDapCommand for FlutterHotReloadCommand {
+    type Response = ();
+    type DapRequest = dap::flutter::HotReload;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::flutter::HotReloadArguments {
+            reason: self.reason.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        _message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(())
+    }
+}
+
+/// Hot restart command - updates code and performs a full restart
+/// (does not preserve state).
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct FlutterHotRestartCommand {
+    /// Reason for the hot restart ("manual" or "save")
+    pub reason: Option<String>,
+}
+
+impl LocalDapCommand for FlutterHotRestartCommand {
+    type Response = ();
+    type DapRequest = dap::flutter::HotRestart;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::flutter::HotRestartArguments {
+            reason: self.reason.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        _message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(())
+    }
+}
+
+/// Call service command - invokes a VM service extension.
+/// Used for Flutter-specific operations like debug paint, performance overlay, etc.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct FlutterCallServiceCommand {
+    /// The service method to call (e.g., "ext.flutter.debugPaint")
+    pub method: String,
+    /// Optional parameters for the service call
+    pub params: Option<serde_json::Value>,
+}
+
+impl LocalDapCommand for FlutterCallServiceCommand {
+    type Response = ();
+    type DapRequest = dap::flutter::CallService;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::flutter::CallServiceArguments {
+            method: self.method.clone(),
+            params: self.params.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        _message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        // We ignore the result for now, just acknowledge the call succeeded
+        Ok(())
+    }
+}
