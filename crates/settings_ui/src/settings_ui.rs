@@ -3675,7 +3675,7 @@ fn update_project_setting_file(
 
         anyhow::Ok(())
     })
-    .detach();
+    .detach_and_log_err(cx);
 
     return anyhow::Ok(());
 }
