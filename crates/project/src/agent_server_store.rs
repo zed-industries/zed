@@ -1477,6 +1477,22 @@ impl ExternalAgentServer for LocalCodex {
                 {
                     Ok(release) => {
                         let version_dir = dir.join(&release.tag_name);
+                        if fs.is_dir(&version_dir).await
+                            && !fs.is_file(&version_dir.join(bin_name)).await
+                        {
+                            log::warn!(
+                                "Removing incomplete Codex installation at {}",
+                                version_dir.display()
+                            );
+                            fs.remove_dir(
+                                &version_dir,
+                                RemoveOptions {
+                                    recursive: true,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await?;
+                        }
                         if !fs.is_dir(&version_dir).await {
                             if let Some(ref mut status_tx) = status_tx {
                                 status_tx.send("Installing…".into()).ok();
