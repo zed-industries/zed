@@ -617,17 +617,6 @@ impl ToolbarItemView for BufferSearchBar {
                 }
                 return ToolbarItemLocation::Secondary;
             }
-            // if !self.dismissed {
-            //     if is_project_search {
-            //         self.dismiss(&Default::default(), window, cx);
-            //     } else {
-            //         if self.needs_expand_collapse_option(cx) {
-            //             return ToolbarItemLocation::PrimaryLeft;
-            //         } else {
-            //             return ToolbarItemLocation::Secondary;
-            //         }
-            //     }
-            // }
         }
         ToolbarItemLocation::Hidden
     }
