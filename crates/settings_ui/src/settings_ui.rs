@@ -3645,6 +3645,13 @@ fn update_project_setting_file(
                 .cloned()
         });
         let buffer = if let Some(cached_buffer) = cached_buffer {
+            let needs_reload = cached_buffer.read_with(cx, |buffer, _| buffer.has_conflict())?;
+            if needs_reload {
+                cached_buffer
+                    .update(cx, |buffer, cx| buffer.reload(cx))?
+                    .await
+                    .context("Failed to reload settings file")?;
+            }
             cached_buffer
         } else {
             let buffer = buffer_store
