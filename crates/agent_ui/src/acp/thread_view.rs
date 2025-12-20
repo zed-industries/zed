@@ -2174,37 +2174,18 @@ impl AcpThreadView {
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
-<<<<<<< HEAD
-                                block.markdown().map(|md| {
-                                    let md_c = md
-                                        .read(cx)
-                                        .selected_text()
-                                        .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    md_selection = Some(md_c);
-                                    self.render_markdown(md.clone(), style.clone())
-                                        .into_any_element()
-                                })
-                            }
-                            AssistantMessageChunk::Thought { block } => {
-                                block.markdown().map(|md| {
-                                    let md_c = md
-                                        .read(cx)
-                                        .selected_text()
-                                        .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    md_selection = Some(md_c);
-                                    self.render_thinking_block(
-                                        entry_ix,
-                                        chunk_ix,
-                                        md.clone(),
-                                        window,
-                                        cx,
-=======
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
                                     if this_is_blank {
                                         return None;
                                     }
+
+                                    let md_c = md
+                                        .read(cx)
+                                        .selected_text()
+                                        .unwrap_or_else(|| md.read(cx).source().to_string());
+                                    md_selection = Some(md_c);
 
                                     Some(
                                         self.render_markdown(md.clone(), style.clone())
@@ -2219,6 +2200,11 @@ impl AcpThreadView {
                                     if this_is_blank {
                                         return None;
                                     }
+                                    let md_c = md
+                                        .read(cx)
+                                        .selected_text()
+                                        .unwrap_or_else(|| md.read(cx).source().to_string());
+                                    md_selection = Some(md_c);
 
                                     Some(
                                         self.render_thinking_block(
@@ -2229,7 +2215,6 @@ impl AcpThreadView {
                                             cx,
                                         )
                                         .into_any_element(),
->>>>>>> 7f0842e3a64d5ad24937b0e74fb6afecd8236970
                                     )
                                 })
                             }
@@ -2237,49 +2222,38 @@ impl AcpThreadView {
                     ))
                     .into_any();
 
-<<<<<<< HEAD
-                let message_body_with_menu =
-                    right_click_menu(format!("assistant_context_menu-{}", entry_ix))
-                        .trigger(move |_, _, _| message_body)
-                        .menu(move |window, cx| {
-                            let selection = md_selection.clone();
-                            ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                let selection2 = selection.clone();
-                                menu.entry("Copy", None, move |_, cx| match selection2.as_ref() {
-                                    Some(text) => {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                                            "{}",
-                                            text
-                                        )));
-                                    }
-                                    None => {}
-                                })
-                            })
-                        })
-                        .into_any();
-
-                v_flex()
-                    .px_5()
-                    .py_1p5()
-                    .when(is_last, |this| this.pb_4())
-                    .w_full()
-                    .text_ui(cx)
-                    .child(message_body_with_menu)
-                    .into_any()
-=======
                 if is_blank {
                     Empty.into_any()
                 } else {
+                    let message_body_with_menu =
+                        right_click_menu(format!("assistant_context_menu-{}", entry_ix))
+                            .trigger(move |_, _, _| message_body)
+                            .menu(move |window, cx| {
+                                let selection = md_selection.clone();
+                                ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                    let selection2 = selection.clone();
+                                    menu.entry("Copy", None, move |_, cx| {
+                                        match selection2.as_ref() {
+                                            Some(text) => {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    format!("{}", text),
+                                                ));
+                                            }
+                                            None => {}
+                                        }
+                                    })
+                                })
+                            })
+                            .into_any();
                     v_flex()
                         .px_5()
                         .py_1p5()
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(message_body)
+                        .child(message_body_with_menu)
                         .into_any()
                 }
->>>>>>> 7f0842e3a64d5ad24937b0e74fb6afecd8236970
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
