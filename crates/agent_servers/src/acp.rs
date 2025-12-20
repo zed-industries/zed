@@ -464,9 +464,12 @@ impl AgentConnection for AcpConnection {
                     history.messages.len(),
                     session_id_str
                 );
-                thread.update(&mut cx, |thread, cx| {
-                    thread.load_historical_messages(history.messages, cx);
-                })?;
+                let thread_clone = thread.clone();
+                let _ = cx.update(|cx| {
+                    let _ = thread_clone.update(cx, |thread, cx| {
+                        thread.load_historical_messages(history.messages, cx);
+                    });
+                });
             }
 
             Ok(thread)
