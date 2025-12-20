@@ -3,13 +3,14 @@ use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
-use client::parse_zed_link;
+use client::{ZedLink, parse_zed_link};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
+use futures::future;
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::file_diff_view::FileDiffView;
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
@@ -56,6 +58,12 @@ pub enum OpenRequestKind {
     Setting {
         /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
+    },
+    GitClone {
+        repo_url: SharedString,
+    },
+    GitCommit {
+        sha: String,
     },
 }
 
@@ -109,10 +117,24 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
+            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+                this.parse_git_clone_url(clone_path)?
+            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+                this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
-            } else if let Some(request_path) = parse_zed_link(&url, cx) {
-                this.parse_request_path(request_path).log_err();
+            } else if let Some(zed_link) = parse_zed_link(&url, cx) {
+                match zed_link {
+                    ZedLink::Channel { channel_id } => {
+                        this.join_channel = Some(channel_id);
+                    }
+                    ZedLink::ChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
+                        this.open_channel_notes.push((channel_id, heading));
+                    }
+                }
             } else {
                 log::error!("unhandled url: {}", url);
             }
@@ -125,6 +147,48 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
+        // Format: /?repo=<url> or ?repo=<url>
+        let clone_path = clone_path.strip_prefix('/').unwrap_or(clone_path);
+
+        let query = clone_path
+            .strip_prefix('?')
+            .context("invalid git clone url: missing query string")?;
+
+        let repo_url = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git clone url: missing repo query parameter")?
+            .to_string()
+            .into();
+
+        self.kind = Some(OpenRequestKind::GitClone { repo_url });
+
+        Ok(())
+    }
+
+    fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
+        // Format: <sha>?repo=<path>
+        let (sha, query) = commit_path
+            .split_once('?')
+            .context("invalid git commit url: missing query string")?;
+        anyhow::ensure!(!sha.is_empty(), "invalid git commit url: missing sha");
+
+        let repo = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git commit url: missing repo query parameter")?
+            .to_string();
+
+        self.open_paths.push(repo);
+
+        self.kind = Some(OpenRequestKind::GitCommit {
+            sha: sha.to_string(),
+        });
+
+        Ok(())
     }
 
     fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
@@ -155,31 +219,6 @@ impl OpenRequest {
         self.remote_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
-    }
-
-    fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
-        let mut parts = request_path.split('/');
-        if parts.next() == Some("channel")
-            && let Some(slug) = parts.next()
-            && let Some(id_str) = slug.split('-').next_back()
-            && let Ok(channel_id) = id_str.parse::<u64>()
-        {
-            let Some(next) = parts.next() else {
-                self.join_channel = Some(channel_id);
-                return Ok(());
-            };
-
-            if let Some(heading) = next.strip_prefix("notes#") {
-                self.open_channel_notes
-                    .push((channel_id, Some(heading.to_string())));
-                return Ok(());
-            }
-            if next == "notes" {
-                self.open_channel_notes.push((channel_id, None));
-                return Ok(());
-            }
-        }
-        anyhow::bail!("invalid zed url: {request_path}")
     }
 }
 
@@ -514,33 +553,27 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let mut errored = false;
-
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
-    // Handle reuse flag by finding existing window to replace
-    let replace_window = if reuse {
-        cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
-            .ok()
-            .flatten()
+    // If reuse flag is passed, open a new workspace in an existing window.
+    let (open_new_workspace, replace_window) = if reuse {
+        (
+            Some(true),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
+                .ok()
+                .flatten(),
+        )
     } else {
-        None
+        (open_new_workspace, None)
     };
 
-    // For reuse, force new workspace creation but with replace_window set
-    let effective_open_new_workspace = if reuse {
-        Some(true)
-    } else {
-        open_new_workspace
-    };
-
-    match open_paths_with_positions(
+    let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
         app_state.clone(),
         workspace::OpenOptions {
-            open_new_workspace: effective_open_new_workspace,
+            open_new_workspace,
             replace_window,
             prefer_focused_window: wait,
             env: env.cloned(),
@@ -550,80 +583,95 @@ async fn open_local_workspace(
     )
     .await
     {
-        Ok((workspace, items)) => {
-            let mut item_release_futures = Vec::new();
-
-            for item in items {
-                match item {
-                    Some(Ok(item)) => {
-                        cx.update(|cx| {
-                            let released = oneshot::channel();
-                            item.on_release(
-                                cx,
-                                Box::new(move |_| {
-                                    let _ = released.0.send(());
-                                }),
-                            )
-                            .detach();
-                            item_release_futures.push(released.1);
-                        })
-                        .log_err();
-                    }
-                    Some(Err(err)) => {
-                        responses
-                            .send(CliResponse::Stderr {
-                                message: err.to_string(),
-                            })
-                            .log_err();
-                        errored = true;
-                    }
-                    None => {}
-                }
-            }
-
-            if wait {
-                let background = cx.background_executor().clone();
-                let wait = async move {
-                    if paths_with_position.is_empty() && diff_paths.is_empty() {
-                        let (done_tx, done_rx) = oneshot::channel();
-                        let _subscription = workspace.update(cx, |_, _, cx| {
-                            cx.on_release(move |_, _| {
-                                let _ = done_tx.send(());
-                            })
-                        });
-                        let _ = done_rx.await;
-                    } else {
-                        let _ = futures::future::try_join_all(item_release_futures).await;
-                    };
-                }
-                .fuse();
-
-                futures::pin_mut!(wait);
-
-                loop {
-                    // Repeatedly check if CLI is still open to avoid wasting resources
-                    // waiting for files or workspaces to close.
-                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                    futures::select_biased! {
-                        _ = wait => break,
-                        _ = timer => {
-                            if responses.send(CliResponse::Ping).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        Ok(result) => result,
         Err(error) => {
-            errored = true;
             responses
                 .send(CliResponse::Stderr {
                     message: format!("error opening {paths_with_position:?}: {error}"),
                 })
                 .log_err();
+            return true;
+        }
+    };
+
+    let mut errored = false;
+    let mut item_release_futures = Vec::new();
+    let mut subscriptions = Vec::new();
+
+    // If --wait flag is used with no paths, or a directory, then wait until
+    // the entire workspace is closed.
+    if wait {
+        let mut wait_for_window_close = paths_with_position.is_empty() && diff_paths.is_empty();
+        for path_with_position in &paths_with_position {
+            if app_state.fs.is_dir(&path_with_position.path).await {
+                wait_for_window_close = true;
+                break;
+            }
+        }
+
+        if wait_for_window_close {
+            let (release_tx, release_rx) = oneshot::channel();
+            item_release_futures.push(release_rx);
+            subscriptions.push(workspace.update(cx, |_, _, cx| {
+                cx.on_release(move |_, _| {
+                    let _ = release_tx.send(());
+                })
+            }));
         }
     }
+
+    for item in items {
+        match item {
+            Some(Ok(item)) => {
+                if wait {
+                    let (release_tx, release_rx) = oneshot::channel();
+                    item_release_futures.push(release_rx);
+                    subscriptions.push(cx.update(|cx| {
+                        item.on_release(
+                            cx,
+                            Box::new(move |_| {
+                                release_tx.send(()).ok();
+                            }),
+                        )
+                    }));
+                }
+            }
+            Some(Err(err)) => {
+                responses
+                    .send(CliResponse::Stderr {
+                        message: err.to_string(),
+                    })
+                    .log_err();
+                errored = true;
+            }
+            None => {}
+        }
+    }
+
+    if wait {
+        let wait = async move {
+            let _subscriptions = subscriptions;
+            let _ = future::try_join_all(item_release_futures).await;
+        }
+        .fuse();
+        futures::pin_mut!(wait);
+
+        let background = cx.background_executor().clone();
+        loop {
+            // Repeatedly check if CLI is still open to avoid wasting resources
+            // waiting for files or workspaces to close.
+            let mut timer = background.timer(Duration::from_secs(1)).fuse();
+            futures::select_biased! {
+                _ = wait => break,
+                _ = timer => {
+                    if responses.send(CliResponse::Ping).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     errored
 }
 
@@ -653,12 +701,13 @@ mod tests {
         ipc::{self},
     };
     use editor::Editor;
-    use gpui::TestAppContext;
+    use futures::poll;
+    use gpui::{AppContext as _, TestAppContext};
     use language::LineEnding;
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, Workspace};
 
@@ -686,9 +735,90 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
+                connection_timeout: None,
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_commit_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        // Test basic git commit URL
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?repo=path/to/repo".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        // Verify path was added to open_paths for workspace routing
+        assert_eq!(request.open_paths, vec!["path/to/repo"]);
+
+        // Test with URL encoded path
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/def456?repo=path%20with%20spaces".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "def456");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        assert_eq!(request.open_paths, vec!["path with spaces"]);
+
+        // Test with empty path
+        cx.update(|cx| {
+            assert!(
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec!["zed://git/commit/abc123?repo=".into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo")
+            );
+        });
+
+        // Test error case: missing SHA
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?foo=bar".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo query parameter")
+        );
     }
 
     #[gpui::test]
@@ -751,6 +881,60 @@ mod tests {
                 assert_eq!(items.len(), 1, "Workspace should have two items");
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_wait_with_directory_waits_for_window_close(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": {
+                        "file1.txt": "content1",
+                    },
+                }),
+            )
+            .await;
+
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let workspace_paths = vec![path!("/root/dir1").to_owned()];
+
+        let (done_tx, mut done_rx) = futures::channel::oneshot::channel();
+        cx.spawn({
+            let app_state = app_state.clone();
+            move |mut cx| async move {
+                let errored = open_local_workspace(
+                    workspace_paths,
+                    vec![],
+                    None,
+                    false,
+                    true,
+                    &response_tx,
+                    None,
+                    &app_state,
+                    &mut cx,
+                )
+                .await;
+                let _ = done_tx.send(errored);
+            }
+        })
+        .detach();
+
+        cx.background_executor.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(matches!(poll!(&mut done_rx), Poll::Pending));
+
+        let window = cx.windows()[0];
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let errored = done_rx.await.unwrap();
+        assert!(!errored);
     }
 
     #[gpui::test]
@@ -928,5 +1112,81 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_without_slash(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_with_encoding(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https%3A%2F%2Fgithub.com%2Fzed-industries%2Fzed.git"
+                            .into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
     }
 }

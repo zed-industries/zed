@@ -342,7 +342,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(pane);
+                let _removal_result = self.center.remove(pane, cx);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -351,7 +351,7 @@ impl TerminalPanel {
                 } else if let Some(focus_on_pane) =
                     focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
                 {
-                    focus_on_pane.focus_handle(cx).focus(window);
+                    focus_on_pane.focus_handle(cx).focus(window, cx);
                 }
             }
             pane::Event::ZoomIn => {
@@ -393,8 +393,11 @@ impl TerminalPanel {
                         };
                         panel
                             .update_in(cx, |panel, window, cx| {
-                                panel.center.split(&pane, &new_pane, direction).log_err();
-                                window.focus(&new_pane.focus_handle(cx));
+                                panel
+                                    .center
+                                    .split(&pane, &new_pane, direction, cx)
+                                    .log_err();
+                                window.focus(&new_pane.focus_handle(cx), cx);
                             })
                             .ok();
                     })
@@ -415,8 +418,8 @@ impl TerminalPanel {
                     new_pane.update(cx, |pane, cx| {
                         pane.add_item(item, true, true, None, window, cx);
                     });
-                    self.center.split(&pane, &new_pane, direction).log_err();
-                    window.focus(&new_pane.focus_handle(cx));
+                    self.center.split(&pane, &new_pane, direction, cx).log_err();
+                    window.focus(&new_pane.focus_handle(cx), cx);
                 }
             }
             pane::Event::Focus => {
@@ -787,8 +790,7 @@ impl TerminalPanel {
                 }
 
                 pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(window, cx)
-                        || matches!(reveal_strategy, RevealStrategy::Always);
+                    let focus = matches!(reveal_strategy, RevealStrategy::Always);
                     pane.add_item(terminal_view, true, focus, None, window, cx);
                 });
 
@@ -850,8 +852,7 @@ impl TerminalPanel {
                         }
 
                         pane.update(cx, |pane, cx| {
-                            let focus = pane.has_focus(window, cx)
-                                || matches!(reveal_strategy, RevealStrategy::Always);
+                            let focus = matches!(reveal_strategy, RevealStrategy::Always);
                             pane.add_item(terminal_view, true, focus, None, window, cx);
                         });
 
@@ -938,7 +939,6 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
-        let reveal_target = spawn_task.reveal_target;
         let task_workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             let project = terminal_panel.update(cx, |this, cx| {
@@ -952,6 +952,14 @@ impl TerminalPanel {
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
                 terminal_to_replace.set_terminal(new_terminal.clone(), window, cx);
+            })?;
+
+            let reveal_target = terminal_panel.update(cx, |panel, _| {
+                if panel.center.panes().iter().any(|p| **p == task_pane) {
+                    RevealTarget::Dock
+                } else {
+                    RevealTarget::Center
+                }
             })?;
 
             match reveal {
@@ -995,7 +1003,7 @@ impl TerminalPanel {
                 RevealStrategy::NoFocus => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.active_pane().focus_handle(cx).focus(window);
+                            workspace.active_pane().focus_handle(cx).focus(window, cx);
                         })?;
                     }
                     RevealTarget::Dock => {
@@ -1050,7 +1058,7 @@ impl TerminalPanel {
             .center
             .find_pane_in_direction(&self.active_pane, direction, cx)
         {
-            window.focus(&pane.focus_handle(cx));
+            window.focus(&pane.focus_handle(cx), cx);
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1066,7 +1074,7 @@ impl TerminalPanel {
             .find_pane_in_direction(&self.active_pane, direction, cx)
             .cloned()
         {
-            self.center.swap(&self.active_pane, &to);
+            self.center.swap(&self.active_pane, &to, cx);
             cx.notify();
         }
     }
@@ -1074,7 +1082,7 @@ impl TerminalPanel {
     fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction)
+            .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
             cx.notify();
@@ -1168,63 +1176,67 @@ pub fn new_terminal_pane(
                         let source = tab.pane.clone();
                         let item_id_to_move = item.item_id();
 
-                        let Ok(new_split_pane) = pane
-                            .drag_split_direction()
-                            .map(|split_direction| {
-                                drop_closure_terminal_panel.update(cx, |terminal_panel, cx| {
-                                    let is_zoomed = if terminal_panel.active_pane == this_pane {
-                                        pane.is_zoomed()
-                                    } else {
-                                        terminal_panel.active_pane.read(cx).is_zoomed()
-                                    };
-                                    let new_pane = new_terminal_pane(
-                                        workspace.clone(),
-                                        project.clone(),
-                                        is_zoomed,
-                                        window,
-                                        cx,
-                                    );
-                                    terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
-                                    terminal_panel.center.split(
-                                        &this_pane,
-                                        &new_pane,
-                                        split_direction,
-                                    )?;
-                                    anyhow::Ok(new_pane)
-                                })
-                            })
-                            .transpose()
-                        else {
-                            return ControlFlow::Break(());
+                        // If no split direction, let the regular pane drop handler take care of it
+                        let Some(split_direction) = pane.drag_split_direction() else {
+                            return ControlFlow::Continue(());
                         };
 
-                        match new_split_pane.transpose() {
-                            // Source pane may be the one currently updated, so defer the move.
-                            Ok(Some(new_pane)) => cx
-                                .spawn_in(window, async move |_, cx| {
-                                    cx.update(|window, cx| {
-                                        move_item(
-                                            &source,
-                                            &new_pane,
-                                            item_id_to_move,
-                                            new_pane.read(cx).active_item_index(),
-                                            true,
-                                            window,
-                                            cx,
+                        // Gather data synchronously before deferring
+                        let is_zoomed = drop_closure_terminal_panel
+                            .upgrade()
+                            .map(|terminal_panel| {
+                                let terminal_panel = terminal_panel.read(cx);
+                                if terminal_panel.active_pane == this_pane {
+                                    pane.is_zoomed()
+                                } else {
+                                    terminal_panel.active_pane.read(cx).is_zoomed()
+                                }
+                            })
+                            .unwrap_or(false);
+
+                        let workspace = workspace.clone();
+                        let terminal_panel = drop_closure_terminal_panel.clone();
+
+                        // Defer the split operation to avoid re-entrancy panic.
+                        // The pane may be the one currently being updated, so we cannot
+                        // call mark_positions (via split) synchronously.
+                        cx.spawn_in(window, async move |_, cx| {
+                            cx.update(|window, cx| {
+                                let Ok(new_pane) =
+                                    terminal_panel.update(cx, |terminal_panel, cx| {
+                                        let new_pane = new_terminal_pane(
+                                            workspace, project, is_zoomed, window, cx,
                                         );
+                                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                        terminal_panel.center.split(
+                                            &this_pane,
+                                            &new_pane,
+                                            split_direction,
+                                            cx,
+                                        )?;
+                                        anyhow::Ok(new_pane)
                                     })
-                                    .ok();
-                                })
-                                .detach(),
-                            // If we drop into existing pane or current pane,
-                            // regular pane drop handler will take care of it,
-                            // using the right tab index for the operation.
-                            Ok(None) => return ControlFlow::Continue(()),
-                            err @ Err(_) => {
-                                err.log_err();
-                                return ControlFlow::Break(());
-                            }
-                        };
+                                else {
+                                    return;
+                                };
+
+                                let Some(new_pane) = new_pane.log_err() else {
+                                    return;
+                                };
+
+                                move_item(
+                                    &source,
+                                    &new_pane,
+                                    item_id_to_move,
+                                    new_pane.read(cx).active_item_index(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        })
+                        .detach();
                     } else if let Some(project_path) = item.project_path(cx)
                         && let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
                     {
@@ -1293,7 +1305,7 @@ fn add_paths_to_terminal(
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
     {
-        window.focus(&terminal_view.focus_handle(cx));
+        window.focus(&terminal_view.focus_handle(cx), cx);
         let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
         new_text.push(' ');
         terminal_view.update(cx, |terminal_view, cx| {
@@ -1447,7 +1459,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let next_ix = (ix + 1) % panes.len();
-                            window.focus(&panes[next_ix].focus_handle(cx));
+                            window.focus(&panes[next_ix].focus_handle(cx), cx);
                         }
                     }),
                 )
@@ -1459,7 +1471,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
-                            window.focus(&panes[prev_ix].focus_handle(cx));
+                            window.focus(&panes[prev_ix].focus_handle(cx), cx);
                         }
                     },
                 ))
@@ -1467,7 +1479,7 @@ impl Render for TerminalPanel {
                     cx.listener(|terminal_panel, action: &ActivatePane, window, cx| {
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
-                            window.focus(&pane.read(cx).focus_handle(cx));
+                            window.focus(&pane.read(cx).focus_handle(cx), cx);
                         } else {
                             let future =
                                 terminal_panel.new_pane_with_cloned_active_terminal(window, cx);
@@ -1482,10 +1494,11 @@ impl Render for TerminalPanel {
                                                     &terminal_panel.active_pane,
                                                     &new_pane,
                                                     SplitDirection::Right,
+                                                    cx,
                                                 )
                                                 .log_err();
                                             let new_pane = new_pane.read(cx);
-                                            window.focus(&new_pane.focus_handle(cx));
+                                            window.focus(&new_pane.focus_handle(cx), cx);
                                         },
                                     );
                                 }

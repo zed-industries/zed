@@ -19,7 +19,12 @@ use std::{
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
-use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
+use tree_sitter::{
+    Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
+    QueryPredicateArg, Tree,
+};
+
+pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
 
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
@@ -80,6 +85,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
     matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
@@ -1096,12 +1102,15 @@ impl<'a> SyntaxMapCaptures<'a> {
 
 #[derive(Default)]
 pub struct TreeSitterOptions {
-    max_start_depth: Option<u32>,
+    pub max_start_depth: Option<u32>,
+    pub max_bytes_to_query: Option<usize>,
 }
+
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
+            max_bytes_to_query: None,
         }
     }
 }
@@ -1135,6 +1144,14 @@ impl<'a> SyntaxMapMatches<'a> {
             };
             cursor.set_max_start_depth(options.max_start_depth);
 
+            if let Some(max_bytes_to_query) = options.max_bytes_to_query {
+                let midpoint = (range.start + range.end) / 2;
+                let containing_range_start = midpoint.saturating_sub(max_bytes_to_query / 2);
+                let containing_range_end =
+                    containing_range_start.saturating_add(max_bytes_to_query);
+                cursor.set_containing_byte_range(containing_range_start..containing_range_end);
+            }
+
             cursor.set_byte_range(range.clone());
             let matches = cursor.matches(query, layer.node(), TextProvider(text));
             let grammar_index = result
@@ -1150,6 +1167,7 @@ impl<'a> SyntaxMapMatches<'a> {
                 depth: layer.depth,
                 grammar_index,
                 matches,
+                query,
                 next_pattern_index: 0,
                 next_captures: Vec::new(),
                 has_next: false,
@@ -1247,13 +1265,20 @@ impl SyntaxMapCapturesLayer<'_> {
 
 impl SyntaxMapMatchesLayer<'_> {
     fn advance(&mut self) {
-        if let Some(mat) = self.matches.next() {
-            self.next_captures.clear();
-            self.next_captures.extend_from_slice(mat.captures);
-            self.next_pattern_index = mat.pattern_index;
-            self.has_next = true;
-        } else {
-            self.has_next = false;
+        loop {
+            if let Some(mat) = self.matches.next() {
+                if !satisfies_custom_predicates(self.query, mat) {
+                    continue;
+                }
+                self.next_captures.clear();
+                self.next_captures.extend_from_slice(mat.captures);
+                self.next_pattern_index = mat.pattern_index;
+                self.has_next = true;
+                return;
+            } else {
+                self.has_next = false;
+                return;
+            }
         }
     }
 
@@ -1280,6 +1305,39 @@ impl<'a> Iterator for SyntaxMapCaptures<'a> {
         self.advance();
         result
     }
+}
+
+fn satisfies_custom_predicates(query: &Query, mat: &QueryMatch) -> bool {
+    for predicate in query.general_predicates(mat.pattern_index) {
+        let satisfied = match predicate.operator.as_ref() {
+            "has-parent?" => has_parent(&predicate.args, mat),
+            "not-has-parent?" => !has_parent(&predicate.args, mat),
+            _ => true,
+        };
+        if !satisfied {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_parent(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
+    let (
+        Some(QueryPredicateArg::Capture(capture_ix)),
+        Some(QueryPredicateArg::String(parent_kind)),
+    ) = (args.first(), args.get(1))
+    else {
+        return false;
+    };
+
+    let Some(capture) = mat.captures.iter().find(|c| c.index == *capture_ix) else {
+        return false;
+    };
+
+    capture
+        .node
+        .parent()
+        .is_some_and(|p| p.kind() == parent_kind.as_ref())
 }
 
 fn join_ranges(
@@ -1642,6 +1700,10 @@ impl<'a> SyntaxLayer<'a> {
 
         let mut query_cursor = QueryCursorHandle::new();
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
+        query_cursor.set_containing_byte_range(
+            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
+                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
+        );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);
@@ -1928,6 +1990,8 @@ impl Drop for QueryCursorHandle {
         let mut cursor = self.0.take().unwrap();
         cursor.set_byte_range(0..usize::MAX);
         cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        cursor.set_containing_byte_range(0..usize::MAX);
+        cursor.set_containing_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         QUERY_CURSORS.lock().push(cursor)
     }
 }
