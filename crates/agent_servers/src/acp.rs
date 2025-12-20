@@ -24,6 +24,62 @@ pub struct SessionHistoryNotification {
     pub messages: Vec<HistoricalMessage>,
     #[serde(default)]
     pub compacted: bool,
+    // Lazy load support
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub total_count: usize,
+    #[serde(default)]
+    pub start_index: usize,
+}
+
+// Convergio: Background execution completion notification
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundCompleteNotification {
+    pub session_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub has_buffered_content: bool,
+    #[serde(default)]
+    pub buffered_length: usize,
+}
+
+// Convergio: Load more history request/response
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadMoreRequest {
+    pub session_id: String,
+    pub before_index: usize,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadMoreResponse {
+    pub messages: Vec<HistoricalMessage>,
+    pub has_more: bool,
+    pub start_index: usize,
+    pub total_count: usize,
+}
+
+// Convergio: Background/foreground request
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForegroundResponse {
+    pub success: bool,
+    pub is_processing: bool,
+    #[serde(default)]
+    pub buffered_content: Option<String>,
+    #[serde(default)]
+    pub buffered_length: usize,
 }
 use util::ResultExt as _;
 
@@ -999,6 +1055,36 @@ impl acp::Client for ClientDelegate {
                 }
                 Err(e) => {
                     log::error!("Failed to parse session/history notification: {}", e);
+                }
+            }
+        }
+
+        // Handle Convergio custom extension: session/backgroundComplete
+        if args.method.as_ref() == "session/backgroundComplete" {
+            let params_str = args.params.get();
+            match serde_json::from_str::<BackgroundCompleteNotification>(params_str) {
+                Ok(notification) => {
+                    log::info!(
+                        "Background session {} completed, status: {}, buffered: {} bytes",
+                        notification.session_id,
+                        notification.status,
+                        notification.buffered_length
+                    );
+
+                    let session_id = acp::SessionId::new(notification.session_id.clone());
+                    if let Ok(thread) = self.session_thread(&session_id) {
+                        let _ = thread.update(&mut self.cx.clone(), |thread, cx| {
+                            thread.on_background_complete(
+                                notification.has_buffered_content,
+                                notification.buffered_length,
+                                cx,
+                            );
+                        });
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::error!("Failed to parse session/backgroundComplete notification: {}", e);
                 }
             }
         }

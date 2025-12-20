@@ -895,6 +895,8 @@ pub enum AcpThreadEvent {
     ModeUpdated(acp::SessionModeId),
     /// Historical messages loaded from a resumed session (Convergio extension)
     HistoryLoaded(usize),
+    /// Background execution completed (Convergio extension)
+    BackgroundComplete { has_buffered_content: bool, buffered_length: usize },
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1379,6 +1381,20 @@ impl AcpThread {
         // Emit a single event with the count of loaded messages
         // This allows the UI to sync all entries at once instead of one-by-one
         cx.emit(AcpThreadEvent::HistoryLoaded(message_count));
+    }
+
+    /// Called when a background execution completes (Convergio extension)
+    /// This is triggered by the session/backgroundComplete notification
+    pub fn on_background_complete(
+        &mut self,
+        has_buffered_content: bool,
+        buffered_length: usize,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AcpThreadEvent::BackgroundComplete {
+            has_buffered_content,
+            buffered_length,
+        });
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
