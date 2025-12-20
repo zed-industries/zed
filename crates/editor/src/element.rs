@@ -6164,10 +6164,25 @@ impl EditorElement {
                     let color = cx.theme().colors().editor_hover_line_number;
 
                     let line = self.shape_line_number(shaped_line.text.clone(), color, window);
-                    line.paint(hitbox.origin, line_height, window, cx).log_err()
+                    line.paint(
+                        hitbox.origin,
+                        line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err()
                 } else {
                     shaped_line
-                        .paint(hitbox.origin, line_height, window, cx)
+                        .paint(
+                            hitbox.origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
                         .log_err()
                 }) else {
                     continue;
@@ -8525,7 +8540,7 @@ impl LineWithInvisibles {
         for fragment in &self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
-                    line.paint_aligned(
+                    line.paint(
                         fragment_origin,
                         line_height,
                         layout.text_align,
@@ -8575,7 +8590,7 @@ impl LineWithInvisibles {
         for fragment in &self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
-                    line.paint_background_aligned(
+                    line.paint_background(
                         fragment_origin,
                         line_height,
                         layout.text_align,
@@ -8632,7 +8647,7 @@ impl LineWithInvisibles {
                 [token_offset, token_end_offset],
                 Box::new(move |window: &mut Window, cx: &mut App| {
                     invisible_symbol
-                        .paint(origin, line_height, window, cx)
+                        .paint(origin, line_height, TextAlign::Left, None, window, cx)
                         .log_err();
                 }),
             )
@@ -10610,7 +10625,9 @@ impl StickyHeaderLine {
                 gutter_origin.x + gutter_width - gutter_right_padding - line_number.width,
                 gutter_origin.y,
             );
-            line_number.paint(origin, line_height, window, cx).log_err();
+            line_number
+                .paint(origin, line_height, TextAlign::Left, None, window, cx)
+                .log_err();
         }
     }
 }
@@ -11310,7 +11327,14 @@ impl CursorLayout {
 
         if let Some(block_text) = &self.block_text {
             block_text
-                .paint(self.origin + origin, self.line_height, window, cx)
+                .paint(
+                    self.origin + origin,
+                    self.line_height,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                )
                 .log_err();
         }
     }
