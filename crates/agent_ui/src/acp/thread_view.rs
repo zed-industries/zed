@@ -2060,15 +2060,12 @@ impl AcpThreadView {
                                                             .entry(
                                                                 "Paste",
                                                                 None,
-                                                                move |win, cx| {
+                                                                move |window, cx| {
                                                                     let ed2 = ed2.clone();
-
-                                                                    win.defer(cx, move |window, cx| {
-                                                                        ed2.update(cx, |editor, _cx| {
+                                                                        ed2.update(cx, |editor, cx| {
                                                                             editor
-                                                                                .paste_from_clipboard(_cx, window);
+                                                                                .paste_from_clipboard(cx, window);
                                                                         });
-                                                                    });
                                                                 },
                                                             )
                                                         })
@@ -4429,8 +4426,8 @@ impl AcpThreadView {
                                                 None,
                                                 move |window, cx| {
                                                     let ed2 = ed2.clone();
-                                                    ed2.update(cx, |editor, _cx| {
-                                                        editor.paste_from_clipboard(_cx, window);
+                                                    ed2.update(cx, |editor, cx| {
+                                                        editor.paste_from_clipboard(cx, window);
                                                     });
                                                 },
                                             )
