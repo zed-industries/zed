@@ -82,6 +82,31 @@ impl ShapedLine {
         Ok(())
     }
 
+    /// Paint the line of text to the window with custom alignment.
+    pub fn paint_aligned(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &[],
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
+
     /// Paint the background of the line to the window.
     pub fn paint_background(
         &self,
@@ -96,6 +121,31 @@ impl ShapedLine {
             line_height,
             TextAlign::default(),
             None,
+            &self.decoration_runs,
+            &[],
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
+
+    /// Paint the background of the line to the window with custom alignment.
+    pub fn paint_background_aligned(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line_background(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
             &self.decoration_runs,
             &[],
             window,
