@@ -9,8 +9,6 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use settings::Settings as _;
-use task::ShellBuilder;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -23,7 +21,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -88,11 +86,13 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
-        let mut child =
-            builder.build_command(Some(command.path.display().to_string()), &command.args);
+        // Spawn the command directly without wrapping in a shell.
+        // This is critical for avoiding shell initialization scripts (like .zshenv)
+        // that may override PATH with version managers (asdf, nvm) pointing to
+        // incompatible node versions. See issue #45241.
+        let mut child = util::command::new_smol_command(&command.path);
         child
+            .args(&command.args)
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
