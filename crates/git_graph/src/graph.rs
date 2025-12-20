@@ -116,18 +116,18 @@ impl GitGraph {
                 let author_email: SharedString = fields[5].trim().to_string().into();
                 let refs_str = if fields.len() > 6 { fields[6].trim() } else { "" };
 
-                // Optimize: avoid double trim by splitting on whitespace directly
+                // Convert parent SHAs to owned strings
                 let parent_shas: Vec<SharedString> = if parent_str.is_empty() {
                     vec![]
                 } else {
-                    parent_str.split_whitespace().map(|s| s.into()).collect()
+                    parent_str.split_whitespace().map(|s| s.to_string().into()).collect()
                 };
 
                 let refs = Self::parse_refs(refs_str);
 
-                // Optimize: create short_sha directly from &str without full string conversion
-                let sha_str = sha.as_str();
-                let short_sha: SharedString = sha_str[..7.min(sha_str.len())].into();
+                // Get short sha from the original field to avoid borrow issues
+                let sha_field = fields[0].trim();
+                let short_sha: SharedString = sha_field[..7.min(sha_field.len())].to_string().into();
 
                 let node = CommitNode {
                     sha: sha.clone(),

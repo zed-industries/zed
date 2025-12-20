@@ -309,13 +309,13 @@ impl ConvergioAgent {
         let server_part = display_name.split(" - ").next().unwrap_or(name);
         let server_name = format!("Convergio-{}", server_part);
         Self {
-            name: name.into(),
+            name: name.to_string().into(),
             server_name: server_name.into(),
-            display_name: display_name.into(),
-            description: description.into(),
+            display_name: display_name.to_string().into(),
+            description: description.to_string().into(),
             icon,
             category,
-            skills: skills.into_iter().map(|s| s.into()).collect(),
+            skills: skills.into_iter().map(|s| s.to_string().into()).collect(),
         }
     }
 
@@ -552,7 +552,7 @@ impl ConvergioPanel {
     }
 
     fn on_filter_changed(&mut self, cx: &mut Context<Self>) {
-        self.filter_query = self.filter_editor.read(cx).text(cx);
+        self.filter_query = self.filter_editor.read(cx).text(cx).into();
         cx.notify();
     }
 
@@ -587,7 +587,7 @@ impl ConvergioPanel {
     /// Opens a Convergio agent thread, attempting to resume an existing conversation if available.
     fn open_agent_thread(&mut self, agent_name: &str, server_name: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Mark agent as active
-        self.active_agents.insert(agent_name.into());
+        self.active_agents.insert(agent_name.to_string().into());
         log::info!("Opening Convergio agent chat: {}", agent_name);
 
         // Try to find existing thread in history by agent_name using stored history_store
@@ -619,7 +619,7 @@ impl ConvergioPanel {
             // History not loaded yet - add to pending and create new thread for now
             // When history loads, if we find an existing thread, subsequent opens will resume
             log::info!("History may not be loaded yet for {}, creating new thread (will resume on next open)", agent_name);
-            self.pending_thread_opens.push((agent_name.into(), server_name.into()));
+            self.pending_thread_opens.push((agent_name.to_string().into(), server_name.to_string().into()));
             let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
                 name: server_name.to_string().into()
             });
@@ -942,7 +942,7 @@ impl ConvergioPanel {
         self.active_agents.len()
     }
 
-    fn render_category_header(&self, category: AgentCategory, agent_count: usize, active_in_cat: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_category_header(&self, category: AgentCategory, agent_count: usize, active_in_cat: usize, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let is_collapsed = self.collapsed_categories.contains(&category);
         let cat = category;
         let category_color = category.color();
