@@ -2,6 +2,7 @@
 
 use collections::{HashMap, HashSet};
 use gpui::SharedString;
+use log;
 use serde::{Deserialize, Serialize};
 
 /// A commit node in the git graph
@@ -95,7 +96,6 @@ impl GitGraph {
     /// Expected format per commit: SHA\0PARENT_SHAS\0SUBJECT\0TIMESTAMP\0AUTHOR_NAME\0AUTHOR_EMAIL\0REFS
     pub fn from_git_log(output: &str, delimiter: &str) -> anyhow::Result<Self> {
         let mut graph = Self::new();
-        let mut parent_map: HashMap<SharedString, Vec<SharedString>> = HashMap::default();
 
         for commit_block in output.split(delimiter) {
             let commit_block = commit_block.trim();
@@ -108,21 +108,26 @@ impl GitGraph {
                 let sha: SharedString = fields[0].trim().to_string().into();
                 let parent_str = fields[1].trim();
                 let subject: SharedString = fields[2].trim().to_string().into();
-                let timestamp: i64 = fields[3].trim().parse().unwrap_or(0);
+                let timestamp: i64 = fields[3].trim().parse().unwrap_or_else(|_| {
+                    log::warn!("Failed to parse timestamp for commit {}, using 0", fields[0]);
+                    0
+                });
                 let author_name: SharedString = fields[4].trim().to_string().into();
                 let author_email: SharedString = fields[5].trim().to_string().into();
                 let refs_str = if fields.len() > 6 { fields[6].trim() } else { "" };
 
+                // Optimize: avoid double trim by splitting on whitespace directly
                 let parent_shas: Vec<SharedString> = if parent_str.is_empty() {
                     vec![]
                 } else {
-                    parent_str.split(' ').map(|s| s.trim().to_string().into()).collect()
+                    parent_str.split_whitespace().map(|s| s.into()).collect()
                 };
 
                 let refs = Self::parse_refs(refs_str);
 
-                let sha_str = sha.to_string();
-                let short_sha: SharedString = sha_str[..7.min(sha_str.len())].to_string().into();
+                // Optimize: create short_sha directly from &str without full string conversion
+                let sha_str = sha.as_str();
+                let short_sha: SharedString = sha_str[..7.min(sha_str.len())].into();
 
                 let node = CommitNode {
                     sha: sha.clone(),
@@ -131,12 +136,11 @@ impl GitGraph {
                     author_name,
                     author_email,
                     timestamp,
-                    parent_shas: parent_shas.clone(),
+                    parent_shas,
                     refs,
                     lane: 0, // Will be assigned by layout
                 };
 
-                parent_map.insert(sha.clone(), parent_shas);
                 graph.ordered_commits.push(sha.clone());
                 graph.commits.insert(sha, node);
             }

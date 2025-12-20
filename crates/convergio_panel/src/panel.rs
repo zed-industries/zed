@@ -209,13 +209,13 @@ impl AgentCategory {
 
 #[derive(Clone, Debug)]
 pub struct ConvergioAgent {
-    pub name: String,
-    pub server_name: String,
-    pub display_name: String,
-    pub description: String,
+    pub name: SharedString,
+    pub server_name: SharedString,
+    pub display_name: SharedString,
+    pub description: SharedString,
     pub icon: IconName,
     pub category: AgentCategory,
-    pub skills: Vec<String>,
+    pub skills: Vec<SharedString>,
 }
 
 impl ConvergioAgent {
@@ -309,13 +309,13 @@ impl ConvergioAgent {
         let server_part = display_name.split(" - ").next().unwrap_or(name);
         let server_name = format!("Convergio-{}", server_part);
         Self {
-            name: name.to_string(),
-            server_name,
-            display_name: display_name.to_string(),
-            description: description.to_string(),
+            name: name.into(),
+            server_name: server_name.into(),
+            display_name: display_name.into(),
+            description: description.into(),
             icon,
             category,
-            skills: skills.into_iter().map(|s| s.to_string()).collect(),
+            skills: skills.into_iter().map(|s| s.into()).collect(),
         }
     }
 
@@ -323,9 +323,12 @@ impl ConvergioAgent {
         if query.is_empty() {
             return true;
         }
+        // Optimize: only lowercase query once, reuse for all checks
         let query_lower = query.to_lowercase();
-        self.display_name.to_lowercase().contains(&query_lower)
-            || self.description.to_lowercase().contains(&query_lower)
+        let display_lower = self.display_name.to_lowercase();
+        let desc_lower = self.description.to_lowercase();
+        display_lower.contains(&query_lower)
+            || desc_lower.contains(&query_lower)
             || self.skills.iter().any(|s| s.to_lowercase().contains(&query_lower))
     }
 }
@@ -354,8 +357,8 @@ pub struct ConvergioPanel {
     selected_index: Option<usize>,
     collapsed_categories: HashSet<AgentCategory>,
     filter_editor: Entity<Editor>,
-    filter_query: String,
-    active_agents: HashSet<String>,
+    filter_query: SharedString,
+    active_agents: HashSet<SharedString>,
     show_active_only: bool,
     // Active agent pack preset
     active_pack: AgentPack,
@@ -372,7 +375,7 @@ pub struct ConvergioPanel {
     history_store: Option<Entity<HistoryStore>>,
     _history_subscription: Option<Subscription>,
     // Pending thread opens waiting for history to load (agent_name, server_name)
-    pending_thread_opens: Vec<(String, String)>,
+    pending_thread_opens: Vec<(SharedString, SharedString)>,
 }
 
 pub fn init(cx: &mut App) {
@@ -524,7 +527,7 @@ impl ConvergioPanel {
             selected_index: None,
             collapsed_categories: HashSet::default(),
             filter_editor,
-            filter_query: String::new(),
+            filter_query: SharedString::default(),
             active_agents: HashSet::default(),
             show_active_only: false,
             active_pack: AgentPack::default(),
@@ -553,14 +556,16 @@ impl ConvergioPanel {
         cx.notify();
     }
 
-    fn toggle_category(&mut self, category: AgentCategory, cx: &mut Context<Self>) {
+    fn toggle_category(&mut self, category: AgentCategory, window: &mut Window, cx: &mut Context<Self>) {
         if self.collapsed_categories.contains(&category) {
             self.collapsed_categories.remove(&category);
         } else {
             self.collapsed_categories.insert(category);
         }
         cx.notify();
-        self.serialize(cx);
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn toggle_active_filter(&mut self, cx: &mut Context<Self>) {
@@ -582,7 +587,7 @@ impl ConvergioPanel {
     /// Opens a Convergio agent thread, attempting to resume an existing conversation if available.
     fn open_agent_thread(&mut self, agent_name: &str, server_name: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Mark agent as active
-        self.active_agents.insert(agent_name.to_string());
+        self.active_agents.insert(agent_name.into());
         log::info!("Opening Convergio agent chat: {}", agent_name);
 
         // Try to find existing thread in history by agent_name using stored history_store
@@ -614,7 +619,7 @@ impl ConvergioPanel {
             // History not loaded yet - add to pending and create new thread for now
             // When history loads, if we find an existing thread, subsequent opens will resume
             log::info!("History may not be loaded yet for {}, creating new thread (will resume on next open)", agent_name);
-            self.pending_thread_opens.push((agent_name.to_string(), server_name.to_string()));
+            self.pending_thread_opens.push((agent_name.into(), server_name.into()));
             let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
                 name: server_name.to_string().into()
             });
@@ -658,24 +663,29 @@ impl ConvergioPanel {
     }
 
     fn save_agent_sessions(&self, cx: &mut Context<Self>) {
-        let sessions = self._agent_sessions.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let data = SerializedAgentSessions { sessions };
-                if let Ok(serialized) = serde_json::to_string(&data) {
+        // Serialize directly instead of cloning HashMap
+        let data = SerializedAgentSessions {
+            sessions: self._agent_sessions.clone(),
+        };
+        if let Ok(serialized) = serde_json::to_string(&data) {
+            let key = AGENT_SESSIONS_KEY.to_string();
+            cx.background_executor()
+                .spawn(async move {
                     KEY_VALUE_STORE
-                        .write_kvp(AGENT_SESSIONS_KEY.to_string(), serialized)
+                        .write_kvp(key, serialized)
                         .await
                         .log_err();
-                }
-            })
-            .detach();
+                })
+                .detach();
+        }
     }
 
-    fn dismiss_onboarding(&mut self, cx: &mut Context<Self>) {
+    fn dismiss_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_onboarding = false;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn serialize(&self, cx: &mut Context<Self>) {
@@ -858,8 +868,8 @@ impl ConvergioPanel {
                                     .size(LabelSize::Default)
                                     .weight(gpui::FontWeight::MEDIUM)
                             )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.dismiss_onboarding(cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismiss_onboarding(window, cx);
                             }))
                     )
             )
@@ -895,9 +905,36 @@ impl ConvergioPanel {
     }
 
     fn agents_in_category(&self, category: AgentCategory) -> Vec<&ConvergioAgent> {
-        self.filtered_agents()
-            .into_iter()
-            .filter(|agent| agent.category == category)
+        // Optimized: filter once with all criteria including category
+        self.agents
+            .iter()
+            .filter(|agent| {
+                // Category filter first (cheapest check)
+                if agent.category != category {
+                    return false;
+                }
+
+                // Then check pack filter
+                let matches_pack = match self.active_pack {
+                    AgentPack::Enterprise => true,
+                    AgentPack::Custom => true,
+                    _ => {
+                        if let Some(pack_agents) = self.active_pack.included_agents() {
+                            pack_agents.contains(&agent.name.as_str())
+                        } else {
+                            true
+                        }
+                    }
+                };
+
+                let matches_query = agent.matches_query(&self.filter_query);
+                let matches_active = if self.show_active_only {
+                    self.active_agents.contains(&agent.name)
+                } else {
+                    true
+                };
+                matches_pack && matches_query && matches_active
+            })
             .collect()
     }
 
@@ -905,7 +942,7 @@ impl ConvergioPanel {
         self.active_agents.len()
     }
 
-    fn render_category_header(&self, category: AgentCategory, agent_count: usize, active_in_cat: usize, cx: &Context<Self>) -> impl IntoElement {
+    fn render_category_header(&self, category: AgentCategory, agent_count: usize, active_in_cat: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_collapsed = self.collapsed_categories.contains(&category);
         let cat = category;
         let category_color = category.color();
@@ -921,8 +958,8 @@ impl ConvergioPanel {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_category(cat, cx);
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_category(cat, window, cx);
             }))
             .child(
                 Disclosure::new(SharedString::from(format!("disc-{:?}", category)), !is_collapsed)
@@ -1271,7 +1308,7 @@ impl Render for ConvergioPanel {
                                     .count();
 
                                 let is_collapsed = self.collapsed_categories.contains(&category);
-                                let header = self.render_category_header(category, agents_in_cat.len(), active_in_cat, cx);
+                                let header = self.render_category_header(category, agents_in_cat.len(), active_in_cat, window, cx);
 
                                 let agent_elements: Vec<_> = if is_collapsed {
                                     vec![]

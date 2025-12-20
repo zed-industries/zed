@@ -131,17 +131,21 @@ impl GraphLayout {
     pub fn calculate_edges(&self, graph: &GitGraph) -> Vec<GraphEdge> {
         let mut edges = Vec::new();
 
+        // Optimize: create index once instead of calling position() for each parent
+        let sha_to_row: HashMap<&SharedString, usize> = graph
+            .ordered_commits
+            .iter()
+            .enumerate()
+            .map(|(row, sha)| (sha, row))
+            .collect();
+
         for (row, sha) in graph.ordered_commits.iter().enumerate() {
             if let Some(commit) = graph.commits.get(sha) {
                 let from_lane = commit.lane;
 
                 for parent_sha in &commit.parent_shas {
-                    // Find parent row
-                    if let Some(parent_row) = graph
-                        .ordered_commits
-                        .iter()
-                        .position(|s| s == parent_sha)
-                    {
+                    // Use pre-built index instead of linear search
+                    if let Some(&parent_row) = sha_to_row.get(parent_sha) {
                         if let Some(parent) = graph.commits.get(parent_sha) {
                             let to_lane = parent.lane;
                             let edge_type = if from_lane == to_lane {
