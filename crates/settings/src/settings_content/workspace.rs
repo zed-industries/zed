@@ -435,6 +435,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: false
     pub line_endings_button: Option<bool>,
+    /// Whether to show the active encoding button in the status bar.
+    ///
+    /// Default: true
+    pub active_encoding_button: Option<bool>,
 }
 
 #[derive(
