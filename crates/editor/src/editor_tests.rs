@@ -18346,7 +18346,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             "Some other server name".into(),
             LspSettings {
                 binary: None,
@@ -18367,7 +18367,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18388,7 +18388,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18409,7 +18409,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
