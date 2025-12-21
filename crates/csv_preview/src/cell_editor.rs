@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext as _, Entity};
+use menu::Confirm;
 use text::ToOffset;
 use ui::{
     ActiveTheme as _, Context, IntoElement, ParentElement as _, Styled as _, StyledTypography as _,
@@ -79,42 +80,48 @@ impl CsvPreviewView {
             editor
         });
 
-        // Subscribe to editor events to handle Enter key commits
-        let subscription = cx.subscribe(
-            &cell_editor,
-            |this, _editor, event: &editor::EditorEvent, cx| {
-                if let editor::EditorEvent::Edited { .. } = event {
-                    this.commit_cell_edit(cx);
-                }
-            },
-        );
-
         self.cell_editor = Some(cell_editor);
-        self.cell_editor_subscription = Some(subscription);
+        self.cell_editor_subscription = None;
+    }
+
+    /// POC: Handle Enter key press in cell editor to commit changes
+    pub(crate) fn handle_cell_editor_confirm(
+        &mut self,
+        _: &Confirm,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_cell_edit(cx);
     }
 
     /// POC: Commit the cell editor content back to the source buffer
     fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
+        println!("Committing cell edit");
         let Some(cell_editor) = &self.cell_editor else {
+            println!("No cell editor found");
             return;
         };
 
         // Get the focused cell coordinates
         let Some((data_row, col)) = self.get_focused_cell() else {
+            println!("No focused cell found");
             return;
         };
 
         // Check if we have the target cell
         if data_row >= self.contents.rows.len() || col >= self.contents.rows[data_row].len() {
+            println!("No target cell found");
             return;
         }
 
         let cell = &self.contents.rows[data_row][col];
         let Some(position) = &cell.position else {
+            println!("Target cell has no position");
             return;
         };
 
         let Some(active_editor_state) = &self.active_editor else {
+            println!("No active editor found to write changes to");
             return;
         };
 

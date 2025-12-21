@@ -36,6 +36,7 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::extend_selection_to_bottom_edge))
             .on_action(cx.listener(Self::extend_selection_to_left_edge))
             .on_action(cx.listener(Self::extend_selection_to_right_edge))
+            .on_action(cx.listener(Self::handle_cell_editor_confirm))
             .child(self.render_settings_panel(window, cx))
             .child(self.render_cell_editor(cx))
             .child({
