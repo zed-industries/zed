@@ -10,24 +10,41 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  DEVELOPER_ID: "Developer ID Application: Fight The Stroke Foundation (93T3LG4NPG)"
 
 jobs:
-  build-release:
-    name: Build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: convergio-studio-macos-arm64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: convergio-studio-macos-x64
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            artifact: convergio-studio-linux-x64
+  # Verify ACP protocol compatibility
+  check-compatibility:
+    name: Check ACP Protocol Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout convergio-zed
+        uses: actions/checkout@v4
 
+      - name: Check ACP protocol version
+        run: |
+          LOCAL_VERSION=$(cat ACP_PROTOCOL_VERSION | tr -d '\n')
+          echo "Local ACP Protocol Version: $LOCAL_VERSION"
+
+          # Fetch ConvergioCLI's protocol version
+          CLI_VERSION=$(curl -s https://raw.githubusercontent.com/Roberdan/convergio-cli/main/ACP_PROTOCOL_VERSION | tr -d '\n')
+          echo "ConvergioCLI ACP Protocol Version: $CLI_VERSION"
+
+          if [ "$LOCAL_VERSION" != "$CLI_VERSION" ]; then
+            echo "::warning::ACP Protocol versions differ: convergio-zed=$LOCAL_VERSION, ConvergioCLI=$CLI_VERSION"
+            echo "::warning::Ensure compatibility before release!"
+          else
+            echo "✅ ACP Protocol versions match: $LOCAL_VERSION"
+          fi
+
+  # Build and sign macOS ARM64
+  build-macos-arm64:
+    name: Build macOS ARM64
+    needs: check-compatibility
+    runs-on: macos-14
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,10 +52,220 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-action@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+
+      - name: Generate licenses
+        run: script/generate-licenses
+
+      - name: Build release
+        run: |
+          export ZED_BUNDLE=true
+          export CXXFLAGS="-stdlib=libc++"
+          cargo build --release -p zed -p cli --target aarch64-apple-darwin
+
+      - name: Create app bundle
+        run: |
+          pushd crates/zed
+          cargo bundle --release --target aarch64-apple-darwin
+          popd
+
+      - name: Install Apple certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Sign app bundle
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          APP_PATH="target/aarch64-apple-darwin/release/bundle/osx/Zed.app"
+          codesign --force --deep --options runtime --sign "$DEVELOPER_ID" --timestamp "$APP_PATH"
+          codesign --verify --verbose "$APP_PATH"
+
+      - name: Create DMG
+        run: |
+          APP_PATH="target/aarch64-apple-darwin/release/bundle/osx/Zed.app"
+          DMG_PATH="target/aarch64-apple-darwin/release/Convergio-Studio-arm64.dmg"
+
+          # Rename app
+          mv "$APP_PATH" "target/aarch64-apple-darwin/release/bundle/osx/Convergio Studio.app"
+          APP_PATH="target/aarch64-apple-darwin/release/bundle/osx/Convergio Studio.app"
+
+          # Create DMG
+          hdiutil create -volname "Convergio Studio" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH"
+
+          echo "✅ Created DMG: $DMG_PATH"
+
+      - name: Notarize DMG
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG_PATH="target/aarch64-apple-darwin/release/Convergio-Studio-arm64.dmg"
+
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+          echo "✅ DMG notarized and stapled"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergio-studio-macos-arm64
+          path: target/aarch64-apple-darwin/release/Convergio-Studio-arm64.dmg
+          if-no-files-found: error
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+          rm -f $RUNNER_TEMP/certificate.p12 || true
+
+  # Build and sign macOS x86_64
+  build-macos-x64:
+    name: Build macOS x64
+    needs: check-compatibility
+    runs-on: macos-13
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+
+      - name: Generate licenses
+        run: script/generate-licenses
+
+      - name: Build release
+        run: |
+          export ZED_BUNDLE=true
+          export CXXFLAGS="-stdlib=libc++"
+          cargo build --release -p zed -p cli --target x86_64-apple-darwin
+
+      - name: Create app bundle
+        run: |
+          pushd crates/zed
+          cargo bundle --release --target x86_64-apple-darwin
+          popd
+
+      - name: Install Apple certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Sign app bundle
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          APP_PATH="target/x86_64-apple-darwin/release/bundle/osx/Zed.app"
+          codesign --force --deep --options runtime --sign "$DEVELOPER_ID" --timestamp "$APP_PATH"
+          codesign --verify --verbose "$APP_PATH"
+
+      - name: Create DMG
+        run: |
+          APP_PATH="target/x86_64-apple-darwin/release/bundle/osx/Zed.app"
+          DMG_PATH="target/x86_64-apple-darwin/release/Convergio-Studio-x64.dmg"
+
+          # Rename app
+          mv "$APP_PATH" "target/x86_64-apple-darwin/release/bundle/osx/Convergio Studio.app"
+          APP_PATH="target/x86_64-apple-darwin/release/bundle/osx/Convergio Studio.app"
+
+          # Create DMG
+          hdiutil create -volname "Convergio Studio" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH"
+
+          echo "✅ Created DMG: $DMG_PATH"
+
+      - name: Notarize DMG
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG_PATH="target/x86_64-apple-darwin/release/Convergio-Studio-x64.dmg"
+
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+          echo "✅ DMG notarized and stapled"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergio-studio-macos-x64
+          path: target/x86_64-apple-darwin/release/Convergio-Studio-x64.dmg
+          if-no-files-found: error
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+          rm -f $RUNNER_TEMP/certificate.p12 || true
+
+  # Build Linux
+  build-linux:
+    name: Build Linux x64
+    needs: check-compatibility
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -49,28 +276,26 @@ jobs:
             libfontconfig-dev
 
       - name: Build release
-        run: cargo build --release -p zed --target ${{ matrix.target }}
+        run: cargo build --release -p zed --target x86_64-unknown-linux-gnu
 
       - name: Package artifact
         run: |
           mkdir -p dist
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            cp target/${{ matrix.target }}/release/zed dist/convergio-studio
-          else
-            cp target/${{ matrix.target }}/release/zed dist/convergio-studio
-          fi
+          cp target/x86_64-unknown-linux-gnu/release/zed dist/convergio-studio
           cd dist
-          tar -czvf ../${{ matrix.artifact }}.tar.gz convergio-studio
+          tar -czvf ../convergio-studio-linux-x64.tar.gz convergio-studio
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
+          name: convergio-studio-linux-x64
+          path: convergio-studio-linux-x64.tar.gz
+          if-no-files-found: error
 
+  # Create GitHub Release
   create-release:
     name: Create Release
-    needs: build-release
+    needs: [build-macos-arm64, build-macos-x64, build-linux]
     runs-on: ubuntu-latest
 
     steps:
@@ -90,15 +315,28 @@ jobs:
             exit 1
           fi
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          mv artifacts/convergio-studio-macos-arm64/*.dmg release-files/ || true
+          mv artifacts/convergio-studio-macos-x64/*.dmg release-files/ || true
+          mv artifacts/convergio-studio-linux-x64/*.tar.gz release-files/ || true
+          ls -la release-files/
+
+      - name: Calculate checksums
+        run: |
+          cd release-files
+          shasum -a 256 * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Extract changelog
         id: changelog
         run: |
-          # Extract changes for this version from CONVERGIO_CHANGELOG.md
           VERSION=${{ steps.version.outputs.VERSION }}
           CHANGES=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CONVERGIO_CHANGELOG.md | head -n -1)
           echo "CHANGES<<EOF" >> $GITHUB_OUTPUT
@@ -116,17 +354,30 @@ jobs:
 
             ## Installation
 
-            Download the appropriate binary for your platform and run:
+            ### macOS (Apple Silicon)
+            1. Download `Convergio-Studio-arm64.dmg`
+            2. Open the DMG and drag Convergio Studio to Applications
+            3. The app is signed and notarized by Apple
+
+            ### macOS (Intel)
+            1. Download `Convergio-Studio-x64.dmg`
+            2. Open the DMG and drag Convergio Studio to Applications
+
+            ### Linux
             ```bash
-            tar -xzf convergio-studio-*.tar.gz
+            tar -xzf convergio-studio-linux-x64.tar.gz
             chmod +x convergio-studio
             ./convergio-studio
             ```
 
             ## Requirements
 
-            - **convergio-acp**: The Convergio ACP server
-            - Anthropic API key configured in Convergio
+            - **Convergio CLI**: Install via `brew install Roberdan/convergio-cli/convergio`
+            - **Anthropic API key**: Configure in Convergio CLI first
+
+            ## Checksums
+
+            See `SHA256SUMS.txt` for file integrity verification.
           files: |
-            artifacts/**/*.tar.gz
+            release-files/*
           generate_release_notes: true
