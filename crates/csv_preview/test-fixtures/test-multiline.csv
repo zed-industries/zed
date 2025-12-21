@@ -1,0 +1,18 @@
+Name,Description,Notes
+Bob Johnson,Simple description,Regular single-line note
+John Doe,"A software engineer
+with 5 years experience
+in web development","Excellent skills in:
+- JavaScript
+- React
+- Node.js"
+Jane Smith,"Marketing manager
+specializing in digital campaigns","Known for:
+• Creative thinking
+• Data-driven decisions"
+Alice Brown,"Database administrator
+Expert in PostgreSQL
+and MongoDB","Responsibilities:
+1. Database optimization
+2. Performance monitoring
+3. Backup management"
