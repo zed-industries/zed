@@ -4262,10 +4262,7 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split {
-                direction,
-                mode,
-            } => {
+            pane::Event::Split { direction, mode } => {
                 match mode {
                     SplitMode::ClonePane => {
                         self.split_and_clone(pane.clone(), *direction, window, cx)
