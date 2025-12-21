@@ -1417,6 +1417,86 @@ impl QuickSearchDelegate {
         }
     }
 
+    fn expand_and_select(
+        &mut self,
+        file_key: &SharedString,
+        header_visible_idx: usize,
+        going_down: bool,
+    ) {
+        self.toggle_file_collapsed(file_key);
+
+        let target_idx = if going_down {
+            self.find_first_match_of_file(file_key, header_visible_idx)
+        } else {
+            self.find_last_match_of_file(file_key, header_visible_idx)
+        };
+
+        if let Some(idx) = target_idx {
+            self.selected_index = idx;
+        }
+    }
+
+    fn find_first_match_of_file(
+        &self,
+        file_key: &SharedString,
+        header_visible_idx: usize,
+    ) -> Option<usize> {
+        let next_idx = header_visible_idx + 1;
+        if next_idx < self.visible_indices.len() {
+            let actual_idx = *self.visible_indices.get(next_idx)?;
+            if let Some(QuickSearchItem::LineMatch(data)) = self.items.get(actual_idx) {
+                if &data.file_key == file_key {
+                    return Some(next_idx);
+                }
+            }
+        }
+        None
+    }
+
+    fn find_last_match_of_file(
+        &self,
+        file_key: &SharedString,
+        header_visible_idx: usize,
+    ) -> Option<usize> {
+        let mut last_match_idx = None;
+        for check_idx in (header_visible_idx + 1)..self.visible_indices.len() {
+            let actual_idx = *self.visible_indices.get(check_idx)?;
+            match self.items.get(actual_idx) {
+                Some(QuickSearchItem::LineMatch(data)) if &data.file_key == file_key => {
+                    last_match_idx = Some(check_idx);
+                }
+                Some(QuickSearchItem::FileHeader { .. }) => break,
+                _ => {}
+            }
+        }
+        last_match_idx.or_else(|| self.find_first_match_of_file(file_key, header_visible_idx))
+    }
+
+    fn find_collapsed_file_in_direction(
+        &self,
+        from_visible_idx: usize,
+        going_down: bool,
+    ) -> Option<(usize, SharedString)> {
+        let range: Box<dyn Iterator<Item = usize>> = if going_down {
+            Box::new((from_visible_idx + 1)..self.visible_indices.len())
+        } else {
+            Box::new((0..from_visible_idx).rev())
+        };
+
+        for scan_idx in range {
+            if let Some(&actual_idx) = self.visible_indices.get(scan_idx) {
+                if let Some(QuickSearchItem::FileHeader { file_key, .. }) =
+                    self.items.get(actual_idx)
+                {
+                    if self.collapsed_files.contains(file_key) {
+                        return Some((scan_idx, file_key.clone()));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn render_file_header(
         &self,
         ix: usize,
@@ -1622,10 +1702,56 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let going_down = ix >= self.selected_index;
 
+        let collapsed_file_at_ix = self.visible_indices.get(ix).and_then(|&actual_idx| {
+            if let Some(QuickSearchItem::FileHeader { file_key, .. }) = self.items.get(actual_idx) {
+                if self.collapsed_files.contains(file_key) {
+                    Some(file_key.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        if let Some(file_key) = collapsed_file_at_ix {
+            self.expand_and_select(&file_key, ix, going_down);
+            return;
+        }
+
         if let Some(found) = self.find_nearest_line_match(ix, going_down) {
+            let scan_range: Box<dyn Iterator<Item = usize>> = if going_down {
+                Box::new((ix + 1)..found)
+            } else {
+                Box::new(((found + 1)..ix).rev())
+            };
+
+            for scan_idx in scan_range {
+                if let Some(&actual_idx) = self.visible_indices.get(scan_idx) {
+                    if let Some(QuickSearchItem::FileHeader { file_key, .. }) =
+                        self.items.get(actual_idx)
+                    {
+                        if self.collapsed_files.contains(file_key) {
+                            let file_key = file_key.clone();
+                            self.expand_and_select(&file_key, scan_idx, going_down);
+                            return;
+                        }
+                    }
+                }
+            }
+
             self.selected_index = found;
-        } else if let Some(found) = self.find_nearest_line_match(ix, !going_down) {
-            self.selected_index = found;
+        } else {
+            if let Some((collapsed_idx, file_key)) =
+                self.find_collapsed_file_in_direction(ix, going_down)
+            {
+                self.expand_and_select(&file_key, collapsed_idx, going_down);
+                return;
+            }
+
+            if let Some(found) = self.find_nearest_line_match(ix, !going_down) {
+                self.selected_index = found;
+            }
         }
     }
 
@@ -2461,6 +2587,162 @@ mod tests {
             assert_eq!(d.find_nearest_line_match(2, false), Some(1));
             assert_eq!(d.find_nearest_line_match(1, true), Some(1));
             assert_eq!(d.find_nearest_line_match(3, true), Some(3));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_navigation_down_expands_collapsed_file(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("test.rs", "src"),
+            line_match("src/test.rs", 0, "fn test()"),
+            line_match("src/test.rs", 1, "fn other()"),
+            file_header("lib.rs", "src"),
+            line_match("src/lib.rs", 0, "pub fn lib()"),
+        ]);
+
+        let file_key: SharedString = "src/lib.rs".into();
+        fixture.toggle_file_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert!(d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 4);
+        });
+
+        fixture
+            .quick_search
+            .update_in(&mut fixture.cx, |modal, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.selected_index = 2;
+                    picker.delegate.set_selected_index(3, window, cx);
+                });
+            });
+
+        fixture.delegate(|d| {
+            assert!(!d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 5);
+            assert_eq!(d.selected_index, 4);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_navigation_up_expands_collapsed_file(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("test.rs", "src"),
+            line_match("src/test.rs", 0, "fn test()"),
+            line_match("src/test.rs", 1, "fn other()"),
+            file_header("lib.rs", "src"),
+            line_match("src/lib.rs", 0, "pub fn lib()"),
+            line_match("src/lib.rs", 1, "pub fn lib2()"),
+        ]);
+
+        let file_key: SharedString = "src/test.rs".into();
+        fixture.toggle_file_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert!(d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 4);
+        });
+
+        fixture
+            .quick_search
+            .update_in(&mut fixture.cx, |modal, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.selected_index = 2;
+                    picker.delegate.set_selected_index(1, window, cx);
+                });
+            });
+
+        fixture.delegate(|d| {
+            assert!(!d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 6);
+            assert_eq!(d.selected_index, 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_navigation_up_skipping_collapsed_file(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("a.rs", "src"),
+            line_match("src/a.rs", 0, "fn a()"),
+            file_header("b.rs", "src"),
+            line_match("src/b.rs", 0, "fn b()"),
+            file_header("c.rs", "src"),
+            line_match("src/c.rs", 0, "fn c()"),
+        ]);
+
+        let file_key_b: SharedString = "src/b.rs".into();
+        fixture.toggle_file_collapsed(&file_key_b);
+
+        fixture.delegate(|d| {
+            assert!(d.collapsed_files.contains(&file_key_b));
+            assert_eq!(d.visible_indices.len(), 5);
+        });
+
+        fixture
+            .quick_search
+            .update_in(&mut fixture.cx, |modal, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.selected_index = 4;
+                    picker.delegate.set_selected_index(3, window, cx);
+                });
+            });
+
+        fixture.delegate(|d| {
+            assert!(!d.collapsed_files.contains(&file_key_b));
+            assert_eq!(d.visible_indices.len(), 6);
+            assert_eq!(d.selected_index, 3);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_navigation_up_multiple_collapsed_expands_nearest(
+        cx: &mut TestAppContext,
+    ) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("a.rs", "src"),
+            line_match("src/a.rs", 0, "fn a()"),
+            file_header("b.rs", "src"),
+            line_match("src/b.rs", 0, "fn b()"),
+            file_header("c.rs", "src"),
+            line_match("src/c.rs", 0, "fn c()"),
+            file_header("d.rs", "src"),
+            line_match("src/d.rs", 0, "fn d()"),
+        ]);
+
+        let file_key_a: SharedString = "src/a.rs".into();
+        let file_key_b: SharedString = "src/b.rs".into();
+        let file_key_c: SharedString = "src/c.rs".into();
+        fixture.toggle_file_collapsed(&file_key_a);
+        fixture.toggle_file_collapsed(&file_key_b);
+        fixture.toggle_file_collapsed(&file_key_c);
+
+        fixture.delegate(|d| {
+            assert_eq!(d.collapsed_files.len(), 3);
+            assert_eq!(d.visible_indices.len(), 5);
+        });
+
+        fixture
+            .quick_search
+            .update_in(&mut fixture.cx, |modal, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.selected_index = 4;
+                    picker.delegate.set_selected_index(3, window, cx);
+                });
+            });
+
+        fixture.delegate(|d| {
+            assert!(d.collapsed_files.contains(&file_key_a));
+            assert!(d.collapsed_files.contains(&file_key_b));
+            assert!(!d.collapsed_files.contains(&file_key_c));
+            assert_eq!(d.collapsed_files.len(), 2);
         });
     }
 
