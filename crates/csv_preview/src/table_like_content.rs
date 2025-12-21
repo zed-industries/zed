@@ -1,6 +1,9 @@
 use text::BufferSnapshot;
 use ui::SharedString;
 
+#[cfg(test)]
+use text::{Buffer, BufferId, ReplicaId};
+
 use crate::{row_identifiers::LineNumber, table_cell::TableCell};
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
@@ -42,11 +45,11 @@ impl TableLikeContent {
         // Convert to TableCell objects with buffer positions
         let headers = parsed_cells_with_positions[0]
             .iter()
-            .map(|(content, start_offset, end_offset)| {
+            .map(|(content, range)| {
                 TableCell::from_buffer_position(
                     content.clone(),
-                    *start_offset,
-                    *end_offset,
+                    range.start,
+                    range.end,
                     buffer_id,
                     &buffer_snapshot,
                 )
@@ -58,11 +61,11 @@ impl TableLikeContent {
             .skip(1)
             .map(|row| {
                 row.into_iter()
-                    .map(|(content, start_offset, end_offset)| {
+                    .map(|(content, range)| {
                         TableCell::from_buffer_position(
                             content,
-                            start_offset,
-                            end_offset,
+                            range.start,
+                            range.end,
                             buffer_id,
                             &buffer_snapshot,
                         )
@@ -84,10 +87,13 @@ impl TableLikeContent {
     /// Parse CSV and track byte positions for each cell
     fn parse_csv_with_positions(
         text: &str,
-    ) -> (Vec<Vec<(SharedString, usize, usize)>>, Vec<LineNumber>) {
+    ) -> (
+        Vec<Vec<(SharedString, std::ops::Range<usize>)>>,
+        Vec<LineNumber>,
+    ) {
         let mut rows = Vec::new();
         let mut line_numbers = Vec::new();
-        let mut current_row: Vec<(SharedString, usize, usize)> = Vec::new();
+        let mut current_row: Vec<(SharedString, std::ops::Range<usize>)> = Vec::new();
         let mut current_field = String::new();
         let mut field_start_offset = 0;
         let mut current_offset = 0;
@@ -115,7 +121,8 @@ impl TableLikeContent {
                         // Start of quoted field
                         in_quotes = true;
                         if current_field.is_empty() {
-                            field_start_offset = current_offset + char_byte_len;
+                            // Include the opening quote in the range
+                            field_start_offset = current_offset;
                         }
                     }
                 }
@@ -127,8 +134,7 @@ impl TableLikeContent {
                     }
                     current_row.push((
                         current_field.trim().to_string().into(),
-                        field_start_offset,
-                        field_end_offset,
+                        field_start_offset..field_end_offset,
                     ));
                     current_field.clear();
                     field_start_offset = current_offset + char_byte_len;
@@ -143,16 +149,13 @@ impl TableLikeContent {
                         }
                         current_row.push((
                             current_field.trim().to_string().into(),
-                            field_start_offset,
-                            field_end_offset,
+                            field_start_offset..field_end_offset,
                         ));
                         current_field.clear();
 
                         // Only add non-empty rows
                         if !current_row.is_empty()
-                            && !current_row
-                                .iter()
-                                .all(|(field, _, _)| field.trim().is_empty())
+                            && !current_row.iter().all(|(field, _)| field.trim().is_empty())
                         {
                             rows.push(current_row);
                             // Add line number info for this row
@@ -184,16 +187,13 @@ impl TableLikeContent {
                             let field_end_offset = current_offset;
                             current_row.push((
                                 current_field.trim().to_string().into(),
-                                field_start_offset,
-                                field_end_offset,
+                                field_start_offset..field_end_offset,
                             ));
                             current_field.clear();
 
                             // Only add non-empty rows
                             if !current_row.is_empty()
-                                && !current_row
-                                    .iter()
-                                    .all(|(field, _, _)| field.trim().is_empty())
+                                && !current_row.iter().all(|(field, _)| field.trim().is_empty())
                             {
                                 rows.push(current_row);
                                 // Add line number info for this row
@@ -229,14 +229,10 @@ impl TableLikeContent {
             let field_end_offset = current_offset;
             current_row.push((
                 current_field.trim().to_string().into(),
-                field_start_offset,
-                field_end_offset,
+                field_start_offset..field_end_offset,
             ));
         }
-        if !current_row.is_empty()
-            && !current_row
-                .iter()
-                .all(|(field, _, _)| field.trim().is_empty())
+        if !current_row.is_empty() && !current_row.iter().all(|(field, _)| field.trim().is_empty())
         {
             rows.push(current_row);
             // Add line number info for the last row
@@ -249,6 +245,14 @@ impl TableLikeContent {
         }
 
         (rows, line_numbers)
+    }
+
+    #[cfg(test)]
+    pub fn from_str(text: String) -> Self {
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text);
+        let snapshot = buffer.snapshot();
+        Self::from_buffer(snapshot)
     }
 }
 
@@ -332,5 +336,83 @@ Jane,"Simple name""#;
         let parsed = TableLikeContent::from_str("".to_string());
         assert!(parsed.headers.is_empty());
         assert!(parsed.rows.is_empty());
+    }
+
+    #[test]
+    fn test_csv_parsing_quote_offset_handling() {
+        let csv_data = r#"first,"se,cond",third"#;
+        let (parsed_cells, _) = TableLikeContent::parse_csv_with_positions(csv_data);
+
+        assert_eq!(parsed_cells.len(), 1); // One row
+        assert_eq!(parsed_cells[0].len(), 3); // Three cells
+
+        // first: 0..5 (no quotes)
+        let (content1, range1) = &parsed_cells[0][0];
+        assert_eq!(content1.as_ref(), "first");
+        assert_eq!(*range1, 0..5);
+
+        // "se,cond": 6..15 (includes quotes in range, content without quotes)
+        let (content2, range2) = &parsed_cells[0][1];
+        assert_eq!(content2.as_ref(), "se,cond");
+        assert_eq!(*range2, 6..15);
+
+        // third: 16..21 (no quotes)
+        let (content3, range3) = &parsed_cells[0][2];
+        assert_eq!(content3.as_ref(), "third");
+        assert_eq!(*range3, 16..21);
+    }
+
+    #[test]
+    fn test_csv_parsing_complex_quotes() {
+        let csv_data = r#"id,"name with spaces","description, with commas",status
+1,"John Doe","A person with ""quotes"" and, commas",active
+2,"Jane Smith","Simple description",inactive"#;
+        let (parsed_cells, _) = TableLikeContent::parse_csv_with_positions(csv_data);
+
+        assert_eq!(parsed_cells.len(), 3); // header + 2 rows
+
+        // Check header row
+        let header_row = &parsed_cells[0];
+        assert_eq!(header_row.len(), 4);
+
+        // id: 0..2
+        assert_eq!(header_row[0].0.as_ref(), "id");
+        assert_eq!(header_row[0].1, 0..2);
+
+        // "name with spaces": 3..21 (includes quotes)
+        assert_eq!(header_row[1].0.as_ref(), "name with spaces");
+        assert_eq!(header_row[1].1, 3..21);
+
+        // "description, with commas": 22..48 (includes quotes)
+        assert_eq!(header_row[2].0.as_ref(), "description, with commas");
+        assert_eq!(header_row[2].1, 22..48);
+
+        // status: 49..55
+        assert_eq!(header_row[3].0.as_ref(), "status");
+        assert_eq!(header_row[3].1, 49..55);
+
+        // Check first data row
+        let first_row = &parsed_cells[1];
+        assert_eq!(first_row.len(), 4);
+
+        // 1: 56..57
+        assert_eq!(first_row[0].0.as_ref(), "1");
+        assert_eq!(first_row[0].1, 56..57);
+
+        // "John Doe": 58..68 (includes quotes)
+        assert_eq!(first_row[1].0.as_ref(), "John Doe");
+        assert_eq!(first_row[1].1, 58..68);
+
+        // Content should be stripped of quotes but include escaped quotes
+        assert_eq!(
+            first_row[2].0.as_ref(),
+            r#"A person with "quotes" and, commas"#
+        );
+        // The range should include the outer quotes: 69..107
+        assert_eq!(first_row[2].1, 69..107);
+
+        // active: 108..114
+        assert_eq!(first_row[3].0.as_ref(), "active");
+        assert_eq!(first_row[3].1, 108..114);
     }
 }
