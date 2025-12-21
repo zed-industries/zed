@@ -1617,9 +1617,17 @@ impl QuickSearchDelegate {
             .on_click({
                 move |event, window, cx| {
                     cx.stop_propagation();
+                    let Some(qs) = quick_search.upgrade() else {
+                        return;
+                    };
                     if event.click_count() >= 2 {
-                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                    } else if let Some(qs) = quick_search.upgrade() {
+                        qs.update(cx, |modal, cx| {
+                            modal.picker.update(cx, |picker, cx| {
+                                picker.delegate.selected_index = ix;
+                                picker.delegate.confirm(false, window, cx);
+                            });
+                        });
+                    } else {
                         let preview_data = {
                             let modal = qs.read(cx);
                             let delegate = &modal.picker.read(cx).delegate;
