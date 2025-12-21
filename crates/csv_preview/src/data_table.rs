@@ -3,9 +3,8 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListAlignment, ListHorizontalSizingBehavior, ListSizingBehavior,
-    ListState, Point, Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black,
-    uniform_list,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
+    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
 use itertools::intersperse_with;
@@ -69,14 +68,16 @@ pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
     pub custom_scrollbar: Option<Scrollbars>,
+    pub list_state: ListState,
 }
 
 impl TableInteractionState {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(cx: &mut App, list_state: ListState) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             custom_scrollbar: None,
+            list_state,
         }
     }
 
@@ -542,9 +543,9 @@ impl<const COLS: usize> Table<COLS> {
     pub fn variable_row_height_list(
         mut self,
         row_count: usize,
+        list_state: ListState,
         render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
     ) -> Self {
-        let list_state = ListState::new(row_count, ListAlignment::Top, px(0.0));
         self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
             render_row_fn: Box::new(render_row_fn),
             list_state,

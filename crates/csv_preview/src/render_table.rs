@@ -160,7 +160,7 @@ impl CsvPreviewView {
                 let selected_bg = cx.theme().colors().element_selected;
                 match self.settings.rendering_with {
                     RowRenderMechanism::VariableList => {
-                        table.variable_row_height_list(row_count, {
+                        table.variable_row_height_list(row_count, self.list_state.clone(), {
                             cx.processor(move |this, display_index: usize, _window, cx| {
                                 // Record this display index for performance metrics
                                 this.performance_metrics

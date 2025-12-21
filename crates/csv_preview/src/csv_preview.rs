@@ -1,5 +1,8 @@
 use editor::Editor;
-use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
+use gpui::{
+    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState, Task,
+    actions,
+};
 use std::{sync::Arc, time::Instant};
 
 use crate::data_table::TableInteractionState;
@@ -76,6 +79,7 @@ pub struct CsvPreviewView {
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
+    pub(crate) list_state: gpui::ListState,
 }
 
 pub fn init(cx: &mut App) {
@@ -141,8 +145,10 @@ impl CsvPreviewView {
     }
 
     fn from_editor(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
         let contents = TableLikeContent::default();
+        let list_state = ListState::new(contents.rows.len(), ListAlignment::Top, px(0.));
+        let table_interaction_state =
+            cx.new(|cx| TableInteractionState::new(cx, list_state.clone()));
 
         cx.new(|cx| {
             let mut view = Self {
@@ -159,6 +165,7 @@ impl CsvPreviewView {
                 selection: TableSelection::new(),
                 settings: CsvPreviewSettings::default(),
                 performance_metrics: PerformanceMetrics::default(),
+                list_state,
             };
 
             view.set_editor(editor.clone(), cx);
