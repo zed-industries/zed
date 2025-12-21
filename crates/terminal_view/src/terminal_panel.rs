@@ -60,12 +60,41 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                    // Create a terminal if panel is empty when user explicitly opens it
+                    if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
+                        if panel.read(cx).has_no_terminals(cx) {
+                            panel.update(cx, |panel, cx| {
+                                let kind = default_working_directory(workspace, cx);
+                                panel
+                                    .add_terminal_shell(kind, RevealStrategy::Always, window, cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }
+                    }
                 }
             });
             workspace.register_action(|workspace, _: &Toggle, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
-                    if !workspace.toggle_panel_focus::<TerminalPanel>(window, cx) {
+                    let did_focus = workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                    if !did_focus {
                         workspace.close_panel::<TerminalPanel>(window, cx);
+                    } else {
+                        // Create a terminal if panel is empty when user explicitly opens it
+                        if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
+                            if panel.read(cx).has_no_terminals(cx) {
+                                panel.update(cx, |panel, cx| {
+                                    let kind = default_working_directory(workspace, cx);
+                                    panel
+                                        .add_terminal_shell(
+                                            kind,
+                                            RevealStrategy::Always,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                });
+                            }
+                        }
                     }
                 }
             });
@@ -337,7 +366,13 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
-            pane::Event::RemovedItem { .. } => self.serialize(cx),
+            pane::Event::RemovedItem { .. } => {
+                self.serialize(cx);
+                // Close the dock when the last terminal is removed
+                if self.has_no_terminals(cx) {
+                    cx.emit(PanelEvent::Close);
+                }
+            }
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
                 let _removal_result = self.center.remove(pane, cx);
@@ -767,14 +802,23 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
+        let pane = self.active_pane.clone();
+        // Increment synchronously so that has_no_terminals() returns false
+        // before any deferred callbacks run (e.g., in set_active).
+        self.pending_terminals_to_add += 1;
+
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
+                // Decrement if we bailed early
+                terminal_panel
+                    .update(cx, |this, _| {
+                        this.pending_terminals_to_add =
+                            this.pending_terminals_to_add.saturating_sub(1);
+                    })
+                    .ok();
                 anyhow::bail!("terminal not yet supported for remote projects");
             }
-            let pane = terminal_panel.update(cx, |terminal_panel, _| {
-                terminal_panel.pending_terminals_to_add += 1;
-                terminal_panel.active_pane.clone()
-            })?;
+            let pane = pane;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_task(task, cx))
@@ -1070,8 +1114,15 @@ impl TerminalPanel {
         })
     }
 
-    fn has_no_terminals(&self, cx: &App) -> bool {
-        self.active_pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
+    pub fn has_no_terminals(&self, cx: &App) -> bool {
+        // Check all panes in the center group, not just the active pane.
+        // This prevents incorrectly closing the dock when split panes still have terminals.
+        let all_panes_empty = self
+            .center
+            .panes()
+            .into_iter()
+            .all(|pane| pane.read(cx).items_len() == 0);
+        all_panes_empty && self.pending_terminals_to_add == 0
     }
 
     pub fn assistant_enabled(&self) -> bool {
@@ -1694,23 +1745,10 @@ impl Panel for TerminalPanel {
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let old_active = self.active;
+    fn set_active(&mut self, active: bool, _window: &mut Window, _cx: &mut Context<Self>) {
+        // Just track active state. Terminal creation is handled by action handlers
+        // (Toggle/ToggleFocus) to avoid race conditions when tasks are spawned.
         self.active = active;
-        if !active || old_active == active || !self.has_no_terminals(cx) {
-            return;
-        }
-        cx.defer_in(window, |this, window, cx| {
-            let Ok(kind) = this
-                .workspace
-                .update(cx, |workspace, cx| default_working_directory(workspace, cx))
-            else {
-                return;
-            };
-
-            this.add_terminal_shell(kind, RevealStrategy::Always, window, cx)
-                .detach_and_log_err(cx)
-        })
     }
 
     fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
@@ -1929,7 +1967,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.terminal.get_or_insert_default().project.shell =
-                        Some(settings::Shell::Program("asdf".to_owned()));
+                        Some(settings::Shell::Program("__nonexistent_shell__".to_owned()));
                 });
             });
         });
