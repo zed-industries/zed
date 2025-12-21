@@ -989,6 +989,7 @@ impl Fs for RealFs {
                             .into_iter()
                             .map(|event| {
                                 log::trace!("fs path event: {event:?}");
+
                                 let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
@@ -996,10 +997,17 @@ impl Fs for RealFs {
                                 } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
                                     | event.flags.contains(StreamFlags::ITEM_RENAMED)
                                 {
+                                    if !is_fifo(&event.path) {
+                                        Some(PathEventKind::Changed)
+                                    } else {
+                                        None
+                                    }
+                                } else if event.flags.contains(StreamFlags::ITEM_XATTR_MOD) && is_fifo(&event.path) {
                                     Some(PathEventKind::Changed)
                                 } else {
                                     None
                                 };
+
                                 PathEvent {
                                     path: event.path,
                                     kind,
@@ -2889,6 +2897,14 @@ fn read_recursive<'a>(
         Ok(())
     }
     .boxed()
+}
+
+#[cfg(unix)]
+fn is_fifo(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|m| m.file_type().is_fifo())
+        .unwrap_or(false)
 }
 
 // todo(windows)
