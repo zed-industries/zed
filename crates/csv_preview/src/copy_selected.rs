@@ -7,8 +7,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     CopySelected, CsvPreviewView,
-    settings::CopyFormat,
-    types::{AnyColumn, DataRow},
+    settings::{CopyFormat, CopyMode},
+    types::AnyColumn,
 };
 use std::collections::HashSet;
 
@@ -46,37 +46,81 @@ impl CsvPreviewView {
         let start_time = Instant::now();
         let max_rows = self.contents.rows.len();
         let max_cols = self.contents.headers.len();
-        let selected_cells =
-            self.selection
-                .get_selected_cells(&self.ordered_indices, max_rows, max_cols);
-
-        if selected_cells.is_empty() {
-            return;
-        }
         let copy_format = self.settings.copy_format;
+        let copy_mode = self.settings.copy_mode;
         let full_content = &self.contents;
 
-        // Group selected cells by row, then by column for proper TSV formatting
-        let mut rows_data: BTreeMap<DataRow, BTreeMap<AnyColumn, String>> = BTreeMap::new();
+        // Get selected cells in appropriate coordinate system
+        let (rows_data, selected_cells_count) = match copy_mode {
+            CopyMode::Display => {
+                let selected_display_cells = self.selection.get_selected_display_cells(
+                    &self.ordered_indices,
+                    max_rows,
+                    max_cols,
+                );
 
-        for cell_id in &selected_cells {
-            let row_idx = cell_id.row;
-            let col_idx = cell_id.col;
+                if selected_display_cells.is_empty() {
+                    return;
+                }
 
-            if let Some(row) = (&full_content.rows).get(row_idx.get()) {
-                let cell_content = row
-                    .get(col_idx.get())
-                    .map(|s| s.display_value().as_ref().to_string())
-                    .unwrap_or_default();
+                let mut rows_data: BTreeMap<usize, BTreeMap<AnyColumn, String>> = BTreeMap::new();
 
-                rows_data
-                    .entry(row_idx)
-                    .or_default()
-                    .insert(col_idx, cell_content);
+                for cell_id in &selected_display_cells {
+                    let display_row_idx = cell_id.row.get();
+                    let col_idx = cell_id.col.get();
+
+                    // Convert display row to data row to get the correct cell content
+                    if let Some(data_row) = self.ordered_indices.get_data_row(cell_id.row) {
+                        if let Some(row) = (&full_content.rows).get(data_row.get()) {
+                            let cell_content = row
+                                .get(col_idx)
+                                .map(|s| s.display_value().as_ref().to_string())
+                                .unwrap_or_default();
+
+                            rows_data
+                                .entry(display_row_idx)
+                                .or_default()
+                                .insert(AnyColumn::new(col_idx), cell_content);
+                        }
+                    }
+                }
+
+                (rows_data, selected_display_cells.len())
             }
-        }
+            CopyMode::Data => {
+                let selected_data_cells =
+                    self.selection
+                        .get_selected_cells(&self.ordered_indices, max_rows, max_cols);
 
-        let toast_info = calculate_toast_info(&selected_cells, copy_format, &rows_data);
+                if selected_data_cells.is_empty() {
+                    return;
+                }
+
+                let mut rows_data: BTreeMap<usize, BTreeMap<AnyColumn, String>> = BTreeMap::new();
+
+                for cell_id in &selected_data_cells {
+                    let data_row_idx = cell_id.row.get();
+                    let col_idx = cell_id.col.get();
+
+                    if let Some(row) = (&full_content.rows).get(data_row_idx) {
+                        let cell_content = row
+                            .get(col_idx)
+                            .map(|s| s.display_value().as_ref().to_string())
+                            .unwrap_or_default();
+
+                        rows_data
+                            .entry(data_row_idx)
+                            .or_default()
+                            .insert(AnyColumn::new(col_idx), cell_content);
+                    }
+                }
+
+                (rows_data, selected_data_cells.len())
+            }
+        };
+
+        let toast_info =
+            calculate_toast_info_generic(selected_cells_count, copy_format, &rows_data);
 
         let content = if copy_format == CopyFormat::Markdown {
             format_as_markdown_table(&full_content.headers, &rows_data)
@@ -157,7 +201,7 @@ impl CsvPreviewView {
 
 fn format_as_markdown_table(
     all_table_headers: &[crate::table_cell::TableCell],
-    rows_data: &BTreeMap<DataRow, BTreeMap<AnyColumn, String>>,
+    rows_data: &BTreeMap<usize, BTreeMap<AnyColumn, String>>,
 ) -> String {
     if rows_data.is_empty() {
         return String::new();
@@ -261,12 +305,11 @@ fn show_toast_with_copy_results(
     });
 }
 
-fn calculate_toast_info(
-    selected_cells: &HashSet<crate::types::DataCellId>,
+fn calculate_toast_info_generic(
+    selected_cell_count: usize,
     copy_format: CopyFormat,
-    rows_data: &BTreeMap<DataRow, BTreeMap<AnyColumn, String>>,
+    rows_data: &BTreeMap<usize, BTreeMap<AnyColumn, String>>,
 ) -> ToastInfo {
-    let selected_cell_count = selected_cells.len();
     let (rectangle_dimensions, empty_cells_count) = if copy_format == CopyFormat::Markdown {
         // For markdown, use the selected columns approach
         let mut selected_columns: HashSet<AnyColumn> = HashSet::new();

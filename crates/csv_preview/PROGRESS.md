@@ -80,7 +80,7 @@ This document outlines the current state of the POC feature. It might not be the
 **Features:**
 - [x] feat: Add copying by Ctrl+C
 - [x] feat: Add copy as (CSV, TSV, markdown table, semicolon separated)
-- [ ] feat: Copy in display mode (what you see) not data mode (how it's in file), or toggle between them
+- [x] feat: Copy in display mode (what you see) not data mode (how it's in file), or toggle between them
 
 **Fixes:**
 

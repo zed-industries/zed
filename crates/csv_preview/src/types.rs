@@ -75,7 +75,7 @@ impl From<usize> for AnyColumn {
 }
 
 /// Visual cell position in rendered table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DisplayCellId {
     pub row: DisplayRow,
     pub col: AnyColumn,
