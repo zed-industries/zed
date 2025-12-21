@@ -34,11 +34,9 @@ impl CsvPreviewView {
         let start_time = Instant::now();
         let max_rows = self.contents.rows.len();
         let max_cols = self.contents.headers.len();
-        self.selection
-            .select_all(&self.ordered_indices, max_rows, max_cols);
+        self.selection.select_all(max_rows, max_cols);
 
-        let selection_duration = start_time.elapsed();
-        self.performance_metrics.last_selection_took = Some(selection_duration);
+        self.performance_metrics.last_selection_took = Some(start_time.elapsed());
         self.on_selection_changed(window, cx);
         cx.notify();
     }

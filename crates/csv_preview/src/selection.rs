@@ -38,13 +38,218 @@ pub enum NavigationOperation {
     ExtendToEdge,
 }
 
-/// Selected cells stored in data coordinates (not display coordinates).
-pub type SelectedCells = HashSet<DataCellId>;
+/// Internal selection strategy for performance optimization
+#[derive(Debug, Clone)]
+enum SelectionStrategy {
+    /// No cells selected
+    Empty,
+    /// Whole document selected (CMD+A) - Major optimization for large files
+    AllCells,
+    /// Single cell selected - Minor optimization for common case
+    SingleCell(DataCellId),
+    /// Multiple cells - fallback to current HashSet approach
+    MultiCell(HashSet<DataCellId>),
+}
+
+/// Manages cell selection with optimizations for common cases.
+///
+/// Uses a hybrid strategy:
+/// - `Empty`: No selection (O(1) operations)
+/// - `AllCells`: Whole document selected (O(1) select-all and lookup)
+/// - `SingleCell`: One cell selected (O(1) lookup)
+/// - `MultiCell`: Multiple cells (current HashSet performance)
+///
+/// This provides immediate optimization for select-all operations while
+/// maintaining compatibility and setting up for future range-based optimizations.
+#[derive(Debug, Clone)]
+pub struct CellSelectionManager {
+    strategy: SelectionStrategy,
+}
+
+impl Default for CellSelectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CellSelectionManager {
+    /// Create a new empty selection manager
+    pub fn new() -> Self {
+        Self {
+            strategy: SelectionStrategy::Empty,
+        }
+    }
+
+    /// Clear all selections
+    pub fn clear(&mut self) {
+        self.strategy = SelectionStrategy::Empty;
+    }
+
+    /// Select all cells in the document (O(1) operation)
+    pub fn select_all(&mut self) {
+        self.strategy = SelectionStrategy::AllCells;
+    }
+
+    /// Add a single cell to the selection
+    ///
+    /// # Arguments
+    /// * `display_cell` - Cell coordinates in display space
+    /// * `ordered_indices` - Mapping between display and data coordinates
+    pub fn add_cell(&mut self, display_cell: DisplayCellId, ordered_indices: &OrderedIndices) {
+        if let Some(data_row) =
+            ordered_indices.get_data_row(DisplayRow::from(display_cell.row.get()))
+        {
+            let data_cell_id = DataCellId::new(data_row, display_cell.col.get());
+
+            match &mut self.strategy {
+                SelectionStrategy::Empty => {
+                    self.strategy = SelectionStrategy::SingleCell(data_cell_id);
+                }
+                SelectionStrategy::AllCells => {
+                    // Already all selected, nothing to add
+                }
+                SelectionStrategy::SingleCell(existing) => {
+                    if *existing == data_cell_id {
+                        return; // Same cell, nothing to change
+                    }
+
+                    // Convert to MultiCell strategy
+                    let mut cells = HashSet::new();
+                    cells.insert(*existing);
+                    cells.insert(data_cell_id);
+                    self.strategy = SelectionStrategy::MultiCell(cells);
+                }
+                SelectionStrategy::MultiCell(cells) => {
+                    cells.insert(data_cell_id);
+                }
+            }
+        }
+    }
+
+    /// Add a rectangular range of cells to the selection
+    ///
+    /// # Arguments
+    /// * `start` - Starting cell in display coordinates
+    /// * `end` - Ending cell in display coordinates
+    /// * `ordered_indices` - Mapping between display and data coordinates
+    pub fn add_range(
+        &mut self,
+        start: DisplayCellId,
+        end: DisplayCellId,
+        ordered_indices: &OrderedIndices,
+    ) {
+        // Simple implementation - add individual cells (can optimize with ranges later)
+        let min_row = start.row.get().min(end.row.get());
+        let max_row = start.row.get().max(end.row.get());
+        let min_col = start.col.get().min(end.col.get());
+        let max_col = start.col.get().max(end.col.get());
+
+        for row in min_row..=max_row {
+            for col in min_col..=max_col {
+                let display_cell = DisplayCellId::new(row, col);
+                self.add_cell(display_cell, ordered_indices);
+            }
+        }
+    }
+
+    /// Check if a cell is selected (optimized for common cases)
+    ///
+    /// # Arguments
+    /// * `display_row` - Row in display coordinates
+    /// * `col` - Column index
+    /// * `ordered_indices` - Mapping between display and data coordinates
+    ///
+    /// # Returns
+    /// `true` if the cell is selected, `false` otherwise
+    pub fn is_selected(
+        &self,
+        display_row: DisplayRow,
+        col: AnyColumn,
+        ordered_indices: &OrderedIndices,
+    ) -> bool {
+        match &self.strategy {
+            SelectionStrategy::Empty => false,
+            SelectionStrategy::AllCells => true, // O(1) optimization for select-all!
+            SelectionStrategy::SingleCell(data_cell) => {
+                if let Some(data_row) = ordered_indices.get_data_row(display_row) {
+                    *data_cell == DataCellId::new(data_row, col)
+                } else {
+                    false
+                }
+            }
+            SelectionStrategy::MultiCell(cells) => {
+                if let Some(data_row) = ordered_indices.get_data_row(display_row) {
+                    cells.contains(&DataCellId::new(data_row, col))
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Check if the selection is empty
+    pub fn is_empty(&self) -> bool {
+        matches!(self.strategy, SelectionStrategy::Empty)
+    }
+
+    /// Get an estimate of the number of selected cells
+    ///
+    /// # Returns
+    /// Number of selected cells, or `usize::MAX` for select-all
+    pub fn get_selected_count_estimate(&self) -> usize {
+        match &self.strategy {
+            SelectionStrategy::Empty => 0,
+            SelectionStrategy::AllCells => usize::MAX, // Indicates "all cells"
+            SelectionStrategy::SingleCell(_) => 1,
+            SelectionStrategy::MultiCell(cells) => cells.len(),
+        }
+    }
+
+    /// Get selected cells as HashSet for compatibility with existing code
+    ///
+    /// Note: For `AllCells` strategy, this requires materializing all cells
+    /// and should be used sparingly (e.g., only for copy operations).
+    ///
+    /// # Arguments
+    /// * `ordered_indices` - Mapping between display and data coordinates
+    /// * `max_rows` - Maximum number of rows (for AllCells strategy)
+    /// * `max_cols` - Maximum number of columns (for AllCells strategy)
+    pub fn get_selected_cells(
+        &self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) -> HashSet<DataCellId> {
+        match &self.strategy {
+            SelectionStrategy::Empty => HashSet::new(),
+            SelectionStrategy::AllCells => {
+                // Expensive operation - materialize all cells
+                let mut cells = HashSet::new();
+                for display_row_index in 0..max_rows {
+                    for col in 0..max_cols {
+                        if let Some(data_row) =
+                            ordered_indices.get_data_row(DisplayRow::from(display_row_index))
+                        {
+                            cells.insert(DataCellId::new(data_row, col));
+                        }
+                    }
+                }
+                cells
+            }
+            SelectionStrategy::SingleCell(data_cell) => {
+                let mut cells = HashSet::new();
+                cells.insert(*data_cell);
+                cells
+            }
+            SelectionStrategy::MultiCell(cells) => cells.clone(),
+        }
+    }
+}
 
 /// Manages table cell selection state and behavior.
 pub struct TableSelection {
-    /// Currently selected cells in data coordinates
-    selected_cells: SelectedCells,
+    /// Efficient selection management with optimizations for common cases
+    selection_manager: CellSelectionManager,
     /// Whether user is currently dragging to select
     is_selecting: bool,
     /// Currently focused cell in display coordinates
@@ -60,10 +265,9 @@ impl Default for TableSelection {
 }
 
 impl TableSelection {
-    /// Create a new empty table selection
     pub fn new() -> Self {
         Self {
-            selected_cells: HashSet::new(),
+            selection_manager: CellSelectionManager::new(),
             is_selecting: false,
             focused_cell: None,
             selection_anchor: None,
@@ -79,18 +283,15 @@ impl TableSelection {
         preserve_existing: bool,
     ) {
         if !preserve_existing {
-            self.selected_cells.clear();
+            self.selection_manager.clear();
         }
 
-        // Convert display coordinates to data coordinates for storage
-        if let Some(data_row) = ordered_indices.get_data_row(display_row) {
-            let cell_id = DataCellId::new(data_row, col);
-            self.selected_cells.insert(cell_id);
-            // Set focus and anchor to the clicked cell in display coordinates
-            let display_cell_id = DisplayCellId::new(display_row, col);
-            self.focused_cell = Some(display_cell_id);
-            self.selection_anchor = Some(display_cell_id);
-        }
+        // Set focus and anchor to the clicked cell in display coordinates
+        let display_cell_id = DisplayCellId::new(display_row, col);
+        self.focused_cell = Some(display_cell_id);
+        self.selection_anchor = Some(display_cell_id);
+        self.selection_manager
+            .add_cell(display_cell_id, ordered_indices);
 
         self.is_selecting = true;
     }
@@ -105,7 +306,7 @@ impl TableSelection {
     ) {
         if let Some(anchor_cell) = self.selection_anchor {
             if !preserve_existing {
-                self.selected_cells.clear();
+                self.selection_manager.clear();
             }
 
             // Create rectangle in display coordinates
@@ -117,11 +318,9 @@ impl TableSelection {
             // Convert each display cell to data coordinates for storage
             for display_r in min_display_row..=max_display_row {
                 for c in min_col..=max_col {
-                    if let Some(data_row) =
-                        ordered_indices.get_data_row(DisplayRow::from(display_r))
-                    {
-                        self.selected_cells.insert(DataCellId::new(data_row, c));
-                    }
+                    let display_cell = DisplayCellId::new(display_r, c);
+                    self.selection_manager
+                        .add_cell(display_cell, ordered_indices);
                 }
             }
 
@@ -142,12 +341,8 @@ impl TableSelection {
         col: AnyColumn,
         ordered_indices: &OrderedIndices,
     ) -> bool {
-        if let Some(data_row) = ordered_indices.get_data_row(display_row) {
-            self.selected_cells
-                .contains(&DataCellId::new(data_row, col))
-        } else {
-            false
-        }
+        self.selection_manager
+            .is_selected(display_row, col, ordered_indices)
     }
 
     /// Check if user is currently selecting (dragging)
@@ -156,8 +351,14 @@ impl TableSelection {
     }
 
     /// Get the selected cells for copying
-    pub fn get_selected_cells(&self) -> &SelectedCells {
-        &self.selected_cells
+    pub fn get_selected_cells(
+        &self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) -> HashSet<DataCellId> {
+        self.selection_manager
+            .get_selected_cells(ordered_indices, max_rows, max_cols)
     }
 
     /// Get the currently focused cell
@@ -199,10 +400,9 @@ impl TableSelection {
         // Set anchor to the same cell for consistent visual feedback
         self.selection_anchor = Some(display_cell);
         // Update selection to follow focus
-        self.selected_cells.clear();
-        if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::from(0)) {
-            self.selected_cells.insert(DataCellId::new(data_row, 0));
-        }
+        self.selection_manager.clear();
+        self.selection_manager
+            .add_cell(display_cell, ordered_indices);
     }
 
     /// Move focus in the specified direction with bounds checking.
@@ -254,12 +454,8 @@ impl TableSelection {
             self.focused_cell = Some(new_cell);
             // Set anchor to the same cell for consistent visual feedback
             self.selection_anchor = Some(new_cell);
-            self.selected_cells.clear();
-            // Convert to data coordinates for storage
-            if let Some(data_row) = ordered_indices.get_data_row(new_cell.row) {
-                self.selected_cells
-                    .insert(DataCellId::new(data_row, new_cell.col));
-            }
+            self.selection_manager.clear();
+            self.selection_manager.add_cell(new_cell, ordered_indices);
         }
     }
 
@@ -273,24 +469,9 @@ impl TableSelection {
     /// Update selection from anchor to focused cell (rectangular selection).
     fn update_range_selection(&mut self, ordered_indices: &OrderedIndices) {
         if let (Some(anchor), Some(focused)) = (self.selection_anchor, self.focused_cell) {
-            self.selected_cells.clear();
-
-            // Create rectangle in display coordinates (both anchor and focus are already in display coordinates)
-            let min_display_row = anchor.row.get().min(focused.row.get());
-            let max_display_row = anchor.row.get().max(focused.row.get());
-            let min_col = anchor.col.get().min(focused.col.get());
-            let max_col = anchor.col.get().max(focused.col.get());
-
-            // Convert each display cell to data coordinates for storage
-            for display_r in min_display_row..=max_display_row {
-                for c in min_col..=max_col {
-                    if let Some(data_row) =
-                        ordered_indices.get_data_row(DisplayRow::from(display_r))
-                    {
-                        self.selected_cells.insert(DataCellId::new(data_row, c));
-                    }
-                }
-            }
+            self.selection_manager.clear();
+            self.selection_manager
+                .add_range(anchor, focused, ordered_indices);
         }
     }
 
@@ -356,28 +537,13 @@ impl TableSelection {
     }
 
     /// Select all visible cells in the table (cmd+a / ctrl+a).
-    pub fn select_all(
-        &mut self,
-        ordered_indices: &OrderedIndices,
-        max_rows: usize,
-        max_cols: usize,
-    ) {
+    pub fn select_all(&mut self, max_rows: usize, max_cols: usize) {
         if max_rows == 0 || max_cols == 0 {
             return;
         }
 
-        self.selected_cells.clear();
-
-        // Select all cells from (0,0) to (max_rows-1, max_cols-1) in display coordinates
-        for display_row_index in 0..max_rows {
-            for col in 0..max_cols {
-                if let Some(data_row) =
-                    ordered_indices.get_data_row(DisplayRow::from(display_row_index))
-                {
-                    self.selected_cells.insert(DataCellId::new(data_row, col));
-                }
-            }
-        }
+        // Major optimization: O(1) select all instead of O(rows × cols)
+        self.selection_manager.select_all();
 
         // Set focus to the first cell and anchor to the last cell in display coordinates
         self.focused_cell = Some(DisplayCellId::new(0, 0));
@@ -394,12 +560,8 @@ impl TableSelection {
         let new_cell = DisplayCellId::new(0, focused.col);
         self.focused_cell = Some(new_cell);
         self.selection_anchor = Some(new_cell);
-        self.selected_cells.clear();
-        // Convert to data coordinates for storage
-        if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::from(0)) {
-            self.selected_cells
-                .insert(DataCellId::new(data_row, focused.col));
-        }
+        self.selection_manager.clear();
+        self.selection_manager.add_cell(new_cell, ordered_indices);
     }
 
     /// Jump focus to the bottom row (last row in display order)
@@ -413,12 +575,8 @@ impl TableSelection {
             let new_cell = DisplayCellId::new(max_rows - 1, focused.col);
             self.focused_cell = Some(new_cell);
             self.selection_anchor = Some(new_cell);
-            self.selected_cells.clear();
-            // Convert to data coordinates for storage
-            if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::from(max_rows - 1)) {
-                self.selected_cells
-                    .insert(DataCellId::new(data_row, focused.col));
-            }
+            self.selection_manager.clear();
+            self.selection_manager.add_cell(new_cell, ordered_indices);
         }
     }
 
@@ -432,11 +590,8 @@ impl TableSelection {
         let new_cell = DisplayCellId::new(focused.row, 0);
         self.focused_cell = Some(new_cell);
         self.selection_anchor = Some(new_cell);
-        self.selected_cells.clear();
-        // Convert to data coordinates for storage
-        if let Some(data_row) = ordered_indices.get_data_row(focused.row) {
-            self.selected_cells.insert(DataCellId::new(data_row, 0));
-        }
+        self.selection_manager.clear();
+        self.selection_manager.add_cell(new_cell, ordered_indices);
     }
 
     /// Jump focus to the rightmost column (last column)
@@ -450,12 +605,8 @@ impl TableSelection {
             let new_cell = DisplayCellId::new(focused.row, max_cols - 1);
             self.focused_cell = Some(new_cell);
             self.selection_anchor = Some(new_cell);
-            self.selected_cells.clear();
-            // Convert to data coordinates for storage
-            if let Some(data_row) = ordered_indices.get_data_row(focused.row) {
-                self.selected_cells
-                    .insert(DataCellId::new(data_row, max_cols - 1));
-            }
+            self.selection_manager.clear();
+            self.selection_manager.add_cell(new_cell, ordered_indices);
         }
     }
 
@@ -627,8 +778,7 @@ impl CsvPreviewView {
             max_cols,
         );
 
-        let selection_duration = start_time.elapsed();
-        self.performance_metrics.last_selection_took = Some(selection_duration);
+        self.performance_metrics.last_selection_took = Some(start_time.elapsed());
 
         // Update cell editor to show focused cell content
         self.on_selection_changed(window, cx);
