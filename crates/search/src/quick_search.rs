@@ -453,7 +453,6 @@ impl Render for QuickSearchModal {
                 window.focus(&picker.focus_handle(cx), cx);
             })
             .on_action({
-                let project = project.clone();
                 move |_: &Save, window, cx| {
                     if let Some(editor) = save_preview_editor.clone() {
                         editor.update(cx, |editor, cx| {
