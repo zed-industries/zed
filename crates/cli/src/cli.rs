@@ -2,6 +2,14 @@ use collections::HashMap;
 pub use ipc_channel::ipc;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffPaths {
+    pub old_path: String,
+    pub new_path: String,
+    pub new_row: Option<u32>,
+    pub new_column: Option<u32>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct IpcHandshake {
     pub requests: ipc::IpcSender<CliRequest>,
@@ -13,7 +21,7 @@ pub enum CliRequest {
     Open {
         paths: Vec<String>,
         urls: Vec<String>,
-        diff_paths: Vec<[String; 2]>,
+        diff_paths: Vec<DiffPaths>,
         wsl: Option<String>,
         wait: bool,
         open_new_workspace: Option<bool>,
