@@ -337,6 +337,13 @@ impl TrustedWorktreesStore {
                 if restricted_host != remote_host {
                     return true;
                 }
+
+                // When trusting an abs path on the host, we transitively trust all single file worktrees on this host too.
+                if is_file && !new_trusted_abs_paths.is_empty() {
+                    trusted_paths.insert(PathTrust::Worktree(*restricted_worktree));
+                    return false;
+                }
+
                 let retain = (!is_file || new_trusted_other_worktrees.is_empty())
                     && new_trusted_abs_paths.iter().all(|new_trusted_path| {
                         !restricted_worktree_path.starts_with(new_trusted_path)
@@ -1045,6 +1052,13 @@ mod tests {
             "single-file worktree should be restricted initially"
         );
 
+        let can_trust_directory =
+            trusted_worktrees.update(cx, |store, cx| store.can_trust(dir_worktree_id, cx));
+        assert!(
+            !can_trust_directory,
+            "directory worktree should be restricted initially"
+        );
+
         trusted_worktrees.update(cx, |store, cx| {
             store.trust(
                 HashSet::from_iter([PathTrust::Worktree(dir_worktree_id)]),
@@ -1061,6 +1075,78 @@ mod tests {
         assert!(
             can_trust_file_after,
             "single-file worktree should be trusted after directory worktree trust"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_path_trust_enables_single_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": { "main.rs": "fn main() {}" },
+                "standalone.rs": "fn standalone() {}"
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs,
+            [path!("/project").as_ref(), path!("/standalone.rs").as_ref()],
+            cx,
+        )
+        .await;
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let (dir_worktree_id, file_worktree_id) = worktree_store.read_with(cx, |store, cx| {
+            let worktrees: Vec<_> = store.worktrees().collect();
+            assert_eq!(worktrees.len(), 2);
+            let (dir_worktree, file_worktree) = if worktrees[0].read(cx).is_single_file() {
+                (&worktrees[1], &worktrees[0])
+            } else {
+                (&worktrees[0], &worktrees[1])
+            };
+            assert!(!dir_worktree.read(cx).is_single_file());
+            assert!(file_worktree.read(cx).is_single_file());
+            (dir_worktree.read(cx).id(), file_worktree.read(cx).id())
+        });
+
+        let trusted_worktrees = init_trust_global(worktree_store, cx);
+
+        let can_trust_file =
+            trusted_worktrees.update(cx, |store, cx| store.can_trust(file_worktree_id, cx));
+        assert!(
+            !can_trust_file,
+            "single-file worktree should be restricted initially"
+        );
+
+        let can_trust_directory =
+            trusted_worktrees.update(cx, |store, cx| store.can_trust(dir_worktree_id, cx));
+        assert!(
+            !can_trust_directory,
+            "directory worktree should be restricted initially"
+        );
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/project")))]),
+                None,
+                cx,
+            );
+        });
+
+        let can_trust_dir =
+            trusted_worktrees.update(cx, |store, cx| store.can_trust(dir_worktree_id, cx));
+        let can_trust_file_after =
+            trusted_worktrees.update(cx, |store, cx| store.can_trust(file_worktree_id, cx));
+        assert!(
+            can_trust_dir,
+            "directory worktree should be trusted after its parent is trusted"
+        );
+        assert!(
+            can_trust_file_after,
+            "single-file worktree should be trusted after directory worktree trust via its parent directory trust"
         );
     }
 
