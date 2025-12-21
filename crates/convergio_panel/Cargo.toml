@@ -5,6 +5,12 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
+[features]
+default = []
+# Build variant feature flags for different editions
+convergio-education = []
+convergio-enterprise = []
+
 [lints]
 workspace = true
 

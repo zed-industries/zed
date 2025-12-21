@@ -42,6 +42,8 @@ pub enum AgentPack {
     Startup,
     /// Developer-focused: Ali, Baccio, Dario, Rex, Paolo, Guardian
     Developer,
+    /// Education-focused: accessibility, coaching, and learning agents
+    Education,
     /// Minimal: Just Ali
     Minimal,
     /// Custom selection (uses active_agents filter)
@@ -55,6 +57,7 @@ impl AgentPack {
             Self::Enterprise,
             Self::Startup,
             Self::Developer,
+            Self::Education,
             Self::Minimal,
             Self::Custom,
         ]
@@ -65,6 +68,7 @@ impl AgentPack {
             Self::Enterprise => "Enterprise (All 54)",
             Self::Startup => "Startup (6 core)",
             Self::Developer => "Developer (6 tech)",
+            Self::Education => "Education (12 focus)",
             Self::Minimal => "Minimal (Ali only)",
             Self::Custom => "Custom",
         }
@@ -76,6 +80,7 @@ impl AgentPack {
             Self::Enterprise => "Full access to all agents for enterprise teams",
             Self::Startup => "Essential agents for fast-moving startups",
             Self::Developer => "Tech-focused agents for development workflows",
+            Self::Education => "Accessibility-focused agents for educational environments",
             Self::Minimal => "Just Ali as your AI Chief of Staff",
             Self::Custom => "Your custom agent selection",
         }
@@ -93,6 +98,12 @@ impl AgentPack {
                 "ali", "baccio-tech-architect", "dario-debugger",
                 "rex-code-reviewer", "paolo-best-practices-enforcer", "guardian-ai-security-validator"
             ]),
+            Self::Education => Some(vec![
+                "ali", "jenny-inclusive-accessibility-champion", "coach-team-coach",
+                "riccardo-storyteller", "behice-cultural-coach", "socrates-first-principles-reasoning",
+                "stefan-design-thinking-facilitator", "sara-ux-ui-designer", "thor-quality-assurance-guardian",
+                "marcello-pm", "davide-project-manager", "anna-executive-assistant"
+            ]),
             Self::Minimal => Some(vec!["ali"]),
             Self::Custom => None, // Uses active_agents filter
         }
@@ -103,6 +114,7 @@ impl AgentPack {
             Self::Enterprise => IconName::UserGroup,
             Self::Startup => IconName::Sparkle,
             Self::Developer => IconName::Code,
+            Self::Education => IconName::Ai,
             Self::Minimal => IconName::ConvergioAli,
             Self::Custom => IconName::Settings,
         }
