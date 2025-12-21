@@ -2489,9 +2489,11 @@ impl AcpThreadView {
                                     .border_color(self.tool_card_border_color(cx))
                                     .child(input_output_header("Raw Input:".into()))
                                     .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                        self.render_markdown(
-                                            input,
-                                            default_markdown_style(false, false, window, cx),
+                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
+                                            self.render_markdown(
+                                                input,
+                                                default_markdown_style(false, false, window, cx),
+                                            ),
                                         )
                                     }))
                                     .child(input_output_header("Output:".into())),
@@ -2499,15 +2501,17 @@ impl AcpThreadView {
                         })
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
-                                div().child(self.render_tool_call_content(
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    use_card_layout,
-                                    window,
-                                    cx,
-                                ))
+                                div().id(("tool-call-output", entry_ix)).child(
+                                    self.render_tool_call_content(
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        use_card_layout,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                             },
                         ))
                         .into_any(),

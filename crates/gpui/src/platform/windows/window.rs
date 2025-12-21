@@ -740,8 +740,8 @@ impl PlatformWindow for WindowsWindow {
                         ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
                     }
 
-                    SetActiveWindow(hwnd).log_err();
-                    SetFocus(Some(hwnd)).log_err();
+                    SetActiveWindow(hwnd).ok();
+                    SetFocus(Some(hwnd)).ok();
                 }
 
                 // premium ragebait by windows, this is needed because the window
