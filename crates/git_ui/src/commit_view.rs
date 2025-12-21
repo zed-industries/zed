@@ -8,9 +8,9 @@ use git::{
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context,
+    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{DiffStat, Tooltip, prelude::*};
+use ui::{DiffStat, IconButtonShape, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -63,6 +63,7 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    commit_sha_hovered: bool,
 }
 
 struct GitBlob {
@@ -311,6 +312,7 @@ impl CommitView {
             stash,
             repository,
             remote,
+            commit_sha_hovered: false,
         }
     }
 
@@ -384,6 +386,7 @@ impl CommitView {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let commit = &self.commit;
         let author_name = commit.author_name.clone();
+        let commit_sha = commit.sha.clone();
         let commit_date = time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
             .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
         let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
@@ -456,11 +459,45 @@ impl CommitView {
                                     .gap_1()
                                     .child(Label::new(author_name).color(Color::Default))
                                     .child(
-                                        Label::new(format!("Commit:{}", commit.sha))
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small)
-                                            .truncate()
-                                            .buffer_font(cx),
+                                        h_flex()
+                                            .id("commit-sha")
+                                            .min_w_0()
+                                            .gap_0p5()
+                                            .on_hover(cx.listener(|this, hovered, _, cx| {
+                                                if this.commit_sha_hovered != *hovered {
+                                                    this.commit_sha_hovered = *hovered;
+                                                    cx.notify();
+                                                }
+                                            }))
+                                            .child(
+                                                Label::new(format!("Commit:{commit_sha}"))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small)
+                                                    .truncate()
+                                                    .buffer_font(cx),
+                                            )
+                                            .when(self.commit_sha_hovered, |this| {
+                                                let commit_sha = commit_sha.clone();
+                                                this.child(
+                                                    IconButton::new(
+                                                        "copy-commit-sha",
+                                                        IconName::Copy,
+                                                    )
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .tooltip(Tooltip::text("Copy commit SHA"))
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.stop_propagation();
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                commit_sha.to_string(),
+                                                            ),
+                                                        );
+                                                    }),
+                                                )
+                                            }),
                                     ),
                             )
                             .child(
@@ -968,6 +1005,7 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                commit_sha_hovered: false,
             }
         })))
     }
