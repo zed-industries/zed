@@ -244,6 +244,54 @@ impl CellSelectionManager {
             SelectionStrategy::MultiCell(cells) => cells.clone(),
         }
     }
+
+    /// Get selected cells as DisplayCellId set for display-order copying
+    ///
+    /// Returns cells in their display coordinates, preserving the visual order
+    /// that the user sees (after sorting).
+    ///
+    /// # Arguments
+    /// * `ordered_indices` - Mapping between display and data coordinates
+    /// * `max_rows` - Maximum number of rows (for AllCells strategy)
+    /// * `max_cols` - Maximum number of columns (for AllCells strategy)
+    pub fn get_selected_display_cells(
+        &self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) -> HashSet<DisplayCellId> {
+        match &self.strategy {
+            SelectionStrategy::Empty => HashSet::new(),
+            SelectionStrategy::AllCells => {
+                // Materialize all cells in display coordinates
+                let mut cells = HashSet::new();
+                for display_row_index in 0..max_rows {
+                    for col in 0..max_cols {
+                        cells.insert(DisplayCellId::new(display_row_index, col));
+                    }
+                }
+                cells
+            }
+            SelectionStrategy::SingleCell(data_cell) => {
+                let mut cells = HashSet::new();
+                // Convert data cell back to display coordinates
+                if let Some(display_row) = ordered_indices.get_display_row(data_cell.row) {
+                    cells.insert(DisplayCellId::new(display_row.get(), data_cell.col));
+                }
+                cells
+            }
+            SelectionStrategy::MultiCell(data_cells) => {
+                let mut display_cells = HashSet::new();
+                // Convert each data cell to display coordinates
+                for data_cell in data_cells {
+                    if let Some(display_row) = ordered_indices.get_display_row(data_cell.row) {
+                        display_cells.insert(DisplayCellId::new(display_row.get(), data_cell.col));
+                    }
+                }
+                display_cells
+            }
+        }
+    }
 }
 
 /// Manages table cell selection state and behavior.
@@ -359,6 +407,17 @@ impl TableSelection {
     ) -> HashSet<DataCellId> {
         self.selection_manager
             .get_selected_cells(ordered_indices, max_rows, max_cols)
+    }
+
+    /// Get selected cells in display coordinates for display-order copying
+    pub fn get_selected_display_cells(
+        &self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) -> HashSet<DisplayCellId> {
+        self.selection_manager
+            .get_selected_display_cells(ordered_indices, max_rows, max_cols)
     }
 
     /// Get the currently focused cell

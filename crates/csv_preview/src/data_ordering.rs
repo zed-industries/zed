@@ -29,6 +29,14 @@ impl OrderedIndices {
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
     }
+
+    /// Get the display row for a given data row (reverse lookup)
+    pub fn get_display_row(&self, data_row: DataRow) -> Option<DisplayRow> {
+        self.mapping
+            .iter()
+            .find(|(_, mapped_data_row)| **mapped_data_row == data_row)
+            .map(|(display_row, _)| *display_row)
+    }
 }
 
 /// Generate ordered row indices based on current ordering settings.

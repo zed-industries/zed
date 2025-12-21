@@ -55,12 +55,22 @@ pub(crate) enum CopyFormat {
     Markdown,
 }
 
+#[derive(Default, Clone, Copy, PartialEq)]
+pub(crate) enum CopyMode {
+    /// Copy in display order (what you see after sorting)
+    #[default]
+    Display,
+    /// Copy in original file order (data coordinates)
+    Data,
+}
+
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
     pub(crate) copy_format: CopyFormat,
+    pub(crate) copy_mode: CopyMode,
     pub(crate) show_debug_info: bool,
 }
 
@@ -72,6 +82,7 @@ impl Default for CsvPreviewSettings {
             font_type: FontType::default(),
             numbering_type: RowIdentifiers::default(),
             copy_format: CopyFormat::default(),
+            copy_mode: CopyMode::default(),
             show_debug_info: false,
         }
     }
@@ -105,6 +116,11 @@ impl CsvPreviewView {
             CopyFormat::Csv => "CSV (Comma)",
             CopyFormat::Semicolon => "Semicolon",
             CopyFormat::Markdown => "Markdown",
+        };
+
+        let current_copy_mode_text = match self.settings.copy_mode {
+            CopyMode::Display => "Display Order",
+            CopyMode::Data => "File Order",
         };
 
         let view = cx.entity();
@@ -210,12 +226,34 @@ impl CsvPreviewView {
             })
         });
 
+        let copy_mode_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("Display Order", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.copy_mode = CopyMode::Display;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("File Order", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.copy_mode = CopyMode::Data;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
         h_flex()
                 .gap_4()
                 .p_2()
                 .bg(cx.theme().colors().surface_background)
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
+                .flex_wrap()
                 .child(
                     h_flex()
                         .gap_2()
@@ -294,6 +332,26 @@ impl CsvPreviewView {
                             )
                             .trigger_size(ButtonSize::Compact)
                             .trigger_tooltip(Tooltip::text("Choose format for copying selected cells (CSV, TSV, Semicolon, or Markdown table)"))
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child("Copy Order:"),
+                        )
+                        .child(
+                            DropdownMenu::new(
+                                ElementId::Name("copy-mode-dropdown".into()),
+                                current_copy_mode_text,
+                                copy_mode_dropdown_menu,
+                            )
+                            .trigger_size(ButtonSize::Compact)
+                            .trigger_tooltip(Tooltip::text("Choose whether to copy in display order (what you see) or file order (original data)"))
                         ),
                 )
                 .child(
