@@ -2993,8 +2993,12 @@ impl Editor {
         self.collaboration_hub = Some(hub);
     }
 
-    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+    pub fn set_in_project_search(&mut self, in_project_search: bool, cx: &mut Context<Self>) {
         self.in_project_search = in_project_search;
+        // Skip excerpt boundary blocks during sync for project search to reduce per-excerpt work.
+        self.display_map.update(cx, |map, _| {
+            map.set_skip_excerpt_boundary_sync(in_project_search);
+        });
     }
 
     pub fn set_custom_context_menu(
@@ -16219,6 +16223,9 @@ impl Editor {
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         if !EditorSettings::get_global(cx).gutter.runnables {
             self.clear_tasks();
+            return Task::ready(());
+        }
+        if self.in_project_search {
             return Task::ready(());
         }
         let project = self.project().map(Entity::downgrade);

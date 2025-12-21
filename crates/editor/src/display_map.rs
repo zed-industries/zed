@@ -453,6 +453,12 @@ impl DisplayMap {
         &self.block_map.folded_buffers
     }
 
+    /// Sets whether to skip excerpt boundary block creation during sync.
+    /// This is a performance optimization for editors with many excerpts (like project search).
+    pub fn set_skip_excerpt_boundary_sync(&mut self, skip: bool) {
+        self.block_map.set_skip_excerpt_boundary_sync(skip);
+    }
+
     #[instrument(skip_all)]
     pub fn insert_creases(
         &mut self,

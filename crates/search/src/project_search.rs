@@ -207,6 +207,8 @@ pub struct ProjectSearch {
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
+    /// Total match count
+    total_match_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -266,6 +268,7 @@ impl ProjectSearch {
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
+            total_match_count: 0,
         }
     }
 
@@ -285,6 +288,7 @@ impl ProjectSearch {
             search_history_cursor: self.search_history_cursor.clone(),
             search_included_history_cursor: self.search_included_history_cursor.clone(),
             search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+            total_match_count: self.total_match_count,
         })
     }
     fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
@@ -303,6 +307,8 @@ impl ProjectSearch {
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        self.total_match_count = 0;
+
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
@@ -335,6 +341,7 @@ impl ProjectSearch {
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
                     project_search.no_results = Some(true);
                     project_search.limit_reached = false;
+                    project_search.total_match_count = 0;
                 })
                 .ok()?;
 
@@ -359,6 +366,9 @@ impl ProjectSearch {
                     })
                     .await;
                 limit_reached |= has_reached_limit;
+
+                // Always materialize immediately - lazy loading disabled because
+                // scroll-based loading doesn't work (there's no content to scroll to)
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
                         project_search.excerpts.update(cx, |excerpts, cx| {
@@ -377,22 +387,33 @@ impl ProjectSearch {
                         })
                     })
                     .ok()?;
+                let mut buffer_count = 0;
+                let mut pending_ranges = Vec::new();
                 while let Some(new_ranges) = new_ranges.next().await {
                     // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
                     // will not reschedule, starving other front end tasks, insert a yield point for that here
                     smol::future::yield_now().await;
+                    buffer_count += 1;
+                    pending_ranges.extend(new_ranges);
+                }
+                if !pending_ranges.is_empty() {
                     project_search
                         .update(cx, |project_search, cx| {
-                            project_search.match_ranges.extend(new_ranges);
+                            project_search.total_match_count += pending_ranges.len();
+                            project_search.match_ranges.extend(pending_ranges);
                             cx.notify();
                         })
                         .ok()?;
                 }
+                // Suppress unused variable warning - kept for future optimizations
+                let _ = buffer_count;
             }
 
             project_search
                 .update(cx, |project_search, cx| {
-                    if !project_search.match_ranges.is_empty() {
+                    if !project_search.match_ranges.is_empty()
+                        || project_search.total_match_count > 0
+                    {
                         project_search.no_results = Some(false);
                     }
                     project_search.limit_reached = limit_reached;
@@ -404,6 +425,11 @@ impl ProjectSearch {
             None
         }));
         cx.notify();
+    }
+
+    /// Returns the total match count (includes pending + materialized)
+    pub fn total_match_count(&self) -> usize {
+        self.total_match_count
     }
 }
 
@@ -908,7 +934,7 @@ impl ProjectSearchView {
         let results_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
-            editor.set_in_project_search(true);
+            editor.set_in_project_search(true, cx);
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
@@ -2060,7 +2086,7 @@ impl Render for ProjectSearchBar {
             .active_match_index
             .and_then(|index| {
                 let index = index + 1;
-                let match_quantity = project_search.match_ranges.len();
+                let match_quantity = project_search.total_match_count;
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
                     if limit_reached {

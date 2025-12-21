@@ -45,6 +45,9 @@ pub struct BlockMap {
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
     buffers_with_disabled_headers: HashSet<BufferId>,
+    /// When true, skip excerpt boundary blocks during sync.
+    /// This is a performance optimization for editors with many excerpts (like project search).
+    skip_excerpt_boundary_sync: bool,
 }
 
 pub struct BlockMapReader<'a> {
@@ -495,6 +498,7 @@ impl BlockMap {
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
+            skip_excerpt_boundary_sync: false,
         };
         map.sync(
             &wrap_snapshot,
@@ -527,6 +531,12 @@ impl BlockMap {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter(self)
+    }
+
+    /// Sets whether to skip excerpt boundary block creation during sync.
+    /// This is a performance optimization for editors with many excerpts (like project search).
+    pub fn set_skip_excerpt_boundary_sync(&mut self, skip: bool) {
+        self.skip_excerpt_boundary_sync = skip;
     }
 
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
@@ -723,18 +733,24 @@ impl BlockMap {
                     }),
             );
 
-            blocks_in_edit.extend(self.header_and_footer_blocks(
-                buffer,
-                (start_bound, end_bound),
-                |point, bias| {
-                    wrap_point_cursor
-                        .map(
-                            tab_point_cursor
-                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
-                        )
-                        .row()
-                },
-            ));
+            // Skip excerpt boundary blocks when skip_excerpt_boundary_sync is true.
+            // This avoids creating per-excerpt blocks for project search while still
+            // preserving buffer headers.
+            if buffer.show_headers() || !self.skip_excerpt_boundary_sync {
+                blocks_in_edit.extend(self.header_and_footer_blocks(
+                    buffer,
+                    (start_bound, end_bound),
+                    |point, bias| {
+                        wrap_point_cursor
+                            .map(
+                                tab_point_cursor.map(
+                                    fold_point_cursor.map(inlay_point_cursor.map(point), bias),
+                                ),
+                            )
+                            .row()
+                    },
+                ));
+            }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
@@ -885,7 +901,7 @@ impl BlockMap {
                         excerpt: excerpt_boundary.next,
                         height,
                     }
-                } else if excerpt_boundary.prev.is_some() {
+                } else if excerpt_boundary.prev.is_some() && !self.skip_excerpt_boundary_sync {
                     height += self.excerpt_header_height;
                     Block::ExcerptBoundary {
                         excerpt: excerpt_boundary.next,
