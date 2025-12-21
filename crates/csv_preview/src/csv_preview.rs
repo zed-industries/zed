@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState, Task,
-    actions,
+    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
+    Subscription, Task, actions,
 };
 use std::{sync::Arc, time::Instant};
 
@@ -19,6 +19,7 @@ use crate::{
     table_like_content::TableLikeContent,
 };
 
+mod cell_editor;
 mod copy_selected;
 mod data_ordering;
 mod data_table;
@@ -80,6 +81,9 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
+    /// POC: Single-line editor
+    pub(crate) cell_editor: Option<Entity<Editor>>,
+    pub(crate) cell_editor_subscription: Option<Subscription>,
 }
 
 pub fn init(cx: &mut App) {
@@ -104,7 +108,7 @@ impl CsvPreviewView {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .filter(|editor| Self::is_csv_file(editor, cx))
             {
-                let csv_preview = Self::from_editor(&editor, cx);
+                let csv_preview = Self::from_editor(&editor, window, cx);
                 workspace.add_item_to_active_pane(Box::new(csv_preview), None, true, window, cx);
             }
         });
@@ -144,11 +148,21 @@ impl CsvPreviewView {
             .unwrap_or(false)
     }
 
-    fn from_editor(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
+    fn from_editor(
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let list_state = ListState::new(contents.rows.len(), ListAlignment::Top, px(0.));
         let table_interaction_state =
             cx.new(|cx| TableInteractionState::new(cx, list_state.clone()));
+
+        let cell_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text("foobar", window, cx);
+            editor
+        });
 
         cx.new(|cx| {
             let mut view = Self {
@@ -166,6 +180,8 @@ impl CsvPreviewView {
                 settings: CsvPreviewSettings::default(),
                 performance_metrics: PerformanceMetrics::default(),
                 list_state,
+                cell_editor: Some(cell_editor),
+                cell_editor_subscription: None,
             };
 
             view.set_editor(editor.clone(), cx);
