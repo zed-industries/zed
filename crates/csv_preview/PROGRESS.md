@@ -69,8 +69,8 @@ This document outlines the current state of the POC feature. It might not be the
   }
   ```
   - [ ] feat: Convert adjacent cells selected individually into a range if range is single dimention (1xN or Nx1)
-- [ ] feat: Move viewport by keyboard selection
-- [ ] feat: Move viewport by mouse selection
+- [x] feat: Move viewport by keyboard selection
+- [x] feat: Move viewport by mouse selection
 
 **Fixes:**
 - [x] fix: Selection when sorted (follow data cells not display cells)

@@ -10,6 +10,7 @@ use crate::{
     ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
     ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
     SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
+    cell_editor::ScrollOffset,
     selection::{NavigationDirection as ND, NavigationOperation as NO, TableSelection},
 };
 
@@ -21,7 +22,7 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         self.selection = TableSelection::new();
-        self.on_selection_changed(window, cx);
+        self.on_selection_changed(window, cx, None);
         cx.notify();
     }
 
@@ -37,7 +38,7 @@ impl CsvPreviewView {
         self.selection.select_all(max_rows, max_cols);
 
         self.performance_metrics.last_selection_took = Some(start_time.elapsed());
-        self.on_selection_changed(window, cx);
+        self.on_selection_changed(window, cx, Some(ScrollOffset::NoOffset));
         cx.notify();
     }
 

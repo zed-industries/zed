@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{AppContext as _, Entity};
+use gpui::{AppContext as _, Entity, ScrollStrategy};
 use menu::Confirm;
 use text::ToOffset;
 use ui::{
@@ -8,6 +8,17 @@ use ui::{
 };
 
 use crate::{CsvPreviewView, copy_selected::EscapedCellString};
+
+/// Enum representing the offset of the focused cell in the list.
+/// Used to keep viewport following the focused cell with some buffer, so mouse selection and autoscrollihng works correctly.
+/// // TODO: rewrite this nonsence doc to be more clear
+#[derive(Debug)]
+
+pub enum ScrollOffset {
+    NoOffset,
+    Negative,
+    Positive,
+}
 
 impl CsvPreviewView {
     /// Get the currently focused cell data from the selection
@@ -158,9 +169,52 @@ impl CsvPreviewView {
     }
 
     /// POC: Handle cell editor focus and content updates when selection changes
-    pub(crate) fn on_selection_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// apply_scroll - Whether to apply scroll. If applied, offset direction is specified
+    pub(crate) fn on_selection_changed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        apply_scroll: Option<ScrollOffset>,
+    ) {
         // Update cell editor content to match newly focused cell
         self.update_cell_editor_content(window, cx);
+
+        // Follow focused cell in list viewport
+        if let Some(focused_cell) = self.selection.get_focused_cell()
+            && let Some(scroll) = apply_scroll
+        {
+            let display_row_index = focused_cell.row;
+            let ix = display_row_index.0;
+
+            match self.settings.rendering_with {
+                crate::settings::RowRenderMechanism::VariableList => {
+                    // Variable height list uses ListState::scroll_to_reveal_item
+                    let ix_with_offset = match scroll {
+                        ScrollOffset::NoOffset => ix,
+                        ScrollOffset::Negative => ix.saturating_sub(2), // Avoid overflowing
+                        ScrollOffset::Positive => ix + 2,
+                    };
+                    self.list_state.scroll_to_reveal_item(ix_with_offset);
+                }
+                crate::settings::RowRenderMechanism::UniformList => {
+                    // Uniform list uses UniformListScrollHandle
+                    let table_interaction_state = &self.table_interaction_state;
+                    table_interaction_state.update(cx, |state, _| {
+                        let ix_with_offset = match scroll {
+                            ScrollOffset::NoOffset => ix,
+                            ScrollOffset::Negative => ix.saturating_sub(2),
+                            ScrollOffset::Positive => ix + 2,
+                        };
+                        // Use ScrollStrategy::Nearest for minimal scrolling (like scroll_to_reveal_item)
+                        state.scroll_handle.scroll_to_item_with_offset(
+                            ix_with_offset,
+                            ScrollStrategy::Nearest,
+                            0, // No additional offset since we already calculate it above
+                        );
+                    });
+                }
+            }
+        }
     }
 
     /// POC: Render the single-line cell editor

@@ -3,7 +3,7 @@
 //! Creates interactive cell elements with mouse event handlers for selection.
 //! Also defines cell position tracking for span-based parsing.
 
-use std::time::Instant;
+use std::{cmp::Ordering, time::Instant};
 
 use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
 use text::{Anchor, BufferId};
@@ -11,6 +11,7 @@ use ui::{SharedString, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
+    cell_editor::ScrollOffset,
     settings::{FontType, VerticalAlignment},
     types::DisplayCellId,
 };
@@ -170,6 +171,18 @@ impl CsvPreviewView {
             move |_event, window, cx| {
                 view.update(cx, |this, cx| {
                     let start_time = Instant::now();
+
+                    // Calculate scroll direction by comparing current vs focused cell
+                    let scroll = if let Some(focused_cell) = this.selection.get_focused_cell() {
+                        match focused_cell.row.0.cmp(&display_cell_id.row.0) {
+                            std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
+                            std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
+                            std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
+                        }
+                    } else {
+                        ScrollOffset::NoOffset
+                    };
+
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.start_mouse_selection(
@@ -182,7 +195,7 @@ impl CsvPreviewView {
                     this.performance_metrics.last_selection_took = Some(selection_duration);
 
                     // Update cell editor to show focused cell content
-                    this.on_selection_changed(window, cx);
+                    this.on_selection_changed(window, cx, Some(scroll));
                     cx.notify();
                 });
             }
@@ -206,6 +219,17 @@ impl CsvPreviewView {
                         return;
                     }
                     let start_time = Instant::now();
+                    // Calculate scroll direction by comparing current vs focused cell
+                    let scroll = if let Some(focused_cell) = this.selection.get_focused_cell() {
+                        match focused_cell.row.0.cmp(&display_cell_id.row.0) {
+                            std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
+                            std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
+                            std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
+                        }
+                    } else {
+                        ScrollOffset::NoOffset
+                    };
+
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.extend_mouse_selection(
@@ -218,7 +242,8 @@ impl CsvPreviewView {
                     this.performance_metrics.last_selection_took = Some(selection_duration);
 
                     // Update cell editor to show focused cell content during drag
-                    this.on_selection_changed(window, cx);
+                    let scroll = Some(scroll);
+                    this.on_selection_changed(window, cx, scroll);
                     cx.notify();
                 });
             }
