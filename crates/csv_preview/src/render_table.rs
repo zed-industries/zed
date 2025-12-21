@@ -1,6 +1,7 @@
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
+use crate::table_cell::TableCell;
 use gpui::{AnyElement, ElementId, Entity};
 use std::ops::Range;
 use ui::{Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, div, h_flex, prelude::*};
@@ -224,14 +225,15 @@ impl CsvPreviewView {
             row_index,
         )?);
 
+        let empty_cell = TableCell {
+            position: None,
+            cached_value: "".into(),
+            is_editing: false,
+        };
+
         // Remaining columns: actual CSV data
         for col in 0..(COLS - 1) {
-            let Some(table_cell) = row.get(col) else {
-                panic!(
-                    "Bugs in table implementation: Expected a value at column {}",
-                    col
-                );
-            };
+            let table_cell = row.get(col).unwrap_or_else(|| &empty_cell);
 
             let cell_content = table_cell.display_value().clone();
             let pos = table_cell.position.as_ref();
@@ -253,7 +255,7 @@ impl CsvPreviewView {
                 .selection
                 .is_cell_anchor(DisplayRow::from(display_index), AnyColumn::from(col));
 
-            elements.push(CsvPreviewView::create_selectable_cell(
+            let selectable_cell = CsvPreviewView::create_selectable_cell(
                 DisplayCellId::new(display_index, col),
                 cell_content,
                 cx.entity(),
@@ -264,7 +266,21 @@ impl CsvPreviewView {
                 this.settings.vertical_alignment,
                 this.settings.font_type,
                 cx,
-            ));
+            );
+
+            elements.push(
+                div()
+                    .size_full()
+                    .when_some(pos, |parent, pos| {
+                        parent.child(
+                            div()
+                                .child(format!("Pos {}-{}", pos.start.offset, pos.end.offset))
+                                .text_color(row_identifier_text_color),
+                        )
+                    })
+                    .child(selectable_cell)
+                    .into_any_element(),
+            );
         }
 
         let elements_array: [AnyElement; COLS] = elements.try_into().ok()?;
