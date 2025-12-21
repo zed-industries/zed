@@ -1,6 +1,7 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
-    IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonSize, Checkbox, Context, ContextMenu, DropdownMenu,
+    ElementId, IntoElement as _, ParentElement as _, Styled as _, ToggleState, Tooltip, Window,
+    div, h_flex,
 };
 
 use crate::CsvPreviewView;
@@ -54,13 +55,26 @@ pub(crate) enum CopyFormat {
     Markdown,
 }
 
-#[derive(Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
     pub(crate) copy_format: CopyFormat,
+    pub(crate) show_debug_info: bool,
+}
+
+impl Default for CsvPreviewSettings {
+    fn default() -> Self {
+        Self {
+            rendering_with: RowRenderMechanism::default(),
+            vertical_alignment: VerticalAlignment::default(),
+            font_type: FontType::default(),
+            numbering_type: RowIdentifiers::default(),
+            copy_format: CopyFormat::default(),
+            show_debug_info: false,
+        }
+    }
 }
 
 ///// Settings related /////
@@ -280,6 +294,32 @@ impl CsvPreviewView {
                             )
                             .trigger_size(ButtonSize::Compact)
                             .trigger_tooltip(Tooltip::text("Choose format for copying selected cells (CSV, TSV, Semicolon, or Markdown table)"))
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child("Debug Info:"),
+                        )
+                        .child(
+                            Checkbox::new(
+                                "show-debug-info",
+                                if self.settings.show_debug_info {
+                                    ToggleState::Selected
+                                } else {
+                                    ToggleState::Unselected
+                                },
+                            )
+                            .label("Show cell positions")
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.settings.show_debug_info = *checked == ToggleState::Selected;
+                                cx.notify();
+                            })),
                         ),
                 )
                 .into_any_element()

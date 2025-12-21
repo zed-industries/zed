@@ -2,8 +2,8 @@ use gpui::ClipboardItem;
 use ui::{Context, Window};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
-use std::collections::BTreeMap;
 use std::time::Instant;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     CopySelected, CsvPreviewView,
@@ -11,6 +11,30 @@ use crate::{
     types::{AnyColumn, DataRow},
 };
 use std::collections::HashSet;
+
+pub struct EscapedCellString(String);
+
+impl EscapedCellString {
+    pub fn new(input: impl AsRef<str>, delimiter: char) -> Self {
+        let cell = input.as_ref();
+        let escaped = if cell.contains(delimiter) || cell.contains('"') || cell.contains('\n') {
+            format!("\"{}\"", cell.replace("\"", "\"\""))
+        } else {
+            cell.to_string()
+        };
+        Self(escaped)
+    }
+
+    pub fn take(self) -> String {
+        self.0
+    }
+}
+
+impl From<EscapedCellString> for Arc<str> {
+    fn from(escaped: EscapedCellString) -> Self {
+        escaped.take().into()
+    }
+}
 
 impl CsvPreviewView {
     pub(crate) fn copy_selected(
@@ -94,33 +118,18 @@ impl CsvPreviewView {
                 let formatted_cells: Vec<String> = match copy_format {
                     CopyFormat::Tsv => row_cells
                         .into_iter()
-                        .map(|cell| {
-                            if cell.contains('\t') || cell.contains('"') || cell.contains('\n') {
-                                format!("\"{}\"", cell.replace("\"", "\"\""))
-                            } else {
-                                cell
-                            }
-                        })
+                        .map(|cell| EscapedCellString::new(cell, '\t'))
+                        .map(|cell| cell.take())
                         .collect(),
                     CopyFormat::Csv => row_cells
                         .into_iter()
-                        .map(|cell| {
-                            if cell.contains(',') || cell.contains('"') || cell.contains('\n') {
-                                format!("\"{}\"", cell.replace("\"", "\"\""))
-                            } else {
-                                cell
-                            }
-                        })
+                        .map(|cell| EscapedCellString::new(cell, ','))
+                        .map(|cell| cell.take())
                         .collect(),
                     CopyFormat::Semicolon => row_cells
                         .into_iter()
-                        .map(|cell| {
-                            if cell.contains(';') || cell.contains('"') || cell.contains('\n') {
-                                format!("\"{}\"", cell.replace("\"", "\"\""))
-                            } else {
-                                cell
-                            }
-                        })
+                        .map(|cell| EscapedCellString::new(cell, ';'))
+                        .map(|cell| cell.take())
                         .collect(),
                     CopyFormat::Markdown => unreachable!(),
                 };

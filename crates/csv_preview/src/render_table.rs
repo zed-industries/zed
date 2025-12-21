@@ -4,7 +4,7 @@ use crate::data_table::TableResizeBehavior;
 use crate::table_cell::TableCell;
 use gpui::{AnyElement, ElementId, Entity};
 use std::ops::Range;
-use ui::{Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, div, h_flex, prelude::*};
+use ui::{Button, ButtonSize, ButtonStyle, DefiniteLength, div, h_flex, prelude::*};
 
 use crate::{
     CsvPreviewView, Ordering,
@@ -271,12 +271,14 @@ impl CsvPreviewView {
             elements.push(
                 div()
                     .size_full()
-                    .when_some(pos, |parent, pos| {
-                        parent.child(
-                            div()
-                                .child(format!("Pos {}-{}", pos.start.offset, pos.end.offset))
-                                .text_color(row_identifier_text_color),
-                        )
+                    .when(this.settings.show_debug_info, |parent| {
+                        parent.when_some(pos, |parent, pos| {
+                            parent.child(
+                                div()
+                                    .child(format!("Pos {}-{}", pos.start.offset, pos.end.offset))
+                                    .text_color(row_identifier_text_color),
+                            )
+                        })
                     })
                     .child(selectable_cell)
                     .into_any_element(),
