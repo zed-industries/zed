@@ -73,11 +73,6 @@ impl<'a> BuildPermalinkParams<'a> {
     }
 }
 
-pub struct BuildCreatePullRequestParams<'a> {
-    pub source_branch: &'a str,
-    pub target_branch: Option<&'a str>,
-}
-
 /// A Git hosting provider.
 #[async_trait]
 pub trait GitHostingProvider {
@@ -101,7 +96,7 @@ pub trait GitHostingProvider {
     fn build_create_pull_request_url(
         &self,
         _remote: &ParsedGitRemote,
-        _params: BuildCreatePullRequestParams,
+        _source_branch: &str,
     ) -> Option<Url> {
         None
     }

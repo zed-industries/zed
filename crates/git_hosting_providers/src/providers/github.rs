@@ -12,8 +12,8 @@ use url::Url;
 use urlencoding::encode;
 
 use git::{
-    BuildCommitPermalinkParams, BuildCreatePullRequestParams, BuildPermalinkParams,
-    GitHostingProvider, ParsedGitRemote, PullRequest, RemoteUrl,
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    PullRequest, RemoteUrl,
 };
 
 use crate::get_host_from_git_remote_url;
@@ -228,27 +228,14 @@ impl GitHostingProvider for Github {
     fn build_create_pull_request_url(
         &self,
         remote: &ParsedGitRemote,
-        params: BuildCreatePullRequestParams,
+        source_branch: &str,
     ) -> Option<Url> {
         let ParsedGitRemote { owner, repo } = remote;
-        let BuildCreatePullRequestParams {
-            source_branch,
-            target_branch,
-        } = params;
-
         let encoded_source = encode(source_branch);
 
-        let mut url = self
-            .base_url()
+        self.base_url()
             .join(&format!("{owner}/{repo}/pull/new/{encoded_source}"))
-            .ok()?;
-
-        if let Some(target_branch) = target_branch {
-            let encoded_target = encode(target_branch);
-            url.set_query(Some(&format!("base={encoded_target}")));
-        }
-
-        Some(url)
+            .ok()
     }
 
     fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
@@ -503,33 +490,12 @@ mod tests {
         let provider = Github::public_instance();
 
         let url = provider
-            .build_create_pull_request_url(
-                &remote,
-                BuildCreatePullRequestParams {
-                    source_branch: "feature/something cool",
-                    target_branch: Some("main"),
-                },
-            )
+            .build_create_pull_request_url(&remote, "feature/something cool")
             .expect("url should be constructed");
 
         assert_eq!(
             url.as_str(),
-            "https://github.com/zed-industries/zed/pull/new/feature%2Fsomething%20cool?base=main"
-        );
-
-        let url_without_target = provider
-            .build_create_pull_request_url(
-                &remote,
-                BuildCreatePullRequestParams {
-                    source_branch: "feature/only-source",
-                    target_branch: None,
-                },
-            )
-            .expect("url should be constructed");
-
-        assert_eq!(
-            url_without_target.as_str(),
-            "https://github.com/zed-industries/zed/pull/new/feature%2Fonly-source"
+            "https://github.com/zed-industries/zed/pull/new/feature%2Fsomething%20cool"
         );
     }
 

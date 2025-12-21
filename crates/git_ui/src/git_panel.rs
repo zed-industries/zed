@@ -3076,6 +3076,72 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    pub fn create_pull_request(&self, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+
+        let result = (|| -> anyhow::Result<()> {
+            let (branch, remote_origin, remote_upstream) = {
+                let repository = repo.read(cx);
+                (
+                    repository.branch.clone(),
+                    repository.remote_origin_url.clone(),
+                    repository.remote_upstream_url.clone(),
+                )
+            };
+
+            let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
+            let source_branch = branch
+                .upstream
+                .as_ref()
+                .and_then(|upstream| {
+                    if let UpstreamTracking::Tracked(_) = upstream.tracking {
+                        upstream.branch_name().map(|name| name.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| branch.name().to_string());
+
+            let remote_url = branch
+                .upstream
+                .as_ref()
+                .and_then(|upstream| {
+                    let remote_name = upstream.remote_name();
+                    match remote_name {
+                        Some("upstream") => remote_upstream.as_deref(),
+                        Some(_) => remote_origin.as_deref(),
+                        None => None,
+                    }
+                })
+                .or_else(|| remote_origin.as_deref())
+                .or_else(|| remote_upstream.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let remote_url = remote_url.to_string();
+
+            let provider_registry = git::GitHostingProviderRegistry::global(cx);
+            let Some((provider, parsed_remote)) =
+                git::parse_git_remote_url(provider_registry, &remote_url)
+            else {
+                return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
+            };
+
+            let Some(url) = provider.build_create_pull_request_url(&parsed_remote, &source_branch)
+            else {
+                return Err(anyhow::anyhow!("Unable to construct pull request URL"));
+            };
+
+            cx.open_url(url.as_str());
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            log::error!("Error while creating pull request {:?}", e);
+            self.show_error_toast("Create Pull Request", e, cx);
+        }
+    }
+
     fn askpass_delegate(
         &self,
         operation: impl Into<SharedString>,

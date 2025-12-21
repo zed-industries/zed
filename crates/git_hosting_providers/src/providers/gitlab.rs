@@ -10,8 +10,8 @@ use url::Url;
 use urlencoding::encode;
 
 use git::{
-    BuildCommitPermalinkParams, BuildCreatePullRequestParams, BuildPermalinkParams,
-    GitHostingProvider, ParsedGitRemote, RemoteUrl,
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
 };
 
 use crate::get_host_from_git_remote_url;
@@ -213,13 +213,8 @@ impl GitHostingProvider for Gitlab {
     fn build_create_pull_request_url(
         &self,
         remote: &ParsedGitRemote,
-        params: BuildCreatePullRequestParams,
+        source_branch: &str,
     ) -> Option<Url> {
-        let BuildCreatePullRequestParams {
-            source_branch,
-            target_branch,
-        } = params;
-
         let mut url = self
             .base_url()
             .join(&format!(
@@ -228,15 +223,7 @@ impl GitHostingProvider for Gitlab {
             ))
             .ok()?;
 
-        let mut query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
-
-        if let Some(target_branch) = target_branch {
-            query.push('&');
-            query.push_str(&format!(
-                "merge_request%5Btarget_branch%5D={}",
-                encode(target_branch)
-            ));
-        }
+        let query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
 
         url.set_query(Some(&query));
         Some(url)
@@ -419,33 +406,12 @@ mod tests {
         let provider = Gitlab::public_instance();
 
         let url = provider
-            .build_create_pull_request_url(
-                &remote,
-                BuildCreatePullRequestParams {
-                    source_branch: "feature/cool stuff",
-                    target_branch: Some("main"),
-                },
-            )
+            .build_create_pull_request_url(&remote, "feature/cool stuff")
             .expect("create PR url should be constructed");
 
         assert_eq!(
             url.as_str(),
-            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff&merge_request%5Btarget_branch%5D=main"
-        );
-
-        let url_without_target = provider
-            .build_create_pull_request_url(
-                &remote,
-                BuildCreatePullRequestParams {
-                    source_branch: "feature/only-source",
-                    target_branch: None,
-                },
-            )
-            .expect("create PR url should be constructed without target");
-
-        assert_eq!(
-            url_without_target.as_str(),
-            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fonly-source"
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff"
         );
     }
 

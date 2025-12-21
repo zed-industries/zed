@@ -14,7 +14,6 @@ mod blame_ui;
 pub mod clone;
 
 use git::{
-    BuildCreatePullRequestParams, GitHostingProviderRegistry, parse_git_remote_url,
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
@@ -84,9 +83,11 @@ pub fn init(cx: &mut App) {
         }
         if !project.is_via_collab() {
             workspace.register_action(
-                |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
-                    if let Err(error) = open_create_pull_request(workspace, window, cx) {
-                        workspace.show_error(&error, cx);
+                |workspace, _: &zed_actions::git::CreatePullRequest, _window, cx| {
+                    if let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.create_pull_request(cx);
+                        });
                     }
                 },
             );
@@ -277,77 +278,6 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
-}
-
-fn open_create_pull_request(
-    workspace: &mut Workspace,
-    _window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> anyhow::Result<()> {
-    let project = workspace.project();
-    let Some(active_repository) = project.read(cx).active_repository(cx) else {
-        return Err(anyhow!("No active repository"));
-    };
-
-    let (branch, remote_origin, remote_upstream) = {
-        let repository = active_repository.read(cx);
-        (
-            repository.branch.clone(),
-            repository.remote_origin_url.clone(),
-            repository.remote_upstream_url.clone(),
-        )
-    };
-
-    let branch = branch.ok_or_else(|| anyhow!("No active branch"))?;
-    let source_branch = branch.name().to_string();
-
-    let remote_url = branch
-        .upstream
-        .as_ref()
-        .and_then(|upstream| {
-            let remote_name = upstream.remote_name();
-            match remote_name {
-                Some("upstream") => remote_upstream.as_deref(),
-                Some(_) => remote_origin.as_deref(),
-                None => None,
-            }
-        })
-        .or_else(|| remote_origin.as_deref())
-        .or_else(|| remote_upstream.as_deref())
-        .ok_or_else(|| anyhow!("No remote configured for repository"))?;
-    let remote_url = remote_url.to_string();
-
-    let target_branch = branch.upstream.as_ref().and_then(|upstream| {
-        if let UpstreamTracking::Tracked(_) = upstream.tracking {
-            let ref_name = upstream.ref_name.as_ref();
-            let stripped = ref_name.strip_prefix("refs/remotes/").unwrap_or(ref_name);
-            let branch_name = stripped
-                .split_once('/')
-                .map(|(_, name)| name)
-                .unwrap_or(stripped);
-            Some(branch_name.to_string())
-        } else {
-            None
-        }
-    });
-
-    let provider_registry = GitHostingProviderRegistry::global(cx);
-    let Some((provider, parsed_remote)) = parse_git_remote_url(provider_registry, &remote_url)
-    else {
-        return Err(anyhow!("Unsupported remote URL: {}", remote_url));
-    };
-
-    let params = BuildCreatePullRequestParams {
-        source_branch: source_branch.as_str(),
-        target_branch: target_branch.as_deref(),
-    };
-
-    let Some(url) = provider.build_create_pull_request_url(&parsed_remote, params) else {
-        return Err(anyhow!("Unable to construct pull request URL"));
-    };
-
-    cx.open_url(url.as_str());
-    Ok(())
 }
 
 fn open_modified_files(
