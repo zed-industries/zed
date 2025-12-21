@@ -1,7 +1,8 @@
 use crate::{CsvPreviewView, table_like_content::TableLikeContent};
 use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Context, Entity, Subscription, Task};
+use gpui::{AppContext, Context, Entity, ListAlignment, ListState, Subscription, Task};
 use std::time::{Duration, Instant};
+use ui::px;
 
 pub(crate) const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -78,6 +79,7 @@ impl CsvPreviewView {
             let parse_duration = instant.elapsed();
             log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
+                view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
                 view.contents = parsed_csv;
                 view.performance_metrics.last_parse_took = Some(parse_duration);
                 view.update_ordered_indices();
