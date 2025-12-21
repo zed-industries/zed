@@ -44,7 +44,11 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
-        let selected_cells = self.selection.get_selected_cells();
+        let max_rows = self.contents.rows.len();
+        let max_cols = self.contents.headers.len();
+        let selected_cells =
+            self.selection
+                .get_selected_cells(&self.ordered_indices, max_rows, max_cols);
 
         if selected_cells.is_empty() {
             return;
@@ -55,7 +59,7 @@ impl CsvPreviewView {
         // Group selected cells by row, then by column for proper TSV formatting
         let mut rows_data: BTreeMap<DataRow, BTreeMap<AnyColumn, String>> = BTreeMap::new();
 
-        for cell_id in selected_cells {
+        for cell_id in &selected_cells {
             let row_idx = cell_id.row;
             let col_idx = cell_id.col;
 
@@ -72,7 +76,7 @@ impl CsvPreviewView {
             }
         }
 
-        let toast_info = calculate_toast_info(selected_cells, copy_format, &rows_data);
+        let toast_info = calculate_toast_info(&selected_cells, copy_format, &rows_data);
 
         let content = if copy_format == CopyFormat::Markdown {
             format_as_markdown_table(&full_content.headers, &rows_data)

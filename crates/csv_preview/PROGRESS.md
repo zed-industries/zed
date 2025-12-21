@@ -51,7 +51,7 @@ This document outlines the current state of the POC feature. It might not be the
 - [x] feat: Clear selection
 - [x] feat: Navigate with keyboard
 - [x] feat: Extend selection with keyboard
-- [ ] feat: Optimize selection by using `SelectionStrategy`:
+- [x] feat: Optimize selection by using `SelectionStrategy`:
   ```rust
   enum SelectionStrategy {
       /// Whole document (CMD+A)
