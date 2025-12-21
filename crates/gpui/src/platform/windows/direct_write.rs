@@ -568,6 +568,14 @@ impl DirectWriteState {
         font_size: Pixels,
         font_runs: &[FontRun],
     ) -> Result<LineLayout> {
+        fn contains_complex_emoji(text: &str) -> bool {
+            text.chars().any(|c| {
+                c == '\u{200D}' // ZWJ
+                    || matches!(c as u32, 0x1F1E6..=0x1F1FF) // regional indicators
+                    || matches!(c as u32, 0x1F3FB..=0x1F3FF) // skin tone modifiers
+            })
+        }
+
         if font_runs.is_empty() {
             return Ok(LineLayout {
                 font_size,
@@ -657,17 +665,23 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                let font_size = if break_ligatures {
+
+                let run_has_complex_emoji = contains_complex_emoji(current_text);
+                let font_size_value = if run_has_complex_emoji {
+                    font_size.0
+                } else if break_ligatures {
                     font_size.0.next_up()
                 } else {
                     font_size.0
                 };
-                text_layout.SetFontSize(font_size, text_range)?;
+                text_layout.SetFontSize(font_size_value, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
 
-                break_ligatures = !break_ligatures;
+                if !run_has_complex_emoji {
+                    break_ligatures = !break_ligatures;
+                }
             }
 
             let mut runs = Vec::new();

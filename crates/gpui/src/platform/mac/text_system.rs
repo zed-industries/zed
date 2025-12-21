@@ -463,12 +463,21 @@ impl MacTextSystemState {
         let mut max_ascent = 0.0f32;
         let mut max_descent = 0.0f32;
 
+        fn contains_complex_emoji(text: &str) -> bool {
+            text.chars().any(|c| {
+                c == '\u{200D}' // ZWJ
+                    || matches!(c as u32, 0x1F1E6..=0x1F1FF) // regional indicators
+                    || matches!(c as u32, 0x1F3FB..=0x1F3FF) // skin tone modifiers
+            })
+        }
+
         {
             let mut text = text;
             let mut break_ligature = true;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
+                let text_run_has_complex_emoji = contains_complex_emoji(text_run);
 
                 let utf16_start = string.char_len(); // insert at end of string
                 // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
@@ -484,7 +493,9 @@ impl MacTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
-                let font_size = if break_ligature {
+                let font_size = if text_run_has_complex_emoji {
+                    font_size
+                } else if break_ligature {
                     px(font_size.0.next_up())
                 } else {
                     font_size
@@ -496,7 +507,10 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
-                break_ligature = !break_ligature;
+
+                if !text_run_has_complex_emoji {
+                    break_ligature = !break_ligature;
+                }
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
