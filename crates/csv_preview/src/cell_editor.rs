@@ -7,7 +7,7 @@ use ui::{
     Window, div, h_flex,
 };
 
-use crate::CsvPreviewView;
+use crate::{CsvPreviewView, copy_selected::EscapedCellString};
 
 impl CsvPreviewView {
     /// Get the currently focused cell data from the selection
@@ -127,6 +127,8 @@ impl CsvPreviewView {
 
         // Get the new text from the cell editor
         let new_text = cell_editor.read(cx).text(cx);
+        const DELIMITER: char = ',';
+        let new_text = EscapedCellString::new(new_text, DELIMITER);
 
         // Apply the edit to the source buffer
         let buffer_snapshot = active_editor_state
