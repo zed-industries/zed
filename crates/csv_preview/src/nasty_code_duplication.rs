@@ -21,10 +21,11 @@
 //! Pre-allocate one `Entity<TableColumnWidths<N>>` for each column count (1-30), then use
 //! a match statement to bridge runtime values to compile-time types. All table logic remains
 //! in a single generic `create_table<COLS>()` method.
+use crate::data_table::TableColumnWidths;
 use gpui::{AppContext as _, Entity};
 use ui::{
     ActiveTheme as _, AnyElement, Context, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, TableColumnWidths, div,
+    Styled as _, div,
 };
 
 use crate::CsvPreviewView;

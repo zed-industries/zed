@@ -1,9 +1,9 @@
+use crate::data_table::Table;
+use crate::data_table::TableColumnWidths;
+use crate::data_table::TableResizeBehavior;
 use gpui::{AnyElement, ElementId, Entity};
 use std::ops::Range;
-use ui::{
-    Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
-    TableResizeBehavior, div, h_flex, prelude::*,
-};
+use ui::{Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, div, h_flex, prelude::*};
 
 use crate::{
     CsvPreviewView, Ordering,

@@ -2,7 +2,8 @@ use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
 use std::{sync::Arc, time::Instant};
 
-use ui::{SharedString, TableInteractionState, prelude::*};
+use crate::data_table::TableInteractionState;
+use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
 
 mod copy_selected;
 mod data_ordering;
+mod data_table;
 mod nasty_code_duplication;
 mod parser;
 mod performance_metrics_overlay;

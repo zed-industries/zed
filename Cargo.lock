@@ -4368,11 +4368,14 @@ name = "csv_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "component",
  "derive_more 0.99.20",
  "editor",
  "gpui",
+ "itertools 0.14.0",
  "log",
  "ui",
+ "ui_macros",
  "workspace",
 ]
 
