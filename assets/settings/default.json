@@ -1178,6 +1178,10 @@
   "remove_trailing_whitespace_on_save": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
+  // Whether to continue markdown lists when pressing enter.
+  "extend_list_on_newline": true,
+  // Whether to indent list items when pressing tab after a list marker.
+  "indent_list_on_tab": true,
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
