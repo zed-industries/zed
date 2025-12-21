@@ -61,7 +61,24 @@ impl CsvPreviewView {
     ) -> Task<anyhow::Result<()>> {
         cx.spawn(async move |view, cx| {
             if wait_for_debounce {
-                cx.background_executor().timer(REPARSE_DEBOUNCE).await;
+                // Smart debouncing: check if cooldown period has already passed
+                let now = Instant::now();
+                let should_wait = view.update(cx, |view, _| {
+                    if let Some(last_end) = view.last_parse_end_time {
+                        let cooldown_until = last_end + REPARSE_DEBOUNCE;
+                        if now < cooldown_until {
+                            Some(cooldown_until - now)
+                        } else {
+                            None // Cooldown already passed, parse immediately
+                        }
+                    } else {
+                        None // First parse, no debounce
+                    }
+                })?;
+
+                if let Some(wait_duration) = should_wait {
+                    cx.background_executor().timer(wait_duration).await;
+                }
             }
 
             let instant = Instant::now();
@@ -84,11 +101,13 @@ impl CsvPreviewView {
             let parsed_csv = parsing_task.await;
 
             let parse_duration = instant.elapsed();
+            let parse_end_time = Instant::now();
             log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
                 view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
                 view.contents = parsed_csv;
                 view.performance_metrics.last_parse_took = Some(parse_duration);
+                view.last_parse_end_time = Some(parse_end_time);
                 view.update_ordered_indices();
                 cx.notify();
             })

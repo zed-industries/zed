@@ -84,6 +84,8 @@ pub struct CsvPreviewView {
     /// POC: Single-line editor
     pub(crate) cell_editor: Option<Entity<Editor>>,
     pub(crate) cell_editor_subscription: Option<Subscription>,
+    /// Time when the last parsing operation ended, used for smart debouncing
+    pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
 
 pub fn init(cx: &mut App) {
@@ -170,12 +172,13 @@ impl CsvPreviewView {
                 ordered_indices: Arc::new(crate::data_ordering::generate_ordered_indices(
                     None, &contents,
                 )),
-                selection: TableSelection::new(),
-                settings: CsvPreviewSettings::default(),
+                selection: TableSelection::default(),
                 performance_metrics: PerformanceMetrics::default(),
-                list_state,
+                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
+                settings: CsvPreviewSettings::default(),
                 cell_editor: None,
                 cell_editor_subscription: None,
+                last_parse_end_time: None,
             };
 
             // Create cell editor after the view is initialized
