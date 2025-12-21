@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext as _, Entity};
+use text::ToOffset;
 use ui::{
     ActiveTheme as _, Context, IntoElement, ParentElement as _, Styled as _, StyledTypography as _,
     Window, div, h_flex,
@@ -29,6 +30,18 @@ impl CsvPreviewView {
             if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
                 let cell = &self.contents.rows[data_row][col];
                 return Some(cell.display_value().to_string());
+            }
+        }
+        None
+    }
+
+    /// Get the position of the currently focused cell
+    pub(crate) fn get_focused_cell_position(&self) -> Option<&crate::table_cell::CellPosition> {
+        if let Some((data_row, col)) = self.get_focused_cell() {
+            // Get cell position from the table
+            if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
+                let cell = &self.contents.rows[data_row][col];
+                return cell.position.as_ref();
             }
         }
         None
@@ -151,7 +164,36 @@ impl CsvPreviewView {
 
         // Get focused cell info for display
         let focused_cell_info = if let Some((row, col)) = self.get_focused_cell() {
-            format!("R{}C{}", row + 1, col + 1) // 1-based for display
+            if let Some(position) = self.get_focused_cell_position() {
+                let Some(active_editor_state) = &self.active_editor else {
+                    return div().child("No active editor");
+                };
+
+                let buffer_snapshot = active_editor_state
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton();
+
+                let Some(buffer) = buffer_snapshot else {
+                    return div().child("No buffer available");
+                };
+
+                let buffer = buffer.read(cx);
+                let start_offset = position.start.to_offset(&buffer);
+                let end_offset = position.end.to_offset(&buffer);
+
+                format!(
+                    "R{}C{} at {}..{}",
+                    row + 1,
+                    col + 1,
+                    start_offset,
+                    end_offset
+                )
+            } else {
+                format!("R{}C{}", row + 1, col + 1) // 1-based for display
+            }
         } else {
             "No cell focused".to_string()
         };
