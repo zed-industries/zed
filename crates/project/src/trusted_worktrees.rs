@@ -1130,7 +1130,7 @@ mod tests {
 
         trusted_worktrees.update(cx, |store, cx| {
             store.trust(
-                HashSet::from_iter([PathTrust::AbsPath(PathBuf::from("/project"))]),
+                HashSet::from_iter([PathTrust::AbsPath(PathBuf::from(path!("/project")))]),
                 None,
                 cx,
             );
