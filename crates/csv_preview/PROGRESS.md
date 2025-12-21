@@ -3,7 +3,6 @@
 This document outlines the current state of the POC feature. It might not be the most understandable document for others, but the feature author depends on it to track progress and ideas.
 
 ## Problems to Discuss
-- **Variable list scrolling**: Horizontal scrolling doesn't work in my variable list rendering mode for some reason
 - **Data table architecture**: Replace const generics with flexible types (array/vec) to support both compile time fix column sizes and runtime defined column numbers
 
 ## Progress
@@ -20,9 +19,10 @@ This document outlines the current state of the POC feature. It might not be the
 - [ ] feat: Add persisting of the state of opened previews on editor restart
 - [ ] feat: Add `CsvPreviewView` settings persistence (probably need to add them to settings.json)
 - [ ] feat: Generalize the preview to support .tsv files (maybe even all files, and prompt user to select format if it's not .csv/.tsv)
+- [ ] feat: Smart debouncing (now + cooldown instead of dumb waiting)
 
 **Fixes:**
-- [ ] fix: Horizontal scrolling doesn't work in variable list rendering mode
+- [x] fix: Vertical scrolling doesn't work in variable list rendering mode
 
 ### Table: Minor UI Tweaks
 
