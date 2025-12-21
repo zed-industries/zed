@@ -7386,7 +7386,7 @@ mod tests {
             SplitMode::MovePane => {
                 let head = &pane_labels[..(num_labels - 1)];
                 if num_labels == 1 {
-                    // We special-case this behavior and actually execute an empty pane commmand
+                    // We special-case this behavior and actually execute an empty pane command
                     // followed by a refocus of the old pane for this case.
                     pane_before = workspace.read_with(cx, |workspace, _cx| {
                         workspace
