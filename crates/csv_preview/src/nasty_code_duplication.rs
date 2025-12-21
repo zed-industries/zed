@@ -23,10 +23,7 @@
 //! in a single generic `create_table<COLS>()` method.
 use crate::data_table::TableColumnWidths;
 use gpui::{AppContext as _, Entity};
-use ui::{
-    ActiveTheme as _, AnyElement, Context, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, div,
-};
+use ui::{AnyElement, Context, IntoElement as _, ParentElement as _, div};
 
 use crate::CsvPreviewView;
 
@@ -147,81 +144,11 @@ impl CsvPreviewView {
             28 => self.create_table::<28>(&w.widths_28, cx),
             29 => self.create_table::<29>(&w.widths_29, cx),
             30 => self.create_table::<30>(&w.widths_30, cx),
-            _ => self.render_fallback_table(cx),
+            _ => div()
+                .child(format!(
+                    "Can't render table with {column_count} columns. 1-30 columns supported"
+                ))
+                .into_any_element(),
         }
-    }
-
-    /// Renders a fallback ASCII table for unsupported column counts (>30).
-    ///
-    /// Creates a monospace text table with proper column alignment and borders.
-    /// Used when the column count exceeds our pre-allocated `TableColumnWidths`
-    /// entities or when the resizable table fails to render.
-    ///
-    /// The table format includes:
-    /// - Header row with column names
-    /// - Separator line with dashes
-    /// - Data rows with consistent spacing
-    /// - Monospace font for alignment
-    fn render_fallback_table(&self, cx: &mut Context<Self>) -> AnyElement {
-        let max_widths = self.calculate_column_widths_pixels();
-        let header_row = self.format_row(&self.contents.headers, &max_widths);
-
-        let separator = max_widths
-            .iter()
-            .map(|&width| "-".repeat(width))
-            .collect::<Vec<_>>()
-            .join("-+-");
-
-        let data_rows: Vec<String> = self
-            .contents
-            .rows
-            .iter()
-            .map(|row| self.format_row(row, &max_widths))
-            .collect();
-
-        let all_content = format!("{}\n{}\n{}", header_row, separator, data_rows.join("\n"));
-
-        div()
-            .font_family("monospace")
-            .w_full()
-            .h_full()
-            .p_2()
-            .bg(cx.theme().colors().editor_subheader_background)
-            .child(all_content)
-            .into_any_element()
-    }
-
-    fn calculate_column_widths_pixels(&self) -> Vec<usize> {
-        if self.contents.headers.is_empty() {
-            return vec![];
-        }
-
-        let num_cols = self.contents.headers.len();
-        let mut max_widths = vec![0; num_cols];
-
-        for (i, header) in self.contents.headers.iter().enumerate() {
-            max_widths[i] = max_widths[i].max(header.len());
-        }
-
-        for row in &self.contents.rows {
-            for (i, cell) in row.iter().enumerate() {
-                if i < max_widths.len() {
-                    max_widths[i] = max_widths[i].max(cell.len());
-                }
-            }
-        }
-
-        max_widths.into_iter().map(|w| w.max(3) + 2).collect()
-    }
-
-    fn format_row(&self, row: &[SharedString], widths: &[usize]) -> String {
-        row.iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                let width = widths.get(i).copied().unwrap_or(10);
-                format!("{:width$}", cell.as_ref(), width = width)
-            })
-            .collect::<Vec<_>>()
-            .join(" | ")
     }
 }
