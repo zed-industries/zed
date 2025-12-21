@@ -210,10 +210,9 @@ fn process_file_matches(data: BufferExtractData) -> Option<FileMatchResult> {
     })
 }
 
-const MIN_MODAL_WIDTH: Pixels = px(800.);
-const MIN_MODAL_HEIGHT: Pixels = px(500.);
+const MIN_WIDTH_FOR_HORIZONTAL_LAYOUT: Pixels = px(950.);
 const LEFT_PANEL_RATIO: f32 = 0.30;
-const MIN_LEFT_PANEL_WIDTH: Pixels = px(350.);
+const VERTICAL_RESULTS_RATIO: f32 = 0.40;
 const MAX_PREVIEW_BYTES: usize = 200;
 const PREVIEW_DEBOUNCE_MS: u64 = 50;
 const EDIT_OPEN_DELAY_MS: u64 = 200;
@@ -427,11 +426,89 @@ impl Render for QuickSearchModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let preview_editor = self.preview_editor.clone();
         let picker = self.picker.clone();
+        let project = self.project.clone();
 
         let viewport_size = window.viewport_size();
-        let modal_width = (viewport_size.width * 0.8).max(MIN_MODAL_WIDTH);
-        let modal_height = (viewport_size.height * 0.8).max(MIN_MODAL_HEIGHT);
-        let left_panel_width = (modal_width * LEFT_PANEL_RATIO).max(MIN_LEFT_PANEL_WIDTH);
+        let use_vertical_layout = viewport_size.width < MIN_WIDTH_FOR_HORIZONTAL_LAYOUT;
+
+        let modal_width = (viewport_size.width * 0.9).min(viewport_size.width);
+        let modal_height = (viewport_size.height * 0.8).min(viewport_size.height);
+
+        let border_color = cx.theme().colors().border;
+
+        let results_panel = v_flex()
+            .flex_shrink_0()
+            .min_h_0()
+            .overflow_hidden()
+            .child(self.picker.clone());
+
+        let save_preview_editor = preview_editor.clone();
+        let preview_panel = v_flex()
+            .id("quick-search-preview")
+            .relative()
+            .flex_1()
+            .overflow_hidden()
+            .bg(cx.theme().colors().editor_background)
+            .on_click(move |_, window, cx| {
+                window.focus(&picker.focus_handle(cx), cx);
+            })
+            .on_action({
+                let project = project.clone();
+                move |_: &Save, window, cx| {
+                    if let Some(editor) = save_preview_editor.clone() {
+                        editor.update(cx, |editor, cx| {
+                            editor
+                                .save(SaveOptions::default(), project.clone(), window, cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
+                }
+            })
+            .when_some(preview_editor, |this, editor| this.child(editor))
+            .when(self.preview_editor.is_none(), |this| {
+                this.child(
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Label::new("Select a result to preview").color(Color::Muted)),
+                )
+            });
+
+        let content = if use_vertical_layout {
+            let results_height = modal_height * VERTICAL_RESULTS_RATIO;
+            v_flex()
+                .w_full()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .child(
+                    results_panel
+                        .h(results_height)
+                        .w_full()
+                        .border_b_1()
+                        .border_color(border_color),
+                )
+                .child(preview_panel.w_full())
+                .into_any_element()
+        } else {
+            let left_panel_width = modal_width * LEFT_PANEL_RATIO;
+            h_flex()
+                .w_full()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .child(
+                    results_panel
+                        .w(left_panel_width)
+                        .h_full()
+                        .border_r_1()
+                        .border_color(border_color),
+                )
+                .child(preview_panel.h_full())
+                .into_any_element()
+        };
 
         div()
             .id("quick-search-modal")
@@ -444,69 +521,8 @@ impl Render for QuickSearchModal {
                     .size_full()
                     .overflow_hidden()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .child(
-                                v_flex()
-                                    .w(left_panel_width)
-                                    .flex_shrink_0()
-                                    .h_full()
-                                    .min_h_0()
-                                    .overflow_hidden()
-                                    .border_r_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .child(self.picker.clone()),
-                            )
-                            .child({
-                                let project = self.project.clone();
-                                let save_preview_editor = preview_editor.clone();
-                                v_flex()
-                                    .id("quick-search-preview")
-                                    .relative()
-                                    .flex_1()
-                                    .h_full()
-                                    .overflow_hidden()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .on_click(move |_, window, cx| {
-                                        window.focus(&picker.focus_handle(cx), cx);
-                                    })
-                                    .on_action({
-                                        move |_: &Save, window, cx| {
-                                            if let Some(editor) = save_preview_editor.clone() {
-                                                editor.update(cx, |editor, cx| {
-                                                    editor
-                                                        .save(
-                                                            SaveOptions::default(),
-                                                            project.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx);
-                                                });
-                                            }
-                                        }
-                                    })
-                                    .when_some(preview_editor, |this, editor| this.child(editor))
-                                    .when(self.preview_editor.is_none(), |this| {
-                                        this.child(
-                                            div()
-                                                .size_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(
-                                                    Label::new("Select a result to preview")
-                                                        .color(Color::Muted),
-                                                ),
-                                        )
-                                    })
-                            }),
-                    ),
+                    .border_color(border_color)
+                    .child(content),
             )
     }
 }
