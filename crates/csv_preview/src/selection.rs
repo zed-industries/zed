@@ -12,6 +12,7 @@ use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
+    cell_editor::ScrollOffset,
     data_ordering::OrderedIndices,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
@@ -303,7 +304,7 @@ pub struct TableSelection {
     /// Currently focused cell in display coordinates
     focused_cell: Option<DisplayCellId>,
     /// Anchor cell for range selection (both keyboard and mouse) in display coordinates
-    selection_anchor: Option<DisplayCellId>,
+    pub selection_anchor: Option<DisplayCellId>,
 }
 
 impl Default for TableSelection {
@@ -352,29 +353,31 @@ impl TableSelection {
         ordered_indices: &OrderedIndices,
         preserve_existing: bool,
     ) {
-        if let Some(anchor_cell) = self.selection_anchor {
-            if !preserve_existing {
-                self.selection_manager.clear();
-            }
+        let Some(anchor_cell) = self.selection_anchor else {
+            return;
+        };
 
-            // Create rectangle in display coordinates
-            let min_display_row = anchor_cell.row.get().min(display_row.get());
-            let max_display_row = anchor_cell.row.get().max(display_row.get());
-            let min_col = anchor_cell.col.get().min(col.get());
-            let max_col = anchor_cell.col.get().max(col.get());
-
-            // Convert each display cell to data coordinates for storage
-            for display_r in min_display_row..=max_display_row {
-                for c in min_col..=max_col {
-                    let display_cell = DisplayCellId::new(display_r, c);
-                    self.selection_manager
-                        .add_cell(display_cell, ordered_indices);
-                }
-            }
-
-            // Update focused cell to follow the current mouse position (selection frontier)
-            self.focused_cell = Some(DisplayCellId::new(display_row, col));
+        if !preserve_existing {
+            self.selection_manager.clear();
         }
+
+        // Create rectangle in display coordinates
+        let min_display_row = anchor_cell.row.get().min(display_row.get());
+        let max_display_row = anchor_cell.row.get().max(display_row.get());
+        let min_col = anchor_cell.col.get().min(col.get());
+        let max_col = anchor_cell.col.get().max(col.get());
+
+        // Convert each display cell to data coordinates for storage
+        for display_r in min_display_row..=max_display_row {
+            for c in min_col..=max_col {
+                let display_cell = DisplayCellId::new(display_r, c);
+                self.selection_manager
+                    .add_cell(display_cell, ordered_indices);
+            }
+        }
+
+        // Update focused cell to follow the current mouse position (selection frontier)
+        self.focused_cell = Some(DisplayCellId::new(display_row, col));
     }
 
     /// End cell selection (user stopped dragging)
@@ -838,9 +841,15 @@ impl CsvPreviewView {
         );
 
         self.performance_metrics.last_selection_took = Some(start_time.elapsed());
+        let scroll = match direction {
+            NavigationDirection::Up => Some(ScrollOffset::Negative),
+            NavigationDirection::Down => Some(ScrollOffset::Positive),
+            NavigationDirection::Left => None,
+            NavigationDirection::Right => None,
+        };
 
         // Update cell editor to show focused cell content
-        self.on_selection_changed(window, cx);
+        self.on_selection_changed(window, cx, scroll);
         cx.notify();
     }
 }
