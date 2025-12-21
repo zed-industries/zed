@@ -2391,8 +2391,10 @@ impl Pane {
             // ensure that we focus the moved pane
             // in this case we know that the window is the same as the active_item
             if let Some(active_item) = active_item {
-                let focus_handle = active_item.item_focus_handle(cx);
-                window.focus(&focus_handle, cx);
+                cx.defer_in(window, move |_, window, cx| {
+                    let focus_handle = active_item.item_focus_handle(cx);
+                    window.focus(&focus_handle, cx);
+                });
             }
         } else {
             cx.emit(Event::Split { direction, mode });
@@ -4479,7 +4481,7 @@ mod tests {
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -7158,43 +7160,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_empty_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitMode::EmptyPane, cx).await;
+    async fn test_split_empty(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A"], split_direction, SplitMode::EmptyPane, cx).await;
+        }
     }
 
     #[gpui::test]
-    async fn test_split_empty_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Left, SplitMode::EmptyPane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_empty_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Up, SplitMode::EmptyPane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_empty_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Down, SplitMode::EmptyPane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_clone_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Right, SplitMode::ClonePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_clone_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Left, SplitMode::ClonePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_clone_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Up, SplitMode::ClonePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_clone_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A"], SplitDirection::Down, SplitMode::ClonePane, cx).await;
+    async fn test_split_clone(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A"], split_direction, SplitMode::ClonePane, cx).await;
+        }
     }
 
     #[gpui::test]
@@ -7203,23 +7179,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_move_right(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Right, SplitMode::MovePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_move_left(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Left, SplitMode::MovePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_move_up(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Up, SplitMode::MovePane, cx).await;
-    }
-
-    #[gpui::test]
-    async fn test_split_move_down(cx: &mut TestAppContext) {
-        test_single_pane_split(["A", "B"], SplitDirection::Down, SplitMode::MovePane, cx).await;
+    async fn test_split_move(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A", "B"], split_direction, SplitMode::MovePane, cx).await;
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -7376,7 +7339,8 @@ mod tests {
                             false
                         }
                     }),
-                    "pane ids do not match expectation"
+                    "pane ids do not match expectation: {expected_ids:?} != {actual_ids:?}",
+                    actual_ids = axis.members
                 );
             }
             Member::Pane(_) => panic!("expected axis"),
@@ -7395,7 +7359,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let pane_before = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let mut pane_before =
+            workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         for label in pane_labels {
             add_labeled_item(&pane_before, label, false, cx);
         }
@@ -7419,14 +7384,32 @@ mod tests {
                 assert_item_labels(&pane_after, [&last_as_active], cx);
             }
             SplitMode::MovePane => {
+                let head = &pane_labels[..(num_labels - 1)];
                 if num_labels == 1 {
-                    assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
-                    assert_item_labels(&pane_after, [], cx);
-                } else {
-                    let head = &pane_labels[..(num_labels - 1)];
-                    assert_item_labels_active_index(&pane_before, &head, head.len() - 1, cx);
-                    assert_item_labels(&pane_after, [&last_as_active], cx);
-                }
+                    // We special-case this behavior and actually execute an empty pane commmand
+                    // followed by a refocus of the old pane for this case.
+                    pane_before = workspace.read_with(cx, |workspace, _cx| {
+                        workspace
+                            .panes()
+                            .into_iter()
+                            .find(|pane| *pane != &pane_after)
+                            .unwrap()
+                            .clone()
+                    });
+                };
+
+                assert_item_labels_active_index(
+                    &pane_before,
+                    &head,
+                    head.len().saturating_sub(1),
+                    cx,
+                );
+                assert_item_labels(&pane_after, [&last_as_active], cx);
+                pane_after.update_in(cx, |pane, window, cx| {
+                    window.focused(cx).is_some_and(|focus_handle| {
+                        focus_handle == pane.active_item().unwrap().item_focus_handle(cx)
+                    })
+                });
             }
         }
 
@@ -7452,11 +7435,6 @@ mod tests {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
             SplitMode::MovePane => {
-                let expected_ids = if num_labels == 1 {
-                    [expected_ids[1], expected_ids[0]]
-                } else {
-                    expected_ids
-                };
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
         }

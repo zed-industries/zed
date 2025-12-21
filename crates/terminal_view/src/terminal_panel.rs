@@ -380,10 +380,7 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            &pane::Event::Split {
-                direction,
-                mode,
-            } => {
+            &pane::Event::Split { direction, mode } => {
                 match mode {
                     SplitMode::ClonePane | SplitMode::EmptyPane => {
                         let clone = matches!(mode, SplitMode::ClonePane);
