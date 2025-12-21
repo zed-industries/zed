@@ -8,7 +8,7 @@
 
 use std::{collections::HashSet, time::Instant};
 
-use ui::Context;
+use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
@@ -158,6 +158,11 @@ impl TableSelection {
     /// Get the selected cells for copying
     pub fn get_selected_cells(&self) -> &SelectedCells {
         &self.selected_cells
+    }
+
+    /// Get the currently focused cell
+    pub fn get_focused_cell(&self) -> Option<&DisplayCellId> {
+        self.focused_cell.as_ref()
     }
 
     /// Check if cell at display coordinates is focused.
@@ -607,6 +612,7 @@ impl CsvPreviewView {
         &mut self,
         direction: NavigationDirection,
         operation: NavigationOperation,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
@@ -623,6 +629,9 @@ impl CsvPreviewView {
 
         let selection_duration = start_time.elapsed();
         self.performance_metrics.last_selection_took = Some(selection_duration);
+
+        // Update cell editor to show focused cell content
+        self.on_selection_changed(window, cx);
         cx.notify();
     }
 }

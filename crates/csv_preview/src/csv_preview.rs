@@ -158,12 +158,6 @@ impl CsvPreviewView {
         let table_interaction_state =
             cx.new(|cx| TableInteractionState::new(cx, list_state.clone()));
 
-        let cell_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_text("foobar", window, cx);
-            editor
-        });
-
         cx.new(|cx| {
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
@@ -180,10 +174,12 @@ impl CsvPreviewView {
                 settings: CsvPreviewSettings::default(),
                 performance_metrics: PerformanceMetrics::default(),
                 list_state,
-                cell_editor: Some(cell_editor),
+                cell_editor: None,
                 cell_editor_subscription: None,
             };
 
+            // Create cell editor after the view is initialized
+            view.create_cell_editor(window, cx);
             view.set_editor(editor.clone(), cx);
             view
         })

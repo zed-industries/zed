@@ -37,7 +37,7 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::extend_selection_to_left_edge))
             .on_action(cx.listener(Self::extend_selection_to_right_edge))
             .child(self.render_settings_panel(window, cx))
-            .child(self.render_cell_editor(window, cx))
+            .child(self.render_cell_editor(cx))
             .child({
                 if self.contents.headers.is_empty() {
                     div()
