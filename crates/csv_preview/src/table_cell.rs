@@ -180,6 +180,9 @@ impl CsvPreviewView {
                     );
                     let selection_duration = start_time.elapsed();
                     this.performance_metrics.last_selection_took = Some(selection_duration);
+
+                    // Update cell editor to show focused cell content
+                    this.on_selection_changed(window, cx);
                     cx.notify();
                 });
             }
@@ -213,6 +216,9 @@ impl CsvPreviewView {
                     );
                     let selection_duration = start_time.elapsed();
                     this.performance_metrics.last_selection_took = Some(selection_duration);
+
+                    // Update cell editor to show focused cell content during drag
+                    this.on_selection_changed(window, cx);
                     cx.notify();
                 });
             }
