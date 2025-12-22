@@ -3,19 +3,19 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Task, WeakEntity,
+    Action, AsyncWindowContext, BackgroundExecutor, ClickEvent, DismissEvent, FocusHandle,
+    Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::SettingsStore;
 use ui::{DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
@@ -54,7 +54,12 @@ pub struct AcpModelPickerDelegate {
     selected_index: usize,
     selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
+    /// Local cache of favorite model IDs for immediate UI updates.
+    /// This is updated optimistically when the user toggles a favorite,
+    /// before the settings file is written.
+    favorites: HashSet<ModelId>,
     _refresh_models_task: Task<()>,
+    _settings_subscription: Subscription,
     focus_handle: FocusHandle,
 }
 
@@ -102,6 +107,14 @@ impl AcpModelPickerDelegate {
             })
         };
 
+        let agent_server_for_subscription = agent_server.clone();
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |picker, window, cx| {
+                picker.delegate.favorites = agent_server_for_subscription.favorite_model_ids(cx);
+                picker.refresh(window, cx);
+            });
+        let favorites = agent_server.favorite_model_ids(cx);
+
         Self {
             selector,
             agent_server,
@@ -111,7 +124,9 @@ impl AcpModelPickerDelegate {
             selected_model: None,
             selected_index: 0,
             selected_description: None,
+            favorites,
             _refresh_models_task: refresh_models_task,
+            _settings_subscription: settings_subscription,
             focus_handle,
         }
     }
@@ -121,11 +136,7 @@ impl AcpModelPickerDelegate {
     }
 
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if !self.selector.supports_favorites() {
-            return;
-        }
-
-        let favorites = AgentSettings::get_global(cx).favorite_model_ids();
+        let favorites = &self.favorites;
 
         if favorites.is_empty() {
             return;
@@ -220,11 +231,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let favorites = if self.selector.supports_favorites() {
-            AgentSettings::get_global(cx).favorite_model_ids()
-        } else {
-            Default::default()
-        };
+        let favorites = self.favorites.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = match this
@@ -317,21 +324,32 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
-                let supports_favorites = self.selector.supports_favorites();
-
                 let is_favorite = *is_favorite;
                 let handle_action_click = {
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
+                    let agent_server = self.agent_server.clone();
 
-                    move |cx: &App| {
-                        crate::favorite_models::toggle_model_id_in_settings(
+                    cx.listener(move |picker, _: &ClickEvent, window, cx| {
+                        // Optimistically update our local favorites cache for immediate UI feedback
+                        let new_favorite_state = !is_favorite;
+
+                        if new_favorite_state {
+                            picker.delegate.favorites.insert(model_id.clone());
+                        } else {
+                            picker.delegate.favorites.remove(&model_id);
+                        }
+
+                        // Persist to settings (writes to the `agent_servers` settings)
+                        agent_server.toggle_favorite_model(
                             model_id.clone(),
-                            !is_favorite,
+                            new_favorite_state,
                             fs.clone(),
                             cx,
                         );
-                    }
+
+                        picker.refresh(window, cx);
+                    })
                 };
 
                 Some(
@@ -357,10 +375,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 })
                                 .is_selected(is_selected)
                                 .is_focused(selected)
-                                .when(supports_favorites, |this| {
-                                    this.is_favorite(is_favorite)
-                                        .on_toggle_favorite(handle_action_click)
-                                }),
+                                .is_favorite(is_favorite)
+                                .on_toggle_favorite(handle_action_click),
                         )
                         .into_any_element(),
                 )

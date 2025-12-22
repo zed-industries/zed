@@ -1,4 +1,4 @@
-use gpui::{Action, FocusHandle, prelude::*};
+use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
 use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
@@ -51,7 +51,7 @@ pub struct ModelSelectorListItem {
     is_selected: bool,
     is_focused: bool,
     is_favorite: bool,
-    on_toggle_favorite: Option<Box<dyn Fn(&App) + 'static>>,
+    on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl ModelSelectorListItem {
@@ -92,7 +92,10 @@ impl ModelSelectorListItem {
         self
     }
 
-    pub fn on_toggle_favorite(mut self, handler: impl Fn(&App) + 'static) -> Self {
+    pub fn on_toggle_favorite(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle_favorite = Some(Box::new(handler));
         self
     }
@@ -144,7 +147,7 @@ impl RenderOnce for ModelSelectorListItem {
                             .icon_color(color)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text(tooltip))
-                            .on_click(move |_, _, cx| (handle_click)(cx)),
+                            .on_click(move |event, window, cx| (handle_click)(event, window, cx)),
                     )
                 }
             }))

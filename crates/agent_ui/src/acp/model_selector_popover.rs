@@ -3,19 +3,17 @@ use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
-use settings::Settings as _;
-use ui::{ButtonLike, KeyBinding, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
-use zed_actions::agent::ToggleModelSelector;
+use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 
-use crate::CycleFavoriteModels;
 use crate::acp::{AcpModelSelector, model_selector::acp_model_selector};
+use crate::ui::ModelSelectorTooltip;
 
 pub struct AcpModelSelectorPopover {
     selector: Entity<AcpModelSelector>,
+    agent_server: Rc<dyn AgentServer>,
     menu_handle: PopoverMenuHandle<AcpModelSelector>,
     focus_handle: FocusHandle,
 }
@@ -31,17 +29,19 @@ impl AcpModelSelectorPopover {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle_clone = focus_handle.clone();
+        let agent_server_clone = agent_server.clone();
         Self {
             selector: cx.new(move |cx| {
                 acp_model_selector(
                     selector,
-                    agent_server,
+                    agent_server_clone,
                     fs,
                     focus_handle_clone.clone(),
                     window,
                     cx,
                 )
             }),
+            agent_server,
             menu_handle,
             focus_handle,
         }
@@ -73,6 +73,7 @@ impl Render for AcpModelSelectorPopover {
         let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 
         let focus_handle = self.focus_handle.clone();
+        let agent_server = self.agent_server.clone();
 
         let (color, icon) = if self.menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
@@ -83,40 +84,11 @@ impl Render for AcpModelSelectorPopover {
         let tooltip = Tooltip::element({
             move |_, cx| {
                 let focus_handle = focus_handle.clone();
-                let should_show_cycle_row = !AgentSettings::get_global(cx)
-                    .favorite_model_ids()
-                    .is_empty();
+                let show_cycle_row = agent_server.favorite_model_ids(cx).len() > 1;
 
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Change Model"))
-                            .child(KeyBinding::for_action_in(
-                                &ToggleModelSelector,
-                                &focus_handle,
-                                cx,
-                            )),
-                    )
-                    .when(should_show_cycle_row, |this| {
-                        this.child(
-                            h_flex()
-                                .pt_1()
-                                .gap_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .justify_between()
-                                .child(Label::new("Cycle Favorited Models"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleFavoriteModels,
-                                    &focus_handle,
-                                    cx,
-                                )),
-                        )
-                    })
-                    .into_any()
+                ModelSelectorTooltip::new(focus_handle)
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
             }
         });
 
