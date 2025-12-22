@@ -308,7 +308,7 @@ impl CsvPreviewView {
 
         // Create the cell editor
         let editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(1, 3, window, cx);
+            let mut editor = Editor::auto_height(1, 100, window, cx);
             editor.set_text(&*initial_content, window, cx);
             editor
         });
