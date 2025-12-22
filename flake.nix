@@ -8,6 +8,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crane.url = "github:ipetkov/crane";
+    crate2nix.url = "github:jrobsonchase/crate2nix";
     flake-compat.url = "github:edolstra/flake-compat";
   };
 
@@ -17,6 +18,7 @@
       nixpkgs,
       rust-overlay,
       crane,
+      crate2nix,
       ...
     }:
     let
@@ -31,13 +33,14 @@
       mkZed =
         pkgs:
         pkgs.callPackage ./nix/zed.nix {
-          inherit rust-overlay crane;
+          inherit rust-overlay crane crate2nix;
         };
     in
     {
-      packages = forAllSystems (pkgs: rec {
-        default = mkZed pkgs;
-        debug = default.override { profile = "dev"; };
+      workspace = forAllSystems (pkgs: (mkZed pkgs).workspace);
+      cargoNix = forAllSystems (pkgs: (mkZed pkgs).cargoNix);
+      packages = forAllSystems (pkgs: {
+        default = (mkZed pkgs).zed;
       });
       devShells = forAllSystems (pkgs: {
         default = pkgs.callPackage ./nix/shell.nix {

@@ -777,7 +777,7 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
-calloop = { git = "https://github.com/zed-industries/calloop" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "eb6b4fd17b9af5ecc226546bdd04185391b3e265" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
