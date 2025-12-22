@@ -180,11 +180,10 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
-    use workspace::AppState;
 
     #[gpui::test]
     async fn test_capture_example(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
         let committed_contents = indoc! {"
@@ -291,7 +290,7 @@ mod tests {
             .unwrap();
         example.name = "test".to_string();
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             example,
             ExampleSpec {
                 name: "test".to_string(),
@@ -315,7 +314,7 @@ mod tests {
                      }
                 "}
                 .to_string(),
-                cursor_path: Path::new("src/main.rs").into(),
+                cursor_path: Path::new("project/src/main.rs").into(),
                 cursor_position: indoc! {"
                     <|user_cursor|>fn main() {
                         // comment 1
@@ -355,22 +354,16 @@ mod tests {
         );
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+    fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             zlog::init_test();
-            release_channel::init(semver::Version::new(0, 0, 0), cx);
-
             let http_client = FakeHttpClient::with_404_response();
             let client = Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
             language_model::init(client.clone(), cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             EditPredictionStore::global(&client, &user_store, cx);
-
-            let app_state = AppState::test(cx);
-            workspace::init(app_state.clone(), cx);
-            app_state
         })
     }
 }
