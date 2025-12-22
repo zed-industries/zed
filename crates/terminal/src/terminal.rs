@@ -419,6 +419,7 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
+        entity_id: u64,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let fut = async move {
@@ -436,6 +437,7 @@ impl TerminalBuilder {
             }
 
             env.insert("ZED_TERM".to_string(), "true".to_string());
+            env.insert("ZED_TERM_ID".to_string(), entity_id.to_string());
             env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
             env.insert("TERM".to_string(), "xterm-256color".to_string());
             env.insert("COLORTERM".to_string(), "truecolor".to_string());
@@ -2083,53 +2085,76 @@ impl Terminal {
 
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
-        match &self.task {
-            Some(task_state) => {
-                if truncate {
-                    truncate_and_trailoff(&task_state.spawned_task.label, MAX_CHARS)
-                } else {
-                    task_state.spawned_task.full_label.clone()
-                }
-            }
-            None => self
-                .title_override
-                .as_ref()
-                .map(|title_override| title_override.to_string())
-                .unwrap_or_else(|| match &self.terminal_type {
-                    TerminalType::Pty { info, .. } => info
-                        .current
-                        .as_ref()
-                        .map(|fpi| {
-                            let process_file = fpi
-                                .cwd
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default();
 
-                            let argv = fpi.argv.as_slice();
-                            let process_name = format!(
-                                "{}{}",
-                                fpi.name,
-                                if !argv.is_empty() {
-                                    format!(" {}", (argv[1..]).join(" "))
-                                } else {
-                                    "".to_string()
-                                }
-                            );
-                            let (process_file, process_name) = if truncate {
-                                (
-                                    truncate_and_trailoff(&process_file, MAX_CHARS),
-                                    truncate_and_trailoff(&process_name, MAX_CHARS),
-                                )
-                            } else {
-                                (process_file, process_name)
-                            };
-                            format!("{process_file} — {process_name}")
-                        })
-                        .unwrap_or_else(|| "Terminal".to_string()),
-                    TerminalType::DisplayOnly => "Terminal".to_string(),
-                }),
+        // Check title_override first - explicit user setting takes priority
+        if let Some(title_override) = &self.title_override {
+            return if truncate {
+                truncate_and_trailoff(title_override, MAX_CHARS)
+            } else {
+                title_override.to_string()
+            };
         }
+
+        // Check task label if present and non-empty
+        if let Some(task_state) = &self.task {
+            let label = if truncate {
+                &task_state.spawned_task.label
+            } else {
+                &task_state.spawned_task.full_label
+            };
+            if !label.is_empty() {
+                return if truncate {
+                    truncate_and_trailoff(label, MAX_CHARS)
+                } else {
+                    label.clone()
+                };
+            }
+        }
+
+        // Fall back to process info
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info
+                .current
+                .as_ref()
+                .map(|fpi| {
+                    let process_file = fpi
+                        .cwd
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+
+                    let argv = fpi.argv.as_slice();
+                    let process_name = format!(
+                        "{}{}",
+                        fpi.name,
+                        if !argv.is_empty() {
+                            format!(" {}", (argv[1..]).join(" "))
+                        } else {
+                            "".to_string()
+                        }
+                    );
+                    let (process_file, process_name) = if truncate {
+                        (
+                            truncate_and_trailoff(&process_file, MAX_CHARS),
+                            truncate_and_trailoff(&process_name, MAX_CHARS),
+                        )
+                    } else {
+                        (process_file, process_name)
+                    };
+                    format!("{process_file} — {process_name}")
+                })
+                .unwrap_or_else(|| "Terminal".to_string()),
+            TerminalType::DisplayOnly => "Terminal".to_string(),
+        }
+    }
+
+    pub fn title_override(&self) -> Option<&str> {
+        self.title_override.as_deref()
+    }
+
+    pub fn set_title_override(&mut self, title: Option<String>, cx: &mut Context<Self>) {
+        self.title_override = title;
+        cx.notify();
     }
 
     pub fn kill_active_task(&mut self) {
@@ -2245,7 +2270,12 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: Option<PathBuf>,
+        entity_id: u64,
+    ) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2262,6 +2292,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
+            entity_id,
         )
     }
 }
@@ -2586,6 +2617,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    0,
                 )
             })
             .await
@@ -2636,6 +2668,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    0,
                 )
             })
             .await
@@ -2711,6 +2744,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    0,
                 )
             })
             .await
@@ -3113,6 +3147,7 @@ mod tests {
                         None,
                         cx,
                         vec![],
+                        0,
                     )
                 })
                 .await

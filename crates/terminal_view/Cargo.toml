@@ -24,6 +24,7 @@ collections.workspace = true
 db.workspace = true
 dirs.workspace = true
 editor.workspace = true
+extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true

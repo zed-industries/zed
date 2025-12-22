@@ -3,3 +3,6 @@
 
 # Ensure the WSL script always has LF line endings, even on Windows
 crates/zed/resources/windows/zed.sh text eol=lf
+
+# Use bd merge for beads JSONL files
+.beads/issues.jsonl merge=beads
