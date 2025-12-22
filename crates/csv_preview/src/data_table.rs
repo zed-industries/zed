@@ -209,6 +209,7 @@ impl TableResizeBehavior {
     }
 }
 
+#[derive(Debug)]
 pub struct TableColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     visible_widths: [DefiniteLength; COLS],

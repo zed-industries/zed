@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use ui::{div, prelude::*};
+use ui::{ScrollAxes, WithScrollbar, div, prelude::*};
 
 use crate::{CsvPreviewView, KEY_CONTEXT_NAME, settings::FontType};
 
@@ -10,13 +10,12 @@ impl Render for CsvPreviewView {
 
         let render_prep_start = Instant::now();
         let table_with_settings = v_flex()
-            .w_full()
-            .h_full()
+            .size_full()
             .p_4()
             .bg(theme.colors().editor_background)
-            .key_context(KEY_CONTEXT_NAME)
             // Apparently, this should make newly created CSV preview to get focus automatically
             .track_focus(&self.focus_handle)
+            .key_context(KEY_CONTEXT_NAME)
             .on_action(cx.listener(Self::copy_selected))
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::select_up))
@@ -55,7 +54,27 @@ impl Render for CsvPreviewView {
                         .child("No CSV content to display")
                         .into_any_element()
                 } else {
-                    self.render_table_with_cols(cx)
+                    // Wrapping into div to enable horizontal scrolling.
+                    // This is super stinky solution, but unfortunatelly I don't know how to do better
+                    div()
+                        .id("table-div") // enables scrolling api
+                        .size_full()
+                        .overflow_x_scroll() // Allow the element to grow, so there's something to scroll
+                        .track_scroll(&self.scroll_handle) // draws scrollbars
+                        .custom_scrollbars(
+                            // draws scrollbars when track_scroll is provided. Is utterly broken :D
+                            ui::Scrollbars::new(ScrollAxes::Horizontal)
+                                .tracked_scroll_handle(&self.scroll_handle)
+                                .with_track_along(
+                                    ScrollAxes::Horizontal,
+                                    cx.theme().colors().panel_background,
+                                )
+                                .tracked_entity(cx.entity_id()),
+                            window,
+                            cx,
+                        )
+                        .child(self.render_table_with_cols(cx))
+                        .into_any_element()
                 }
             });
 
@@ -63,6 +82,8 @@ impl Render for CsvPreviewView {
         self.performance_metrics.last_render_preparation_took = Some(render_prep_duration);
 
         div()
+            // .id("csv-preview-pane")
+            // .overflow_scroll()
             .relative()
             .w_full()
             .h_full()
