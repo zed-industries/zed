@@ -1,19 +1,27 @@
 use editor::Editor;
 use gpui::{AppContext as _, Entity, ScrollStrategy};
-use menu::Confirm;
 use text::ToOffset;
 use ui::{
     ActiveTheme as _, Context, IntoElement, ParentElement as _, Styled as _, StyledTypography as _,
     Window, div, h_flex,
 };
 
-use crate::{CsvPreviewView, copy_selected::EscapedCellString};
+use crate::{
+    CancelCellEditing, CsvPreviewView, FinishCellEditing, StartCellEditing,
+    copy_selected::EscapedCellString,
+    table_cell::CellContentSpan,
+    types::{DataCellId, DisplayCellId},
+};
+
+pub struct CellEditorCtx {
+    editor: Entity<Editor>,
+    cell_to_edit: DisplayCellId,
+}
 
 /// Enum representing the offset of the focused cell in the list.
 /// Used to keep viewport following the focused cell with some buffer, so mouse selection and autoscrollihng works correctly.
 /// // TODO: rewrite this nonsence doc to be more clear
 #[derive(Debug)]
-
 pub enum ScrollOffset {
     NoOffset,
     Negative,
@@ -21,103 +29,62 @@ pub enum ScrollOffset {
 }
 
 impl CsvPreviewView {
-    /// Get the currently focused cell data from the selection
-    pub(crate) fn get_focused_cell(&self) -> Option<(usize, usize)> {
-        if let Some(focused_cell) = self.selection.get_focused_cell() {
-            // Convert display coordinates to data coordinates using ordered indices
-            let display_row = focused_cell.row;
-            let col = focused_cell.col;
+    /// Get the currently focused cell from the selection
+    pub(crate) fn get_focused_data_cell(&self) -> Option<DataCellId> {
+        let cid = self.selection.get_focused_cell()?;
+        self.display_to_data_cell(&cid)
+    }
 
-            if let Some(data_row) = self.sorted_indices.get_data_row(display_row) {
-                return Some((data_row.get(), col.get()));
-            }
-        }
-        None
+    fn display_to_data_cell(&self, focused_cell: &DisplayCellId) -> Option<DataCellId> {
+        let data_row = self.sorted_indices.get_data_row(focused_cell.row)?;
+        Some(DataCellId::new(data_row, focused_cell.col))
     }
 
     /// Get the content of the currently focused cell
     pub(crate) fn get_focused_cell_content(&self) -> Option<String> {
-        if let Some((data_row, col)) = self.get_focused_cell() {
-            // Get cell content from the table
-            if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
-                let cell = &self.contents.rows[data_row][col];
-                return Some(cell.display_value().to_string());
+        if let Some(cid) = self.get_focused_data_cell() {
+            if let Some(value) = self.get_cell_content(cid) {
+                return value;
             }
         }
         None
     }
 
-    /// Get the position of the currently focused cell
-    pub(crate) fn get_focused_cell_position(&self) -> Option<&crate::table_cell::CellPosition> {
-        if let Some((data_row, col)) = self.get_focused_cell() {
-            // Get cell position from the table
-            if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
-                let cell = &self.contents.rows[data_row][col];
-                return cell.position.as_ref();
-            }
+    fn get_cell_content(&self, cid: DataCellId) -> Option<Option<String>> {
+        let data_row = *cid.row;
+        let col = *cid.col;
+        // Get cell content from the table
+        if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
+            let cell = &self.contents.rows[data_row][col];
+            return Some(Some(cell.display_value().to_string()));
         }
         None
     }
 
-    /// Update the cell editor to display the focused cell's content
-    pub(crate) fn update_cell_editor_content(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(cell_editor) = &self.cell_editor {
-            if let Some(focused_content) = self.get_focused_cell_content() {
-                cell_editor.update(cx, |editor, cx| {
-                    editor.set_text(&*focused_content, window, cx);
-                });
-            } else {
-                // No focused cell or content, clear the editor
-                cell_editor.update(cx, |editor, cx| {
-                    editor.set_text("", window, cx);
-                });
-            }
+    fn get_cell_content_span(&self, data_cell: DataCellId) -> Option<&CellContentSpan> {
+        let (data_row, col) = (*data_cell.row, *data_cell.col);
+        // Get cell position from the table
+        if data_row < self.contents.rows.len() && col < self.contents.rows[data_row].len() {
+            let cell = &self.contents.rows[data_row][col];
+            return cell.position.as_ref();
         }
-    }
-
-    /// POC: Create a single-line editor
-    pub(crate) fn create_cell_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Create the cell editor
-        let cell_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-
-            // Set initial content from focused cell
-            let initial_content = self.get_focused_cell_content().unwrap_or_default();
-            editor.set_text(&*initial_content, window, cx);
-            editor
-        });
-
-        self.cell_editor = Some(cell_editor);
-        self.cell_editor_subscription = None;
-    }
-
-    /// POC: Handle Enter key press in cell editor to commit changes
-    pub(crate) fn handle_cell_editor_confirm(
-        &mut self,
-        _: &Confirm,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.commit_cell_edit(cx);
+        None
     }
 
     /// POC: Commit the cell editor content back to the source buffer
+    /// TODO: Refactor. It stinks
     fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
         println!("Committing cell edit");
-        let Some(cell_editor) = &self.cell_editor else {
+        let Some(CellEditorCtx {
+            editor,
+            cell_to_edit,
+        }) = &self.cell_editor
+        else {
             println!("No cell editor found");
             return;
         };
 
-        // Get the focused cell coordinates
-        let Some((data_row, col)) = self.get_focused_cell() else {
-            println!("No focused cell found");
-            return;
-        };
+        let (data_row, col) = cell_to_edit.to_raw();
 
         // Check if we have the target cell
         if data_row >= self.contents.rows.len() || col >= self.contents.rows[data_row].len() {
@@ -137,7 +104,7 @@ impl CsvPreviewView {
         };
 
         // Get the new text from the cell editor
-        let new_text = cell_editor.read(cx).text(cx);
+        let new_text = editor.read(cx).text(cx);
         const DELIMITER: char = ',';
         let new_text = EscapedCellString::new(new_text, DELIMITER);
 
@@ -165,22 +132,15 @@ impl CsvPreviewView {
         cx.notify();
     }
 
-    /// POC: Get the cell editor for rendering
-    pub(crate) fn get_cell_editor(&self) -> Option<&Entity<Editor>> {
-        self.cell_editor.as_ref()
-    }
-
+    // TODO: Move to `selection.rs`
     /// POC: Handle cell editor focus and content updates when selection changes
     /// apply_scroll - Whether to apply scroll. If applied, offset direction is specified
     pub(crate) fn on_selection_changed(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
         apply_scroll: Option<ScrollOffset>,
     ) {
-        // Update cell editor content to match newly focused cell
-        self.update_cell_editor_content(window, cx);
-
         // Follow focused cell in list viewport
         if let Some(focused_cell) = self.selection.get_focused_cell()
             && let Some(scroll) = apply_scroll
@@ -221,81 +181,75 @@ impl CsvPreviewView {
 
     /// POC: Render the single-line cell editor
     pub fn render_cell_editor(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.cell_editor.is_none() {
-            return div().child("No cell editor available");
-        }
+        let Some(active_editor_state) = &self.active_editor else {
+            return div().child("WARN: No active editor attached to preview pane");
+        };
 
+        let Some(CellEditorCtx {
+            editor,
+            cell_to_edit,
+        }) = &self.cell_editor
+        else {
+            return div().child("Not editing cell. Select cell and press enter to start editing");
+        };
+
+        let Some(data_cid) = self.display_to_data_cell(cell_to_edit) else {
+            return div().child("ERROR: Can't find data cell by display cell");
+        };
+
+        let (row, col) = data_cid.to_raw();
         let theme = cx.theme();
-
         // Get focused cell info for display
-        let focused_cell_info = if let Some((row, col)) = self.get_focused_cell() {
-            if let Some(position) = self.get_focused_cell_position() {
-                let Some(active_editor_state) = &self.active_editor else {
-                    return div().child("No active editor");
-                };
+        let edited_cell_info = if let Some(position) = self.get_cell_content_span(data_cid) {
+            let buffer_snapshot = active_editor_state
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton();
 
-                let buffer_snapshot = active_editor_state
-                    .editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton();
+            let Some(buffer) = buffer_snapshot else {
+                return div().child("No buffer available");
+            };
 
-                let Some(buffer) = buffer_snapshot else {
-                    return div().child("No buffer available");
-                };
+            let buffer = buffer.read(cx);
+            let start_offset = position.start.to_offset(&buffer);
+            let end_offset = position.end.to_offset(&buffer);
 
-                let buffer = buffer.read(cx);
-                let start_offset = position.start.to_offset(&buffer);
-                let end_offset = position.end.to_offset(&buffer);
-
-                format!(
-                    "R{}C{} at {}..{}",
-                    row + 1,
-                    col + 1,
-                    start_offset,
-                    end_offset
-                )
-            } else {
-                format!("R{}C{}", row + 1, col + 1) // 1-based for display
-            }
+            format!(
+                "R{}C{} at {}..{}",
+                row + 1,
+                col + 1,
+                start_offset,
+                end_offset
+            )
         } else {
-            "No cell focused".to_string()
+            format!("R{}C{}", row + 1, col + 1) // 1-based for display
         };
 
         div()
             .p_2()
-            .bg(theme.colors().editor_background)
+            .bg(theme.colors().panel_background)
             .border_1()
             .border_color(theme.colors().border)
             .child(
                 h_flex()
+                    .items_stretch()
                     .gap_2()
-                    .items_center()
+                    .items_start()
                     .child(
                         div()
                             .text_ui(cx)
                             .text_color(theme.colors().text)
-                            .child(format!("Edit cell {}:", focused_cell_info)),
+                            .child(format!("Editing cell {edited_cell_info}:")),
                     )
                     .child({
-                        if let Some(cell_editor) = self.get_cell_editor() {
-                            div()
-                                .flex_1()
-                                .min_w_48()
-                                .child(cell_editor.clone())
-                                .into_any_element()
-                        } else {
-                            div()
-                                .flex_1()
-                                .min_w_48()
-                                .p_2()
-                                .bg(theme.colors().editor_subheader_background)
-                                .text_ui(cx)
-                                .text_color(theme.colors().text_muted)
-                                .child("No cell editor available")
-                                .into_any_element()
-                        }
+                        div()
+                            .flex_1()
+                            .min_w_48()
+                            .bg(theme.colors().editor_background)
+                            .child(editor.clone())
+                            .into_any_element()
                     })
                     .child(
                         div()
@@ -304,5 +258,63 @@ impl CsvPreviewView {
                             .child("(Press Enter to commit)"),
                     ),
             )
+    }
+
+    fn clear_cell_editor(&mut self) {
+        self.cell_editor = None;
+    }
+}
+
+///// Handlers /////
+impl CsvPreviewView {
+    pub(crate) fn start_cell_editing(
+        &mut self,
+        _: &StartCellEditing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(focused_cell_id) = self.selection.get_focused_cell() else {
+            println!("No focused cell id. Skip editing start");
+            return;
+        };
+
+        let Some(initial_content) = self.get_focused_cell_content() else {
+            println!("No focused cell. Skip editing start");
+            return;
+        };
+
+        // Create the cell editor
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(1, 3, window, cx);
+            editor.set_text(&*initial_content, window, cx);
+            editor
+        });
+
+        self.cell_editor = Some(CellEditorCtx {
+            editor,
+            cell_to_edit: focused_cell_id,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn finish_cell_editing(
+        &mut self,
+        _: &FinishCellEditing,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_cell_edit(cx);
+        self.clear_cell_editor();
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_cell_editing_handler(
+        &mut self,
+        _: &CancelCellEditing,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_cell_editor();
+        cx.notify();
     }
 }

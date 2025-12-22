@@ -5,7 +5,7 @@ use gpui::{
 };
 use std::{sync::Arc, time::Instant};
 
-use crate::data_table::TableInteractionState;
+use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState};
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
@@ -62,13 +62,18 @@ actions!(
         ExtendSelectionToTopEdge,
         ExtendSelectionToBottomEdge,
         ExtendSelectionToLeftEdge,
-        ExtendSelectionToRightEdge
+        ExtendSelectionToRightEdge,
+        ///// Cell editing /////
+        StartCellEditing,
+        FinishCellEditing,
+        CancelCellEditing,
     ]
 );
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
 
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
+    /// Horizontal table scroll handle. Stinks. Won't work normally unless table column resizing is rewritten
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) active_editor: Option<EditorState>,
     pub(crate) contents: TableLikeContent,
@@ -83,8 +88,7 @@ pub struct CsvPreviewView {
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
     /// POC: Single-line editor
-    pub(crate) cell_editor: Option<Entity<Editor>>,
-    pub(crate) cell_editor_subscription: Option<Subscription>,
+    pub(crate) cell_editor: Option<CellEditorCtx>,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
     /// Used to signalize parser that the cell was edited, and reparsing is needed.
@@ -185,14 +189,11 @@ impl CsvPreviewView {
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
                 cell_editor: None,
-                cell_editor_subscription: None,
                 last_parse_end_time: None,
                 cell_edited_flag: false,
                 scroll_handle: ScrollHandle::default(),
             };
 
-            // Create cell editor after the view is initialized
-            view.create_cell_editor(window, cx);
             view.set_editor(editor.clone(), cx);
             view
         })

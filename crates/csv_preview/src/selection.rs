@@ -424,8 +424,8 @@ impl TableSelection {
     }
 
     /// Get the currently focused cell
-    pub fn get_focused_cell(&self) -> Option<&DisplayCellId> {
-        self.focused_cell.as_ref()
+    pub fn get_focused_cell(&self) -> Option<DisplayCellId> {
+        self.focused_cell
     }
 
     /// Check if cell at display coordinates is focused.
