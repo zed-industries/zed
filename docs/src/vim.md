@@ -205,6 +205,7 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
+
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects
