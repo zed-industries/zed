@@ -688,12 +688,14 @@ impl EditPredictionStore {
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
     pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.events.clear();
+            project_state.last_event.take();
         }
     }
 
