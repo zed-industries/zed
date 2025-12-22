@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Downloads the a tarball from https://zed.dev/releases and unpacks it
+# Downloads the tarball from https://zed.dev/releases and unpacks it
 # into ~/.local/. If you'd prefer to do this manually, instructions are at
 # https://zed.dev/docs/linux.
 
