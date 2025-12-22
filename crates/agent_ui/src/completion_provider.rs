@@ -20,7 +20,7 @@ use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse,
     PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
-use prompt_store::{PromptId, PromptStore, UserPromptId};
+use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
@@ -1114,7 +1114,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
@@ -1586,13 +1585,10 @@ pub(crate) fn search_rules(
                 if metadata.default {
                     None
                 } else {
-                    match metadata.id {
-                        PromptId::EditWorkflow => None,
-                        PromptId::User { uuid } => Some(RulesContextEntry {
-                            prompt_id: uuid,
-                            title: metadata.title?,
-                        }),
-                    }
+                    Some(RulesContextEntry {
+                        prompt_id: metadata.id.as_user()?,
+                        title: metadata.title?,
+                    })
                 }
             })
             .collect::<Vec<_>>()

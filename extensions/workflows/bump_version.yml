@@ -1,4 +1,4 @@
-# Generated from xtask::workflows:: within the Zed repository.extensions::bump_version
+# Generated from xtask::workflows::extensions::bump_version within the Zed repository.
 # Rebuild with `cargo xtask workflows`.
 name: extensions::bump_version
 on:
@@ -8,6 +8,9 @@ on:
   push:
     branches:
     - main
+    paths-ignore:
+    - .github/**
+  workflow_dispatch: {}
 jobs:
   determine_bump_type:
     runs-on: namespace-profile-16x32-ubuntu-2204
@@ -36,9 +39,7 @@ jobs:
   call_bump_version:
     needs:
     - determine_bump_type
-    if: |-
-      (github.event.action == 'labeled' && needs.determine_bump_type.outputs.bump_type != 'patch') ||
-      github.event_name == 'push'
+    if: github.event.action != 'labeled' || needs.determine_bump_type.outputs.bump_type != 'patch'
     uses: zed-industries/zed/.github/workflows/extension_bump.yml@main
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
@@ -46,3 +47,6 @@ jobs:
     with:
       bump-type: ${{ needs.determine_bump_type.outputs.bump_type }}
       force-bump: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}labels
+  cancel-in-progress: true

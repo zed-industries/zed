@@ -1,3 +1,4 @@
+mod ai;
 mod avatar;
 mod banner;
 mod button;
@@ -43,6 +44,7 @@ mod tree_view_item;
 #[cfg(feature = "stories")]
 mod stories;
 
+pub use ai::*;
 pub use avatar::*;
 pub use banner::*;
 pub use button::*;

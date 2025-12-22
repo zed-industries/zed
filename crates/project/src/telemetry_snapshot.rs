@@ -96,7 +96,7 @@ impl TelemetryWorktreeSnapshot {
                                 };
                             };
 
-                            let remote_url = backend.remote_url("origin");
+                            let remote_url = backend.remote_url("origin").await;
                             let head_sha = backend.head_sha().await;
                             let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 

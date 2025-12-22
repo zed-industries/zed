@@ -21,6 +21,8 @@ jobs:
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
+        owner: zed-industries
+        repositories: extensions
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:

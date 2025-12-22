@@ -73,6 +73,7 @@ fn main() -> Result<(), anyhow::Error> {
             registry,
             fs,
             Some(Default::default()),
+            false,
             cx,
         );
 

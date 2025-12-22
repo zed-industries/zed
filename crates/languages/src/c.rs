@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use http_client::github_download::fetch_github_binary_with_digest_check;
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -85,32 +85,55 @@ impl LspInstaller for CLspAdapter {
         };
 
         let metadata_path = version_dir.join("metadata");
-
-        let binary_path_for_check = binary_path.clone();
-        fetch_github_binary_with_digest_check(
-            &binary_path,
-            &metadata_path,
-            expected_digest,
-            &url,
-            AssetKind::Zip,
-            &container_dir,
-            &*delegate.http_client(),
-            || async move {
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
                 delegate
                     .try_exec(LanguageServerBinary {
-                        path: binary_path_for_check,
+                        path: binary_path.clone(),
                         arguments: vec!["--version".into()],
                         env: None,
                     })
                     .await
                     .inspect_err(|err| {
-                        log::warn!("Unable to run clangd asset, redownloading: {err:#}")
+                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
                     })
-            },
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+        download_server_binary(
+            &*delegate.http_client(),
+            &url,
+            expected_digest.as_deref(),
+            &container_dir,
+            AssetKind::Zip,
         )
         .await?;
-
         remove_matching(&container_dir, |entry| entry != version_dir).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
 
         Ok(binary)
     }

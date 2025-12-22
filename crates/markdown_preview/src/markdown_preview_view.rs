@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -20,11 +21,12 @@ use workspace::{Pane, Workspace};
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
 use crate::{
-    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
+use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -94,7 +96,7 @@ impl MarkdownPreviewView {
                         pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
                     }
                 });
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
                 cx.notify();
             }
         });
@@ -368,7 +370,7 @@ impl MarkdownPreviewView {
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
             });
         }
     }
@@ -425,7 +427,7 @@ impl MarkdownPreviewView {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
 
-    fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_page_up(&mut self, _: &ScrollPageUp, _window: &mut Window, cx: &mut Context<Self>) {
         let viewport_height = self.list_state.viewport_bounds().size.height;
         if viewport_height.is_zero() {
             return;
@@ -435,13 +437,68 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
-    fn scroll_page_down(&mut self, _: &MovePageDown, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_page_down(
+        &mut self,
+        _: &ScrollPageDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let viewport_height = self.list_state.viewport_bounds().size.height;
         if viewport_height.is_zero() {
             return;
         }
 
         self.list_state.scroll_by(viewport_height);
+        cx.notify();
+    }
+
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            let item_height = bounds.size.height;
+            // Scroll no more than the rough equivalent of a large headline
+            let max_height = window.rem_size() * 2;
+            let scroll_height = min(item_height, max_height);
+            self.list_state.scroll_by(-scroll_height);
+        }
+        cx.notify();
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            let item_height = bounds.size.height;
+            // Scroll no more than the rough equivalent of a large headline
+            let max_height = window.rem_size() * 2;
+            let scroll_height = min(item_height, max_height);
+            self.list_state.scroll_by(scroll_height);
+        }
+        cx.notify();
+    }
+
+    fn scroll_up_by_item(
+        &mut self,
+        _: &ScrollUpByItem,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            self.list_state.scroll_by(-bounds.size.height);
+        }
+        cx.notify();
+    }
+
+    fn scroll_down_by_item(
+        &mut self,
+        _: &ScrollDownByItem,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            self.list_state.scroll_by(bounds.size.height);
+        }
         cx.notify();
     }
 }
@@ -496,6 +553,10 @@ impl Render for MarkdownPreviewView {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_up))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_down))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -524,7 +585,7 @@ impl Render for MarkdownPreviewView {
                                                         if e.checked() { "[x]" } else { "[ ]" };
 
                                                     editor.edit(
-                                                        vec![(
+                                                        [(
                                                             MultiBufferOffset(
                                                                 e.source_range().start,
                                                             )

@@ -6,6 +6,9 @@ prHygiene({
   rules: {
     // Don't enable this rule just yet, as it can have false positives.
     useImperativeMood: "off",
+    noConventionalCommits: {
+      bannedTypes: ["feat", "fix", "style", "refactor", "perf", "test", "chore", "build", "revert"],
+    },
   },
 });
 

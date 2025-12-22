@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod after_release;
+mod autofix_pr;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
@@ -82,10 +83,10 @@ impl WorkflowType {
                 "# Generated from xtask::workflows::{}{}\n",
                 "# Rebuild with `cargo xtask workflows`.",
             ),
+            workflow_name,
             matches!(self, WorkflowType::Extensions)
                 .then_some(" within the Zed repository.")
                 .unwrap_or_default(),
-            workflow_name
         )
     }
 
@@ -111,6 +112,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(run_tests::run_tests),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(cherry_pick::cherry_pick),
+        WorkflowFile::zed(autofix_pr::autofix_pr),
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),

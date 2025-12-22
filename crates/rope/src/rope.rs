@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
+use ztracing::instrument;
 
 pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
@@ -226,7 +227,7 @@ impl Rope {
         #[cfg(all(test, not(rust_analyzer)))]
         const PARALLEL_THRESHOLD: usize = 4;
         #[cfg(not(all(test, not(rust_analyzer))))]
-        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
+        const PARALLEL_THRESHOLD: usize = 84 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks
@@ -428,6 +429,7 @@ impl Rope {
             })
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;

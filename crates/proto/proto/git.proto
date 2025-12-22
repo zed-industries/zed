@@ -124,6 +124,8 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
+    optional string remote_upstream_url = 14;
+    optional string remote_origin_url = 15;
 }
 
 message RemoveRepository {
@@ -188,6 +190,19 @@ message GitRenameBranch {
     uint64 repository_id = 2;
     string branch = 3;
     string new_name = 4;
+}
+
+message GitCreateRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+    string remote_url = 4;
+}
+
+message GitRemoveRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
 }
 
 message GitDeleteBranch {
@@ -487,8 +502,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        optional string remote_url = 4;
         reserved 3;
+        reserved 4;
     }
 
     optional BlameResponse blame_response = 5;
@@ -565,6 +580,7 @@ message GitCreateWorktree {
 message RunGitHook {
     enum GitHook {
         PRE_COMMIT = 0;
+        reserved 1;
     }
 
     uint64 project_id = 1;

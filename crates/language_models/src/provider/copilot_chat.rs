@@ -14,22 +14,20 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
+use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, prelude::*};
+use ui::prelude::*;
 use util::debug_panic;
-
-use crate::ui::ConfiguredApiCard;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -106,8 +104,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::Copilot
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::Copilot)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -179,8 +177,18 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new(|cx| {
+            copilot::ConfigurationView::new(
+                |cx| {
+                    CopilotChat::global(cx)
+                        .map(|m| m.read(cx).is_authenticated())
+                        .unwrap_or(false)
+                },
+                copilot::ConfigurationMode::Chat,
+                cx,
+            )
+        })
+        .into()
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -1472,94 +1480,5 @@ mod tests {
             Some("Let me check the directory".to_string()),
             "Should capture reasoning_text"
         );
-    }
-}
-struct ConfigurationView {
-    copilot_status: Option<copilot::Status>,
-    state: Entity<State>,
-    _subscription: Option<Subscription>,
-}
-
-impl ConfigurationView {
-    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
-        let copilot = Copilot::global(cx);
-
-        Self {
-            copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
-            state,
-            _subscription: copilot.as_ref().map(|copilot| {
-                cx.observe(copilot, |this, model, cx| {
-                    this.copilot_status = Some(model.read(cx).status());
-                    cx.notify();
-                })
-            }),
-        }
-    }
-}
-
-impl Render for ConfigurationView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.state.read(cx).is_authenticated(cx) {
-            ConfiguredApiCard::new("Authorized")
-                .button_label("Sign Out")
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
-                })
-                .into_any_element()
-        } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
-
-            const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
-
-            match &self.copilot_status {
-                Some(status) => match status {
-                    Status::Starting { task: _ } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Starting Copilot…"))
-                        .into_any_element(),
-                    Status::SigningIn { prompt: _ }
-                    | Status::SignedOut {
-                        awaiting_signing_in: true,
-                    } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…"))
-                        .into_any_element(),
-                    Status::Error(_) => {
-                        const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
-                        v_flex()
-                            .gap_6()
-                            .child(Label::new(LABEL))
-                            .child(svg().size_8().path(IconName::CopilotError.path()))
-                            .into_any_element()
-                    }
-                    _ => {
-                        const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-
-                        v_flex()
-                            .gap_2()
-                            .child(Label::new(LABEL))
-                            .child(
-                                Button::new("sign_in", "Sign in to use GitHub Copilot")
-                                    .full_width()
-                                    .style(ButtonStyle::Outlined)
-                                    .icon_color(Color::Muted)
-                                    .icon(IconName::Github)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(|_, window, cx| {
-                                        copilot::initiate_sign_in(window, cx)
-                                    }),
-                            )
-                            .into_any_element()
-                    }
-                },
-                None => v_flex()
-                    .gap_6()
-                    .child(Label::new(ERROR_LABEL))
-                    .into_any_element(),
-            }
-        }
     }
 }

@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob, Workflow,
+    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob,
+    Workflow, WorkflowDispatch,
 };
 use indexmap::IndexMap;
 use indoc::indoc;
@@ -7,7 +8,7 @@ use indoc::indoc;
 use crate::tasks::workflows::{
     runners,
     steps::{NamedJob, named},
-    vars::{self, JobOutput, StepOutput},
+    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) fn bump_version() -> Workflow {
@@ -18,8 +19,14 @@ pub(crate) fn bump_version() -> Workflow {
 
     named::workflow()
         .on(Event::default()
-            .push(Push::default().add_branch("main"))
-            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled)))
+            .push(
+                Push::default()
+                    .add_branch("main")
+                    .add_ignored_path(".github/**"),
+            )
+            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled))
+            .workflow_dispatch(WorkflowDispatch::default()))
+        .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)
 }
@@ -30,10 +37,7 @@ pub(crate) fn call_bump_version(
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
         .cond(Expression::new(format!(
-            indoc! {
-                "(github.event.action == 'labeled' && {} != 'patch') ||
-                github.event_name == 'push'"
-            },
+            "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
         .uses(
