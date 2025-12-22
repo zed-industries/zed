@@ -69,7 +69,8 @@ actions!(
         CancelCellEditing,
     ]
 );
-const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
+const TABLE_CONTEXT_NAME: &'static str = "CsvPreview";
+const CELL_EDITOR_CONTEXT_NAME: &'static str = "TableCellEditor";
 
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
