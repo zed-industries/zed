@@ -40,7 +40,9 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::finish_cell_editing))
             .on_action(cx.listener(Self::cancel_cell_editing_handler))
             .child(self.render_settings_panel(window, cx))
-            .child(self.render_cell_editor(cx))
+            .when(self.settings.show_cell_editor_row, |div| {
+                div.child(self.render_cell_editor(cx))
+            })
             .child({
                 if self.contents.headers.is_empty() {
                     div()
