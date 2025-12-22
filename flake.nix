@@ -28,27 +28,13 @@
       ];
 
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      mkWorkspace =
+      mkZed =
         pkgs:
-        let
-          rustBin = rust-overlay.lib.mkRustBin { } pkgs;
-          toolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
-        in
-        (pkgs.callPackage ./Cargo.nix {
-          buildRustCrateForPkgs =
-            pkgs:
-            pkgs.buildRustCrate.override {
-              rustc = toolchain;
-              cargo = toolchain;
-              defaultCodegenUnits = 16;
-              defaultCrateOverrides = pkgs.defaultCrateOverrides // (pkgs.callPackage ./nix/overrides.nix { });
-            };
-        });
-      # Pull just the zed binary out of the workspace
-      mkZed = pkgs: (mkWorkspace pkgs).workspaceMembers.zed.build;
+        pkgs.callPackage ./nix/zed.nix {
+          inherit rust-overlay crane;
+        };
     in
     {
-      workspace = forAllSystems mkWorkspace;
       packages = forAllSystems (pkgs: rec {
         default = mkZed pkgs;
         debug = default.override { profile = "dev"; };
