@@ -83,7 +83,6 @@ struct PendingScrollFraction {
     fraction: f32,
 }
 
-
 /// Whether the list is scrolling from top to bottom or bottom to top.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListAlignment {
@@ -236,7 +235,7 @@ impl ListState {
             reset: false,
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
-            pending_scroll: None
+            pending_scroll: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -702,12 +701,12 @@ impl StateInner {
                 if ix == 0 {
                     if let Some(pending_scroll) = self.pending_scroll.take() {
                         if pending_scroll.item_ix == scroll_top.item_ix {
-                            scroll_top.offset_in_item = Pixels(pending_scroll.fraction * element_size.height.0);
+                            scroll_top.offset_in_item =
+                                Pixels(pending_scroll.fraction * element_size.height.0);
                             self.logical_scroll_top = Some(scroll_top);
                         }
                     }
                 }
-
 
                 if visible_height < available_height {
                     item_layouts.push_back(ItemLayout {
@@ -1248,13 +1247,14 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod test {
 
+    use gpui::{ScrollDelta, ScrollWheelEvent};
     use std::cell::Cell;
     use std::rc::Rc;
-    use gpui::{ScrollDelta, ScrollWheelEvent};
 
-    use crate::{self as gpui, TestAppContext, AppContext, Context, Element,
-    IntoElement, ListState, Render, Styled, Window, div, list, point, px, size};
-
+    use crate::{
+        self as gpui, AppContext, Context, Element, IntoElement, ListState, Render, Styled,
+        TestAppContext, Window, div, list, point, px, size,
+    };
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
