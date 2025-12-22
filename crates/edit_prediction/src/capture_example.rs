@@ -21,11 +21,11 @@ pub fn capture_example(
     let ep_store = EditPredictionStore::try_global(cx)?;
     let snapshot = buffer.read(cx).snapshot();
     let file = snapshot.file()?;
-    let cursor_path = file.full_path(cx).into();
     let worktree_id = file.worktree_id(cx);
     let repository = project.read(cx).active_repository(cx)?;
     let repository_snapshot = repository.read(cx).snapshot();
     let worktree = project.read(cx).worktree_for_id(worktree_id, cx)?;
+    let cursor_path = worktree.read(cx).root_name().join(file.path());
     if worktree.read(cx).abs_path() != repository_snapshot.work_directory_abs_path {
         return None;
     }
@@ -75,7 +75,7 @@ pub fn capture_example(
             repository_url,
             revision,
             uncommitted_diff,
-            cursor_path,
+            cursor_path: cursor_path.as_std_path().into(),
             cursor_position: cursor_excerpt,
             edit_history,
             expected_patch,
@@ -110,12 +110,18 @@ async fn collect_snapshots(
     let mut snapshots_by_path = HashMap::default();
     for stored_event in events {
         let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-        if let Some(project_path) = project
-            .read_with(cx, |project, cx| project.find_project_path(path, cx))
-            .ok()
-            .flatten()
-        {
-            if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(path.clone()) {
+        if let Some((project_path, full_path)) = project.read_with(cx, |project, cx| {
+            let project_path = project.find_project_path(path, cx)?;
+            let full_path = project
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .root_name()
+                .join(&project_path.path)
+                .as_std_path()
+                .into();
+            Some((project_path, full_path))
+        })? {
+            if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(full_path) {
                 let buffer = project
                     .update(cx, |project, cx| {
                         project.open_buffer(project_path.clone(), cx)
