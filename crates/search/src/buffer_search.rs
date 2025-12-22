@@ -1755,13 +1755,15 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, MultiBuffer, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
+    use futures::channel::mpsc::UnboundedReceiver;
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    use settings::{SearchSettingsContent, SettingsStore};
+    use settings::{SearchSettingsContent, SettingsStore, initial_local_debug_tasks_content};
     use smol::stream::StreamExt as _;
+    use tracing::instrument::WithSubscriber;
     use unindent::Unindent as _;
     use util_macros::perf;
 
@@ -1774,6 +1776,79 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
+    }
+
+    fn init_multibuffer_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Editor>,
+        Entity<BufferSearchBar>,
+        &mut VisualTestContext,
+    ) {
+        init_globals(cx);
+
+        let buffer1 = cx.new(|cx| {
+            Buffer::local(
+                            r#"
+                            A regular expression (shortened as regex or regexp;[1] also referred to as
+                            rational expression[2][3]) is a sequence of characters that specifies a search
+                            pattern in text. Usually such patterns are used by string-searching algorithms
+                            for "find" or "find and replace" operations on strings, or for input validation.
+                            "#
+                            .unindent(),
+                            cx,
+                        )
+        });
+
+        let buffer2 = cx.new(|cx| {
+            Buffer::local(
+                r#"
+                            Some Additional text with the term regular expression in it.
+                            There two lines.
+                            "#
+                .unindent(),
+                cx,
+            )
+        });
+
+        let multibuffer = cx.new(|cx| {
+            let mut buffer = MultiBuffer::new(language::Capability::ReadWrite);
+
+            //[ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))]
+            buffer.push_excerpts(
+                buffer1,
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+                cx,
+            );
+            buffer.push_excerpts(
+                buffer2,
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                cx,
+            );
+
+            buffer
+        });
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            editor =
+                Some(cx.new(|cx| Editor::for_multibuffer(multibuffer.clone(), None, window, cx)));
+
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        (editor.unwrap(), search_bar, cx)
     }
 
     fn init_test(
@@ -3074,38 +3149,140 @@ mod tests {
 
     #[perf]
     #[gpui::test]
-    async fn test_invalid_regexp_search_after_valid(cx: &mut TestAppContext) {
+    async fn test_hides_and_uses_secondary_when_in_singleton_buffer(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
-        // Search using valid regexp
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.enable_search_option(SearchOptions::REGEX, window, cx);
-                search_bar.search("expression", None, true, window, cx)
-            })
-            .await
-            .unwrap();
-        editor.update_in(cx, |editor, window, cx| {
-            assert_eq!(
-                display_points_of(editor.all_text_background_highlights(window, cx)),
-                &[
-                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
-                    DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
-                ],
-            );
+
+        let initial_location = search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx)
         });
 
-        // Now, the expression is invalid
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression (", None, true, window, cx)
-            })
-            .await
-            .unwrap_err();
-        editor.update_in(cx, |editor, window, cx| {
-            assert!(
-                display_points_of(editor.all_text_background_highlights(window, cx)).is_empty(),
-            );
+        assert_eq!(initial_location, ToolbarItemLocation::Secondary);
+
+        let mut events = cx.events(&search_bar);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Dismiss, window, cx);
         });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::Hidden
+            ))
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.show(window, cx);
+        });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::Secondary
+            ))
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_uses_primary_left_when_in_multi_buffer(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        let initial_location = search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx)
+        });
+
+        assert_eq!(initial_location, ToolbarItemLocation::PrimaryLeft);
+
+        let mut events = cx.events(&search_bar);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Dismiss, window, cx);
+        });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::PrimaryLeft
+            ))
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.show(window, cx);
+        });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::PrimaryLeft
+            ))
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_hides_and_uses_secondary_when_part_of_project_search(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        editor.update(cx, |editor, _| {
+            editor.set_in_project_search(true);
+        });
+
+        let initial_location = search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx)
+        });
+
+        assert_eq!(initial_location, ToolbarItemLocation::Secondary);
+
+        let mut events = cx.events(&search_bar);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.dismiss(&Dismiss, window, cx);
+        });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::Hidden
+            ))
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.show(window, cx);
+        });
+
+        assert_eq!(
+            events.try_next().unwrap(),
+            Some(ToolbarItemEvent::ChangeLocation(
+                ToolbarItemLocation::Secondary
+            ))
+        );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_sets_collapsed_when_editor_fold_events_emitted(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_all(&FoldAll, window, cx);
+        });
+
+        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
+
+        assert!(is_collapsed);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.unfold_all(&UnfoldAll, window, cx);
+        });
+
+        let is_collapsed = search_bar.read_with(cx, |search_bar, cx| search_bar.is_collapsed);
+
+        assert!(!is_collapsed);
     }
 
     #[perf]

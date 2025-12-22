@@ -6,6 +6,7 @@ use gpui::{
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
 }
