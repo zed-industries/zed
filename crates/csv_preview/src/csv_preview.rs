@@ -86,6 +86,11 @@ pub struct CsvPreviewView {
     pub(crate) cell_editor_subscription: Option<Subscription>,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
+    /// Used to signalize parser that the cell was edited, and reparsing is needed.
+    /// Emited by `cell_editor` module on submit.
+    /// Is needed, as `buffer.edit([(range, new_text)], None, cx);` emits `BufferEdited` event,
+    /// which is too generic, and this flag shows that the source of that event is indeed cell editing
+    pub(crate) cell_edited_flag: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -179,6 +184,7 @@ impl CsvPreviewView {
                 cell_editor: None,
                 cell_editor_subscription: None,
                 last_parse_end_time: None,
+                cell_edited_flag: false,
             };
 
             // Create cell editor after the view is initialized
