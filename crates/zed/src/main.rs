@@ -318,6 +318,12 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
+    // Listen for CLI connections via Unix socket
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let socket_bind_failed = crate::zed::listen_for_cli_connections(open_listener.clone()).is_err();
+    #[cfg(target_os = "macos")]
+    crate::zed::listen_for_cli_connections(open_listener.clone()).log_err();
+
     let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
     {
@@ -325,7 +331,7 @@ fn main() {
     } else {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
-            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+            socket_bind_failed
         }
 
         #[cfg(target_os = "windows")]

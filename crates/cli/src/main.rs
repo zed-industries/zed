@@ -1152,30 +1152,44 @@ mod mac_os {
                 }
 
                 Self::LocalPath { executable, .. } => {
-                    let executable_parent = executable
-                        .parent()
-                        .with_context(|| format!("Executable {executable:?} path has no parent"))?;
-                    let subprocess_stdout_file = fs::File::create(
-                        executable_parent.join("zed_dev.log"),
-                    )
-                    .with_context(|| format!("Log file creation in {executable_parent:?}"))?;
-                    let subprocess_stdin_file =
-                        subprocess_stdout_file.try_clone().with_context(|| {
-                            format!("Cloning descriptor for file {subprocess_stdout_file:?}")
-                        })?;
-                    let mut command = std::process::Command::new(executable);
-                    command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
-                    if let Some(dir) = user_data_dir {
-                        command.arg("--user-data-dir").arg(dir);
-                    }
-                    command
-                        .stderr(subprocess_stdout_file)
-                        .stdout(subprocess_stdin_file)
-                        .arg(url);
+                    use std::os::unix::net::UnixDatagram;
 
-                    command
-                        .spawn()
-                        .with_context(|| format!("Spawning {command:?}"))?;
+                    let data_dir = user_data_dir
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| paths::data_dir().clone());
+
+                    let sock_path = data_dir.join(format!(
+                        "zed-{}.sock",
+                        *release_channel::RELEASE_CHANNEL_NAME
+                    ));
+                    let sock = UnixDatagram::unbound()?;
+
+                    if sock.connect(&sock_path).is_ok() {
+                        sock.send(url.as_bytes())?;
+                    } else {
+                        let executable_parent = executable.parent().with_context(|| {
+                            format!("Executable {executable:?} path has no parent")
+                        })?;
+                        let subprocess_stdout_file = fs::File::create(
+                            executable_parent.join("zed_dev.log"),
+                        )
+                        .with_context(|| format!("Log file creation in {executable_parent:?}"))?;
+                        let subprocess_stdin_file =
+                            subprocess_stdout_file.try_clone().with_context(|| {
+                                format!("Cloning descriptor for file {subprocess_stdout_file:?}")
+                            })?;
+                        let mut command = std::process::Command::new(executable);
+                        command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                        if let Some(dir) = user_data_dir {
+                            command.arg("--user-data-dir").arg(dir);
+                        }
+                        command
+                            .stderr(subprocess_stdout_file)
+                            .stdout(subprocess_stdin_file)
+                            .arg(url)
+                            .spawn()
+                            .with_context(|| format!("Spawning {command:?}"))?;
+                    }
                 }
             }
 
