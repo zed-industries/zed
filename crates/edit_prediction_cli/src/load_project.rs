@@ -86,26 +86,18 @@ async fn cursor_position(
         return Err(error);
     }
 
-    let worktree = project.read_with(cx, |project, cx| {
-        project
-            .visible_worktrees(cx)
-            .next()
-            .context("No visible worktrees")
-    })??;
-
-    let cursor_path = RelPath::new(&example.spec.cursor_path, PathStyle::Posix)
-        .context("Failed to create RelPath")?
-        .into_arc();
-    let cursor_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer(
-                ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: cursor_path,
-                },
-                cx,
-            )
+    let cursor_path = project
+        .read_with(cx, |project, cx| {
+            project.find_project_path(&example.spec.cursor_path, cx)
         })?
+        .with_context(|| {
+            format!(
+                "failed to find cursor path {}",
+                example.spec.cursor_path.display()
+            )
+        })?;
+    let cursor_buffer = project
+        .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
         .await?;
     let cursor_offset_within_excerpt = example
         .spec
