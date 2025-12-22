@@ -1,4 +1,10 @@
+use ui::{
+    Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Context, ElementId,
+    IntoElement, Tooltip,
+};
+
 use crate::{
+    CsvPreviewView,
     table_like_content::TableLikeContent,
     types::{AnyColumn, DataRow, DisplayRow},
 };
@@ -98,4 +104,62 @@ fn order_indices(
     });
 
     indices
+}
+
+impl CsvPreviewView {
+    pub(crate) fn create_sort_button(
+        &self,
+        cx: &mut Context<'_, CsvPreviewView>,
+        col_idx: AnyColumn,
+    ) -> Button {
+        let sort_btn = Button::new(
+            ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
+            match self.ordering {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    OrderingDirection::Asc => "↓",
+                    OrderingDirection::Desc => "↑",
+                },
+                _ => "↕", // Unsorted/available for sorting
+            },
+        )
+        .size(ButtonSize::Compact)
+        .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
+            ButtonStyle::Filled
+        } else {
+            ButtonStyle::Subtle
+        })
+        .tooltip(Tooltip::text(match self.ordering {
+            Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                OrderingDirection::Asc => "Sorted A-Z. Click to sort Z-A",
+                OrderingDirection::Desc => "Sorted Z-A. Click to disable sorting",
+            },
+            _ => "Not sorted. Click to sort A-Z",
+        }))
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            let new_ordering = match this.ordering {
+                Some(ordering) if ordering.col_idx == col_idx => {
+                    // Same column clicked - cycle through states
+                    match ordering.direction {
+                        OrderingDirection::Asc => Some(Ordering {
+                            col_idx,
+                            direction: OrderingDirection::Desc,
+                        }),
+                        OrderingDirection::Desc => None, // Clear sorting
+                    }
+                }
+                _ => {
+                    // Different column or no sorting - start with ascending
+                    Some(Ordering {
+                        col_idx,
+                        direction: OrderingDirection::Asc,
+                    })
+                }
+            };
+
+            this.ordering = new_ordering;
+            this.update_ordered_indices();
+            cx.notify();
+        }));
+        sort_btn
+    }
 }

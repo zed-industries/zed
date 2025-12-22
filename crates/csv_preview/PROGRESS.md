@@ -112,7 +112,7 @@ This document outlines the current state of the POC feature. It might not be the
 ### Ordering
 
 **Features:**
-- [ ] feat: Add tooltip on order button
+- [x] feat: Add tooltip on order button
 - [ ] feat: Add manual ordering of columns (drag to reorder)
 
 **Fixes:**
