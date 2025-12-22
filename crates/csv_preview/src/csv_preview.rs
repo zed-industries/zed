@@ -5,7 +5,7 @@ use gpui::{
 };
 use std::{sync::Arc, time::Instant};
 
-use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState};
+use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState, types::DisplayCellId};
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
@@ -88,7 +88,7 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
-    /// POC: Single-line editor
+    /// Context of inline cell editor. If None - no editing is in progress.
     pub(crate) cell_editor: Option<CellEditorCtx>,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,

@@ -14,9 +14,9 @@ use crate::{
     types::{DataCellId, DisplayCellId},
 };
 
-pub struct CellEditorCtx {
-    editor: Entity<Editor>,
-    cell_to_edit: DisplayCellId,
+pub(crate) struct CellEditorCtx {
+    pub editor: Entity<CellEditor>,
+    pub cell_to_edit: DisplayCellId,
 }
 
 /// Enum representing the offset of the focused cell in the list.
@@ -36,7 +36,7 @@ impl CsvPreviewView {
         self.display_to_data_cell(&cid)
     }
 
-    fn display_to_data_cell(&self, focused_cell: &DisplayCellId) -> Option<DataCellId> {
+    pub(crate) fn display_to_data_cell(&self, focused_cell: &DisplayCellId) -> Option<DataCellId> {
         let data_row = self.sorted_indices.get_data_row(focused_cell.row)?;
         Some(DataCellId::new(data_row, focused_cell.col))
     }
@@ -105,7 +105,7 @@ impl CsvPreviewView {
         };
 
         // Get the new text from the cell editor
-        let new_text = editor.read(cx).text(cx);
+        let new_text = editor.read(cx).cell_editor.read(cx).text(cx);
         const DELIMITER: char = ',';
         let new_text = EscapedCellString::new(new_text, DELIMITER);
 
@@ -230,12 +230,6 @@ impl CsvPreviewView {
             format!("R{}C{}", row + 1, col + 1) // 1-based for display
         };
 
-        // Must wrap into entity. Without it, CellEditor is not renderable
-        let e = cx.new(|cx| CellEditor {
-            cell_editor: editor.clone(),
-            focus_handle: cx.focus_handle(),
-        });
-
         div()
             // .track_focus(&self.focus_handle)
             .p_2()
@@ -253,7 +247,7 @@ impl CsvPreviewView {
                             .text_color(theme.colors().text)
                             .child(format!("Editing cell {edited_cell_info}:")),
                     )
-                    .child(e)
+                    .child(editor.clone())
                     .child(
                         div()
                             .text_ui(cx)
@@ -269,8 +263,8 @@ impl CsvPreviewView {
 }
 
 pub(crate) struct CellEditor {
-    cell_editor: Entity<Editor>,
-    focus_handle: FocusHandle,
+    pub cell_editor: Entity<Editor>,
+    pub focus_handle: FocusHandle,
 }
 
 impl Focusable for CellEditor {
@@ -323,7 +317,10 @@ impl CsvPreviewView {
         editor.read(cx).focus_handle(cx).focus(window);
 
         self.cell_editor = Some(CellEditorCtx {
-            editor,
+            editor: cx.new(|cx| CellEditor {
+                cell_editor: editor,
+                focus_handle: cx.focus_handle(),
+            }),
             cell_to_edit: focused_cell_id,
         });
         cx.notify();
