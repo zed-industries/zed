@@ -241,6 +241,7 @@
       "shift-alt-l": "agent::OpenRulesLibrary",
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
@@ -254,7 +255,6 @@
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
       "shift-alt-z": "agent::RejectOnce",
-      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
