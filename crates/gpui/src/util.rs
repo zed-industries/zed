@@ -65,7 +65,7 @@ pub trait FluentBuilder {
 /// Extensions for Future types that provide additional combinators and utilities.
 pub trait FutureExt {
     /// Requires a Future to complete before the specified duration has elapsed.
-    /// Similar to tokio::timeout.
+    /// Similar to tokio::timeout. Resolves to `Result<T, Timeout>`
     fn with_timeout(self, timeout: Duration, executor: &BackgroundExecutor) -> WithTimeout<Self>
     where
         Self: Sized;
