@@ -520,12 +520,8 @@ pub(crate) fn compute_diff_between_snapshots(
     let old_edit_range = old_start_line_offset..old_end_line_offset;
     let new_edit_range = new_start_line_offset..new_end_line_offset;
 
-    let old_region_text: String = old_snapshot
-        .text_for_range(old_edit_range.clone())
-        .collect();
-    let new_region_text: String = new_snapshot
-        .text_for_range(new_edit_range.clone())
-        .collect();
+    let old_region_text: String = old_snapshot.text_for_range(old_edit_range).collect();
+    let new_region_text: String = new_snapshot.text_for_range(new_edit_range).collect();
 
     let diff = language::unified_diff_with_offsets(
         &old_region_text,

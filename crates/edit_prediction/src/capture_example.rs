@@ -176,12 +176,11 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::{AppContext as _, TestAppContext, http_client::FakeHttpClient};
     use indoc::indoc;
-    use language::Point;
+    use language::{Anchor, Point};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
-    use text::Anchor;
     use workspace::AppState;
 
     #[gpui::test]
