@@ -756,6 +756,7 @@ impl VsCodeSettings {
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            cli_enabled: None,
         })
     }
 
