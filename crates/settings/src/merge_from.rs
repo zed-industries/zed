@@ -56,6 +56,7 @@ merge_from_overwrites!(
     std::sync::Arc<str>,
     gpui::SharedString,
     std::path::PathBuf,
+    std::sync::Arc<std::path::Path>,
     gpui::Modifiers,
     gpui::FontFeatures,
     gpui::FontWeight

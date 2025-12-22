@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, path::Path};
 
 use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
@@ -167,6 +167,8 @@ pub struct EditPredictionSettingsContent {
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
+    /// The directory where manually captured edit prediction examples are stored.
+    pub examples_dir: Option<Arc<Path>>,
 }
 
 #[with_fallible_options]
