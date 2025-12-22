@@ -118,8 +118,12 @@ const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
+    entity_id: Option<u64>,
 ) {
     env.insert("ZED_TERM".to_string(), "true".to_string());
+    if let Some(entity_id) = entity_id {
+        env.insert("ZED_TERM_ID".to_string(), entity_id.to_string());
+    }
     env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
@@ -448,7 +452,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_zed_terminal_env(&mut env, &version, Some(entity_id));
 
             #[derive(Default)]
             struct ShellParams {
