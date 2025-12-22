@@ -11,8 +11,6 @@ use crate::{row_identifiers::LineNumber, table_cell::TableCell};
 pub struct TableLikeContent {
     pub headers: Vec<TableCell>,
     pub rows: Vec<Vec<TableCell>>,
-    /// The source buffer snapshot for anchor resolution
-    pub buffer_snapshot: Option<BufferSnapshot>,
     /// Follows the same indices as `rows`
     pub line_numbers: Vec<LineNumber>,
 }
@@ -25,7 +23,6 @@ impl TableLikeContent {
             return Self {
                 headers: vec![],
                 rows: vec![],
-                buffer_snapshot: Some(buffer_snapshot),
                 line_numbers: vec![],
             };
         }
@@ -35,12 +32,9 @@ impl TableLikeContent {
             return Self {
                 headers: vec![],
                 rows: vec![],
-                buffer_snapshot: Some(buffer_snapshot),
                 line_numbers: vec![],
             };
         }
-
-        let buffer_id = buffer_snapshot.remote_id();
 
         // Convert to TableCell objects with buffer positions
         let headers = parsed_cells_with_positions[0]
@@ -50,7 +44,6 @@ impl TableLikeContent {
                     content.clone(),
                     range.start,
                     range.end,
-                    buffer_id,
                     &buffer_snapshot,
                 )
             })
@@ -66,7 +59,6 @@ impl TableLikeContent {
                             content,
                             range.start,
                             range.end,
-                            buffer_id,
                             &buffer_snapshot,
                         )
                     })
@@ -79,7 +71,6 @@ impl TableLikeContent {
         Self {
             headers,
             rows,
-            buffer_snapshot: Some(buffer_snapshot),
             line_numbers: row_line_numbers,
         }
     }

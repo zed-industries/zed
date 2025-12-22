@@ -1,4 +1,3 @@
-use crate::cell_editor::CellEditor;
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
@@ -186,7 +185,6 @@ impl CsvPreviewView {
         let empty_cell = TableCell {
             position: None,
             cached_value: "".into(),
-            is_editing: false,
         };
 
         // Remaining columns: actual CSV data

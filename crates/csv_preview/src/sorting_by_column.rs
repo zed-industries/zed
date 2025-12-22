@@ -1,6 +1,5 @@
 use ui::{
-    Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Context, ElementId,
-    IntoElement, Tooltip,
+    Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Context, ElementId, Tooltip,
 };
 
 use crate::{
