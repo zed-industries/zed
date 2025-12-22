@@ -18,14 +18,13 @@ pub fn capture_example(
     last_event_is_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
+    let ep_store = EditPredictionStore::try_global(cx)?;
     let snapshot = buffer.read(cx).snapshot();
     let file = snapshot.file()?;
-    let cursor_path: Arc<Path> = file.path().as_std_path().into();
+    let cursor_path = file.full_path(cx).into();
     let worktree_id = file.worktree_id(cx);
-
     let repository = project.read(cx).active_repository(cx)?;
     let repository_snapshot = repository.read(cx).snapshot();
-
     let worktree = project.read(cx).worktree_for_id(worktree_id, cx)?;
     if worktree.read(cx).abs_path() != repository_snapshot.work_directory_abs_path {
         return None;
@@ -37,18 +36,18 @@ pub fn capture_example(
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
-    let ep_store = EditPredictionStore::try_global(cx)?;
     let mut events = ep_store.update(cx, |store, cx| {
         store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
 
-    let cursor_excerpt = compute_cursor_excerpt(&snapshot, cursor_anchor);
-
     let git_store = project.read(cx).git_store().clone();
 
     Some(cx.spawn(async move |mut cx| {
-        let snapshots_by_path = collect_file_data(&project, &git_store, &events, &mut cx).await?;
-
+        let snapshots_by_path = collect_snapshots(&project, &git_store, &events, &mut cx).await?;
+        let cursor_excerpt = cx
+            .background_executor()
+            .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
+            .await;
         let uncommitted_diff = cx
             .background_executor()
             .spawn(async move { compute_uncommitted_diff(snapshots_by_path) })
@@ -102,7 +101,7 @@ fn compute_cursor_excerpt(
     excerpt
 }
 
-async fn collect_file_data(
+async fn collect_snapshots(
     project: &Entity<Project>,
     git_store: &Entity<project::git_store::GitStore>,
     events: &[StoredEvent],
