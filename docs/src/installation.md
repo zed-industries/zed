@@ -36,6 +36,16 @@ For most Linux users, the easiest way to install Zed is through our installation
 curl -f https://zed.dev/install.sh | sh
 ```
 
+You can now optionally specify a **version** of Zed to install using the `ZED_VERSION` environment variable:
+
+```sh
+# Install the latest stable version (default)
+curl -f https://zed.dev/install.sh | sh
+
+# Install a specific version
+curl -f https://zed.dev/install.sh | ZED_VERSION=0.216.0 sh
+```
+
 If you'd like to help us test our new features, you can also install our preview build:
 
 ```sh
