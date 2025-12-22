@@ -8,6 +8,7 @@ use edit_prediction_context_view::EditPredictionContextView;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::actions;
+use language::language_settings::AllLanguageSettings;
 use project::DisableAiSettings;
 use rate_prediction_modal::RatePredictionsModal;
 use settings::{Settings as _, SettingsStore};
@@ -141,6 +142,7 @@ fn capture_example_as_markdown(
         .languages
         .language_for_name("Markdown");
 
+    let fs = workspace.app_state().fs.clone();
     let project = workspace.project().clone();
     let editor = workspace.active_item_as::<Editor>(cx)?;
     let editor = editor.read(cx);
@@ -150,15 +152,26 @@ fn capture_example_as_markdown(
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
     let example = capture_example(project.clone(), buffer, cursor_anchor, true, cx)?;
 
+    let examples_dir = AllLanguageSettings::get_global(cx)
+        .edit_predictions
+        .examples_dir
+        .clone();
+
     cx.spawn_in(window, async move |workspace_entity, cx| {
         let markdown_language = markdown_language.await?;
         let example_spec = example.await?;
-        let markdown = example_spec.to_markdown();
-        let buffer = project
-            .update(cx, |project, cx| project.create_buffer(false, cx))?
-            .await?;
+        let buffer = if let Some(dir) = examples_dir {
+            fs.create_dir(&dir).await.ok();
+            let mut path = dir.join(&example_spec.name.replace(' ', "--").replace(':', "-"));
+            path.set_extension("md");
+            project.update(cx, |project, cx| project.open_local_buffer(&path, cx))
+        } else {
+            project.update(cx, |project, cx| project.create_buffer(false, cx))
+        }?
+        .await?;
+
         buffer.update(cx, |buffer, cx| {
-            buffer.set_text(markdown, cx);
+            buffer.set_text(example_spec.to_markdown(), cx);
             buffer.set_language(Some(markdown_language), cx);
         })?;
         workspace_entity.update_in(cx, |workspace, window, cx| {
