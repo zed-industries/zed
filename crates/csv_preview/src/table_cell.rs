@@ -278,8 +278,7 @@ fn create_table_cell(
         .id(ElementId::NamedInteger(
             format!(
                 "csv-display-cell-{}-{}",
-                display_cell_id.row.get(),
-                display_cell_id.col.get()
+                *display_cell_id.row, *display_cell_id.col
             )
             .into(),
             0,
@@ -310,5 +309,5 @@ fn create_table_cell(
             FontType::Monospace => div.font_buffer(cx),
         })
         .tooltip(Tooltip::text(cell_content.clone()))
-        .child(cell_content)
+        .child(div().child(cell_content))
 }

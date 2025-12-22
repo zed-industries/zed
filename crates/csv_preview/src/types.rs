@@ -22,6 +22,14 @@ impl DisplayRow {
     }
 }
 
+impl Deref for DisplayRow {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Original CSV row position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DataRow(pub usize);

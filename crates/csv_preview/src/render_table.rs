@@ -1,3 +1,4 @@
+use crate::cell_editor::CellEditor;
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
@@ -193,7 +194,9 @@ impl CsvPreviewView {
             let table_cell = row.get(col).unwrap_or_else(|| &empty_cell);
 
             let cell_content = table_cell.display_value().clone();
-            let pos = table_cell.position.as_ref();
+            let span = table_cell.position.as_ref();
+
+            let display_cell_id = DisplayCellId::new(display_index, col);
 
             // Check if this cell is selected using display coordinates
             let is_selected = this.selection.is_cell_selected(
@@ -212,24 +215,33 @@ impl CsvPreviewView {
                 .selection
                 .is_cell_anchor(DisplayRow::from(display_index), AnyColumn::from(col));
 
-            let selectable_cell = CsvPreviewView::create_selectable_cell(
-                DisplayCellId::new(display_index, col),
-                cell_content,
-                cx.entity(),
-                selected_bg,
-                is_selected,
-                is_focused,
-                is_anchor,
-                this.settings.vertical_alignment,
-                this.settings.font_type,
-                cx,
-            );
+            let cell = if let Some(ctx) = this.cell_editor.as_ref()
+                && ctx.cell_to_edit == display_cell_id
+            {
+                div()
+                    .relative()
+                    .child(div().absolute().child(ctx.editor.clone()))
+                    .into_any_element()
+            } else {
+                CsvPreviewView::create_selectable_cell(
+                    display_cell_id,
+                    cell_content,
+                    cx.entity(),
+                    selected_bg,
+                    is_selected,
+                    is_focused,
+                    is_anchor,
+                    this.settings.vertical_alignment,
+                    this.settings.font_type,
+                    cx,
+                )
+            };
 
             elements.push(
                 div()
                     .size_full()
                     .when(this.settings.show_debug_info, |parent| {
-                        parent.when_some(pos, |parent, pos| {
+                        parent.when_some(span, |parent, pos| {
                             parent.child(
                                 div()
                                     .child(format!("Pos {}-{}", pos.start.offset, pos.end.offset))
@@ -237,7 +249,7 @@ impl CsvPreviewView {
                             )
                         })
                     })
-                    .child(selectable_cell)
+                    .child(cell)
                     .into_any_element(),
             );
         }
