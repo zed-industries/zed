@@ -14,8 +14,8 @@ use crate::{
 };
 
 impl CsvPreviewView {
-    /// Create header for data, which is orderable with text on the left and order button on the right
-    fn create_header_element_for_orderables(
+    /// Create header for data, which is orderable with text on the left and sort button on the right
+    fn create_header_element_with_sort_button(
         &self,
         header_text: String,
         cx: &mut Context<'_, CsvPreviewView>,
@@ -77,7 +77,7 @@ impl CsvPreviewView {
 
         headers.push(self.create_row_identitifier_header(cx));
 
-        // Add the actual CSV headers with ordering buttons
+        // Add the actual CSV headers with sort buttons
         for i in 0..(COLS - 1) {
             let header_text = self
                 .contents
@@ -86,7 +86,7 @@ impl CsvPreviewView {
                 .map(|h| h.display_value().as_ref().to_string())
                 .unwrap_or_else(|| format!("Col {}", i + 1));
 
-            headers.push(self.create_header_element_for_orderables(
+            headers.push(self.create_header_element_with_sort_button(
                 header_text,
                 cx,
                 AnyColumn::from(i),
@@ -166,10 +166,10 @@ impl CsvPreviewView {
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
-        let ordered_indices = this.get_ordered_indices();
+        let sorted_indices = this.get_sorted_indices();
 
-        // Get the actual row index from our ordered indices
-        let data_row = ordered_indices.get_data_row(DisplayRow::from(display_index))?;
+        // Get the actual row index from our sorted indices
+        let data_row = sorted_indices.get_data_row(DisplayRow::from(display_index))?;
         let row_index = data_row.get();
         let row = this.contents.rows.get(row_index)?;
 
@@ -199,7 +199,7 @@ impl CsvPreviewView {
             let is_selected = this.selection.is_cell_selected(
                 DisplayRow::from(display_index),
                 AnyColumn::from(col),
-                &ordered_indices,
+                &sorted_indices,
             );
 
             // Check if this cell is focused using display coordinates

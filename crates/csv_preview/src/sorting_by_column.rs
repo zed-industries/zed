@@ -11,26 +11,26 @@ use crate::{
 use std::collections::HashMap;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum OrderingDirection {
+pub enum SortDirection {
     Asc,
     Desc,
 }
 
 #[derive(Clone, Copy)]
-pub struct Ordering {
+pub struct SortingConfig {
     /// 0-based column index
     pub col_idx: AnyColumn,
-    /// Direction of ordering
-    pub direction: OrderingDirection,
+    /// Direction of sorting (asc/desc)
+    pub direction: SortDirection,
 }
 
-/// Ordered indices mapping display positions to data positions
+/// Sorted indices mapping display positions to data positions
 #[derive(Debug, Clone)]
-pub struct OrderedIndices {
+pub struct SortedIndices {
     mapping: HashMap<DisplayRow, DataRow>,
 }
 
-impl OrderedIndices {
+impl SortedIndices {
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
@@ -45,47 +45,47 @@ impl OrderedIndices {
     }
 }
 
-/// Generate ordered row indices based on current ordering settings.
+/// Generate sorted row indices based on current sorting settings.
 /// Returns a mapping from DisplayRow to DataRow.
-/// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
+/// Note: sorting.col_idx refers to CSV data columns (0-based), not display columns
 /// (display columns include the line number column at index 0)
-pub fn generate_ordered_indices(
-    ordering: Option<Ordering>,
+pub fn generate_sorted_indices(
+    sorting: Option<SortingConfig>,
     contents: &TableLikeContent,
-) -> OrderedIndices {
+) -> SortedIndices {
     let indices: Vec<usize> = (0..contents.rows.len()).collect();
 
-    let ordered_indices = if let Some(ordering) = ordering {
-        order_indices(contents, indices, ordering)
+    let sorted_indices = if let Some(sorting) = sorting {
+        sort_indices(contents, indices, sorting)
     } else {
         indices
     };
 
     // Create mapping from display position to data row
-    let mapping: HashMap<DisplayRow, DataRow> = ordered_indices
+    let mapping: HashMap<DisplayRow, DataRow> = sorted_indices
         .iter()
         .enumerate()
         .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), DataRow::from(data_idx)))
         .collect();
 
-    OrderedIndices { mapping }
+    SortedIndices { mapping }
 }
 
-fn order_indices(
+fn sort_indices(
     contents: &TableLikeContent,
     mut indices: Vec<usize>,
-    ordering: Ordering,
+    sorting: SortingConfig,
 ) -> Vec<usize> {
     indices.sort_by(|&a, &b| {
         let row_a = &contents.rows[a];
         let row_b = &contents.rows[b];
 
         let val_a = row_a
-            .get(ordering.col_idx.get())
+            .get(sorting.col_idx.get())
             .map(|s| s.display_value().as_ref())
             .unwrap_or("");
         let val_b = row_b
-            .get(ordering.col_idx.get())
+            .get(sorting.col_idx.get())
             .map(|s| s.display_value().as_ref())
             .unwrap_or("");
 
@@ -97,9 +97,9 @@ fn order_indices(
             _ => val_a.cmp(val_b),
         };
 
-        match ordering.direction {
-            OrderingDirection::Asc => cmp,
-            OrderingDirection::Desc => cmp.reverse(),
+        match sorting.direction {
+            SortDirection::Asc => cmp,
+            SortDirection::Desc => cmp.reverse(),
         }
     });
 
@@ -114,49 +114,49 @@ impl CsvPreviewView {
     ) -> Button {
         let sort_btn = Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
-            match self.ordering {
+            match self.sorting_cfg {
                 Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
-                    OrderingDirection::Asc => "↓",
-                    OrderingDirection::Desc => "↑",
+                    SortDirection::Asc => "↓",
+                    SortDirection::Desc => "↑",
                 },
                 _ => "↕", // Unsorted/available for sorting
             },
         )
         .size(ButtonSize::Compact)
-        .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
+        .style(if self.sorting_cfg.is_some_and(|o| o.col_idx == col_idx) {
             ButtonStyle::Filled
         } else {
             ButtonStyle::Subtle
         })
-        .tooltip(Tooltip::text(match self.ordering {
+        .tooltip(Tooltip::text(match self.sorting_cfg {
             Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
-                OrderingDirection::Asc => "Sorted A-Z. Click to sort Z-A",
-                OrderingDirection::Desc => "Sorted Z-A. Click to disable sorting",
+                SortDirection::Asc => "Sorted A-Z. Click to sort Z-A",
+                SortDirection::Desc => "Sorted Z-A. Click to disable sorting",
             },
             _ => "Not sorted. Click to sort A-Z",
         }))
         .on_click(cx.listener(move |this, _event, _window, cx| {
-            let new_ordering = match this.ordering {
+            let new_ordering = match this.sorting_cfg {
                 Some(ordering) if ordering.col_idx == col_idx => {
                     // Same column clicked - cycle through states
                     match ordering.direction {
-                        OrderingDirection::Asc => Some(Ordering {
+                        SortDirection::Asc => Some(SortingConfig {
                             col_idx,
-                            direction: OrderingDirection::Desc,
+                            direction: SortDirection::Desc,
                         }),
-                        OrderingDirection::Desc => None, // Clear sorting
+                        SortDirection::Desc => None, // Clear sorting
                     }
                 }
                 _ => {
                     // Different column or no sorting - start with ascending
-                    Some(Ordering {
+                    Some(SortingConfig {
                         col_idx,
-                        direction: OrderingDirection::Asc,
+                        direction: SortDirection::Asc,
                     })
                 }
             };
 
-            this.ordering = new_ordering;
+            this.sorting_cfg = new_ordering;
             this.update_ordered_indices();
             cx.notify();
         }));

@@ -54,7 +54,7 @@ impl CsvPreviewView {
         let (rows_data, selected_cells_count) = match copy_mode {
             CopyMode::Display => {
                 let selected_display_cells = self.selection.get_selected_display_cells(
-                    &self.ordered_indices,
+                    &self.sorted_indices,
                     max_rows,
                     max_cols,
                 );
@@ -70,7 +70,7 @@ impl CsvPreviewView {
                     let col_idx = cell_id.col.get();
 
                     // Convert display row to data row to get the correct cell content
-                    if let Some(data_row) = self.ordered_indices.get_data_row(cell_id.row) {
+                    if let Some(data_row) = self.sorted_indices.get_data_row(cell_id.row) {
                         if let Some(row) = (&full_content.rows).get(data_row.get()) {
                             let cell_content = row
                                 .get(col_idx)
@@ -90,7 +90,7 @@ impl CsvPreviewView {
             CopyMode::Data => {
                 let selected_data_cells =
                     self.selection
-                        .get_selected_cells(&self.ordered_indices, max_rows, max_cols);
+                        .get_selected_cells(&self.sorted_indices, max_rows, max_cols);
 
                 if selected_data_cells.is_empty() {
                     return;
