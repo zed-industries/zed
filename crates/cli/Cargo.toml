@@ -30,13 +30,13 @@ parking_lot.workspace = true
 paths.workspace = true
 release_channel.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 util.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
 walkdir = "2.5"
 
 [dev-dependencies]
-serde_json.workspace = true
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]

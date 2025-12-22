@@ -1,12 +1,13 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
-use cli::{CliRequest, CliResponse, ipc::IpcSender};
+use cli::{CliRequest, CliResponse, TerminalCommand, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use extension::ExtensionHostProxy;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
@@ -25,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use terminal::terminal_settings::TerminalSettings;
 use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
@@ -275,7 +277,7 @@ impl OpenListener {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
@@ -472,6 +474,317 @@ pub async fn handle_cli_connection(
                 let status = if open_workspace_result.is_err() { 1 } else { 0 };
                 responses.send(CliResponse::Exit { status }).log_err();
             }
+            CliRequest::Terminal {
+                command,
+                caller_terminal_id,
+            } => {
+                handle_terminal_command(command, caller_terminal_id, responses, cx).await;
+            }
+        }
+    }
+}
+
+async fn handle_terminal_command(
+    cmd: TerminalCommand,
+    caller_terminal_id: Option<u64>,
+    responses: IpcSender<CliResponse>,
+    cx: &mut AsyncApp,
+) {
+    let cli_enabled = cx
+        .update(|cx| TerminalSettings::get_global(cx).cli_enabled)
+        .unwrap_or(true);
+
+    if !cli_enabled {
+        responses
+            .send(CliResponse::Stderr {
+                message:
+                    "Terminal CLI commands are disabled. Enable them in Settings > Terminal > CLI."
+                        .to_string(),
+            })
+            .log_err();
+        responses.send(CliResponse::Exit { status: 1 }).log_err();
+        return;
+    }
+
+    let result = execute_terminal_command(cmd, caller_terminal_id, cx).await;
+
+    match result {
+        Ok(json_output) => {
+            responses
+                .send(CliResponse::Stdout {
+                    message: json_output,
+                })
+                .log_err();
+            responses.send(CliResponse::Exit { status: 0 }).log_err();
+        }
+        Err(e) => {
+            responses
+                .send(CliResponse::Stderr {
+                    message: e.to_string(),
+                })
+                .log_err();
+            responses.send(CliResponse::Exit { status: 1 }).log_err();
+        }
+    }
+}
+
+async fn execute_terminal_command(
+    cmd: TerminalCommand,
+    caller_terminal_id: Option<u64>,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    use extension::ExtensionTerminalProxy;
+
+    // Get the extension host proxy
+    let proxy = cx.update(|cx| ExtensionHostProxy::global(cx))?;
+
+    match cmd {
+        TerminalCommand::Create {
+            cwd,
+            command,
+            args,
+            env,
+            title,
+            in_pane_of,
+            activate,
+        } => {
+            // Resolve in_pane_of string to an entity_id if specified
+            let in_pane_of_entity_id = if let Some(ref terminal_id) = in_pane_of {
+                Some(proxy.resolve_terminal(terminal_id.clone()).await?)
+            } else {
+                None
+            };
+
+            let options = extension::TerminalOptions {
+                cwd: cwd.map(std::path::PathBuf::from),
+                command,
+                args,
+                env,
+                title_override: title,
+                in_pane_of: in_pane_of_entity_id,
+                activate,
+            };
+            let entity_id = proxy.create_terminal(options).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "entity_id": entity_id }),
+            )?)
+        }
+
+        TerminalCommand::Send { terminal, text } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            proxy.send_text(handle, text).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
+        }
+
+        TerminalCommand::Key { terminal, key } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            proxy.send_key(handle, key).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
+        }
+
+        TerminalCommand::Read { terminal } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            let content = proxy.read_screen(handle).await?;
+            Ok(serde_json::to_string(&serde_json::json!({
+                "lines": content.lines,
+                "cursor_row": content.cursor_row,
+                "cursor_col": content.cursor_col,
+            }))?)
+        }
+
+        TerminalCommand::List => {
+            let workspaces = proxy.list_terminals().await?;
+            let workspaces_json: Vec<serde_json::Value> = workspaces
+                .into_iter()
+                .map(|ws| {
+                    let terminals: Vec<serde_json::Value> = ws
+                        .terminals
+                        .into_iter()
+                        .map(|t| {
+                            let mut obj = serde_json::json!({
+                                "entity_id": t.entity_id,
+                                "title": t.title,
+                                "title_override": t.title_override,
+                                "is_active": t.is_active,
+                            });
+                            if caller_terminal_id == Some(t.entity_id) {
+                                obj["you_are_here"] = serde_json::json!(true);
+                            }
+                            obj
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "workspace_id": ws.workspace_id,
+                        "name": ws.name,
+                        "terminals": terminals,
+                    })
+                })
+                .collect();
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "workspaces": workspaces_json }),
+            )?)
+        }
+
+        TerminalCommand::Cwd { terminal } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            let cwd = proxy.get_cwd(handle).await?;
+            Ok(serde_json::to_string(&serde_json::json!({ "cwd": cwd }))?)
+        }
+
+        TerminalCommand::Idle { terminal } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            let idle = proxy.is_idle(handle).await?;
+            Ok(serde_json::to_string(&serde_json::json!({ "idle": idle }))?)
+        }
+
+        TerminalCommand::Close { terminal } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            proxy.close_terminal(handle).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
+        }
+
+        TerminalCommand::Split {
+            terminal,
+            direction,
+            title,
+        } => {
+            let entity_id = proxy.resolve_terminal(terminal).await?;
+            let split_direction = match direction.to_lowercase().as_str() {
+                "up" => extension::SplitDirection::Up,
+                "down" => extension::SplitDirection::Down,
+                "left" => extension::SplitDirection::Left,
+                "right" => extension::SplitDirection::Right,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Invalid direction '{}'. Must be one of: up, down, left, right",
+                        direction
+                    ));
+                }
+            };
+            let options = extension::TerminalOptions {
+                title_override: title,
+                ..Default::default()
+            };
+            let new_entity_id = proxy
+                .split_terminal(entity_id, split_direction, options)
+                .await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "entity_id": new_entity_id }),
+            )?)
+        }
+
+        TerminalCommand::Layout { mode } => {
+            // If a mode is provided, set the layout first
+            if let Some(mode) = mode {
+                proxy.set_layout(mode, caller_terminal_id).await?;
+            }
+
+            // Then return the current layout
+            let layout = proxy.get_layout().await?;
+            fn layout_member_to_json(
+                member: &extension::PaneLayoutMember,
+                caller_id: Option<u64>,
+            ) -> serde_json::Value {
+                match member {
+                    extension::PaneLayoutMember::Pane {
+                        pane_id,
+                        terminals,
+                        bounds,
+                    } => {
+                        let terminal_list: Vec<serde_json::Value> = terminals
+                            .iter()
+                            .map(|t| {
+                                let mut obj = serde_json::json!({
+                                    "entity_id": t.entity_id,
+                                    "title": t.title,
+                                    "title_override": t.title_override,
+                                    "is_active": t.is_active,
+                                });
+                                if caller_id == Some(t.entity_id) {
+                                    obj["you_are_here"] = serde_json::json!(true);
+                                }
+                                obj
+                            })
+                            .collect();
+                        let bounds_json = bounds.as_ref().map(|b| {
+                            serde_json::json!({
+                                "x": b.x,
+                                "y": b.y,
+                                "width": b.width,
+                                "height": b.height,
+                            })
+                        });
+                        serde_json::json!({
+                            "type": "pane",
+                            "pane_id": pane_id,
+                            "terminals": terminal_list,
+                            "bounds": bounds_json,
+                        })
+                    }
+                    extension::PaneLayoutMember::Axis { axis, members } => {
+                        let axis_str = match axis {
+                            extension::AxisDirection::Horizontal => "horizontal",
+                            extension::AxisDirection::Vertical => "vertical",
+                        };
+                        let children: Vec<serde_json::Value> = members
+                            .iter()
+                            .map(|m| layout_member_to_json(m, caller_id))
+                            .collect();
+                        serde_json::json!({
+                            "type": "axis",
+                            "axis": axis_str,
+                            "members": children,
+                        })
+                    }
+                }
+            }
+            let panel_bounds_json = layout.panel_bounds.as_ref().map(|b| {
+                serde_json::json!({
+                    "x": b.x,
+                    "y": b.y,
+                    "width": b.width,
+                    "height": b.height,
+                })
+            });
+            let layout_json = serde_json::json!({
+                "panel_bounds": panel_bounds_json,
+                "layout": layout_member_to_json(&layout.root, caller_terminal_id),
+            });
+            Ok(serde_json::to_string(&layout_json)?)
+        }
+
+        TerminalCommand::Focus { terminal } => {
+            let handle = proxy.resolve_terminal(terminal).await?;
+            proxy.focus_terminal(handle).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
+        }
+
+        TerminalCommand::Title { terminal, title } => {
+            let entity_id = proxy.resolve_terminal(terminal).await?;
+            proxy.set_title(entity_id, title).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
+        }
+
+        TerminalCommand::Move {
+            terminal,
+            to_pane_of,
+        } => {
+            let source_handle = proxy.resolve_terminal(terminal).await?;
+            let dest_handle = proxy.resolve_terminal(to_pane_of).await?;
+            proxy.move_terminal(source_handle, dest_handle).await?;
+            Ok(serde_json::to_string(
+                &serde_json::json!({ "success": true }),
+            )?)
         }
     }
 }

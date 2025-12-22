@@ -8,8 +8,10 @@
 )]
 
 use anyhow::{Context as _, Result};
-use clap::Parser;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use clap::{Parser, Subcommand};
+use cli::{
+    CliRequest, CliResponse, IpcHandshake, LayoutMode, TerminalCommand, ipc::IpcOneShotServer,
+};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -134,6 +136,210 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+
+    /// Subcommand to run
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Terminal management commands
+    Terminal {
+        #[command(subcommand)]
+        action: TerminalAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TerminalAction {
+    /// Create a new terminal in the active workspace
+    Create {
+        /// Working directory for the terminal
+        #[arg(long)]
+        cwd: Option<String>,
+
+        /// Command to run instead of default shell
+        #[arg(long)]
+        command: Option<String>,
+
+        /// Arguments for the command (use -- before args starting with -)
+        #[arg(long, num_args = 1.., allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        /// Environment variables (KEY=VALUE format)
+        #[arg(long, value_parser = parse_env_var, num_args = 1..)]
+        env: Vec<(String, String)>,
+
+        /// Title override for the terminal tab
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Terminal entity_id whose pane should be used for the new terminal (creates as tab)
+        #[arg(long)]
+        in_pane_of: Option<String>,
+
+        /// Create terminal as a background tab (do not activate)
+        #[arg(long)]
+        no_activate: bool,
+    },
+    /// Send text to a terminal
+    Send {
+        /// Terminal entity_id or title
+        terminal: String,
+        /// Text to send
+        text: String,
+    },
+    /// Send a key to a terminal (e.g., "enter", "ctrl-c")
+    Key {
+        /// Terminal entity_id or title
+        terminal: String,
+        /// Key name to send
+        key: String,
+    },
+    /// Read terminal screen content
+    Read {
+        /// Terminal entity_id or title
+        terminal: String,
+    },
+    /// List all terminals with their entity_id, title, and title_override
+    List,
+    /// Get the current working directory of a terminal
+    Cwd {
+        /// Terminal entity_id or title
+        terminal: String,
+    },
+    /// Check if a terminal is idle
+    Idle {
+        /// Terminal entity_id or title
+        terminal: String,
+    },
+    /// Close a terminal
+    Close {
+        /// Terminal entity_id or title
+        terminal: String,
+    },
+    /// Split a terminal pane in a given direction
+    Split {
+        /// Terminal entity_id or title
+        terminal: String,
+        /// Direction to split: up, down, left, right
+        #[arg(long, default_value = "right")]
+        direction: String,
+        /// Title override for the new terminal tab
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Get the full layout tree of the terminal panel, or reorganize it
+    Layout {
+        /// Arrange all terminals side-by-side in a horizontal row (vertical splits)
+        #[arg(long, group = "layout_mode")]
+        tile_vertical: bool,
+
+        /// Stack all terminals vertically in a column (horizontal splits)
+        #[arg(long, group = "layout_mode")]
+        tile_horizontal: bool,
+
+        /// Consolidate all terminals into a single pane as tabs
+        #[arg(long, group = "layout_mode")]
+        consolidate: bool,
+    },
+    /// Focus a specific terminal pane
+    Focus {
+        /// Terminal entity_id or title
+        terminal: String,
+    },
+    /// Set the title override for a terminal tab
+    Title {
+        /// Terminal entity_id or title
+        terminal: String,
+        /// The title to set (omit to clear the override)
+        #[arg(long)]
+        set: Option<String>,
+    },
+    /// Move a terminal to another pane
+    Move {
+        /// Terminal entity_id or title to move
+        terminal: String,
+        /// Terminal entity_id or title whose pane is the destination
+        #[arg(long)]
+        to_pane_of: String,
+    },
+}
+
+impl From<TerminalAction> for TerminalCommand {
+    fn from(action: TerminalAction) -> Self {
+        match action {
+            TerminalAction::Create {
+                cwd,
+                command,
+                args,
+                env,
+                title,
+                in_pane_of,
+                no_activate,
+            } => TerminalCommand::Create {
+                cwd,
+                command,
+                args,
+                env,
+                title,
+                in_pane_of,
+                activate: !no_activate,
+            },
+            TerminalAction::Send { terminal, text } => TerminalCommand::Send { terminal, text },
+            TerminalAction::Key { terminal, key } => TerminalCommand::Key { terminal, key },
+            TerminalAction::Read { terminal } => TerminalCommand::Read { terminal },
+            TerminalAction::List => TerminalCommand::List,
+            TerminalAction::Cwd { terminal } => TerminalCommand::Cwd { terminal },
+            TerminalAction::Idle { terminal } => TerminalCommand::Idle { terminal },
+            TerminalAction::Close { terminal } => TerminalCommand::Close { terminal },
+            TerminalAction::Split {
+                terminal,
+                direction,
+                title,
+            } => TerminalCommand::Split {
+                terminal,
+                direction,
+                title,
+            },
+            TerminalAction::Layout {
+                tile_vertical,
+                tile_horizontal,
+                consolidate,
+            } => {
+                let mode = if tile_vertical {
+                    Some(LayoutMode::TileVertical)
+                } else if tile_horizontal {
+                    Some(LayoutMode::TileHorizontal)
+                } else if consolidate {
+                    Some(LayoutMode::Consolidate)
+                } else {
+                    None
+                };
+                TerminalCommand::Layout { mode }
+            }
+            TerminalAction::Focus { terminal } => TerminalCommand::Focus { terminal },
+            TerminalAction::Title { terminal, set } => TerminalCommand::Title {
+                terminal,
+                title: set,
+            },
+            TerminalAction::Move {
+                terminal,
+                to_pane_of,
+            } => TerminalCommand::Move {
+                terminal,
+                to_pane_of,
+            },
+        }
+    }
+}
+
+fn parse_env_var(s: &str) -> Result<(String, String), String> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
 /// Parses a path containing a position (e.g. `path:line:column`)
@@ -401,6 +607,617 @@ mod tests {
         .unwrap();
         assert_eq!(result, expected);
     }
+
+    // Terminal CLI tests
+
+    #[test]
+    fn test_parse_env_var() {
+        // Valid KEY=VALUE
+        let result = parse_env_var("FOO=bar").unwrap();
+        assert_eq!(result, ("FOO".to_string(), "bar".to_string()));
+
+        // Value with = in it
+        let result = parse_env_var("FOO=bar=baz").unwrap();
+        assert_eq!(result, ("FOO".to_string(), "bar=baz".to_string()));
+
+        // Empty value
+        let result = parse_env_var("FOO=").unwrap();
+        assert_eq!(result, ("FOO".to_string(), "".to_string()));
+
+        // Missing =
+        let result = parse_env_var("FOOBAR");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no `=` found"));
+    }
+
+    #[test]
+    fn test_terminal_command_serialization() {
+        // Test roundtrip serialization of TerminalCommand variants
+        let commands = vec![
+            TerminalCommand::Create {
+                cwd: Some("/tmp".to_string()),
+                command: Some("bash".to_string()),
+                args: vec!["-c".to_string(), "echo hello".to_string()],
+                env: vec![("FOO".to_string(), "bar".to_string())],
+                title: Some("worker-1".to_string()),
+                in_pane_of: None,
+                activate: true,
+            },
+            TerminalCommand::Create {
+                cwd: None,
+                command: None,
+                args: vec![],
+                env: vec![],
+                title: None,
+                in_pane_of: Some("1".to_string()),
+                activate: false,
+            },
+            TerminalCommand::Send {
+                terminal: "12345".to_string(),
+                text: "hello world\n".to_string(),
+            },
+            TerminalCommand::Key {
+                terminal: "12345".to_string(),
+                key: "enter".to_string(),
+            },
+            TerminalCommand::Read {
+                terminal: "12345".to_string(),
+            },
+            TerminalCommand::List,
+            TerminalCommand::Cwd {
+                terminal: "12345".to_string(),
+            },
+            TerminalCommand::Idle {
+                terminal: "12345".to_string(),
+            },
+            TerminalCommand::Close {
+                terminal: "12345".to_string(),
+            },
+            TerminalCommand::Layout { mode: None },
+            TerminalCommand::Layout {
+                mode: Some(LayoutMode::TileVertical),
+            },
+            TerminalCommand::Layout {
+                mode: Some(LayoutMode::TileHorizontal),
+            },
+            TerminalCommand::Layout {
+                mode: Some(LayoutMode::Consolidate),
+            },
+            TerminalCommand::Title {
+                terminal: "12345".to_string(),
+                title: Some("Custom Title".to_string()),
+            },
+            TerminalCommand::Focus {
+                terminal: "12345".to_string(),
+            },
+            TerminalCommand::Move {
+                terminal: "12345".to_string(),
+                to_pane_of: "67890".to_string(),
+            },
+            TerminalCommand::Split {
+                terminal: "12345".to_string(),
+                direction: "right".to_string(),
+                title: Some("new-terminal".to_string()),
+            },
+        ];
+
+        for cmd in commands {
+            let serialized = serde_json::to_string(&cmd).unwrap();
+            let deserialized: TerminalCommand = serde_json::from_str(&serialized).unwrap();
+            let reserialized = serde_json::to_string(&deserialized).unwrap();
+            assert_eq!(serialized, reserialized);
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_create() {
+        // Basic create
+        let args = Args::try_parse_from(["zed", "terminal", "create"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Commands::Terminal {
+                action: TerminalAction::Create { .. }
+            })
+        ));
+
+        // Create with cwd
+        let args = Args::try_parse_from(["zed", "terminal", "create", "--cwd", "/tmp"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Create { cwd, .. },
+        }) = args.command
+        {
+            assert_eq!(cwd, Some("/tmp".to_string()));
+        } else {
+            panic!("Expected Terminal Create");
+        }
+
+        // Create with command and args
+        let args = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "create",
+            "--command",
+            "bash",
+            "--args",
+            "hello",
+            "world",
+        ])
+        .unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Create { command, args, .. },
+        }) = args.command
+        {
+            assert_eq!(command, Some("bash".to_string()));
+            assert_eq!(args, vec!["hello".to_string(), "world".to_string()]);
+        } else {
+            panic!("Expected Terminal Create");
+        }
+
+        // Create with args starting with hyphen (allow_hyphen_values)
+        let args = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "create",
+            "--command",
+            "bash",
+            "--args",
+            "-c",
+            "echo hello",
+        ])
+        .unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Create { command, args, .. },
+        }) = args.command
+        {
+            assert_eq!(command, Some("bash".to_string()));
+            assert_eq!(args, vec!["-c".to_string(), "echo hello".to_string()]);
+        } else {
+            panic!("Expected Terminal Create");
+        }
+
+        // Create with env
+        let args =
+            Args::try_parse_from(["zed", "terminal", "create", "--env", "FOO=bar", "BAZ=qux"])
+                .unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Create { env, .. },
+        }) = args.command
+        {
+            assert_eq!(
+                env,
+                vec![
+                    ("FOO".to_string(), "bar".to_string()),
+                    ("BAZ".to_string(), "qux".to_string())
+                ]
+            );
+        } else {
+            panic!("Expected Terminal Create");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_send() {
+        let args =
+            Args::try_parse_from(["zed", "terminal", "send", "12345", "hello world"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Send { terminal, text },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(text, "hello world");
+        } else {
+            panic!("Expected Terminal Send");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_key() {
+        let args = Args::try_parse_from(["zed", "terminal", "key", "12345", "enter"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Key { terminal, key },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(key, "enter");
+        } else {
+            panic!("Expected Terminal Key");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_read() {
+        let args = Args::try_parse_from(["zed", "terminal", "read", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Read { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+        } else {
+            panic!("Expected Terminal Read");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_list() {
+        let args = Args::try_parse_from(["zed", "terminal", "list"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Commands::Terminal {
+                action: TerminalAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_clap_terminal_cwd() {
+        let args = Args::try_parse_from(["zed", "terminal", "cwd", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Cwd { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+        } else {
+            panic!("Expected Terminal Cwd");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_idle() {
+        let args = Args::try_parse_from(["zed", "terminal", "idle", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Idle { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+        } else {
+            panic!("Expected Terminal Idle");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_close() {
+        let args = Args::try_parse_from(["zed", "terminal", "close", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Close { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+        } else {
+            panic!("Expected Terminal Close");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_by_name() {
+        // Terminal can now be identified by name (string) instead of just numeric handle
+        let args = Args::try_parse_from(["zed", "terminal", "read", "worker-1"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Read { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "worker-1");
+        } else {
+            panic!("Expected Terminal Read");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_split() {
+        // Basic split with default direction
+        let args = Args::try_parse_from(["zed", "terminal", "split", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Split {
+                    terminal,
+                    direction,
+                    title,
+                },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(direction, "right");
+            assert_eq!(title, None);
+        } else {
+            panic!("Expected Terminal Split");
+        }
+
+        // Split with direction and title
+        let args = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "split",
+            "worker-1",
+            "--direction",
+            "down",
+            "--title",
+            "my-new-terminal",
+        ])
+        .unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Split {
+                    terminal,
+                    direction,
+                    title,
+                },
+        }) = args.command
+        {
+            assert_eq!(terminal, "worker-1");
+            assert_eq!(direction, "down");
+            assert_eq!(title, Some("my-new-terminal".to_string()));
+        } else {
+            panic!("Expected Terminal Split");
+        }
+    }
+
+    #[test]
+    fn test_terminal_action_to_command_conversion() {
+        // Verify the conversion from TerminalAction to TerminalCommand works correctly
+        let action = TerminalAction::Create {
+            cwd: Some("/home/user".to_string()),
+            command: Some("zsh".to_string()),
+            args: vec!["-l".to_string()],
+            env: vec![("TERM".to_string(), "xterm-256color".to_string())],
+            title: Some("my-terminal".to_string()),
+            in_pane_of: None,
+            no_activate: false,
+        };
+
+        let cmd = match action {
+            TerminalAction::Create {
+                cwd,
+                command,
+                args,
+                env,
+                title,
+                in_pane_of,
+                no_activate,
+            } => TerminalCommand::Create {
+                cwd,
+                command,
+                args,
+                env,
+                title,
+                in_pane_of,
+                activate: !no_activate,
+            },
+            _ => panic!("Expected Create"),
+        };
+
+        if let TerminalCommand::Create {
+            cwd,
+            command,
+            args,
+            env,
+            title,
+            in_pane_of,
+            activate,
+        } = cmd
+        {
+            assert_eq!(cwd, Some("/home/user".to_string()));
+            assert_eq!(command, Some("zsh".to_string()));
+            assert_eq!(args, vec!["-l".to_string()]);
+            assert_eq!(
+                env,
+                vec![("TERM".to_string(), "xterm-256color".to_string())]
+            );
+            assert_eq!(title, Some("my-terminal".to_string()));
+            assert_eq!(in_pane_of, None);
+            assert!(activate);
+        } else {
+            panic!("Expected TerminalCommand::Create");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_title() {
+        // Test title command with --set
+        let args = Args::try_parse_from(["zed", "terminal", "title", "12345", "--set", "My Title"])
+            .unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Title { terminal, set },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(set, Some("My Title".to_string()));
+        } else {
+            panic!("Expected Terminal Title");
+        }
+
+        // Test title command without --set (clear)
+        let args = Args::try_parse_from(["zed", "terminal", "title", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Title { terminal, set },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(set, None);
+        } else {
+            panic!("Expected Terminal Title");
+        }
+    }
+
+    #[test]
+    fn test_clap_terminal_layout() {
+        // Layout with no mode flags (shows current layout)
+        let args = Args::try_parse_from(["zed", "terminal", "layout"]).unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Layout {
+                    tile_vertical,
+                    tile_horizontal,
+                    consolidate,
+                },
+        }) = args.command
+        {
+            assert!(!tile_vertical);
+            assert!(!tile_horizontal);
+            assert!(!consolidate);
+        } else {
+            panic!("Expected Terminal Layout");
+        }
+
+        // Layout with --tile-vertical
+        let args = Args::try_parse_from(["zed", "terminal", "layout", "--tile-vertical"]).unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Layout {
+                    tile_vertical,
+                    tile_horizontal,
+                    consolidate,
+                },
+        }) = args.command
+        {
+            assert!(tile_vertical);
+            assert!(!tile_horizontal);
+            assert!(!consolidate);
+        } else {
+            panic!("Expected Terminal Layout");
+        }
+
+        // Layout with --tile-horizontal
+        let args =
+            Args::try_parse_from(["zed", "terminal", "layout", "--tile-horizontal"]).unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Layout {
+                    tile_vertical,
+                    tile_horizontal,
+                    consolidate,
+                },
+        }) = args.command
+        {
+            assert!(!tile_vertical);
+            assert!(tile_horizontal);
+            assert!(!consolidate);
+        } else {
+            panic!("Expected Terminal Layout");
+        }
+
+        // Layout with --consolidate
+        let args = Args::try_parse_from(["zed", "terminal", "layout", "--consolidate"]).unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Layout {
+                    tile_vertical,
+                    tile_horizontal,
+                    consolidate,
+                },
+        }) = args.command
+        {
+            assert!(!tile_vertical);
+            assert!(!tile_horizontal);
+            assert!(consolidate);
+        } else {
+            panic!("Expected Terminal Layout");
+        }
+
+        // Multiple layout flags are mutually exclusive (should fail)
+        let result = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "layout",
+            "--tile-vertical",
+            "--tile-horizontal",
+        ]);
+        assert!(
+            result.is_err(),
+            "Multiple layout mode flags should be mutually exclusive"
+        );
+
+        let result = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "layout",
+            "--tile-vertical",
+            "--consolidate",
+        ]);
+        assert!(
+            result.is_err(),
+            "Multiple layout mode flags should be mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn test_clap_terminal_move() {
+        // Move terminal to another pane
+        let args =
+            Args::try_parse_from(["zed", "terminal", "move", "12345", "--to-pane-of", "67890"])
+                .unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Move {
+                    terminal,
+                    to_pane_of,
+                },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+            assert_eq!(to_pane_of, "67890");
+        } else {
+            panic!("Expected Terminal Move");
+        }
+
+        // Move by name
+        let args = Args::try_parse_from([
+            "zed",
+            "terminal",
+            "move",
+            "worker-1",
+            "--to-pane-of",
+            "worker-2",
+        ])
+        .unwrap();
+        if let Some(Commands::Terminal {
+            action:
+                TerminalAction::Move {
+                    terminal,
+                    to_pane_of,
+                },
+        }) = args.command
+        {
+            assert_eq!(terminal, "worker-1");
+            assert_eq!(to_pane_of, "worker-2");
+        } else {
+            panic!("Expected Terminal Move");
+        }
+
+        // --to-pane-of is required (should fail without it)
+        let result = Args::try_parse_from(["zed", "terminal", "move", "12345"]);
+        assert!(result.is_err(), "--to-pane-of is required for move command");
+    }
+
+    #[test]
+    fn test_clap_terminal_focus() {
+        // Focus by entity ID
+        let args = Args::try_parse_from(["zed", "terminal", "focus", "12345"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Focus { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "12345");
+        } else {
+            panic!("Expected Terminal Focus");
+        }
+
+        // Focus by name
+        let args = Args::try_parse_from(["zed", "terminal", "focus", "worker-1"]).unwrap();
+        if let Some(Commands::Terminal {
+            action: TerminalAction::Focus { terminal },
+        }) = args.command
+        {
+            assert_eq!(terminal, "worker-1");
+        } else {
+            panic!("Expected Terminal Focus");
+        }
+
+        // Terminal argument is required (should fail without it)
+        let result = Args::try_parse_from(["zed", "terminal", "focus"]);
+        assert!(
+            result.is_err(),
+            "Terminal argument is required for focus command"
+        );
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -524,6 +1341,11 @@ fn main() -> Result<()> {
             .context("Failed to execute uninstall script")?;
 
         std::process::exit(status.code().unwrap_or(1));
+    }
+
+    // Handle terminal subcommand
+    if let Some(Commands::Terminal { action }) = args.command {
+        return handle_terminal_command(action, &app, user_data_dir.as_deref());
     }
 
     let (server, server_name) =
@@ -729,6 +1551,46 @@ fn main() -> Result<()> {
     if let Some(exit_status) = exit_status.lock().take() {
         std::process::exit(exit_status);
     }
+    Ok(())
+}
+
+fn handle_terminal_command(
+    action: TerminalAction,
+    app: &impl InstalledApp,
+    user_data_dir: Option<&str>,
+) -> Result<()> {
+    let (server, server_name) =
+        IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
+    let url = format!("zed-cli://{server_name}");
+
+    let caller_terminal_id = env::var("ZED_TERM_ID")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+
+    let terminal_command: TerminalCommand = action.into();
+
+    // Launch Zed and connect
+    app.launch(url, user_data_dir)?;
+
+    let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+    let (tx, rx) = (handshake.requests, handshake.responses);
+
+    // Send terminal command with caller context
+    tx.send(CliRequest::Terminal {
+        command: terminal_command,
+        caller_terminal_id,
+    })?;
+
+    // Receive responses
+    while let Ok(response) = rx.recv() {
+        match response {
+            CliResponse::Ping => {}
+            CliResponse::Stdout { message } => println!("{message}"),
+            CliResponse::Stderr { message } => eprintln!("{message}"),
+            CliResponse::Exit { status } => std::process::exit(status),
+        }
+    }
+
     Ok(())
 }
 
@@ -1278,30 +2140,48 @@ mod mac_os {
                 }
 
                 Self::LocalPath { executable, .. } => {
-                    let executable_parent = executable
-                        .parent()
-                        .with_context(|| format!("Executable {executable:?} path has no parent"))?;
-                    let subprocess_stdout_file = fs::File::create(
-                        executable_parent.join("zed_dev.log"),
-                    )
-                    .with_context(|| format!("Log file creation in {executable_parent:?}"))?;
-                    let subprocess_stdin_file =
-                        subprocess_stdout_file.try_clone().with_context(|| {
-                            format!("Cloning descriptor for file {subprocess_stdout_file:?}")
-                        })?;
-                    let mut command = std::process::Command::new(executable);
-                    command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
-                    if let Some(dir) = user_data_dir {
-                        command.arg("--user-data-dir").arg(dir);
-                    }
-                    command
-                        .stderr(subprocess_stdout_file)
-                        .stdout(subprocess_stdin_file)
-                        .arg(url);
+                    use std::os::unix::net::UnixDatagram;
 
-                    command
-                        .spawn()
-                        .with_context(|| format!("Spawning {command:?}"))?;
+                    // Try to connect to existing instance via socket (same as Linux)
+                    let data_dir = user_data_dir
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| paths::data_dir().clone());
+                    let sock_path = data_dir.join(format!(
+                        "zed-{}.sock",
+                        *release_channel::RELEASE_CHANNEL_NAME
+                    ));
+
+                    let sock = UnixDatagram::unbound()?;
+                    if sock.connect(&sock_path).is_ok() {
+                        // Connected to existing instance, send URL
+                        sock.send(url.as_bytes())?;
+                    } else {
+                        // No existing instance, spawn new one
+                        let executable_parent = executable.parent().with_context(|| {
+                            format!("Executable {executable:?} path has no parent")
+                        })?;
+                        let subprocess_stdout_file = fs::File::create(
+                            executable_parent.join("zed_dev.log"),
+                        )
+                        .with_context(|| format!("Log file creation in {executable_parent:?}"))?;
+                        let subprocess_stdin_file =
+                            subprocess_stdout_file.try_clone().with_context(|| {
+                                format!("Cloning descriptor for file {subprocess_stdout_file:?}")
+                            })?;
+                        let mut command = std::process::Command::new(executable);
+                        command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                        if let Some(dir) = user_data_dir {
+                            command.arg("--user-data-dir").arg(dir);
+                        }
+                        command
+                            .stderr(subprocess_stdout_file)
+                            .stdout(subprocess_stdin_file)
+                            .arg(url);
+
+                        command
+                            .spawn()
+                            .with_context(|| format!("Spawning {command:?}"))?;
+                    }
                 }
             }
 

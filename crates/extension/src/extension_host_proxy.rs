@@ -33,6 +33,7 @@ pub struct ExtensionHostProxy {
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
+    terminal_proxy: RwLock<Option<Arc<dyn ExtensionTerminalProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -59,6 +60,7 @@ impl ExtensionHostProxy {
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
+            terminal_proxy: RwLock::default(),
         }
     }
 
@@ -103,6 +105,10 @@ impl ExtensionHostProxy {
         self.language_model_provider_proxy
             .write()
             .replace(Arc::new(proxy));
+    }
+
+    pub fn register_terminal_proxy(&self, proxy: impl ExtensionTerminalProxy) {
+        self.terminal_proxy.write().replace(Arc::new(proxy));
     }
 }
 
@@ -494,5 +500,167 @@ impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_language_model_provider(provider_id, cx)
+    }
+}
+
+pub trait ExtensionTerminalProxy: Send + Sync + 'static {
+    fn create_terminal(
+        &self,
+        options: crate::TerminalOptions,
+    ) -> Task<Result<crate::TerminalHandle>>;
+    fn send_text(&self, terminal: crate::TerminalHandle, text: String) -> Task<Result<()>>;
+    fn send_key(&self, terminal: crate::TerminalHandle, key: String) -> Task<Result<()>>;
+    fn read_screen(&self, terminal: crate::TerminalHandle) -> Task<Result<crate::TerminalContent>>;
+    fn split_terminal(
+        &self,
+        terminal: crate::TerminalHandle,
+        direction: crate::SplitDirection,
+        options: crate::TerminalOptions,
+    ) -> Task<Result<crate::TerminalHandle>>;
+    fn close_terminal(&self, terminal: crate::TerminalHandle) -> Task<Result<()>>;
+    fn list_terminals(&self) -> Task<Result<Vec<crate::WorkspaceTerminals>>>;
+    fn get_cwd(&self, terminal: crate::TerminalHandle) -> Task<Result<Option<String>>>;
+    fn is_idle(&self, terminal: crate::TerminalHandle) -> Task<Result<bool>>;
+    fn resolve_terminal(&self, identifier: String) -> Task<Result<crate::TerminalHandle>>;
+    fn get_layout(&self) -> Task<Result<crate::PaneLayout>>;
+    fn set_layout(
+        &self,
+        mode: crate::LayoutMode,
+        caller_terminal_id: Option<u64>,
+    ) -> Task<Result<()>>;
+    fn focus_terminal(&self, terminal: crate::TerminalHandle) -> Task<Result<()>>;
+    fn set_title(&self, terminal: crate::TerminalHandle, title: Option<String>)
+    -> Task<Result<()>>;
+    fn move_terminal(
+        &self,
+        source: crate::TerminalHandle,
+        destination: crate::TerminalHandle,
+    ) -> Task<Result<()>>;
+}
+
+impl ExtensionTerminalProxy for ExtensionHostProxy {
+    fn create_terminal(
+        &self,
+        options: crate::TerminalOptions,
+    ) -> Task<Result<crate::TerminalHandle>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.create_terminal(options)
+    }
+
+    fn send_text(&self, terminal: crate::TerminalHandle, text: String) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.send_text(terminal, text)
+    }
+
+    fn send_key(&self, terminal: crate::TerminalHandle, key: String) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.send_key(terminal, key)
+    }
+
+    fn read_screen(&self, terminal: crate::TerminalHandle) -> Task<Result<crate::TerminalContent>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.read_screen(terminal)
+    }
+
+    fn split_terminal(
+        &self,
+        terminal: crate::TerminalHandle,
+        direction: crate::SplitDirection,
+        options: crate::TerminalOptions,
+    ) -> Task<Result<crate::TerminalHandle>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.split_terminal(terminal, direction, options)
+    }
+
+    fn close_terminal(&self, terminal: crate::TerminalHandle) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.close_terminal(terminal)
+    }
+
+    fn list_terminals(&self) -> Task<Result<Vec<crate::WorkspaceTerminals>>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.list_terminals()
+    }
+
+    fn get_cwd(&self, terminal: crate::TerminalHandle) -> Task<Result<Option<String>>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.get_cwd(terminal)
+    }
+
+    fn is_idle(&self, terminal: crate::TerminalHandle) -> Task<Result<bool>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.is_idle(terminal)
+    }
+
+    fn resolve_terminal(&self, identifier: String) -> Task<Result<crate::TerminalHandle>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.resolve_terminal(identifier)
+    }
+
+    fn get_layout(&self) -> Task<Result<crate::PaneLayout>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.get_layout()
+    }
+
+    fn set_layout(
+        &self,
+        mode: crate::LayoutMode,
+        caller_terminal_id: Option<u64>,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.set_layout(mode, caller_terminal_id)
+    }
+
+    fn focus_terminal(&self, terminal: crate::TerminalHandle) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.focus_terminal(terminal)
+    }
+
+    fn set_title(
+        &self,
+        terminal: crate::TerminalHandle,
+        title: Option<String>,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.set_title(terminal, title)
+    }
+
+    fn move_terminal(
+        &self,
+        source: crate::TerminalHandle,
+        destination: crate::TerminalHandle,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.terminal_proxy.read().clone() else {
+            return Task::ready(Err(anyhow::anyhow!("Terminal proxy not registered")));
+        };
+        proxy.move_terminal(source, destination)
     }
 }

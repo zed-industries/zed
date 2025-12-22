@@ -8,6 +8,7 @@ world extension {
     import platform;
     import process;
     import nodejs;
+    import terminal;
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};

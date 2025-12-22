@@ -2818,6 +2818,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    None,
                     PathStyle::local(),
                 )
             })

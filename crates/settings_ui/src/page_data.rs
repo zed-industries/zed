@@ -6247,6 +6247,30 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
+    fn cli_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("CLI"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "External CLI Control",
+                description: "Allow the `zed` CLI to create, read, and control terminal instances.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.cli_enabled"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.cli_enabled.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .cli_enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn toolbar_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
@@ -6322,6 +6346,7 @@ fn terminal_page() -> SettingsPage {
             behavior_settings_section(),
             layout_settings_section(),
             advanced_settings_section(),
+            cli_section(),
             toolbar_section(),
             scrollbar_section(),
         ],

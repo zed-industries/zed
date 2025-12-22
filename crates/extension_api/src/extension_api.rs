@@ -3,6 +3,7 @@
 pub mod http_client;
 pub mod process;
 pub mod settings;
+pub mod terminal;
 
 use core::fmt;
 

@@ -1,5 +1,7 @@
 use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
+use extension::LayoutMode;
+
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
@@ -11,9 +13,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
-    Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled,
-    Task, WeakEntity, Window, actions,
+    Action, AnyView, App, AsyncApp, AsyncWindowContext, Axis, Bounds, Context, Corner, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
+    Render, Styled, Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
@@ -35,6 +37,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
+    pane_group::{Member, PaneAxis},
 };
 
 use anyhow::{Result, anyhow};
@@ -72,6 +75,44 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+}
+
+/// Information about a terminal in a pane for layout purposes.
+#[derive(Debug, Clone)]
+pub struct TerminalLayoutInfo {
+    /// The GPUI entity ID (stable identifier).
+    pub entity_id: u64,
+    /// The computed title (what appears in the tab).
+    pub title: String,
+    /// The user-set title override, if any.
+    pub title_override: Option<String>,
+    /// Whether this terminal is the active item in its pane.
+    pub is_active: bool,
+}
+
+/// Information about terminals in a pane for layout purposes.
+#[derive(Debug, Clone)]
+pub struct TerminalPaneLayoutInfo {
+    /// A stable identifier for this pane for direct reference.
+    pub pane_id: Option<String>,
+    /// Terminal information.
+    pub terminals: Vec<TerminalLayoutInfo>,
+    /// Bounding box of this pane in pixels.
+    pub bounds: Option<Bounds<Pixels>>,
+}
+
+/// A node in the terminal panel layout tree.
+#[derive(Debug, Clone)]
+pub enum TerminalPanelLayoutNode {
+    /// A pane containing terminals.
+    Pane(TerminalPaneLayoutInfo),
+    /// An axis with child members.
+    Axis {
+        /// The axis direction.
+        axis: Axis,
+        /// Child members.
+        members: Vec<TerminalPanelLayoutNode>,
+    },
 }
 
 pub struct TerminalPanel {
@@ -810,7 +851,93 @@ impl TerminalPanel {
 
                 pane.update(cx, |pane, cx| {
                     let focus = matches!(reveal_strategy, RevealStrategy::Always);
-                    pane.add_item(terminal_view, true, focus, None, window, cx);
+                    if matches!(reveal_strategy, RevealStrategy::Never) {
+                        pane.add_item_behind(terminal_view, false, false, None, window, cx);
+                    } else {
+                        pane.add_item(terminal_view, true, focus, None, window, cx);
+                    }
+                });
+
+                Ok(terminal.downgrade())
+            })?;
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.pending_terminals_to_add =
+                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                terminal_panel.serialize(cx)
+            })?;
+            result
+        })
+    }
+
+    /// Creates a terminal task with optional pane targeting.
+    ///
+    /// If `target_terminal` is Some, the new terminal will be created in the same pane
+    /// as the target terminal. Otherwise, it uses the active pane.
+    ///
+    /// If `activate` is false, the terminal is created as a background tab.
+    pub fn add_terminal_task_in_pane(
+        &mut self,
+        task: SpawnInTerminal,
+        target_terminal: Option<WeakEntity<Terminal>>,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
+        let workspace = self.workspace.clone();
+
+        // Find the target pane based on the target terminal
+        let pane: Entity<Pane> = if let Some(weak_target) = target_terminal {
+            if let Some(target) = weak_target.upgrade() {
+                let target_id = target.entity_id();
+                // Search all panes in the terminal panel for the target terminal
+                let found_pane = self.center.panes().into_iter().find(|pane| {
+                    pane.read(cx).items().any(|item| {
+                        item.downcast::<TerminalView>()
+                            .map(|tv| tv.read(cx).terminal().entity_id() == target_id)
+                            .unwrap_or(false)
+                    })
+                });
+                if let Some(p) = found_pane {
+                    p.clone()
+                } else {
+                    self.active_pane.clone()
+                }
+            } else {
+                self.active_pane.clone()
+            }
+        } else {
+            self.active_pane.clone()
+        };
+
+        cx.spawn_in(window, async move |terminal_panel, cx| {
+            if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
+                anyhow::bail!("terminal not yet supported for remote projects");
+            }
+            terminal_panel.update(cx, |terminal_panel, _| {
+                terminal_panel.pending_terminals_to_add += 1;
+            })?;
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
+            let terminal = project
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
+                .await?;
+            let result = workspace.update_in(cx, |workspace, window, cx| {
+                let terminal_view = Box::new(cx.new(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.weak_handle(),
+                        workspace.database_id(),
+                        workspace.project().downgrade(),
+                        window,
+                        cx,
+                    )
+                }));
+
+                pane.update(cx, |pane: &mut Pane, cx| {
+                    if activate {
+                        pane.add_item(terminal_view, true, true, None, window, cx);
+                    } else {
+                        pane.add_item_behind(terminal_view, false, false, None, window, cx);
+                    }
                 });
 
                 Ok(terminal.downgrade())
@@ -898,7 +1025,11 @@ impl TerminalPanel {
 
                         pane.update(cx, |pane, cx| {
                             let focus = matches!(reveal_strategy, RevealStrategy::Always);
-                            pane.add_item(terminal_view, true, focus, None, window, cx);
+                            if matches!(reveal_strategy, RevealStrategy::Never) {
+                                pane.add_item_behind(terminal_view, false, false, None, window, cx);
+                            } else {
+                                pane.add_item(terminal_view, true, focus, None, window, cx);
+                            }
                         });
 
                         Ok(terminal.downgrade())
@@ -1111,6 +1242,152 @@ impl TerminalPanel {
             .collect()
     }
 
+    /// Returns the bounding box for a pane in the terminal panel.
+    pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
+        self.center.bounding_box_for_pane(pane)
+    }
+
+    /// Returns the layout tree of the terminal panel.
+    /// The callback receives each pane and should return terminal info for that pane.
+    pub fn get_layout_tree<F>(&self, mut get_pane_info: F, cx: &App) -> TerminalPanelLayoutNode
+    where
+        F: FnMut(&Entity<Pane>, Option<Bounds<Pixels>>, &App) -> TerminalPaneLayoutInfo,
+    {
+        self.build_layout_node(&self.center.root, &mut get_pane_info, cx)
+    }
+
+    fn build_layout_node<F>(
+        &self,
+        member: &Member,
+        get_pane_info: &mut F,
+        cx: &App,
+    ) -> TerminalPanelLayoutNode
+    where
+        F: FnMut(&Entity<Pane>, Option<Bounds<Pixels>>, &App) -> TerminalPaneLayoutInfo,
+    {
+        match member {
+            Member::Pane(pane) => {
+                let bounds = self.center.bounding_box_for_pane(pane);
+                let info = get_pane_info(pane, bounds, cx);
+                TerminalPanelLayoutNode::Pane(info)
+            }
+            Member::Axis(axis) => {
+                let children: Vec<_> = axis
+                    .members
+                    .iter()
+                    .map(|m| self.build_layout_node(m, get_pane_info, cx))
+                    .collect();
+                TerminalPanelLayoutNode::Axis {
+                    axis: axis.axis,
+                    members: children,
+                }
+            }
+        }
+    }
+
+    /// Returns the combined bounds of all panes in the terminal panel.
+    /// This is the outer bounding box that encompasses the entire panel.
+    pub fn get_panel_bounds(&self) -> Option<Bounds<Pixels>> {
+        let panes = self.center.panes();
+        let mut combined: Option<Bounds<Pixels>> = None;
+
+        for pane in panes {
+            if let Some(pane_bounds) = self.center.bounding_box_for_pane(pane) {
+                combined = Some(match combined {
+                    Some(existing) => existing.union(&pane_bounds),
+                    None => pane_bounds,
+                });
+            }
+        }
+
+        combined
+    }
+
+    /// Splits a pane and creates a new terminal with the given task.
+    pub fn split_terminal_task(
+        &mut self,
+        source_pane: Entity<Pane>,
+        task: SpawnInTerminal,
+        direction: SplitDirection,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |terminal_panel, cx| {
+            if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
+                anyhow::bail!("terminal not yet supported for remote projects");
+            }
+
+            terminal_panel.update(cx, |terminal_panel, _| {
+                terminal_panel.pending_terminals_to_add += 1;
+            })?;
+
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
+            let terminal = project
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))?
+                .await?;
+
+            let (weak_terminal, new_pane) =
+                workspace.update_in(cx, |workspace, window, cx| {
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        let terminal_view = Box::new(cx.new(|cx| {
+                            TerminalView::new(
+                                terminal.clone(),
+                                terminal_panel.workspace.clone(),
+                                workspace.database_id(),
+                                workspace.project().downgrade(),
+                                window,
+                                cx,
+                            )
+                        }));
+
+                        let is_zoomed = source_pane.read(cx).is_zoomed();
+                        let new_pane = new_terminal_pane(
+                            terminal_panel.workspace.clone(),
+                            workspace.project().clone(),
+                            is_zoomed,
+                            window,
+                            cx,
+                        );
+
+                        terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                        new_pane.update(cx, |pane, cx| {
+                            pane.add_item(terminal_view, true, false, None, window, cx);
+                        });
+
+                        terminal_panel
+                            .center
+                            .split(&source_pane, &new_pane, direction, cx)
+                            .log_err();
+
+                        (terminal.downgrade(), new_pane)
+                    })
+                })??;
+
+            workspace.update_in(cx, |workspace, window, cx| match reveal_strategy {
+                RevealStrategy::Always => {
+                    workspace.focus_panel::<Self>(window, cx);
+                    window.focus(&new_pane.focus_handle(cx), cx);
+                }
+                RevealStrategy::NoFocus => {
+                    workspace.open_panel::<Self>(window, cx);
+                }
+                RevealStrategy::Never => {}
+            })?;
+
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.pending_terminals_to_add =
+                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                terminal_panel.serialize(cx)
+            })?;
+
+            Ok(weak_terminal)
+        })
+    }
+    }
+
     fn is_enabled(&self, cx: &App) -> bool {
         self.workspace
             .upgrade()
@@ -1156,6 +1433,180 @@ impl TerminalPanel {
         {
             cx.notify();
         }
+    }
+
+    /// Reorganizes all terminals according to the specified layout mode.
+    ///
+    /// - **TileVertical**: Arranges all terminals side-by-side in a horizontal row
+    /// - **TileHorizontal**: Stacks all terminals vertically in a column
+    /// - **Consolidate**: Moves all terminals into a single pane as tabs
+    ///
+    /// If `caller_terminal_id` is provided, that terminal will be activated after
+    /// consolidation (used to auto-focus the terminal that initiated the CLI command).
+    pub fn set_layout(
+        &mut self,
+        mode: LayoutMode,
+        caller_terminal_id: Option<u64>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if self.workspace.upgrade().is_none() {
+            return Err(anyhow!("Workspace no longer exists"));
+        }
+
+        // Collect all terminal views from all panes
+        let panes = self.center.panes().into_iter().cloned().collect::<Vec<_>>();
+        let mut terminal_views: Vec<Box<dyn workspace::ItemHandle>> = Vec::new();
+
+        for pane in &panes {
+            for item in pane.read(cx).items() {
+                if item.downcast::<TerminalView>().is_some() {
+                    terminal_views.push(item.boxed_clone());
+                }
+            }
+        }
+
+        if terminal_views.is_empty() {
+            return Ok(());
+        }
+
+        match mode {
+            LayoutMode::Consolidate => {
+                // Move all terminals to the first pane as tabs
+                let target_pane = self.center.first_pane();
+
+                // Remove terminals from their current panes and add to target pane
+                for pane in &panes {
+                    if pane != &target_pane {
+                        let items_to_move: Vec<_> = pane
+                            .read(cx)
+                            .items()
+                            .filter(|item| item.downcast::<TerminalView>().is_some())
+                            .map(|item| (item.item_id(), item.boxed_clone()))
+                            .collect();
+
+                        for (item_id, item) in items_to_move {
+                            // Move item to target pane
+                            pane.update(cx, |pane, cx| {
+                                pane.remove_item(item_id, false, false, window, cx);
+                            });
+                            target_pane.update(cx, |pane, cx| {
+                                pane.add_item(item, false, false, None, window, cx);
+                            });
+                        }
+                    }
+                }
+
+                // Remove empty panes (except the target pane)
+                for pane in panes {
+                    if pane != target_pane && pane.read(cx).items_len() == 0 {
+                        self.center.remove(&pane, cx).ok();
+                    }
+                }
+
+                self.active_pane = target_pane.clone();
+
+                // If we have a caller_terminal_id, activate that terminal in the target pane
+                if let Some(caller_id) = caller_terminal_id {
+                    target_pane.update(cx, |pane, cx| {
+                        let target_index = pane.items().enumerate().find_map(|(index, item)| {
+                            if let Some(terminal_view) = item.downcast::<TerminalView>() {
+                                let terminal_entity_id =
+                                    terminal_view.read(cx).terminal().entity_id().as_u64();
+                                if terminal_entity_id == caller_id {
+                                    return Some(index);
+                                }
+                            }
+                            None
+                        });
+
+                        if let Some(index) = target_index {
+                            pane.activate_item(index, false, false, window, cx);
+                        }
+                    });
+                }
+            }
+
+            LayoutMode::TileVertical | LayoutMode::TileHorizontal => {
+                let axis = match mode {
+                    LayoutMode::TileVertical => Axis::Horizontal,
+                    LayoutMode::TileHorizontal => Axis::Vertical,
+                    _ => unreachable!(),
+                };
+
+                // Remove all terminals from their panes first
+                let mut collected_items: Vec<Box<dyn workspace::ItemHandle>> = Vec::new();
+                for pane in &panes {
+                    let items_to_remove: Vec<_> = pane
+                        .read(cx)
+                        .items()
+                        .filter(|item| item.downcast::<TerminalView>().is_some())
+                        .map(|item| (item.item_id(), item.boxed_clone()))
+                        .collect();
+
+                    for (item_id, item) in items_to_remove {
+                        pane.update(cx, |pane, cx| {
+                            pane.remove_item(item_id, false, false, window, cx);
+                        });
+                        collected_items.push(item);
+                    }
+                }
+
+                if collected_items.is_empty() {
+                    return Ok(());
+                }
+
+                // Create new panes for each terminal
+                let mut new_members: Vec<Member> = Vec::new();
+
+                for (index, item) in collected_items.into_iter().enumerate() {
+                    if index == 0 {
+                        // Reuse the first pane
+                        let first_pane = self.center.first_pane();
+                        first_pane.update(cx, |pane, cx| {
+                            pane.add_item(item, true, false, None, window, cx);
+                        });
+                        new_members.push(Member::Pane(first_pane));
+                    } else {
+                        // Create a new pane for each additional terminal
+                        let new_pane = new_terminal_pane(
+                            self.workspace.clone(),
+                            project.clone(),
+                            false,
+                            window,
+                            cx,
+                        );
+                        self.apply_tab_bar_buttons(&new_pane, cx);
+                        new_pane.update(cx, |pane, cx| {
+                            pane.add_item(item, true, false, None, window, cx);
+                        });
+                        new_members.push(Member::Pane(new_pane));
+                    }
+                }
+
+                // Build the new layout tree
+                let new_root = if new_members.len() == 1 {
+                    new_members.pop().unwrap()
+                } else {
+                    Member::Axis(PaneAxis::new(axis, new_members))
+                };
+
+                // Replace the center with the new layout
+                self.center = PaneGroup::with_root(new_root);
+                self.active_pane = self.center.first_pane();
+            }
+        }
+
+        self.center.mark_positions(cx);
+        // Spawn serialization to avoid reading workspace while it's being updated
+        cx.spawn(async |this, cx| {
+            this.update(cx, |this, cx| this.serialize(cx)).ok();
+        })
+        .detach();
+        cx.notify();
+
+        Ok(())
     }
 }
 

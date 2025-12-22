@@ -321,25 +321,24 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
+    // Try to listen for CLI connections (for terminal commands, etc.)
+    // On Dev channel, we allow multiple instances but still want CLI connectivity
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+    let cli_listen_result = crate::zed::listen_for_cli_connections(open_listener.clone());
+
     let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
     {
         false
     } else {
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
         {
-            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+            cli_listen_result.is_err()
         }
 
         #[cfg(target_os = "windows")]
         {
             !crate::zed::windows_only_instance::handle_single_instance(open_listener.clone(), &args)
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            use zed::mac_only_instance::*;
-            ensure_only_instance() != IsOnlyInstance::Yes
         }
     };
     if failed_single_instance_check {
@@ -591,9 +590,14 @@ fn main() {
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         eager_load_active_theme_and_icon_theme(fs.clone(), cx);
         theme_extension::init(
-            extension_host_proxy,
+            extension_host_proxy.clone(),
             ThemeRegistry::global(cx),
             cx.background_executor().clone(),
+        );
+        terminal_extension::init(
+            extension_host_proxy,
+            Arc::new(ActiveWorkspaceTerminalProvider),
+            cx,
         );
         command_palette::init(cx);
         let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
@@ -1753,5 +1757,623 @@ fn check_for_conpty_dll() {
         }
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
+}
+
+struct ActiveWorkspaceTerminalProvider;
+
+impl ActiveWorkspaceTerminalProvider {
+    fn get_workspace(cx: &gpui::App) -> Option<gpui::WindowHandle<Workspace>> {
+        // First try the active window
+        if let Some(active_window) = cx.active_window() {
+            if let Some(workspace_handle) = active_window.downcast::<Workspace>() {
+                return Some(workspace_handle);
+            }
+        }
+
+        // Fall back to the first available workspace (for CLI access when no window is active)
+        for window in cx.windows() {
+            if let Some(workspace_handle) = window.downcast::<Workspace>() {
+                return Some(workspace_handle);
+            }
+        }
+
+        None
+    }
+}
+
+impl terminal_extension::TerminalProvider for ActiveWorkspaceTerminalProvider {
+    fn active_project(&self, cx: &gpui::App) -> Option<gpui::Entity<project::Project>> {
+        let workspace = Self::get_workspace(cx)?;
+        let workspace_ref = workspace.read(cx).ok()?;
+        Some(workspace_ref.project().clone())
+    }
+
+    fn create_terminal(
+        &self,
+        spawn_task: task::SpawnInTerminal,
+        target_terminal: Option<gpui::WeakEntity<terminal::Terminal>>,
+        activate: bool,
+        cx: &mut gpui::App,
+    ) -> Option<gpui::Task<anyhow::Result<gpui::WeakEntity<terminal::Terminal>>>> {
+        let workspace_window = Self::get_workspace(cx)?;
+        let workspace_ref = workspace_window.read(cx).ok()?;
+        let terminal_panel =
+            workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)?;
+
+        let task = workspace_window
+            .update(cx, |_workspace, window, cx| {
+                terminal_panel.update(cx, |panel, cx| {
+                    panel.add_terminal_task_in_pane(
+                        spawn_task,
+                        target_terminal,
+                        activate,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .ok()?;
+
+        Some(task)
+    }
+
+    fn close_terminal(
+        &self,
+        terminal: gpui::WeakEntity<terminal::Terminal>,
+        cx: &mut gpui::App,
+    ) -> anyhow::Result<()> {
+        use anyhow::anyhow;
+        use gpui::EntityId;
+
+        let workspace_window =
+            Self::get_workspace(cx).ok_or_else(|| anyhow!("No workspace available"))?;
+
+        let terminal_entity = terminal
+            .upgrade()
+            .ok_or_else(|| anyhow!("Terminal no longer exists"))?;
+
+        let terminal_id = terminal_entity.entity_id();
+
+        workspace_window
+            .update(cx, |workspace: &mut Workspace, window, cx| {
+                fn find_and_close_in_pane(
+                    pane: &gpui::Entity<workspace::Pane>,
+                    terminal_id: EntityId,
+                    window: &mut gpui::Window,
+                    cx: &mut gpui::App,
+                ) -> bool {
+                    let items_to_check: Vec<_> = pane
+                        .read(cx)
+                        .items()
+                        .filter_map(|item| {
+                            let tv = item.act_as::<terminal_view::TerminalView>(cx)?;
+                            Some((item.item_id(), tv))
+                        })
+                        .collect();
+
+                    for (item_id, terminal_view) in items_to_check {
+                        if terminal_view.read(cx).terminal().entity_id() == terminal_id {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(
+                                    item_id,
+                                    workspace::SaveIntent::Skip,
+                                    window,
+                                    cx,
+                                )
+                                .detach();
+                            });
+                            return true;
+                        }
+                    }
+                    false
+                }
+
+                for pane in workspace.panes() {
+                    if find_and_close_in_pane(pane, terminal_id, window, cx) {
+                        return Ok(());
+                    }
+                }
+
+                if let Some(terminal_panel) =
+                    workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+                {
+                    if let Some(pane) = terminal_panel.read(cx).pane() {
+                        if find_and_close_in_pane(&pane, terminal_id, window, cx) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                Err(anyhow!("Terminal view not found in any pane"))
+            })
+            .map_err(|e| anyhow!("Failed to access workspace: {}", e))?
+    }
+
+    fn find_terminal_by_id(
+        &self,
+        entity_id: u64,
+        cx: &gpui::App,
+    ) -> Option<gpui::WeakEntity<terminal::Terminal>> {
+        for window in cx.windows() {
+            let Some(workspace_handle) = window.downcast::<Workspace>() else {
+                continue;
+            };
+            let Ok(workspace_ref) = workspace_handle.read(cx) else {
+                continue;
+            };
+            let Some(terminal_panel) =
+                workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+            else {
+                continue;
+            };
+
+            let terminal_panel_ref = terminal_panel.read(cx);
+            for pane in terminal_panel_ref.panes() {
+                for item in pane.read(cx).items() {
+                    if let Some(terminal_view) = item.act_as::<terminal_view::TerminalView>(cx) {
+                        let terminal = terminal_view.read(cx).terminal();
+                        if terminal.entity_id().as_non_zero_u64().get() == entity_id {
+                            return Some(terminal.downgrade());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn list_all_workspaces_terminals(&self, cx: &gpui::App) -> Vec<extension::WorkspaceTerminals> {
+        let mut result = Vec::new();
+
+        for window in cx.windows() {
+            let Some(workspace_handle) = window.downcast::<Workspace>() else {
+                continue;
+            };
+            let Ok(workspace_entity) = workspace_handle.entity(cx) else {
+                continue;
+            };
+            let workspace_ref = workspace_entity.read(cx);
+            let Some(terminal_panel) =
+                workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+            else {
+                continue;
+            };
+
+            let workspace_id = workspace_entity.entity_id().as_non_zero_u64().get();
+            let name = workspace_ref
+                .project()
+                .read(cx)
+                .worktree_root_names(cx)
+                .next()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "Untitled".to_string());
+
+            let mut terminals = Vec::new();
+            let terminal_panel_ref = terminal_panel.read(cx);
+            for pane in terminal_panel_ref.panes() {
+                let pane_ref = pane.read(cx);
+                let active_item_index = pane_ref.active_item_index();
+                for (index, item) in pane_ref.items().enumerate() {
+                    if let Some(terminal_view) = item.act_as::<terminal_view::TerminalView>(cx) {
+                        let terminal = terminal_view.read(cx).terminal();
+                        let term = terminal.read(cx);
+                        terminals.push(extension::TerminalInfo {
+                            entity_id: terminal.entity_id().as_non_zero_u64().get(),
+                            title: term.title(false),
+                            title_override: term.title_override().map(String::from),
+                            is_active: index == active_item_index,
+                        });
+                    }
+                }
+            }
+
+            result.push(extension::WorkspaceTerminals {
+                workspace_id,
+                name,
+                terminals,
+            });
+        }
+
+        result
+    }
+
+    fn split_terminal(
+        &self,
+        terminal: gpui::WeakEntity<terminal::Terminal>,
+        direction: extension::SplitDirection,
+        spawn_task: task::SpawnInTerminal,
+        cx: &mut gpui::App,
+    ) -> Option<gpui::Task<anyhow::Result<gpui::WeakEntity<terminal::Terminal>>>> {
+        use anyhow::anyhow;
+        use workspace::SplitDirection as WsSplitDirection;
+
+        let workspace_window = Self::get_workspace(cx)?;
+        let workspace_ref = workspace_window.read(cx).ok()?;
+        let terminal_panel =
+            workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)?;
+
+        let terminal_entity = terminal.upgrade()?;
+        let terminal_id = terminal_entity.entity_id();
+
+        let ws_direction = match direction {
+            extension::SplitDirection::Up => WsSplitDirection::Up,
+            extension::SplitDirection::Down => WsSplitDirection::Down,
+            extension::SplitDirection::Left => WsSplitDirection::Left,
+            extension::SplitDirection::Right => WsSplitDirection::Right,
+        };
+
+        let result = workspace_window
+            .update(cx, |_workspace, window, cx| {
+                terminal_panel.update(cx, |panel, cx| {
+                    // First find the pane containing the terminal
+                    let target_pane = panel.panes().into_iter().find(|pane| {
+                        pane.read(cx).items().any(|item| {
+                            item.act_as::<terminal_view::TerminalView>(cx)
+                                .map(|tv| tv.read(cx).terminal().entity_id() == terminal_id)
+                                .unwrap_or(false)
+                        })
+                    });
+
+                    if let Some(pane) = target_pane {
+                        Ok(panel.split_terminal_task(
+                            pane.clone(),
+                            spawn_task,
+                            ws_direction,
+                            task::RevealStrategy::Never,
+                            window,
+                            cx,
+                        ))
+                    } else {
+                        Err(anyhow!("Terminal not found in any pane"))
+                    }
+                })
+            })
+            .ok()?;
+
+        result.ok()
+    }
+
+    fn get_layout(
+        &self,
+        handle_for_terminal: &dyn Fn(&gpui::WeakEntity<terminal::Terminal>) -> Option<u64>,
+        cx: &gpui::App,
+    ) -> extension::PaneLayout {
+        let empty_layout = extension::PaneLayout {
+            panel_bounds: None,
+            root: extension::PaneLayoutMember::Pane {
+                pane_id: None,
+                terminals: Vec::new(),
+                bounds: None,
+            },
+        };
+
+        let Some(workspace_window) = Self::get_workspace(cx) else {
+            return empty_layout;
+        };
+
+        let Ok(workspace_ref) = workspace_window.read(cx) else {
+            return empty_layout;
+        };
+
+        let Some(terminal_panel) =
+            workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+        else {
+            return empty_layout;
+        };
+
+        let terminal_panel_ref = terminal_panel.read(cx);
+
+        // Get the overall panel bounds
+        let panel_bounds = terminal_panel_ref
+            .get_panel_bounds()
+            .map(|b| extension::PaneBounds {
+                x: f32::from(b.origin.x),
+                y: f32::from(b.origin.y),
+                width: f32::from(b.size.width),
+                height: f32::from(b.size.height),
+            });
+
+        let layout_tree = terminal_panel_ref.get_layout_tree(
+            |pane, bounds, cx| {
+                let terminals = self.collect_terminals_from_pane(pane, handle_for_terminal, cx);
+                // Use the pane's entity ID as a stable identifier
+                let pane_id = Some(format!("p{}", pane.entity_id().as_u64()));
+                terminal_view::terminal_panel::TerminalPaneLayoutInfo {
+                    pane_id,
+                    terminals: terminals
+                        .into_iter()
+                        .map(|t| terminal_view::terminal_panel::TerminalLayoutInfo {
+                            entity_id: t.entity_id,
+                            title: t.title,
+                            title_override: t.title_override,
+                            is_active: t.is_active,
+                        })
+                        .collect(),
+                    bounds,
+                }
+            },
+            cx,
+        );
+
+        extension::PaneLayout {
+            panel_bounds,
+            root: convert_layout_node(layout_tree),
+        }
+    }
+
+    fn focus_terminal(
+        &self,
+        terminal: gpui::WeakEntity<terminal::Terminal>,
+        cx: &mut gpui::App,
+    ) -> anyhow::Result<()> {
+        use anyhow::anyhow;
+
+        let workspace_window =
+            Self::get_workspace(cx).ok_or_else(|| anyhow!("No workspace available"))?;
+
+        let terminal_entity = terminal
+            .upgrade()
+            .ok_or_else(|| anyhow!("Terminal no longer exists"))?;
+
+        let terminal_id = terminal_entity.entity_id();
+
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                if let Some(terminal_panel) =
+                    workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+                {
+                    let panes = terminal_panel.read(cx).panes();
+
+                    // First find the pane and index without mutating
+                    let target = panes.iter().find_map(|pane| {
+                        let pane_ref = pane.read(cx);
+                        pane_ref.items().enumerate().find_map(|(index, item)| {
+                            item.act_as::<terminal_view::TerminalView>(cx)
+                                .filter(|tv| tv.read(cx).terminal().entity_id() == terminal_id)
+                                .map(|_| (pane.clone(), index))
+                        })
+                    });
+
+                    if let Some((pane, index)) = target {
+                        pane.update(cx, |pane, cx| {
+                            pane.activate_item(index, true, true, window, cx);
+                        });
+                        workspace.focus_panel::<terminal_view::terminal_panel::TerminalPanel>(
+                            window, cx,
+                        );
+                        window.focus(&pane.focus_handle(cx), cx);
+                        Ok(())
+                    } else {
+                        Err(anyhow!("Terminal not found in any pane"))
+                    }
+                } else {
+                    Err(anyhow!("Terminal panel not available"))
+                }
+            })
+            .map_err(|e| anyhow!("Failed to access workspace: {}", e))?
+    }
+
+    fn set_layout(
+        &self,
+        mode: extension::LayoutMode,
+        caller_terminal_id: Option<u64>,
+        cx: &mut gpui::App,
+    ) -> anyhow::Result<()> {
+        use anyhow::anyhow;
+
+        let workspace_window =
+            Self::get_workspace(cx).ok_or_else(|| anyhow!("No workspace available"))?;
+
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                let project = workspace.project().clone();
+                if let Some(terminal_panel) =
+                    workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+                {
+                    terminal_panel.update(cx, |panel, cx| {
+                        panel.set_layout(mode, caller_terminal_id, project, window, cx)
+                    })
+                } else {
+                    Err(anyhow!("Terminal panel not available"))
+                }
+            })
+            .map_err(|e| anyhow!("Failed to access workspace: {}", e))?
+    }
+
+    fn is_terminal_active(
+        &self,
+        terminal: &gpui::WeakEntity<terminal::Terminal>,
+        cx: &gpui::App,
+    ) -> bool {
+        let Some(terminal_entity) = terminal.upgrade() else {
+            return false;
+        };
+
+        let terminal_id = terminal_entity.entity_id();
+
+        let Some(workspace_window) = Self::get_workspace(cx) else {
+            return false;
+        };
+
+        let Ok(workspace_ref) = workspace_window.read(cx) else {
+            return false;
+        };
+
+        let Some(terminal_panel) =
+            workspace_ref.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+        else {
+            return false;
+        };
+
+        let panel_ref = terminal_panel.read(cx);
+        for pane in panel_ref.panes() {
+            let pane_ref = pane.read(cx);
+            let active_item_index = pane_ref.active_item_index();
+
+            for (index, item) in pane_ref.items().enumerate() {
+                if let Some(tv) = item.act_as::<terminal_view::TerminalView>(cx) {
+                    if tv.read(cx).terminal().entity_id() == terminal_id {
+                        return index == active_item_index;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn move_terminal(
+        &self,
+        source: gpui::WeakEntity<terminal::Terminal>,
+        destination: gpui::WeakEntity<terminal::Terminal>,
+        cx: &mut gpui::App,
+    ) -> anyhow::Result<()> {
+        use anyhow::anyhow;
+
+        let workspace_window =
+            Self::get_workspace(cx).ok_or_else(|| anyhow!("No workspace available"))?;
+
+        let source_entity = source
+            .upgrade()
+            .ok_or_else(|| anyhow!("Source terminal no longer exists"))?;
+        let source_id = source_entity.entity_id();
+
+        let dest_entity = destination
+            .upgrade()
+            .ok_or_else(|| anyhow!("Destination terminal no longer exists"))?;
+        let dest_id = dest_entity.entity_id();
+
+        if source_id == dest_id {
+            return Err(anyhow!("Cannot move terminal to itself"));
+        }
+
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                let Some(terminal_panel) =
+                    workspace.panel::<terminal_view::terminal_panel::TerminalPanel>(cx)
+                else {
+                    return Err(anyhow!("Terminal panel not available"));
+                };
+
+                let panes = terminal_panel.read(cx).panes();
+
+                // Find source pane and item
+                let source_info = panes.iter().find_map(|pane| {
+                    let pane_ref = pane.read(cx);
+                    pane_ref.items().enumerate().find_map(|(_index, item)| {
+                        item.act_as::<terminal_view::TerminalView>(cx)
+                            .filter(|tv| tv.read(cx).terminal().entity_id() == source_id)
+                            .map(|_| (pane.clone(), item.item_id()))
+                    })
+                });
+
+                let Some((source_pane, item_id)) = source_info else {
+                    return Err(anyhow!("Source terminal not found in any pane"));
+                };
+
+                // Find destination pane
+                let dest_pane = panes.iter().find(|pane| {
+                    pane.read(cx).items().any(|item| {
+                        item.act_as::<terminal_view::TerminalView>(cx)
+                            .map(|tv| tv.read(cx).terminal().entity_id() == dest_id)
+                            .unwrap_or(false)
+                    })
+                });
+
+                let Some(dest_pane) = dest_pane else {
+                    return Err(anyhow!("Destination terminal not found in any pane"));
+                };
+
+                // Move the item to the destination pane
+                let dest_index = dest_pane.read(cx).items_len();
+                workspace::move_item(
+                    &source_pane,
+                    dest_pane,
+                    item_id,
+                    dest_index,
+                    true,
+                    window,
+                    cx,
+                );
+
+                Ok(())
+            })
+            .map_err(|e| anyhow!("Failed to access workspace: {}", e))?
+    }
+}
+
+impl ActiveWorkspaceTerminalProvider {
+    fn collect_terminals_from_pane(
+        &self,
+        pane: &gpui::Entity<workspace::Pane>,
+        handle_for_terminal: &dyn Fn(&gpui::WeakEntity<terminal::Terminal>) -> Option<u64>,
+        cx: &gpui::App,
+    ) -> Vec<extension::PaneTerminalInfo> {
+        let pane_ref = pane.read(cx);
+        let active_item_index = pane_ref.active_item_index();
+
+        pane_ref
+            .items()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let terminal_view = item.act_as::<terminal_view::TerminalView>(cx)?;
+                let terminal = terminal_view.read(cx).terminal();
+                let weak_terminal = terminal.downgrade();
+                let entity_id = handle_for_terminal(&weak_terminal)?;
+
+                let term = terminal.read(cx);
+                let title = term.title(false);
+                let title_override = term.title_override().map(String::from);
+
+                Some(extension::PaneTerminalInfo {
+                    entity_id,
+                    title,
+                    title_override,
+                    is_active: index == active_item_index,
+                })
+            })
+            .collect()
+    }
+}
+
+fn convert_layout_node(
+    node: terminal_view::terminal_panel::TerminalPanelLayoutNode,
+) -> extension::PaneLayoutMember {
+    match node {
+        terminal_view::terminal_panel::TerminalPanelLayoutNode::Pane(info) => {
+            let bounds = info.bounds.map(|b| extension::PaneBounds {
+                x: f32::from(b.origin.x),
+                y: f32::from(b.origin.y),
+                width: f32::from(b.size.width),
+                height: f32::from(b.size.height),
+            });
+            let terminals = info
+                .terminals
+                .into_iter()
+                .map(|t| extension::PaneTerminalInfo {
+                    entity_id: t.entity_id,
+                    title: t.title,
+                    title_override: t.title_override,
+                    is_active: t.is_active,
+                })
+                .collect();
+            extension::PaneLayoutMember::Pane {
+                pane_id: info.pane_id,
+                terminals,
+                bounds,
+            }
+        }
+        terminal_view::terminal_panel::TerminalPanelLayoutNode::Axis { axis, members } => {
+            let axis_dir = match axis {
+                gpui::Axis::Horizontal => extension::AxisDirection::Horizontal,
+                gpui::Axis::Vertical => extension::AxisDirection::Vertical,
+            };
+            let converted_members = members.into_iter().map(convert_layout_node).collect();
+            extension::PaneLayoutMember::Axis {
+                axis: axis_dir,
+                members: converted_members,
+            }
+        }
     }
 }

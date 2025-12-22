@@ -152,115 +152,125 @@ impl Project {
             .await
             .unwrap_or_default();
 
-            let builder = project
-                .update(cx, move |_, cx| {
-                    let format_to_run = || {
-                        if let Some(command) = &spawn_task.command {
-                            let command = shell_kind.prepend_command_prefix(command);
-                            let command = shell_kind.try_quote_prefix_aware(&command);
-                            let args = spawn_task
-                                .args
-                                .iter()
-                                .filter_map(|arg| shell_kind.try_quote(&arg));
+            let (reservation, builder_task) = project.update(cx, move |_, cx| {
+                let reservation = cx.reserve_entity::<Terminal>();
+                let entity_id = reservation.entity_id().as_non_zero_u64().get();
 
-                            command.into_iter().chain(args).join(" ")
-                        } else {
-                            // todo: this breaks for remotes to windows
-                            format!("exec {shell} -l")
-                        }
-                    };
+                let format_to_run = || {
+                    if let Some(command) = &spawn_task.command {
+                        let command = shell_kind.prepend_command_prefix(command);
+                        let command = shell_kind.try_quote_prefix_aware(&command);
+                        let args = spawn_task
+                            .args
+                            .iter()
+                            .filter_map(|arg| shell_kind.try_quote(&arg));
 
-                    let (shell, env) = {
-                        env.extend(spawn_task.env);
-                        match remote_client {
-                            Some(remote_client) => match activation_script.clone() {
-                                activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
-                                    let activation_script =
-                                        activation_script.join(&format!("{separator} "));
-                                    let to_run = format_to_run();
+                        command.into_iter().chain(args).join(" ")
+                    } else {
+                        // todo: this breaks for remotes to windows
+                        format!("exec {shell} -l")
+                    }
+                };
 
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
-                                    let shell = remote_client
-                                        .read(cx)
-                                        .shell()
-                                        .unwrap_or_else(get_default_system_shell);
+                let (shell, env) = {
+                    env.extend(spawn_task.env);
+                    match remote_client {
+                        Some(remote_client) => match activation_script.clone() {
+                            activation_script if !activation_script.is_empty() => {
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
+                                let to_run = format_to_run();
 
-                                    create_remote_shell(
-                                        Some((&shell, &args)),
-                                        env,
-                                        path,
-                                        remote_client,
-                                        cx,
-                                    )?
-                                }
-                                _ => create_remote_shell(
-                                    spawn_task
-                                        .command
-                                        .as_ref()
-                                        .map(|command| (command, &spawn_task.args)),
+                                let arg = format!("{activation_script}{separator} {to_run}");
+                                let args = shell_kind.args_for_shell(false, arg);
+                                let shell = remote_client
+                                    .read(cx)
+                                    .shell()
+                                    .unwrap_or_else(get_default_system_shell);
+
+                                create_remote_shell(
+                                    Some((&shell, &args)),
                                     env,
                                     path,
                                     remote_client,
                                     cx,
-                                )?,
-                            },
-                            None => match activation_script.clone() {
-                                activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
-                                    let activation_script =
-                                        activation_script.join(&format!("{separator} "));
-                                    let to_run = format_to_run();
+                                )?
+                            }
+                            _ => create_remote_shell(
+                                spawn_task
+                                    .command
+                                    .as_ref()
+                                    .map(|command| (command, &spawn_task.args)),
+                                env,
+                                path,
+                                remote_client,
+                                cx,
+                            )?,
+                        },
+                        None => match activation_script.clone() {
+                            activation_script if !activation_script.is_empty() => {
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
+                                let to_run = format_to_run();
 
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
-
-                                    (
-                                        Shell::WithArguments {
-                                            program: shell,
-                                            args,
-                                            title_override: None,
-                                        },
-                                        env,
-                                    )
+                                let mut arg = format!("{activation_script}{separator} {to_run}");
+                                if shell_kind == ShellKind::Cmd {
+                                    // We need to put the entire command in quotes since otherwise CMD tries to execute them
+                                    // as separate commands rather than chaining one after another.
+                                    arg = format!("\"{arg}\"");
                                 }
-                                _ => (
-                                    if let Some(program) = spawn_task.command {
-                                        Shell::WithArguments {
-                                            program,
-                                            args: spawn_task.args,
-                                            title_override: None,
-                                        }
-                                    } else {
-                                        Shell::System
+
+                                let args = shell_kind.args_for_shell(false, arg);
+
+                                (
+                                    Shell::WithArguments {
+                                        program: shell,
+                                        args,
+                                        title_override: None,
                                     },
                                     env,
-                                ),
-                            },
-                        }
-                    };
-                    anyhow::Ok(TerminalBuilder::new(
-                        local_path.map(|path| path.to_path_buf()),
-                        task_state,
-                        shell,
-                        env,
-                        settings.cursor_shape,
-                        settings.alternate_scroll,
-                        settings.max_scroll_history_lines,
-                        settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
-                        is_via_remote,
-                        cx.entity_id().as_u64(),
-                        Some(completion_tx),
-                        cx,
-                        activation_script,
-                        path_style,
-                    ))
-                })??
-                .await?;
+                                )
+                            }
+                            _ => (
+                                if let Some(program) = spawn_task.command {
+                                    Shell::WithArguments {
+                                        program,
+                                        args: spawn_task.args,
+                                        title_override: None,
+                                    }
+                                } else {
+                                    Shell::System
+                                },
+                                env,
+                            ),
+                        },
+                    }
+                };
+                let builder_task = TerminalBuilder::new(
+                    local_path.map(|path| path.to_path_buf()),
+                    task_state,
+                    shell,
+                    env,
+                    settings.cursor_shape,
+                    settings.alternate_scroll,
+                    settings.max_scroll_history_lines,
+                    settings.path_hyperlink_regexes,
+                    settings.path_hyperlink_timeout_ms,
+                    is_via_remote,
+                    cx.entity_id().as_u64(),
+                    Some(completion_tx),
+                    cx,
+                    activation_script,
+                    Some(entity_id),
+                    path_style,
+                );
+                anyhow::Ok((reservation, builder_task))
+            })??;
+            let builder = builder_task.await?;
             project.update(cx, move |this, cx| {
-                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.insert_entity(reservation, |cx| builder.subscribe(cx));
 
                 this.terminals
                     .local_handles
@@ -395,37 +405,41 @@ impl Project {
             .await
             .unwrap_or_default();
 
-            let builder = project
-                .update(cx, move |_, cx| {
-                    let (shell, env) = {
-                        match remote_client {
-                            Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
-                            }
-                            None => (settings.shell, env),
+            let (reservation, builder_task) = project.update(cx, move |_, cx| {
+                let reservation = cx.reserve_entity::<Terminal>();
+                let entity_id = reservation.entity_id().as_non_zero_u64().get();
+
+                let (shell, env) = {
+                    match remote_client {
+                        Some(remote_client) => {
+                            create_remote_shell(None, env, path, remote_client, cx)?
                         }
-                    };
-                    anyhow::Ok(TerminalBuilder::new(
-                        local_path.map(|path| path.to_path_buf()),
-                        None,
-                        shell,
-                        env,
-                        settings.cursor_shape,
-                        settings.alternate_scroll,
-                        settings.max_scroll_history_lines,
-                        settings.path_hyperlink_regexes,
-                        settings.path_hyperlink_timeout_ms,
-                        is_via_remote,
-                        cx.entity_id().as_u64(),
-                        None,
-                        cx,
-                        activation_script,
-                        path_style,
-                    ))
-                })??
-                .await?;
+                        None => (settings.shell, env),
+                    }
+                };
+                let builder_task = TerminalBuilder::new(
+                    local_path.map(|path| path.to_path_buf()),
+                    None,
+                    shell,
+                    env,
+                    settings.cursor_shape,
+                    settings.alternate_scroll,
+                    settings.max_scroll_history_lines,
+                    settings.path_hyperlink_regexes,
+                    settings.path_hyperlink_timeout_ms,
+                    is_via_remote,
+                    cx.entity_id().as_u64(),
+                    None,
+                    cx,
+                    activation_script,
+                    Some(entity_id),
+                    path_style,
+                );
+                anyhow::Ok((reservation, builder_task))
+            })??;
+            let builder = builder_task.await?;
             project.update(cx, move |this, cx| {
-                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.insert_entity(reservation, |cx| builder.subscribe(cx));
 
                 this.terminals
                     .local_handles
@@ -467,11 +481,13 @@ impl Project {
             cwd
         };
 
-        let builder = terminal.read(cx).clone_builder(cx, local_path);
+        let reservation = cx.reserve_entity::<Terminal>();
+        let entity_id = reservation.entity_id().as_non_zero_u64().get();
+        let builder_task = terminal.read(cx).clone_builder(cx, local_path, entity_id);
         cx.spawn(async |project, cx| {
-            let terminal = builder.await?;
+            let terminal = builder_task.await?;
             project.update(cx, |project, cx| {
-                let terminal_handle = cx.new(|cx| terminal.subscribe(cx));
+                let terminal_handle = cx.insert_entity(reservation, |cx| terminal.subscribe(cx));
 
                 project
                     .terminals
@@ -611,7 +627,7 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
+    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx), None);
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),
