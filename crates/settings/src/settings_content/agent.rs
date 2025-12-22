@@ -363,6 +363,13 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_model: Option<String>,
+    /// The favorite models for this agent.
+    ///
+    /// These are the model IDs as reported by the agent.
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
 }
 
 #[with_fallible_options]
@@ -387,6 +394,13 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -401,5 +415,12 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
     },
 }

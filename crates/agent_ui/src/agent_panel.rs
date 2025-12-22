@@ -2428,7 +2428,7 @@ impl AgentPanel {
                 let history_is_empty = self.history_store.read(cx).is_empty(cx);
 
                 let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
-                    .providers()
+                    .visible_providers()
                     .iter()
                     .any(|provider| {
                         provider.is_authenticated(cx)

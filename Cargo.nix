@@ -424,6 +424,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "component_preview" = rec {
+      packageId = "component_preview";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "component_preview";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "context_server" = rec {
       packageId = "context_server";
       build = internal.buildRustCrateWithFeatures {
@@ -2024,6 +2034,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "worktree_benchmarks" = rec {
+      packageId = "worktree_benchmarks";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "worktree_benchmarks";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "x_ai" = rec {
       packageId = "x_ai";
       build = internal.buildRustCrateWithFeatures {
@@ -3307,9 +3327,9 @@ rec {
       };
       "agent-client-protocol" = rec {
         crateName = "agent-client-protocol";
-        version = "0.9.0";
+        version = "0.9.2";
         edition = "2024";
-        sha256 = "04xgn44p0lhj02n584v8mz4hjkgq0186bzsszjm53r610baygzy2";
+        sha256 = "0v7dlxvhl8wgg7841i11dxgncy8aiwqxkla27lqk9wz0vzbjgrfk";
         libName = "agent_client_protocol";
         authors = [
           "Zed <hi@zed.dev>"
@@ -3359,16 +3379,42 @@ rec {
           }
         ];
         features = {
-          "unstable" = [ "agent-client-protocol-schema/unstable" ];
+          "unstable" = [
+            "unstable_cancel_request"
+            "unstable_session_config_options"
+            "unstable_session_fork"
+            "unstable_session_info_update"
+            "unstable_session_list"
+            "unstable_session_model"
+            "unstable_session_resume"
+          ];
+          "unstable_cancel_request" = [ "agent-client-protocol-schema/unstable_cancel_request" ];
+          "unstable_session_config_options" = [
+            "agent-client-protocol-schema/unstable_session_config_options"
+          ];
+          "unstable_session_fork" = [ "agent-client-protocol-schema/unstable_session_fork" ];
+          "unstable_session_info_update" = [ "agent-client-protocol-schema/unstable_session_info_update" ];
+          "unstable_session_list" = [ "agent-client-protocol-schema/unstable_session_list" ];
+          "unstable_session_model" = [ "agent-client-protocol-schema/unstable_session_model" ];
+          "unstable_session_resume" = [ "agent-client-protocol-schema/unstable_session_resume" ];
         };
-        resolvedDefaultFeatures = [ "unstable" ];
+        resolvedDefaultFeatures = [
+          "unstable"
+          "unstable_cancel_request"
+          "unstable_session_config_options"
+          "unstable_session_fork"
+          "unstable_session_info_update"
+          "unstable_session_list"
+          "unstable_session_model"
+          "unstable_session_resume"
+        ];
       };
       "agent-client-protocol-schema" = rec {
         crateName = "agent-client-protocol-schema";
-        version = "0.10.0";
+        version = "0.10.5";
         edition = "2024";
         crateBin = [ ];
-        sha256 = "1rp773hgxj9kxzvjq76mm5dp6cw30pyjwifvfd7w1yf3sp11ry4a";
+        sha256 = "190xb42ia0md75s9qz5v5v3qfwsdflr1k6n5raxgj8n8i87a00v9";
         libName = "agent_client_protocol_schema";
         authors = [
           "Zed <hi@zed.dev>"
@@ -3411,16 +3457,23 @@ rec {
         ];
         features = {
           "unstable" = [
-            "unstable_session_model"
-            "unstable_session_list"
+            "unstable_cancel_request"
+            "unstable_session_config_options"
             "unstable_session_fork"
+            "unstable_session_info_update"
+            "unstable_session_list"
+            "unstable_session_model"
+            "unstable_session_resume"
           ];
         };
         resolvedDefaultFeatures = [
-          "unstable"
+          "unstable_cancel_request"
+          "unstable_session_config_options"
           "unstable_session_fork"
+          "unstable_session_info_update"
           "unstable_session_list"
           "unstable_session_model"
+          "unstable_session_resume"
         ];
       };
       "agent_servers" = rec {
@@ -5530,7 +5583,7 @@ rec {
           }
           {
             name = "wayland-protocols";
-            packageId = "wayland-protocols 0.32.9";
+            packageId = "wayland-protocols";
             optional = true;
             features = [
               "unstable"
@@ -17861,6 +17914,121 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
+      "component_preview" = rec {
+        crateName = "component_preview";
+        version = "0.1.0";
+        edition = "2024";
+        src = lib.cleanSourceWith {
+          filter = sourceFilter;
+          src = ./crates/component_preview;
+        };
+        libPath = "src/component_preview.rs";
+        dependencies = [
+          {
+            name = "anyhow";
+            packageId = "anyhow";
+          }
+          {
+            name = "client";
+            packageId = "client";
+          }
+          {
+            name = "collections";
+            packageId = "collections";
+          }
+          {
+            name = "component";
+            packageId = "component";
+          }
+          {
+            name = "db";
+            packageId = "db";
+          }
+          {
+            name = "fs";
+            packageId = "fs";
+          }
+          {
+            name = "gpui";
+            packageId = "gpui";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "language";
+            packageId = "language";
+          }
+          {
+            name = "log";
+            packageId = "log";
+            features = [
+              "kv_unstable_serde"
+              "serde"
+            ];
+          }
+          {
+            name = "node_runtime";
+            packageId = "node_runtime";
+          }
+          {
+            name = "notifications";
+            packageId = "notifications";
+          }
+          {
+            name = "project";
+            packageId = "project";
+          }
+          {
+            name = "release_channel";
+            packageId = "release_channel";
+          }
+          {
+            name = "reqwest_client";
+            packageId = "reqwest_client";
+          }
+          {
+            name = "session";
+            packageId = "session";
+          }
+          {
+            name = "settings";
+            packageId = "settings";
+          }
+          {
+            name = "theme";
+            packageId = "theme";
+          }
+          {
+            name = "ui";
+            packageId = "ui";
+          }
+          {
+            name = "ui_input";
+            packageId = "ui_input";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [
+              "v4"
+              "v5"
+              "v7"
+              "serde"
+            ];
+          }
+          {
+            name = "workspace";
+            packageId = "workspace";
+          }
+        ];
+        features = {
+          "test-support" = [ "db/test-support" ];
+        };
+        resolvedDefaultFeatures = [
+          "default"
+          "preview"
+          "test-support"
+        ];
+      };
       "compression-codecs" = rec {
         crateName = "compression-codecs";
         version = "0.4.31";
@@ -23822,15 +23990,6 @@ rec {
             packageId = "anyhow";
           }
           {
-            name = "command_palette";
-            packageId = "command_palette";
-          }
-          {
-            name = "gpui";
-            packageId = "gpui";
-            usesDefaultFeatures = false;
-          }
-          {
             name = "mdbook";
             packageId = "mdbook";
           }
@@ -23869,10 +24028,6 @@ rec {
           {
             name = "util";
             packageId = "util";
-          }
-          {
-            name = "zed";
-            packageId = "zed";
           }
           {
             name = "zlog";
@@ -24369,6 +24524,10 @@ rec {
             packageId = "brotli";
           }
           {
+            name = "buffer_diff";
+            packageId = "buffer_diff";
+          }
+          {
             name = "client";
             packageId = "client";
           }
@@ -24519,8 +24678,24 @@ rec {
             packageId = "telemetry_events";
           }
           {
+            name = "text";
+            packageId = "text";
+          }
+          {
             name = "thiserror";
             packageId = "thiserror 2.0.17";
+          }
+          {
+            name = "time";
+            packageId = "time";
+            features = [
+              "macros"
+              "parsing"
+              "serde"
+              "serde-well-known"
+              "formatting"
+              "local-offset"
+            ];
           }
           {
             name = "ui";
@@ -25077,6 +25252,10 @@ rec {
             packageId = "codestral";
           }
           {
+            name = "collections";
+            packageId = "collections";
+          }
+          {
             name = "command_palette_hooks";
             packageId = "command_palette_hooks";
           }
@@ -25109,10 +25288,6 @@ rec {
             packageId = "futures 0.3.31";
           }
           {
-            name = "git";
-            packageId = "git";
-          }
-          {
             name = "gpui";
             packageId = "gpui";
             usesDefaultFeatures = false;
@@ -25124,14 +25299,6 @@ rec {
           {
             name = "language";
             packageId = "language";
-          }
-          {
-            name = "log";
-            packageId = "log";
-            features = [
-              "kv_unstable_serde"
-              "serde"
-            ];
           }
           {
             name = "markdown";
@@ -25212,6 +25379,10 @@ rec {
         ];
         devDependencies = [
           {
+            name = "clock";
+            packageId = "clock";
+          }
+          {
             name = "copilot";
             packageId = "copilot";
             features = [ "test-support" ];
@@ -25230,14 +25401,32 @@ rec {
             packageId = "indoc";
           }
           {
+            name = "language_model";
+            packageId = "language_model";
+          }
+          {
             name = "lsp";
             packageId = "lsp";
             features = [ "test-support" ];
           }
           {
+            name = "pretty_assertions";
+            packageId = "pretty_assertions";
+            features = [ "unstable" ];
+          }
+          {
             name = "project";
             packageId = "project";
             features = [ "test-support" ];
+          }
+          {
+            name = "release_channel";
+            packageId = "release_channel";
+          }
+          {
+            name = "semver";
+            packageId = "semver";
+            features = [ "serde" ];
           }
           {
             name = "serde_json";
@@ -25251,6 +25440,15 @@ rec {
             name = "theme";
             packageId = "theme";
             features = [ "test-support" ];
+          }
+          {
+            name = "workspace";
+            packageId = "workspace";
+            features = [ "test-support" ];
+          }
+          {
+            name = "zlog";
+            packageId = "zlog";
           }
         ];
 
@@ -33979,7 +34177,7 @@ rec {
           }
           {
             name = "wayland-protocols";
-            packageId = "wayland-protocols 0.31.2";
+            packageId = "wayland-protocols";
             optional = true;
             target =
               { target, features }: (("linux" == target."os" or null) || ("freebsd" == target."os" or null));
@@ -39099,6 +39297,10 @@ rec {
             packageId = "language";
           }
           {
+            name = "lsp";
+            packageId = "lsp";
+          }
+          {
             name = "paths";
             packageId = "paths";
           }
@@ -40470,6 +40672,14 @@ rec {
             name = "deepseek";
             packageId = "deepseek";
             features = [ "schemars" ];
+          }
+          {
+            name = "extension";
+            packageId = "extension";
+          }
+          {
+            name = "extension_host";
+            packageId = "extension_host";
           }
           {
             name = "fs";
@@ -60074,6 +60284,10 @@ rec {
             packageId = "menu";
           }
           {
+            name = "notifications";
+            packageId = "notifications";
+          }
+          {
             name = "pretty_assertions";
             packageId = "pretty_assertions";
             features = [ "unstable" ];
@@ -60472,6 +60686,11 @@ rec {
             ];
           }
           {
+            name = "strum";
+            packageId = "strum 0.27.2";
+            features = [ "derive" ];
+          }
+          {
             name = "text";
             packageId = "text";
           }
@@ -60488,6 +60707,18 @@ rec {
               "v7"
               "serde"
             ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "gpui";
+            packageId = "gpui";
+            usesDefaultFeatures = false;
+            features = [ "test-support" ];
+          }
+          {
+            name = "tempfile";
+            packageId = "tempfile";
           }
         ];
 
@@ -88701,48 +88932,7 @@ rec {
         ];
 
       };
-      "wayland-protocols 0.31.2" = rec {
-        crateName = "wayland-protocols";
-        version = "0.31.2";
-        edition = "2021";
-        sha256 = "1x310l1p6p3p3l76nl1l2yava9408dy77s605917zadlp1jz70cg";
-        libName = "wayland_protocols";
-        authors = [
-          "Elinor Berger <elinor@safaradeg.net>"
-        ];
-        dependencies = [
-          {
-            name = "bitflags";
-            packageId = "bitflags 2.9.4";
-          }
-          {
-            name = "wayland-backend";
-            packageId = "wayland-backend";
-          }
-          {
-            name = "wayland-client";
-            packageId = "wayland-client";
-            optional = true;
-          }
-          {
-            name = "wayland-scanner";
-            packageId = "wayland-scanner";
-          }
-        ];
-        features = {
-          "client" = [ "wayland-client" ];
-          "server" = [ "wayland-server" ];
-          "wayland-client" = [ "dep:wayland-client" ];
-          "wayland-server" = [ "dep:wayland-server" ];
-        };
-        resolvedDefaultFeatures = [
-          "client"
-          "staging"
-          "unstable"
-          "wayland-client"
-        ];
-      };
-      "wayland-protocols 0.32.9" = rec {
+      "wayland-protocols" = rec {
         crateName = "wayland-protocols";
         version = "0.32.9";
         edition = "2021";
@@ -88785,9 +88975,9 @@ rec {
       };
       "wayland-protocols-plasma" = rec {
         crateName = "wayland-protocols-plasma";
-        version = "0.2.0";
-        edition = "2018";
-        sha256 = "0yglbxd4ka8284k0j0ssh9hf6wd9qp2n0s2qrsdymyaz258kb013";
+        version = "0.3.9";
+        edition = "2021";
+        sha256 = "0cn0qbr99snsh41p34qv11bvylbqk2xzii47k4kv6yh7ghji8ym0";
         libName = "wayland_protocols_plasma";
         authors = [
           "Elinor Berger <elinor@safaradeg.net>"
@@ -88808,7 +88998,7 @@ rec {
           }
           {
             name = "wayland-protocols";
-            packageId = "wayland-protocols 0.31.2";
+            packageId = "wayland-protocols";
           }
           {
             name = "wayland-scanner";
@@ -88857,7 +89047,7 @@ rec {
           }
           {
             name = "wayland-protocols";
-            packageId = "wayland-protocols 0.32.9";
+            packageId = "wayland-protocols";
           }
           {
             name = "wayland-scanner";
@@ -99312,6 +99502,43 @@ rec {
         };
         resolvedDefaultFeatures = [ "test-support" ];
       };
+      "worktree_benchmarks" = rec {
+        crateName = "worktree_benchmarks";
+        version = "0.1.0";
+        edition = "2024";
+        crateBin = [
+          {
+            name = "worktree_benchmarks";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith {
+          filter = sourceFilter;
+          src = ./crates/worktree_benchmarks;
+        };
+        dependencies = [
+          {
+            name = "fs";
+            packageId = "fs";
+          }
+          {
+            name = "gpui";
+            packageId = "gpui";
+            usesDefaultFeatures = false;
+            features = [ "windows-manifest" ];
+          }
+          {
+            name = "settings";
+            packageId = "settings";
+          }
+          {
+            name = "worktree";
+            packageId = "worktree";
+          }
+        ];
+
+      };
       "writeable" = rec {
         crateName = "writeable";
         version = "0.6.1";
@@ -100839,7 +101066,7 @@ rec {
         crateBin = [
           {
             name = "zed";
-            path = "src/zed-main.rs";
+            path = "src/main.rs";
             requiredFeatures = [ ];
           }
         ];
@@ -100847,7 +101074,6 @@ rec {
           filter = sourceFilter;
           src = ./crates/zed;
         };
-        libPath = "src/main.rs";
         authors = [
           "Zed Team <hi@zed.dev>"
         ];
@@ -100966,6 +101192,10 @@ rec {
           {
             name = "component";
             packageId = "component";
+          }
+          {
+            name = "component_preview";
+            packageId = "component_preview";
           }
           {
             name = "copilot";
@@ -101391,10 +101621,6 @@ rec {
           {
             name = "ui";
             packageId = "ui";
-          }
-          {
-            name = "ui_input";
-            packageId = "ui_input";
           }
           {
             name = "ui_prompt";
@@ -102672,7 +102898,7 @@ rec {
       };
       "zed_proto" = rec {
         crateName = "zed_proto";
-        version = "0.3.0";
+        version = "0.3.1";
         edition = "2024";
         src = lib.cleanSourceWith {
           filter = sourceFilter;

@@ -338,7 +338,13 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
-        let placeholder = placeholder_text(agent.name().as_ref(), false);
+        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let agent_display_name = agent_server_store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(agent.name()))
+            .unwrap_or_else(|| agent.name());
+
+        let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
@@ -377,7 +383,6 @@ impl AcpThreadView {
             )
         });
 
-        let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
@@ -1498,7 +1503,13 @@ impl AcpThreadView {
                 let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
 
-                let new_placeholder = placeholder_text(self.agent.name().as_ref(), has_commands);
+                let agent_display_name = self
+                    .agent_server_store
+                    .read(cx)
+                    .agent_display_name(&ExternalAgentServerName(self.agent.name()))
+                    .unwrap_or_else(|| self.agent.name());
+
+                let new_placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
 
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_placeholder_text(&new_placeholder, window, cx);
@@ -2113,6 +2124,7 @@ impl AcpThreadView {
                 chunks,
                 indented: _,
             }) => {
+                let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -2122,36 +2134,55 @@ impl AcpThreadView {
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
-                                block.markdown().map(|md| {
-                                    self.render_markdown(md.clone(), style.clone())
-                                        .into_any_element()
+                                block.markdown().and_then(|md| {
+                                    let this_is_blank = md.read(cx).source().trim().is_empty();
+                                    is_blank = is_blank && this_is_blank;
+                                    if this_is_blank {
+                                        return None;
+                                    }
+
+                                    Some(
+                                        self.render_markdown(md.clone(), style.clone())
+                                            .into_any_element(),
+                                    )
                                 })
                             }
                             AssistantMessageChunk::Thought { block } => {
-                                block.markdown().map(|md| {
-                                    self.render_thinking_block(
-                                        entry_ix,
-                                        chunk_ix,
-                                        md.clone(),
-                                        window,
-                                        cx,
+                                block.markdown().and_then(|md| {
+                                    let this_is_blank = md.read(cx).source().trim().is_empty();
+                                    is_blank = is_blank && this_is_blank;
+                                    if this_is_blank {
+                                        return None;
+                                    }
+
+                                    Some(
+                                        self.render_thinking_block(
+                                            entry_ix,
+                                            chunk_ix,
+                                            md.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                        .into_any_element(),
                                     )
-                                    .into_any_element()
                                 })
                             }
                         },
                     ))
                     .into_any();
 
-                v_flex()
-                    .px_5()
-                    .py_1p5()
-                    .when(is_first_indented, |this| this.pt_0p5())
-                    .when(is_last, |this| this.pb_4())
-                    .w_full()
-                    .text_ui(cx)
-                    .child(message_body)
-                    .into_any()
+                if is_blank {
+                    Empty.into_any()
+                } else {
+                    v_flex()
+                        .px_5()
+                        .py_1p5()
+                        .when(is_last, |this| this.pb_4())
+                        .w_full()
+                        .text_ui(cx)
+                        .child(message_body)
+                        .into_any()
+                }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
@@ -2183,7 +2214,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .w_full()
-                .pl(rems_from_px(20.0))
+                .pl_5()
                 .bg(cx.theme().colors().panel_background.opacity(0.2))
                 .child(
                     div()
@@ -2447,36 +2478,40 @@ impl AcpThreadView {
                     | ToolCallStatus::Completed
                     | ToolCallStatus::Failed
                     | ToolCallStatus::Canceled => v_flex()
-                        .mt_1p5()
-                        .w_full()
-                        .child(
-                            v_flex()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pb_1()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(input_output_header("Raw Input".into()))
-                                .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                    self.render_markdown(
-                                        input,
-                                        default_markdown_style(false, false, window, cx),
-                                    )
-                                }))
-                                .child(input_output_header("Output:".into())),
-                        )
+                        .when(!is_edit && !is_terminal_tool, |this| {
+                            this.mt_1p5().w_full().child(
+                                v_flex()
+                                    .ml(rems(0.4))
+                                    .px_3p5()
+                                    .pb_1()
+                                    .gap_1()
+                                    .border_l_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(input_output_header("Raw Input:".into()))
+                                    .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
+                                            self.render_markdown(
+                                                input,
+                                                default_markdown_style(false, false, window, cx),
+                                            ),
+                                        )
+                                    }))
+                                    .child(input_output_header("Output:".into())),
+                            )
+                        })
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
-                                div().child(self.render_tool_call_content(
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    use_card_layout,
-                                    window,
-                                    cx,
-                                ))
+                                div().id(("tool-call-output", entry_ix)).child(
+                                    self.render_tool_call_content(
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        use_card_layout,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                             },
                         ))
                         .into_any(),
@@ -2687,7 +2722,7 @@ impl AcpThreadView {
                             ..default_markdown_style(false, true, window, cx)
                         },
                     ))
-                    .tooltip(Tooltip::text("Jump to File"))
+                    .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
                     }))
@@ -2751,18 +2786,19 @@ impl AcpThreadView {
 
         v_flex()
             .gap_2()
-            .when(!card_layout, |this| {
-                this.ml(rems(0.4))
-                    .px_3p5()
-                    .border_l_1()
-                    .border_color(self.tool_card_border_color(cx))
-            })
-            .when(card_layout, |this| {
-                this.px_2().pb_2().when(context_ix > 0, |this| {
-                    this.border_t_1()
-                        .pt_2()
+            .map(|this| {
+                if card_layout {
+                    this.when(context_ix > 0, |this| {
+                        this.pt_2()
+                            .border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                    })
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
-                })
+                }
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
@@ -4252,37 +4288,6 @@ impl AcpThreadView {
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
-            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
-                    profile_selector.read(cx).menu_handle().toggle(window, cx);
-                } else if let Some(mode_selector) = this.mode_selector() {
-                    mode_selector.read(cx).menu_handle().toggle(window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
-                    profile_selector.update(cx, |profile_selector, cx| {
-                        profile_selector.cycle_profile(cx);
-                    });
-                } else if let Some(mode_selector) = this.mode_selector() {
-                    mode_selector.update(cx, |mode_selector, cx| {
-                        mode_selector.cycle_mode(window, cx);
-                    });
-                }
-            }))
-            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if let Some(model_selector) = this.model_selector.as_ref() {
-                    model_selector
-                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
-                if let Some(model_selector) = this.model_selector.as_ref() {
-                    model_selector.update(cx, |model_selector, cx| {
-                        model_selector.cycle_favorite_models(window, cx);
-                    });
-                }
-            }))
             .p_2()
             .gap_2()
             .border_t_1()
@@ -5969,6 +5974,37 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.read(cx).menu_handle().toggle(window, cx);
+                } else if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.update(cx, |profile_selector, cx| {
+                        profile_selector.cycle_profile(cx);
+                    });
+                } else if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.cycle_mode(window, cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector
+                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
+                }
+            }))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {

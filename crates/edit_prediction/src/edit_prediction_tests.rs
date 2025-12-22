@@ -1,5 +1,5 @@
 use super::*;
-use crate::{udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
+use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
 use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
@@ -360,7 +360,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project(&project, cx)
     });
     assert_eq!(events.len(), 1);
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -377,7 +377,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
     assert_eq!(events.len(), 2);
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -389,7 +389,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         "}
     );
 
-    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].as_ref();
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].event.as_ref();
     assert_eq!(
         diff.as_str(),
         indoc! {"
@@ -2079,6 +2079,74 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
     assert!(
         predict_called.load(std::sync::atomic::Ordering::SeqCst),
         "With custom URL, predict endpoint should be called even without authentication"
+    );
+}
+
+#[gpui::test]
+fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+                zero
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                nine
+                ten
+                eleven
+                twelve
+                thirteen
+                fourteen
+                fifteen
+                sixteen
+                seventeen
+                eighteen
+                nineteen
+                twenty
+                twenty-one
+                twenty-two
+                twenty-three
+                twenty-four
+            "},
+            cx,
+        )
+    });
+
+    let old_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    buffer.update(cx, |buffer, cx| {
+        let point = Point::new(12, 0);
+        buffer.edit([(point..point, "SECOND INSERTION\n")], None, cx);
+        let point = Point::new(8, 0);
+        buffer.edit([(point..point, "FIRST INSERTION\n")], None, cx);
+    });
+
+    let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let diff = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
+
+    assert_eq!(
+        diff,
+        indoc! {"
+            @@ -6,10 +6,12 @@
+             five
+             six
+             seven
+            +FIRST INSERTION
+             eight
+             nine
+             ten
+             eleven
+            +SECOND INSERTION
+             twelve
+             thirteen
+             fourteen
+            "}
     );
 }
 

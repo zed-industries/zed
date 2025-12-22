@@ -1868,6 +1868,7 @@ pub struct BuiltinAgentServerSettings {
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
+    pub favorite_models: Vec<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1891,6 +1892,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
             default_model: value.default_model,
+            favorite_models: value.favorite_models,
         }
     }
 }
@@ -1922,6 +1924,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -1936,6 +1942,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
     },
 }
 
@@ -1962,6 +1972,17 @@ impl CustomAgentServerSettings {
             }
         }
     }
+
+    pub fn favorite_models(&self) -> &[String] {
+        match self {
+            CustomAgentServerSettings::Custom {
+                favorite_models, ..
+            }
+            | CustomAgentServerSettings::Extension {
+                favorite_models, ..
+            } => favorite_models,
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1973,6 +1994,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env,
                 default_mode,
                 default_model,
+                favorite_models,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -1981,13 +2003,16 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 },
                 default_mode,
                 default_model,
+                favorite_models,
             },
             settings::CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                favorite_models,
             } => CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                favorite_models,
             },
         }
     }
@@ -2313,6 +2338,7 @@ mod extension_agent_tests {
             ignore_system_version: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2329,6 +2355,7 @@ mod extension_agent_tests {
             env: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
         };
 
         let converted: CustomAgentServerSettings = settings.into();

@@ -83,6 +83,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
+    pub(crate) parent_hwnd: Option<HWND>,
 }
 
 impl WindowsWindowState {
@@ -241,6 +242,7 @@ impl WindowsWindowInner {
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
             system_settings: WindowsSystemSettings::new(context.display),
+            parent_hwnd: context.parent_hwnd,
         }))
     }
 
@@ -368,6 +370,7 @@ struct WindowCreateContext {
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
+    parent_hwnd: Option<HWND>,
 }
 
 impl WindowsWindow {
@@ -390,6 +393,20 @@ impl WindowsWindow {
             invalidate_devices,
         } = creation_info;
         register_window_class(icon);
+        let parent_hwnd = if params.kind == WindowKind::Dialog {
+            let parent_window = unsafe { GetActiveWindow() };
+            if parent_window.is_invalid() {
+                None
+            } else {
+                // Disable the parent window to make this dialog modal
+                unsafe {
+                    EnableWindow(parent_window, false).as_bool();
+                };
+                Some(parent_window)
+            }
+        } else {
+            None
+        };
         let hide_title_bar = params
             .titlebar
             .as_ref()
@@ -416,8 +433,14 @@ impl WindowsWindow {
             if params.is_minimizable {
                 dwstyle |= WS_MINIMIZEBOX;
             }
+            let dwexstyle = if params.kind == WindowKind::Dialog {
+                dwstyle |= WS_POPUP | WS_CAPTION;
+                WS_EX_DLGMODALFRAME
+            } else {
+                WS_EX_APPWINDOW
+            };
 
-            (WS_EX_APPWINDOW, dwstyle)
+            (dwexstyle, dwstyle)
         };
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
@@ -449,6 +472,7 @@ impl WindowsWindow {
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
+            parent_hwnd,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -460,7 +484,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                None,
+                parent_hwnd,
                 None,
                 Some(hinstance.into()),
                 Some(&context as *const _ as *const _),
@@ -716,8 +740,8 @@ impl PlatformWindow for WindowsWindow {
                         ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
                     }
 
-                    SetActiveWindow(hwnd).log_err();
-                    SetFocus(Some(hwnd)).log_err();
+                    SetActiveWindow(hwnd).ok();
+                    SetFocus(Some(hwnd)).ok();
                 }
 
                 // premium ragebait by windows, this is needed because the window

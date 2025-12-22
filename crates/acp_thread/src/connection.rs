@@ -202,12 +202,15 @@ pub trait AgentModelSelector: 'static {
     fn should_render_footer(&self) -> bool {
         false
     }
+}
 
-    /// Whether this selector supports the favorites feature.
-    /// Only the native agent uses the model ID format that maps to settings.
-    fn supports_favorites(&self) -> bool {
-        false
-    }
+/// Icon for a model in the model selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelIcon {
+    /// A built-in icon from Zed's icon set.
+    Named(IconName),
+    /// Path to a custom SVG icon file.
+    Path(SharedString),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +218,7 @@ pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
-    pub icon: Option<IconName>,
+    pub icon: Option<AgentModelIcon>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {

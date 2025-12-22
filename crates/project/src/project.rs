@@ -83,7 +83,7 @@ use gpui::{
     Task, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
     LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
     ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
@@ -1293,17 +1293,33 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
             if init_worktree_trust {
-                match &connection_options {
-                    RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
-                        trusted_worktrees::track_worktree_trust(
-                            worktree_store.clone(),
-                            Some(RemoteHostLocation::from(connection_options)),
-                            None,
-                            Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
-                            cx,
-                        );
+                let trust_remote_project = match &connection_options {
+                    RemoteConnectionOptions::Ssh(..) | RemoteConnectionOptions::Wsl(..) => false,
+                    RemoteConnectionOptions::Docker(..) => true,
+                };
+                let remote_host = RemoteHostLocation::from(connection_options);
+                trusted_worktrees::track_worktree_trust(
+                    worktree_store.clone(),
+                    Some(remote_host.clone()),
+                    None,
+                    Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                    cx,
+                );
+                if trust_remote_project {
+                    if let Some(trusted_worktres) = TrustedWorktrees::try_get_global(cx) {
+                        trusted_worktres.update(cx, |trusted_worktres, cx| {
+                            trusted_worktres.trust(
+                                worktree_store
+                                    .read(cx)
+                                    .worktrees()
+                                    .map(|worktree| worktree.read(cx).id())
+                                    .map(PathTrust::Worktree)
+                                    .collect(),
+                                Some(remote_host),
+                                cx,
+                            );
+                        })
                     }
-                    RemoteConnectionOptions::Docker(..) => {}
                 }
             }
 
@@ -1330,7 +1346,12 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             let toolchain_store = cx.new(|cx| {
-                ToolchainStore::remote(REMOTE_SERVER_PROJECT_ID, remote.read(cx).proto_client(), cx)
+                ToolchainStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    worktree_store.clone(),
+                    remote.read(cx).proto_client(),
+                    cx,
+                )
             });
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
@@ -5666,7 +5687,9 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.file().map(|file| ProjectPath {
+        let file = self.file()?;
+
+        (!matches!(file.disk_state(), DiskState::Historic { .. })).then(|| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })

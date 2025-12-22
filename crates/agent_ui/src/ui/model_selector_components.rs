@@ -1,5 +1,13 @@
-use gpui::{Action, FocusHandle, prelude::*};
+use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
 use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use zed_actions::agent::ToggleModelSelector;
+
+use crate::CycleFavoriteModels;
+
+enum ModelIcon {
+    Name(IconName),
+    Path(SharedString),
+}
 
 #[derive(IntoElement)]
 pub struct ModelSelectorHeader {
@@ -39,11 +47,11 @@ impl RenderOnce for ModelSelectorHeader {
 pub struct ModelSelectorListItem {
     index: usize,
     title: SharedString,
-    icon: Option<IconName>,
+    icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
     is_favorite: bool,
-    on_toggle_favorite: Option<Box<dyn Fn(&App) + 'static>>,
+    on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl ModelSelectorListItem {
@@ -60,7 +68,12 @@ impl ModelSelectorListItem {
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
-        self.icon = Some(icon);
+        self.icon = Some(ModelIcon::Name(icon));
+        self
+    }
+
+    pub fn icon_path(mut self, path: SharedString) -> Self {
+        self.icon = Some(ModelIcon::Path(path));
         self
     }
 
@@ -79,7 +92,10 @@ impl ModelSelectorListItem {
         self
     }
 
-    pub fn on_toggle_favorite(mut self, handler: impl Fn(&App) + 'static) -> Self {
+    pub fn on_toggle_favorite(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_toggle_favorite = Some(Box::new(handler));
         self
     }
@@ -105,9 +121,12 @@ impl RenderOnce for ModelSelectorListItem {
                     .gap_1p5()
                     .when_some(self.icon, |this, icon| {
                         this.child(
-                            Icon::new(icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
+                            match icon {
+                                ModelIcon::Name(icon_name) => Icon::new(icon_name),
+                                ModelIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                            }
+                            .color(model_icon_color)
+                            .size(IconSize::Small),
                         )
                     })
                     .child(Label::new(self.title).truncate()),
@@ -128,7 +147,7 @@ impl RenderOnce for ModelSelectorListItem {
                             .icon_color(color)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text(tooltip))
-                            .on_click(move |_, _, cx| (handle_click)(cx)),
+                            .on_click(move |event, window, cx| (handle_click)(event, window, cx)),
                     )
                 }
             }))
@@ -172,5 +191,59 @@ impl RenderOnce for ModelSelectorFooter {
                         window.dispatch_action(action.boxed_clone(), cx);
                     }),
             )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ModelSelectorTooltip {
+    focus_handle: FocusHandle,
+    show_cycle_row: bool,
+}
+
+impl ModelSelectorTooltip {
+    pub fn new(focus_handle: FocusHandle) -> Self {
+        Self {
+            focus_handle,
+            show_cycle_row: true,
+        }
+    }
+
+    pub fn show_cycle_row(mut self, show: bool) -> Self {
+        self.show_cycle_row = show;
+        self
+    }
+}
+
+impl RenderOnce for ModelSelectorTooltip {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new("Change Model"))
+                    .child(KeyBinding::for_action_in(
+                        &ToggleModelSelector,
+                        &self.focus_handle,
+                        cx,
+                    )),
+            )
+            .when(self.show_cycle_row, |this| {
+                this.child(
+                    h_flex()
+                        .pt_1()
+                        .gap_2()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .justify_between()
+                        .child(Label::new("Cycle Favorited Models"))
+                        .child(KeyBinding::for_action_in(
+                            &CycleFavoriteModels,
+                            &self.focus_handle,
+                            cx,
+                        )),
+                )
+            })
     }
 }

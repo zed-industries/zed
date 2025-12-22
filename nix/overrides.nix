@@ -89,7 +89,7 @@ in
       libxkbcommon
     ];
   };
-  auto-update = attrs: {
+  auto_update = attrs: {
     inherit ZED_UPDATE_EXPLANATION;
   };
   gpui = attrs: {

@@ -62,8 +62,11 @@ static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
     NSWindowStyleMask::from_bits_retain(1 << 7);
+// WindowLevel const value ref: https://docs.rs/core-graphics2/0.4.1/src/core_graphics2/window_level.rs.html
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
@@ -423,6 +426,8 @@ struct MacWindowState {
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
+    // The parent window if this window is a sheet (Dialog kind)
+    sheet_parent: Option<id>,
 }
 
 impl MacWindowState {
@@ -622,9 +627,14 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
-                WindowKind::Normal | WindowKind::Floating => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::Normal => {
+                    msg_send![WINDOW_CLASS, alloc]
+                }
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
+                WindowKind::Floating | WindowKind::Dialog => {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
@@ -729,6 +739,7 @@ impl MacWindow {
                 select_previous_tab_callback: None,
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
+                sheet_parent: None,
             })));
 
             (*native_window).set_ivar(
@@ -779,9 +790,18 @@ impl MacWindow {
             content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
+            let app: id = NSApplication::sharedApplication(nil);
+            let main_window: id = msg_send![app, mainWindow];
+            let mut sheet_parent = None;
+
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
-                    native_window.setLevel_(NSNormalWindowLevel);
+                    if kind == WindowKind::Floating {
+                        // Let the window float keep above normal windows.
+                        native_window.setLevel_(NSFloatingWindowLevel);
+                    } else {
+                        native_window.setLevel_(NSNormalWindowLevel);
+                    }
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
@@ -816,10 +836,23 @@ impl MacWindow {
                         NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
                     );
                 }
+                WindowKind::Dialog => {
+                    if !main_window.is_null() {
+                        let parent = {
+                            let active_sheet: id = msg_send![main_window, attachedSheet];
+                            if active_sheet.is_null() {
+                                main_window
+                            } else {
+                                active_sheet
+                            }
+                        };
+                        let _: () =
+                            msg_send![parent, beginSheet: native_window completionHandler: nil];
+                        sheet_parent = Some(parent);
+                    }
+                }
             }
 
-            let app = NSApplication::sharedApplication(nil);
-            let main_window: id = msg_send![app, mainWindow];
             if allows_automatic_window_tabbing
                 && !main_window.is_null()
                 && main_window != native_window
@@ -861,7 +894,11 @@ impl MacWindow {
             // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
             //  is different from the primary screen.
             NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
-            window.0.lock().move_traffic_light();
+            {
+                let mut window_state = window.0.lock();
+                window_state.move_traffic_light();
+                window_state.sheet_parent = sheet_parent;
+            }
 
             pool.drain();
 
@@ -938,6 +975,7 @@ impl Drop for MacWindow {
         let mut this = self.0.lock();
         this.renderer.destroy();
         let window = this.native_window;
+        let sheet_parent = this.sheet_parent.take();
         this.display_link.take();
         unsafe {
             this.native_window.setDelegate_(nil);
@@ -946,6 +984,9 @@ impl Drop for MacWindow {
         this.executor
             .spawn(async move {
                 unsafe {
+                    if let Some(parent) = sheet_parent {
+                        let _: () = msg_send![parent, endSheet: window];
+                    }
                     window.close();
                     window.autorelease();
                 }
