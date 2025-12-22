@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ui::{ScrollAxes, WithScrollbar, div, prelude::*};
 
-use crate::{CELL_EDITOR_CONTEXT_NAME, CsvPreviewView, TABLE_CONTEXT_NAME, settings::FontType};
+use crate::{CsvPreviewView, TABLE_CONTEXT_NAME, settings::FontType};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

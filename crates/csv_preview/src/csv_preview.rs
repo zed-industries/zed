@@ -1,11 +1,11 @@
 use editor::Editor;
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
-    ScrollHandle, Subscription, Task, actions,
+    ScrollHandle, Task, actions,
 };
 use std::{sync::Arc, time::Instant};
 
-use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState, types::DisplayCellId};
+use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState};
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
@@ -121,7 +121,7 @@ impl CsvPreviewView {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .filter(|editor| Self::is_csv_file(editor, cx))
             {
-                let csv_preview = Self::from_editor(&editor, window, cx);
+                let csv_preview = Self::new(&editor, cx);
                 workspace.add_item_to_active_pane(Box::new(csv_preview), None, true, window, cx);
             }
         });
@@ -161,11 +161,7 @@ impl CsvPreviewView {
             .unwrap_or(false)
     }
 
-    fn from_editor(
-        editor: &Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
+    fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let list_state = ListState::new(contents.rows.len(), ListAlignment::Top, px(0.));
         let table_interaction_state = cx.new(|cx| {

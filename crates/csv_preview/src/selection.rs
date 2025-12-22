@@ -188,24 +188,6 @@ impl CellSelectionManager {
         }
     }
 
-    /// Check if the selection is empty
-    pub fn is_empty(&self) -> bool {
-        matches!(self.strategy, SelectionStrategy::Empty)
-    }
-
-    /// Get an estimate of the number of selected cells
-    ///
-    /// # Returns
-    /// Number of selected cells, or `usize::MAX` for select-all
-    pub fn get_selected_count_estimate(&self) -> usize {
-        match &self.strategy {
-            SelectionStrategy::Empty => 0,
-            SelectionStrategy::AllCells => usize::MAX, // Indicates "all cells"
-            SelectionStrategy::SingleCell(_) => 1,
-            SelectionStrategy::MultiCell(cells) => cells.len(),
-        }
-    }
-
     /// Get selected cells as HashSet for compatibility with existing code
     ///
     /// Note: For `AllCells` strategy, this requires materializing all cells

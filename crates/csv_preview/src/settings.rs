@@ -1,5 +1,5 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, ButtonStyle, Context, ContextMenu, DropdownMenu,
+    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu,
     ElementId, IconButton, IconName, IconPosition, IconSize, IntoElement as _, ParentElement as _,
     PopoverMenu, Styled as _, Tooltip, Window, div, h_flex,
 };
@@ -65,6 +65,7 @@ pub(crate) enum CopyMode {
 }
 
 #[derive(Clone)]
+#[derive(Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
@@ -77,21 +78,6 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) show_cell_editor_row: bool,
 }
 
-impl Default for CsvPreviewSettings {
-    fn default() -> Self {
-        Self {
-            rendering_with: RowRenderMechanism::default(),
-            vertical_alignment: VerticalAlignment::default(),
-            font_type: FontType::default(),
-            numbering_type: RowIdentifiers::default(),
-            copy_format: CopyFormat::default(),
-            copy_mode: CopyMode::default(),
-            show_debug_info: false,
-            show_perf_metrics_overlay: false,
-            show_cell_editor_row: false,
-        }
-    }
-}
 
 ///// Settings related /////
 impl CsvPreviewView {
@@ -384,7 +370,7 @@ fn create_experimental_popover_menu(
             Tooltip::text("Experimental"),
         )
         .menu({
-            let view_entity = cx.entity().clone();
+            let view_entity = cx.entity();
             move |window, cx| {
                 let view = view_entity.read(cx);
                 let settings = view.settings.clone();
