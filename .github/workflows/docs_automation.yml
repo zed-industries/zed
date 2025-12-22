@@ -83,38 +83,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # Phase 0: Guardrails are loaded via AGENTS.md in each phase
-
-      # Phase 2: Explore Repository (Read-Only - default)
-      - name: "Phase 2: Explore Repository"
-        id: phase2
-        run: |
-          "$DROID_BIN" exec \
-            -m "$DROID_MODEL" \
-            -f .factory/prompts/docs-automation/phase2-explore.md \
-            > /tmp/phase2-output.txt 2>&1 || true
-          echo "Repository exploration complete"
-          cat /tmp/phase2-output.txt
-
       # Phase 3: Analyze Changes (Read-Only - default)
       - name: "Phase 3: Analyze Changes"
         id: phase3
         run: |
           CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
           echo "Analyzing changes in: $CHANGED_FILES"
-
-          # Build prompt with context
-          cat > /tmp/phase3-prompt.md << 'EOF'
-          $(cat .factory/prompts/docs-automation/phase3-analyze.md)
-
-          ## Context
-
-          ### Changed Files
-          $CHANGED_FILES
-
-          ### Phase 2 Output
-          $(cat /tmp/phase2-output.txt)
-          EOF
 
           "$DROID_BIN" exec \
             -m "$DROID_MODEL" \
@@ -129,9 +103,20 @@ jobs:
       - name: "Phase 4: Plan Documentation Impact"
         id: phase4
         run: |
+          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
+          PHASE3_OUTPUT=$(cat /tmp/phase3-output.md)
+          
           "$DROID_BIN" exec \
             -m "$DROID_MODEL" \
-            -f .factory/prompts/docs-automation/phase4-plan.md \
+            "$(cat .factory/prompts/docs-automation/phase4-plan.md)
+
+            ## Context from Phase 3
+
+            ### Changed Files
+            $CHANGED_FILES
+
+            ### Phase 3 Analysis
+            $PHASE3_OUTPUT" \
             > /tmp/phase4-plan.md 2>&1 || true
           echo "Documentation plan complete"
           cat /tmp/phase4-plan.md
@@ -148,10 +133,15 @@ jobs:
         id: phase5
         if: steps.phase4.outputs.updates_required == 'true'
         run: |
+          PHASE4_PLAN=$(cat /tmp/phase4-plan.md)
+          
           "$DROID_BIN" exec \
             -m "$DROID_MODEL" \
             --auto medium \
-            -f .factory/prompts/docs-automation/phase5-apply.md \
+            "$(cat .factory/prompts/docs-automation/phase5-apply.md)
+
+            ## Documentation Plan from Phase 4
+            $PHASE4_PLAN" \
             > /tmp/phase5-report.md 2>&1 || true
           echo "Documentation updates applied"
           cat /tmp/phase5-report.md
@@ -176,10 +166,23 @@ jobs:
         run: |
           # Get git diff of docs
           git diff docs/src/ > /tmp/docs-diff.txt || true
+          
+          PHASE5_REPORT=$(cat /tmp/phase5-report.md)
+          DOCS_DIFF=$(cat /tmp/docs-diff.txt)
 
           "$DROID_BIN" exec \
             -m "$DROID_MODEL" \
-            -f .factory/prompts/docs-automation/phase6-summarize.md \
+            "$(cat .factory/prompts/docs-automation/phase6-summarize.md)
+
+            ## Context
+
+            ### Phase 5 Report
+            $PHASE5_REPORT
+
+            ### Documentation Diff
+            \`\`\`diff
+            $DOCS_DIFF
+            \`\`\`" \
             > /tmp/phase6-summary.md 2>&1 || true
           echo "Summary generated"
           cat /tmp/phase6-summary.md
@@ -201,6 +204,21 @@ jobs:
 
           # Daily batch branch - one branch per day, multiple commits accumulate
           BRANCH_NAME="docs/auto-update-$(date +%Y-%m-%d)"
+
+          # Get source PR info for attribution
+          SOURCE_PR_INFO=""
+          if [ "${{ steps.changed.outputs.source }}" == "pr" ]; then
+            PR_NUM="${{ steps.changed.outputs.ref }}"
+            PR_DETAILS=$(gh pr view "$PR_NUM" --json title,author,url 2>/dev/null || echo "{}")
+            SOURCE_TITLE=$(echo "$PR_DETAILS" | jq -r '.title // "Unknown"')
+            SOURCE_AUTHOR=$(echo "$PR_DETAILS" | jq -r '.author.login // "Unknown"')
+            SOURCE_URL=$(echo "$PR_DETAILS" | jq -r '.url // ""')
+            SOURCE_PR_INFO="
+          ---
+          **Source**: [#$PR_NUM]($SOURCE_URL) - $SOURCE_TITLE
+          **Author**: @$SOURCE_AUTHOR
+          "
+          fi
 
           # Stash local changes from phase 5
           git stash push -m "docs-automation-changes" -- docs/src/
@@ -232,16 +250,37 @@ jobs:
           # Push
           git push -u origin "$BRANCH_NAME"
 
-          # Check if PR already exists for this branch
-          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' || echo "")
+          # Build the PR body section for this update
+          PR_BODY_SECTION="## Update from $(date '+%Y-%m-%d %H:%M')
+          $SOURCE_PR_INFO
+          $(cat /tmp/phase6-summary.md)
+          "
 
-          if [ -n "$EXISTING_PR" ]; then
-            echo "PR #$EXISTING_PR already exists for branch $BRANCH_NAME, updated with new commit"
+          # Check if PR already exists for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number,url,body --jq '.[0]' || echo "")
+
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
+            PR_NUM=$(echo "$EXISTING_PR" | jq -r '.number')
+            PR_URL=$(echo "$EXISTING_PR" | jq -r '.url')
+            EXISTING_BODY=$(echo "$EXISTING_PR" | jq -r '.body // ""')
+            
+            # Append new summary to existing PR body
+            NEW_BODY="${EXISTING_BODY}
+
+          ---
+
+          ${PR_BODY_SECTION}"
+            
+            echo "$NEW_BODY" > /tmp/updated-pr-body.md
+            gh pr edit "$PR_NUM" --body-file /tmp/updated-pr-body.md
+            
+            echo "PR #$PR_NUM updated: $PR_URL"
           else
             # Create new PR
+            echo "$PR_BODY_SECTION" > /tmp/new-pr-body.md
             gh pr create \
               --title "docs: automated documentation update ($(date +%Y-%m-%d))" \
-              --body-file /tmp/phase6-summary.md \
+              --body-file /tmp/new-pr-body.md \
               --base main || true
             echo "PR created on branch: $BRANCH_NAME"
           fi
