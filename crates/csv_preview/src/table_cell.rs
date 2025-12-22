@@ -18,7 +18,7 @@ use crate::{
 
 /// Position of a cell within the source CSV buffer
 #[derive(Clone, Debug)]
-pub struct CellPosition {
+pub struct CellContentSpan {
     /// Start anchor of the cell content in the source buffer
     pub start: Anchor,
     /// End anchor of the cell content in the source buffer
@@ -31,7 +31,7 @@ pub struct CellPosition {
 #[derive(Clone, Debug)]
 pub struct TableCell {
     /// Position of this cell in the source buffer (None for non-buffer-backed cells)
-    pub position: Option<CellPosition>,
+    pub position: Option<CellContentSpan>,
     /// Cached display value (for performance)
     pub cached_value: SharedString,
     /// Whether this cell is currently being edited
@@ -51,7 +51,7 @@ impl TableCell {
         let end_anchor = buffer_snapshot.anchor_after(end_offset);
 
         Self {
-            position: Some(CellPosition {
+            position: Some(CellContentSpan {
                 start: start_anchor,
                 end: end_anchor,
                 buffer_id,

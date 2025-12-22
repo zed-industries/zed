@@ -4,6 +4,8 @@
 //! - Display coordinates: Visual positions in rendered table
 //! - Data coordinates: Original CSV data positions
 
+use std::ops::Deref;
+
 /// Visual row position in rendered table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DisplayRow(pub usize);
@@ -33,6 +35,14 @@ impl DataRow {
     /// Get the inner row value
     pub fn get(self) -> usize {
         self.0
+    }
+}
+
+impl Deref for DataRow {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -68,6 +78,13 @@ impl AnyColumn {
     }
 }
 
+impl Deref for AnyColumn {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 impl From<usize> for AnyColumn {
     fn from(col: usize) -> Self {
         AnyColumn::new(col)
@@ -89,6 +106,11 @@ impl DisplayCellId {
             col: col.into(),
         }
     }
+
+    /// Returns (row, column)
+    pub fn to_raw(&self) -> (usize, usize) {
+        (self.row.0, self.col.0)
+    }
 }
 
 /// Original CSV cell position.
@@ -105,5 +127,9 @@ impl DataCellId {
             row: row.into(),
             col: col.into(),
         }
+    }
+
+    pub fn to_raw(&self) -> (usize, usize) {
+        (self.row.0, self.col.0)
     }
 }
