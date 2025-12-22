@@ -27,7 +27,7 @@ pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use encoding_rs::Encoding;
 use fs::MTime;
-use futures::channel::oneshot;
+use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TaskLabel, TextStyle,
@@ -1736,81 +1736,69 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.background_spawn({
-            let language = language.clone();
-            let language_registry = language_registry.clone();
-            async move {
-                syntax_snapshot.reparse(&text, language_registry, language);
-                syntax_snapshot
-            }
-        });
+        let mut parse_task = cx
+            .background_spawn({
+                let language = language.clone();
+                let language_registry = language_registry.clone();
+                async move {
+                    syntax_snapshot.reparse(&text, language_registry, language);
+                    syntax_snapshot
+                }
+            })
+            .fuse();
+
+        let mut timeout = cx
+            .background_executor()
+            .timer(self.sync_parse_timeout)
+            .fuse();
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        if may_block {
-            match cx
-                .background_executor()
-                .block_with_timeout(self.sync_parse_timeout, parse_task)
-            {
+        let parse_task = if may_block {
+            match cx.background_executor().block(async move {
+                select! {
+                    _ = timeout => {
+                        Err(parse_task)
+                    }
+                    new_syntax_snapshot = parse_task => {
+                        Ok(new_syntax_snapshot)
+                    }
+                }
+            }) {
                 Ok(new_syntax_snapshot) => {
                     self.did_finish_parsing(new_syntax_snapshot, cx);
                     self.reparse = None;
+                    return;
                 }
-                Err(parse_task) => {
-                    self.reparse = Some(cx.spawn(async move |this, cx| {
-                        let new_syntax_map = cx.background_spawn(parse_task).await;
-                        this.update(cx, move |this, cx| {
-                            let grammar_changed = || {
-                                this.language.as_ref().is_none_or(|current_language| {
-                                    !Arc::ptr_eq(&language, current_language)
-                                })
-                            };
-                            let language_registry_changed = || {
-                                new_syntax_map.contains_unknown_injections()
-                                    && language_registry.is_some_and(|registry| {
-                                        registry.version()
-                                            != new_syntax_map.language_registry_version()
-                                    })
-                            };
-                            let parse_again = this.version.changed_since(&parsed_version)
-                                || language_registry_changed()
-                                || grammar_changed();
-                            this.did_finish_parsing(new_syntax_map, cx);
-                            this.reparse = None;
-                            if parse_again {
-                                this.reparse(cx, false);
-                            }
-                        })
-                        .ok();
-                    }));
-                }
+                Err(parse_task) => parse_task,
             }
         } else {
-            self.reparse = Some(cx.spawn(async move |this, cx| {
-                let new_syntax_map = cx.background_spawn(parse_task).await;
-                this.update(cx, move |this, cx| {
-                    let grammar_changed = || {
-                        this.language.as_ref().is_none_or(|current_language| {
-                            !Arc::ptr_eq(&language, current_language)
+            parse_task
+        };
+        self.reparse = Some(cx.spawn(async move |this, cx| {
+            let new_syntax_map = cx.background_spawn(parse_task).await;
+            this.update(cx, move |this, cx| {
+                let grammar_changed = || {
+                    this.language
+                        .as_ref()
+                        .is_none_or(|current_language| !Arc::ptr_eq(&language, current_language))
+                };
+                let language_registry_changed = || {
+                    new_syntax_map.contains_unknown_injections()
+                        && language_registry.is_some_and(|registry| {
+                            registry.version() != new_syntax_map.language_registry_version()
                         })
-                    };
-                    let language_registry_changed = || {
-                        new_syntax_map.contains_unknown_injections()
-                            && language_registry.is_some_and(|registry| {
-                                registry.version() != new_syntax_map.language_registry_version()
-                            })
-                    };
-                    let parse_again = this.version.changed_since(&parsed_version)
-                        || language_registry_changed()
-                        || grammar_changed();
-                    this.did_finish_parsing(new_syntax_map, cx);
-                    this.reparse = None;
-                    if parse_again {
-                        this.reparse(cx, false);
-                    }
-                })
-                .ok();
-            }));
-        }
+                };
+                let parse_again = this.version.changed_since(&parsed_version)
+                    || language_registry_changed()
+                    || grammar_changed();
+                this.did_finish_parsing(new_syntax_map, cx);
+                this.reparse = None;
+                if parse_again {
+                    this.reparse(cx, false);
+                }
+            })
+            .ok();
+        }));
     }
 
     fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
