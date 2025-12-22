@@ -1,17 +1,12 @@
 use std::rc::Rc;
-use std::sync::Arc;
 use std::{any::Any, path::Path};
 
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
-use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
-use collections::HashSet;
-use fs::Fs;
-use gpui::{App, AppContext as _, SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
-use project::agent_server_store::{AllAgentServersSettings, GEMINI_NAME};
-use settings::{SettingsStore, update_settings_file};
+use project::agent_server_store::GEMINI_NAME;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -80,90 +75,6 @@ impl AgentServer for Gemini {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
-    }
-
-    fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        });
-
-        settings
-            .as_ref()
-            .and_then(|s| s.default_mode.clone().map(acp::SessionModeId::new))
-    }
-
-    fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
-        update_settings_file(fs, cx, |settings, _| {
-            settings
-                .agent_servers
-                .get_or_insert_default()
-                .gemini
-                .get_or_insert_default()
-                .default_mode = mode_id.map(|m| m.to_string())
-        });
-    }
-
-    fn default_model(&self, cx: &mut App) -> Option<acp::ModelId> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        });
-
-        settings
-            .as_ref()
-            .and_then(|s| s.default_model.clone().map(acp::ModelId::new))
-    }
-
-    fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
-        update_settings_file(fs, cx, |settings, _| {
-            settings
-                .agent_servers
-                .get_or_insert_default()
-                .gemini
-                .get_or_insert_default()
-                .default_model = model_id.map(|m| m.to_string())
-        });
-    }
-
-    fn favorite_model_ids(&self, cx: &mut App) -> HashSet<acp::ModelId> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        });
-
-        settings
-            .as_ref()
-            .map(|s| {
-                s.favorite_models
-                    .iter()
-                    .map(|id| acp::ModelId::new(id.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn toggle_favorite_model(
-        &self,
-        model_id: acp::ModelId,
-        should_be_favorite: bool,
-        fs: Arc<dyn Fs>,
-        cx: &App,
-    ) {
-        update_settings_file(fs, cx, move |settings, _| {
-            let favorite_models = &mut settings
-                .agent_servers
-                .get_or_insert_default()
-                .gemini
-                .get_or_insert_default()
-                .favorite_models;
-
-            let model_id_str = model_id.to_string();
-            if should_be_favorite {
-                if !favorite_models.contains(&model_id_str) {
-                    favorite_models.push(model_id_str);
-                }
-            } else {
-                favorite_models.retain(|id| id != &model_id_str);
-            }
-        });
     }
 }
 
