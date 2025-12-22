@@ -43,6 +43,7 @@ mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
+poe = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
 release_channel.workspace = true
 schemars.workspace = true

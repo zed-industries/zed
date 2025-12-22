@@ -8820,6 +8820,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "parking_lot",
+ "poe",
  "proto",
  "schemars",
  "serde",
@@ -8868,6 +8869,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "partial-json-fixer",
+ "poe",
  "project",
  "release_channel",
  "schemars",
@@ -12100,6 +12102,22 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "poe"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "strum 0.27.2",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

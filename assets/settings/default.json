@@ -2019,6 +2019,9 @@
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1"
     },
+    "poe": {
+      "api_url": "https://api.poe.com/v1"
+    },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0"
     },

@@ -121,6 +121,7 @@ members = [
     "crates/onboarding",
     "crates/open_ai",
     "crates/open_router",
+    "crates/poe",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -349,6 +350,7 @@ ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
+poe = { path = "crates/poe", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }

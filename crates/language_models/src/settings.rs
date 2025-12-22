@@ -8,7 +8,7 @@ use crate::provider::{
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    poe::PoeSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -21,6 +21,7 @@ pub struct AllLanguageModelSettings {
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
     pub open_router: OpenRouterSettings,
+    pub poe: PoeSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel: VercelSettings,
@@ -41,6 +42,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
         let open_router = language_models.open_router.unwrap();
+        let poe = language_models.poe.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel = language_models.vercel.unwrap();
@@ -83,6 +85,10 @@ impl settings::Settings for AllLanguageModelSettings {
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),
                 available_models: open_router.available_models.unwrap_or_default(),
+            },
+            poe: PoeSettings {
+                api_url: poe.api_url.unwrap(),
+                available_models: poe.available_models.unwrap_or_default(),
             },
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),

@@ -1084,3 +1084,69 @@ mod tests {
         assert_eq!(deserialized.thought_signature, None);
     }
 }
+
+impl From<poe::PoeError> for LanguageModelCompletionError {
+    fn from(error: poe::PoeError) -> Self {
+        let provider = LanguageModelProviderName::new("Poe");
+        match error {
+            poe::PoeError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            poe::PoeError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            poe::PoeError::HttpSend(error) => Self::HttpSend { provider, error },
+            poe::PoeError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            poe::PoeError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            poe::PoeError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            poe::PoeError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            poe::PoeError::ApiError(api_error) => api_error.into(),
+        }
+    }
+}
+
+impl From<poe::ApiError> for LanguageModelCompletionError {
+    fn from(error: poe::ApiError) -> Self {
+        use poe::ApiErrorCode::*;
+        let provider = LanguageModelProviderName::new("Poe");
+        match error.code {
+            InvalidRequestError => Self::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Self::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PaymentRequiredError => Self::AuthenticationError {
+                provider,
+                message: format!("Payment required: {}", error.message),
+            },
+            PermissionError => Self::PermissionError {
+                provider,
+                message: error.message,
+            },
+            RequestTimedOut => Self::HttpResponseError {
+                provider,
+                status_code: StatusCode::REQUEST_TIMEOUT,
+                message: error.message,
+            },
+            RateLimitError => Self::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Self::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Self::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
+        }
+    }
+}

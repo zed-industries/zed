@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
+    pub poe: Option<PoeSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel: Option<VercelSettingsContent>,
@@ -394,6 +395,32 @@ pub enum DataCollection {
     #[default]
     Allow,
     Disallow,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct PoeSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<PoeAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PoeAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub mode: Option<ModelMode>,
+    pub provider: Option<PoeProvider>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PoeProvider {
+    // Placeholder for future Poe-specific provider options
+    _reserved: Option<String>,
 }
 
 fn default_true() -> bool {
