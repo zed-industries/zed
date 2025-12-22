@@ -4,8 +4,7 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, ClickEvent, DismissEvent, FocusHandle,
-    Subscription, Task,
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
@@ -566,7 +565,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let handle_action_click = {
                     let model = model_info.model.clone();
                     let on_toggle_favorite = self.on_toggle_favorite.clone();
-                    cx.listener(move |picker, _: &ClickEvent, window, cx| {
+                    cx.listener(move |picker, _, window, cx| {
                         on_toggle_favorite(model.clone(), !is_favorite, cx);
                         picker.refresh(window, cx);
                     })
