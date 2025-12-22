@@ -85,6 +85,8 @@ You can type `@` to mention files, directories, symbols, previous threads, and r
 
 Copying images and pasting them in the panel's message editor is also supported.
 
+When you paste multi-line code selections copied from an editor buffer, Zed automatically formats them as @mentions with the file context. To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
+
 ### Selection as Context
 
 Additionally, you can also select text in a buffer and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `@` menu.
