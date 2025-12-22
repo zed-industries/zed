@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write as _, mem, path::Path, sync::Arc};
+use std::{borrow::Cow, mem, path::Path, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -20,19 +20,36 @@ const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
-const REPOSITORY_URL_FIELD: &str = "repository_url";
-const REVISION_FIELD: &str = "revision";
+
+#[derive(Serialize, Deserialize)]
+struct FrontMatter<'a> {
+    repository_url: Cow<'a, str>,
+    revision: Cow<'a, str>,
+}
 
 impl ExampleSpec {
     /// Format this example spec as markdown.
     pub fn to_markdown(&self) -> String {
+        use std::fmt::Write as _;
+
+        let front_matter = FrontMatter {
+            repository_url: Cow::Borrowed(&self.repository_url),
+            revision: Cow::Borrowed(&self.revision),
+        };
+        let front_matter_toml =
+            toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
+
         let mut markdown = String::new();
 
-        _ = writeln!(markdown, "# {}", self.name);
+        _ = writeln!(markdown, "+++");
+        markdown.push_str(&front_matter_toml);
+        if !markdown.ends_with('\n') {
+            markdown.push('\n');
+        }
+        _ = writeln!(markdown, "+++");
         markdown.push('\n');
 
-        _ = writeln!(markdown, "repository_url = {}", self.repository_url);
-        _ = writeln!(markdown, "revision = {}", self.revision);
+        _ = writeln!(markdown, "# {}", self.name);
         markdown.push('\n');
 
         if !self.uncommitted_diff.is_empty() {
@@ -87,10 +104,8 @@ impl ExampleSpec {
     }
 
     /// Parse an example spec from markdown.
-    pub fn from_markdown(name: String, input: &str) -> anyhow::Result<Self> {
+    pub fn from_markdown(name: String, mut input: &str) -> anyhow::Result<Self> {
         use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
-
-        let parser = Parser::new(input);
 
         let mut spec = ExampleSpec {
             name,
@@ -103,6 +118,17 @@ impl ExampleSpec {
             expected_patch: String::new(),
         };
 
+        if let Some(rest) = input.strip_prefix("+++\n")
+            && let Some((front_matter, rest)) = rest.split_once("+++\n")
+        {
+            if let Ok(data) = toml::from_str::<FrontMatter<'_>>(front_matter) {
+                spec.repository_url = data.repository_url.into_owned();
+                spec.revision = data.revision.into_owned();
+            }
+            input = rest.trim_start();
+        }
+
+        let parser = Parser::new(input);
         let mut text = String::new();
         let mut block_info: CowStr = "".into();
 
@@ -123,20 +149,6 @@ impl ExampleSpec {
             match event {
                 Event::Text(line) => {
                     text.push_str(&line);
-
-                    if let Section::Start = current_section
-                        && let Some((field, value)) = line.split_once('=')
-                    {
-                        match field.trim() {
-                            REPOSITORY_URL_FIELD => {
-                                spec.repository_url = value.trim().to_string();
-                            }
-                            REVISION_FIELD => {
-                                spec.revision = value.trim().to_string();
-                            }
-                            _ => {}
-                        }
-                    }
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
                     let title = mem::take(&mut text);
