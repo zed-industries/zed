@@ -18,3 +18,5 @@
 {"Key":"r"}
 {"Key":"enter"}
 {"Get":{"state":"foobar\n\nfoobaˇr\n","mode":"Normal"}}
+{"Key":"u"}
+{"Get":{"state":"foˇo\n\nfoo\n","mode":"Normal"}}

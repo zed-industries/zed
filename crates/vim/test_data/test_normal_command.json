@@ -62,3 +62,17 @@
 {"Key":"u"}
 {"Key":"enter"}
 {"Get":{"state":"ˇThe quick\nbrown fox\njumps over\nthe lazy dog\n","mode":"Normal"}}
+{"Put":{"state":"The« quick\nbrownˇ» fox\njumps over\nthe lazy dog\n"}}
+{"Key":":"}
+{"Key":"n"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"m"}
+{"Key":"space"}
+{"Key":"I"}
+{"Key":"1"}
+{"Key":"2"}
+{"Key":"3"}
+{"Key":"enter"}
+{"Key":"u"}
+{"Get":{"state":"ˇThe quick\nbrown fox\njumps over\nthe lazy dog\n","mode":"Normal"}}

@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
-    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
+    Bias, DisplayPoint, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
@@ -243,7 +243,7 @@ struct VimRead {
 struct VimNorm {
     pub range: Option<CommandRange>,
     pub command: String,
-    pub collapse_multicursor: bool,
+    pub override_selections: Option<Vec<DisplayPoint>>,
 }
 
 #[derive(Debug)]
@@ -760,9 +760,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             .map(|c| Keystroke::parse(&c.to_string()).unwrap())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
-        let initial_selections =
-            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
-        if let Some(range) = &action.range {
+        if let Some(new_selections) = &action.override_selections {
+            let _ = vim.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.replace_cursors_with(|_| new_selections.to_vec());
+                });
+            });
+        } else if let Some(range) = &action.range {
             let result = vim.update_editor(cx, |vim, editor, cx| {
                 let range = range.buffer_range(vim, editor, window, cx)?;
                 editor.change_selections(
@@ -791,46 +795,31 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             workspace.send_keystrokes_impl(keystrokes, window, cx)
         });
         let had_range = action.range.is_some();
-        let collapse_multicursor = action.collapse_multicursor;
+        let had_override = action.override_selections.is_some();
 
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
             vim.update_in(cx, |vim, window, cx| {
-                if had_range {
-                    vim.update_editor(cx, |_, editor, cx| {
-                        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                            s.select_anchor_ranges([s.newest_anchor().range()]);
-                        })
-                    });
-                }
                 if matches!(vim.mode, Mode::Insert | Mode::Replace) {
                     vim.normal_before(&Default::default(), window, cx);
                 } else {
                     vim.switch_mode(Mode::Normal, true, window, cx);
                 }
-                if had_range {
+                if had_override || had_range {
                     vim.update_editor(cx, |_, editor, cx| {
-                        if let Some(first_sel) = initial_selections
-                            && let Some(tx_id) = editor
-                                .buffer()
-                                .update(cx, |multi, cx| multi.last_transaction_id(cx))
+                        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                            s.select_anchor_ranges([s.newest_anchor().range()]);
+                        });
+                        if let Some(tx_id) = editor
+                            .buffer()
+                            .update(cx, |multi, cx| multi.last_transaction_id(cx))
                         {
                             let last_sel = editor.selections.disjoint_anchors_arc();
                             editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = first_sel;
+                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
                                 old.1 = Some(last_sel);
                             });
                         }
-                    });
-                } else if collapse_multicursor {
-                    vim.update_editor(cx, |_, editor, cx| {
-                        let newest = editor
-                            .selections
-                            .newest::<Point>(&editor.display_snapshot(cx));
-                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select(vec![newest]);
-                        });
-                        editor.end_transaction_at(Instant::now(), cx);
                     });
                 }
             })
@@ -1620,7 +1609,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             VimNorm {
                 command: "".into(),
                 range: None,
-                collapse_multicursor: false,
+                override_selections: None,
             },
         )
         .args(|_, args| {
@@ -1628,7 +1617,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 VimNorm {
                     command: args,
                     range: None,
-                    collapse_multicursor: false,
+                    override_selections: None,
                 }
                 .boxed_clone(),
             )
@@ -2169,14 +2158,6 @@ impl OnMatchingLines {
             });
         };
 
-        let (action, skip_fix_selections) = match action.as_any().downcast_ref::<VimNorm>() {
-            Some(vim_norm) => {
-                let mut vim_norm = vim_norm.clone();
-                vim_norm.collapse_multicursor = true;
-                (vim_norm.boxed_clone(), true)
-            }
-            None => (action, false),
-        };
         vim.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let mut row = range.start.0;
@@ -2218,6 +2199,18 @@ impl OnMatchingLines {
                 if new_selections.is_empty() {
                     return;
                 }
+
+                if let Some(vim_norm) = action.as_any().downcast_ref::<VimNorm>() {
+                    let mut vim_norm = vim_norm.clone();
+                    vim_norm.override_selections = Some(new_selections);
+                    editor
+                        .update_in(cx, |_, window, cx| {
+                            window.dispatch_action(vim_norm.boxed_clone(), cx);
+                        })
+                        .ok();
+                    return;
+                }
+
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
@@ -2225,9 +2218,6 @@ impl OnMatchingLines {
                             s.replace_cursors_with(|_| new_selections);
                         });
                         window.dispatch_action(action, cx);
-                        if skip_fix_selections {
-                            return;
-                        }
 
                         cx.defer_in(window, move |editor, window, cx| {
                             let newest = editor
@@ -3178,6 +3168,27 @@ mod test {
             jumps over
             the lazy dog
         "});
+
+        cx.set_shared_state(indoc! {"
+            The« quick
+            brownˇ» fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I 1 2 3")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇThe quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
         // Once ctrl-v to input character literals is added there should be a test for redo
     }
 
@@ -3201,6 +3212,14 @@ mod test {
             foobar
 
             foobaˇr
+        "});
+
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            foˇo
+
+            foo
         "});
     }
 
