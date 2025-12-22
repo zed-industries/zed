@@ -940,49 +940,6 @@ impl Item for Editor {
         self.pixel_position_of_newest_cursor
     }
 
-    fn breadcrumb_prefix(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if self.buffer().read(cx).is_singleton() {
-            return None;
-        }
-
-        let is_collapsed = self.is_multibuffer_collapsed;
-
-        let (icon, label, tooltip_label) = if is_collapsed {
-            (
-                IconName::ChevronUpDown,
-                "Expand All",
-                "Expand All Search Results",
-            )
-        } else {
-            (
-                IconName::ChevronDownUp,
-                "Collapse All",
-                "Collapse All Search Results",
-            )
-        };
-
-        let focus_handle = self.focus_handle.clone();
-
-        Some(
-            Button::new("multibuffer-collapse-expand", label)
-                .icon(icon)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action_in(tooltip_label, &ToggleFoldAll, &focus_handle, cx)
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.is_multibuffer_collapsed = !this.is_multibuffer_collapsed;
-                    this.toggle_fold_all(&ToggleFoldAll, window, cx);
-                }))
-                .into_any_element(),
-        )
-    }
-
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
@@ -992,13 +949,10 @@ impl Item for Editor {
     }
 
     // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
-    // In those cases, the toolbar breadcrumbs should be an empty vector.
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         if self.buffer.read(cx).is_singleton() {
             self.breadcrumbs_inner(variant, cx)
         } else {
-            // Should say: If you're searching, None, else, vec![] -> What that really means is if you're searching, don't render the chevron (search bar will do it for you), otherwise _do_ render the chevron (which is defined as a breadcrumb prefix)
-            // Some(vec![])
             None
         }
     }
