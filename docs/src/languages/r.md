@@ -3,7 +3,6 @@
 R support is available via multiple R Zed extensions:
 
 - [ocsmit/zed-r](https://github.com/ocsmit/zed-r)
-
   - Tree-sitter: [r-lib/tree-sitter-r](https://github.com/r-lib/tree-sitter-r)
   - Language-Server: [REditorSupport/languageserver](https://github.com/REditorSupport/languageserver)
 
