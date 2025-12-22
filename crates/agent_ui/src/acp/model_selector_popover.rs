@@ -2,7 +2,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
-use agent_servers::AgentServer;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
@@ -13,7 +12,6 @@ use crate::ui::ModelSelectorTooltip;
 
 pub struct AcpModelSelectorPopover {
     selector: Entity<AcpModelSelector>,
-    agent_server: Rc<dyn AgentServer>,
     menu_handle: PopoverMenuHandle<AcpModelSelector>,
     focus_handle: FocusHandle,
 }
@@ -21,7 +19,7 @@ pub struct AcpModelSelectorPopover {
 impl AcpModelSelectorPopover {
     pub(crate) fn new(
         selector: Rc<dyn AgentModelSelector>,
-        agent_server: Rc<dyn AgentServer>,
+        agent_server: Rc<dyn agent_servers::AgentServer>,
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<AcpModelSelector>,
         focus_handle: FocusHandle,
@@ -29,19 +27,17 @@ impl AcpModelSelectorPopover {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle_clone = focus_handle.clone();
-        let agent_server_clone = agent_server.clone();
         Self {
             selector: cx.new(move |cx| {
                 acp_model_selector(
                     selector,
-                    agent_server_clone,
+                    agent_server,
                     fs,
                     focus_handle_clone.clone(),
                     window,
                     cx,
                 )
             }),
-            agent_server,
             menu_handle,
             focus_handle,
         }
@@ -64,7 +60,8 @@ impl AcpModelSelectorPopover {
 
 impl Render for AcpModelSelectorPopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = self.selector.read(cx).delegate.active_model();
+        let selector = self.selector.read(cx);
+        let model = selector.delegate.active_model();
         let model_name = model
             .as_ref()
             .map(|model| model.name.clone())
@@ -73,7 +70,6 @@ impl Render for AcpModelSelectorPopover {
         let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 
         let focus_handle = self.focus_handle.clone();
-        let agent_server = self.agent_server.clone();
 
         let (color, icon) = if self.menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
@@ -81,12 +77,11 @@ impl Render for AcpModelSelectorPopover {
             (Color::Muted, IconName::ChevronDown)
         };
 
-        let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let show_cycle_row = agent_server.favorite_model_ids(cx).len() > 1;
+        let show_cycle_row = selector.delegate.favorites_count() > 1;
 
-                ModelSelectorTooltip::new(focus_handle)
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }

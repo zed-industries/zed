@@ -54,10 +54,10 @@ pub struct AcpModelPickerDelegate {
     selected_index: usize,
     selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
-    /// Local cache of favorite model IDs for immediate UI updates.
-    /// This is updated optimistically when the user toggles a favorite,
-    /// before the settings file is written.
+    /// Local cache of favorite model IDs for optimistic UI updates.
     favorites: HashSet<ModelId>,
+    /// Cached list of favorite models that only updates when `favorites` or `models` changes.
+    cached_favorite_models: Vec<AgentModelInfo>,
     _refresh_models_task: Task<()>,
     _settings_subscription: Subscription,
     focus_handle: FocusHandle,
@@ -93,6 +93,7 @@ impl AcpModelPickerDelegate {
                         this.update_in(cx, |this, window, cx| {
                             this.delegate.models = models.ok();
                             this.delegate.selected_model = selected_model.ok();
+                            this.delegate.rebuild_cached_favorite_models();
                             this.refresh(window, cx)
                         })
                     }
@@ -110,8 +111,12 @@ impl AcpModelPickerDelegate {
         let agent_server_for_subscription = agent_server.clone();
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |picker, window, cx| {
-                picker.delegate.favorites = agent_server_for_subscription.favorite_model_ids(cx);
-                picker.refresh(window, cx);
+                let new_favorites = agent_server_for_subscription.favorite_model_ids(cx);
+                if new_favorites != picker.delegate.favorites {
+                    picker.delegate.favorites = new_favorites;
+                    picker.delegate.rebuild_cached_favorite_models();
+                    picker.refresh(window, cx);
+                }
             });
         let favorites = agent_server.favorite_model_ids(cx);
 
@@ -125,6 +130,7 @@ impl AcpModelPickerDelegate {
             selected_index: 0,
             selected_description: None,
             favorites,
+            cached_favorite_models: Vec::new(),
             _refresh_models_task: refresh_models_task,
             _settings_subscription: settings_subscription,
             focus_handle,
@@ -135,46 +141,47 @@ impl AcpModelPickerDelegate {
         self.selected_model.as_ref()
     }
 
-    pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let favorites = &self.favorites;
+    fn rebuild_cached_favorite_models(&mut self) {
+        let Some(models) = &self.models else {
+            self.cached_favorite_models.clear();
+            return;
+        };
 
-        if favorites.is_empty() {
+        let all_models: Vec<&AgentModelInfo> = match models {
+            AgentModelList::Flat(list) => list.iter().collect(),
+            AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
+        };
+
+        self.cached_favorite_models = all_models
+            .into_iter()
+            .filter(|model| self.favorites.contains(&model.id))
+            .unique_by(|model| &model.id)
+            .cloned()
+            .collect();
+    }
+
+    pub fn favorites_count(&self) -> usize {
+        self.favorites.len()
+    }
+
+    pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.cached_favorite_models.is_empty() {
             return;
         }
 
-        let Some(models) = self.models.clone() else {
-            return;
-        };
-
-        let all_models: Vec<AgentModelInfo> = match models {
-            AgentModelList::Flat(list) => list,
-            AgentModelList::Grouped(index_map) => index_map
-                .into_values()
-                .flatten()
-                .collect::<Vec<AgentModelInfo>>(),
-        };
-
-        let favorite_models = all_models
-            .iter()
-            .filter(|model| favorites.contains(&model.id))
-            .unique_by(|model| &model.id)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let current_id = self.selected_model.as_ref().map(|m| m.id.clone());
+        let current_id = self.selected_model.as_ref().map(|m| &m.id);
 
         let current_index_in_favorites = current_id
-            .as_ref()
-            .and_then(|id| favorite_models.iter().position(|m| &m.id == id))
+            .and_then(|id| self.cached_favorite_models.iter().position(|m| &m.id == id))
             .unwrap_or(usize::MAX);
 
         let next_index = if current_index_in_favorites == usize::MAX {
             0
         } else {
-            (current_index_in_favorites + 1) % favorite_models.len()
+            (current_index_in_favorites + 1) % self.cached_favorite_models.len()
         };
 
-        let next_model = favorite_models[next_index].clone();
+        let next_model = self.cached_favorite_models[next_index].clone();
 
         self.selector
             .select_model(next_model.id.clone(), cx)
@@ -330,7 +337,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     let fs = self.fs.clone();
                     let agent_server = self.agent_server.clone();
 
-                    cx.listener(move |picker, _: &ClickEvent, window, cx| {
+                    cx.listener(move |picker, _: &ClickEvent, _, cx| {
                         // Optimistically update our local favorites cache for immediate UI feedback
                         let new_favorite_state = !is_favorite;
 
@@ -348,7 +355,16 @@ impl PickerDelegate for AcpModelPickerDelegate {
                             cx,
                         );
 
-                        picker.refresh(window, cx);
+                        picker.delegate.rebuild_cached_favorite_models();
+                        picker.delegate.filtered_entries = info_list_to_picker_entries(
+                            picker
+                                .delegate
+                                .models
+                                .clone()
+                                .unwrap_or(AgentModelList::Flat(vec![])),
+                            &picker.delegate.favorites,
+                        );
+                        cx.notify();
                     })
                 };
 
