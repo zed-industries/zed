@@ -55,6 +55,7 @@ impl ConvergioChatView {
         agent_name: SharedString,
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -83,11 +84,6 @@ impl ConvergioChatView {
                 None
             }
         };
-
-        // Get language registry for markdown syntax highlighting
-        let language_registry = workspace.upgrade().map(|ws| {
-            ws.read(cx).project().read(cx).languages().clone()
-        });
 
         let mut view = Self {
             focus_handle,

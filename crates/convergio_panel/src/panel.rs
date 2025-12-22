@@ -605,6 +605,12 @@ impl ConvergioPanel {
         let agent_name: SharedString = agent_name.to_string().into();
         let display_name: SharedString = server_name.to_string().into();
 
+        // Get language registry BEFORE updating workspace to avoid reentrancy
+        let language_registry = workspace.upgrade().map(|ws| {
+            ws.read(cx).project().read(cx).languages().clone()
+        });
+        let workspace_weak = self._workspace.clone();
+
         // Create the custom chat view
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -612,7 +618,8 @@ impl ConvergioPanel {
                     ConvergioChatView::new(
                         agent_name.clone(),
                         display_name,
-                        self._workspace.clone(),
+                        workspace_weak,
+                        language_registry,
                         window,
                         cx,
                     )

@@ -1467,4 +1467,11 @@
       "cmd-shift-i": "branch_picker::FilterRemotes",
     },
   },
+  {
+    "context": "ConvergioChatView",
+    "bindings": {
+      "enter": "convergio_chat::Send",
+      "cmd-r": "convergio_chat::Refresh",
+    },
+  },
 ]
