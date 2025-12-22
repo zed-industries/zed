@@ -348,12 +348,7 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ### Codestral {#codestral}
 
-<<<<<<< Updated upstream
 To use Mistral's Codestral as your provider:
-=======
-To use Mistral's Codestral as your provider, open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to the Edit Predictions section. Select Codestral as your provider and enter your API key in the corresponding field.
-
-> > > > > > > Stashed changes
 
 1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
 2. Search for "Edit Predictions" and click **Configure Providers**
