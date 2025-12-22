@@ -28,7 +28,7 @@ impl CsvPreviewView {
             let display_row = focused_cell.row;
             let col = focused_cell.col;
 
-            if let Some(data_row) = self.ordered_indices.get_data_row(display_row) {
+            if let Some(data_row) = self.sorted_indices.get_data_row(display_row) {
                 return Some((data_row.get(), col.get()));
             }
         }
