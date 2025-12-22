@@ -22,10 +22,15 @@ impl CsvPreviewView {
         let subscription = cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited { .. }
-                // | EditorEvent::DirtyChanged
-                | EditorEvent::Reparsed(_) // Change of the file from preview cell editor
-                | EditorEvent::ExcerptsEdited{ .. } => {
+                | EditorEvent::DirtyChanged
+                | EditorEvent::ExcerptsEdited { .. } => {
                     println!("Event which triggered reparsing: {event:?}");
+                    this.parse_csv_from_active_editor(true, cx);
+                }
+                EditorEvent::BufferEdited | EditorEvent::Reparsed(_) if this.cell_edited_flag => {
+                    println!("CSV Cell edited. Event: {event:?}");
+                    // Clearing
+                    this.cell_edited_flag = false;
                     this.parse_csv_from_active_editor(true, cx);
                 }
                 _ => {

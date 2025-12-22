@@ -159,6 +159,8 @@ impl CsvPreviewView {
             buffer.edit([(range, new_text)], None, cx);
         });
 
+        self.cell_edited_flag = true;
+
         // The buffer edit will trigger a reparse via the subscription in parser.rs
         cx.notify();
     }
