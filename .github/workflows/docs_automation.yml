@@ -174,7 +174,7 @@ jobs:
           CHANGED_DOCS=$(git diff --name-only docs/src/ | sed 's|^docs/||' | tr '\n' ' ')
           if [ -n "$CHANGED_DOCS" ]; then
             echo "Formatting: $CHANGED_DOCS"
-            cd docs && prettier --write $CHANGED_DOCS
+            cd docs && prettier --write "$CHANGED_DOCS"
           fi
 
       # Create PR
