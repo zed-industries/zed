@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
-    Subscription, Task, actions,
+    ScrollHandle, Subscription, Task, actions,
 };
 use std::{sync::Arc, time::Instant};
 
@@ -69,6 +69,7 @@ const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
 
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
+    pub(crate) scroll_handle: ScrollHandle,
     pub(crate) active_editor: Option<EditorState>,
     pub(crate) contents: TableLikeContent,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
@@ -162,8 +163,10 @@ impl CsvPreviewView {
     ) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let list_state = ListState::new(contents.rows.len(), ListAlignment::Top, px(0.));
-        let table_interaction_state =
-            cx.new(|cx| TableInteractionState::new(cx, list_state.clone()));
+        let table_interaction_state = cx.new(|cx| {
+            TableInteractionState::new(cx, list_state.clone())
+                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+        });
 
         cx.new(|cx| {
             let mut view = Self {
@@ -185,6 +188,7 @@ impl CsvPreviewView {
                 cell_editor_subscription: None,
                 last_parse_end_time: None,
                 cell_edited_flag: false,
+                scroll_handle: ScrollHandle::default(),
             };
 
             // Create cell editor after the view is initialized

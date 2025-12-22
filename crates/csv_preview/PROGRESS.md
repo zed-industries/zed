@@ -3,7 +3,32 @@
 This document outlines the current state of the POC feature. It might not be the most understandable document for others, but the feature author depends on it to track progress and ideas.
 
 ## Problems to Discuss
-- **Data table architecture**: Replace const generics with flexible types (array/vec) to support both compile time fix column sizes and runtime defined column numbers
+**Data table limitations**:
+- Const generics. Switch to dynamic arrays
+- Awkward table width configuration (can't really make the table wider than parent automatically). If width is set statically to be bigger than the parent, scrolling needs to be enabled separately, despite it's stated, that it should work automatically.
+- Column widths are calculated via %, and not absolute units. This way it's not possible to calculate whole table based on width of each column.
+- Can't pin first column (row numbers). This results in bad UX when scrolling horizontally (row numbers move out of viewport, and it becomes hard to reason about rows)
+
+**Column Resizing Behavior: Current vs. Needed**
+
+- **Current approach:**
+  The data table uses **proportional (fluid) resizing**. When you adjust a column’s width, the space is redistributed among other columns so the overall table width stays the same.
+
+- **Limitations:**
+  - The table’s width cannot be determined by simply summing up individual column widths.
+  - The table cannot naturally expand beyond its parent container.
+  - This makes it difficult to handle CSV files with columns of widely varying content lengths.
+
+- **Desired approach:**
+  **Independent (absolute) resizing**—like in Google Sheets or Excel:
+  - Each column can be resized without affecting others.
+  - The table’s total width grows or shrinks as columns are resized.
+  - This allows the table to expand beyond its parent and enables intuitive horizontal scrolling.
+
+- **Why we need this:**
+  - Users expect spreadsheet-like behavior when previewing tabular data.
+  - It allows columns to be expanded as needed to view all content, without artificial constraints.
+  - Improves usability and aligns with common data table UX patterns.
 
 ## Progress
 
@@ -88,7 +113,7 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [ ] feat: Add tooltip on order button
-- [ ] feat: Add manual ordering of columns
+- [ ] feat: Add manual ordering of columns (drag to reorder)
 
 **Fixes:**
 

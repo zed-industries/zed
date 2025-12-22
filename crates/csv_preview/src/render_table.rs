@@ -2,6 +2,7 @@ use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
 use crate::table_cell::TableCell;
+use gpui::Length;
 use gpui::{AnyElement, ElementId, Entity};
 use std::ops::Range;
 use ui::{Button, ButtonSize, ButtonStyle, DefiniteLength, div, h_flex, prelude::*};
@@ -96,7 +97,7 @@ impl CsvPreviewView {
         let fraction = if remaining_col_number > 0 {
             1. / remaining_col_number as f32
         } else {
-            1. // only columns with line numbers is present. Put 100%, but it will be overwritten anyways :D
+            1. // only column with line numbers is present. Put 100%, but it will be overwritten anyways :D
         };
         let mut widths = [DefiniteLength::Fraction(fraction); COLS];
         let line_number_width = self.calculate_row_identifier_column_width();
@@ -150,8 +151,15 @@ impl CsvPreviewView {
             std::array::from_fn(|_| iter.next().unwrap())
         };
 
+        // println!("widths: {widths:?}");
+        // let w = current_widths.read(cx);
+        // println!("widths: {w:?}");
         Table::new()
             .interactable(&self.table_interaction_state)
+            // .width(Length::Definite(DefiniteLength::Absolute( // Uncomment to apply width bigger than the parent
+            //     AbsoluteLength::Pixels(3000u32.into()),
+            // )))
+            .width(DefiniteLength::Fraction(1.))
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
