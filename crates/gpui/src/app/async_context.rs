@@ -3,7 +3,7 @@ use crate::{
     Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
     Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, anyhow, bail};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
@@ -29,12 +29,18 @@ impl AppContext for AsyncApp {
     ) -> Self::Result<Entity<T>> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.new(build_entity))
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.reserve_entity())
     }
 
@@ -45,6 +51,9 @@ impl AppContext for AsyncApp {
     ) -> Result<Entity<T>> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.insert_entity(reservation, build_entity))
     }
 
@@ -55,6 +64,9 @@ impl AppContext for AsyncApp {
     ) -> Self::Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.update_entity(handle, update))
     }
 
@@ -77,6 +89,9 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let lock = app.borrow();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         Ok(lock.read_entity(handle, callback))
     }
 
@@ -86,6 +101,9 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.try_borrow_mut()?;
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.update_window(window, f)
     }
 
@@ -99,6 +117,9 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let lock = app.borrow();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.read_window(window, read)
     }
 
@@ -115,6 +136,9 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         Ok(lock.update(|this| this.read_global(callback)))
     }
 }
@@ -124,6 +148,9 @@ impl AsyncApp {
     pub fn refresh(&self) -> Result<()> {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.refresh_windows();
         Ok(())
     }
@@ -142,6 +169,9 @@ impl AsyncApp {
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         Ok(lock.update(f))
     }
 
@@ -158,6 +188,9 @@ impl AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         let subscription = lock.subscribe(entity, on_event);
         Ok(subscription)
     }
@@ -173,6 +206,9 @@ impl AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.open_window(options, build_root_view)
     }
 
@@ -193,6 +229,9 @@ impl AsyncApp {
     pub fn has_global<G: Global>(&self) -> Result<bool> {
         let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.has_global::<G>())
     }
 
@@ -203,6 +242,9 @@ impl AsyncApp {
     pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(read(app.global(), &app))
     }
 
@@ -215,6 +257,9 @@ impl AsyncApp {
     pub fn try_read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Option<R> {
         let app = self.app.upgrade()?;
         let app = app.borrow_mut();
+        if app.quitting {
+            return None;
+        }
         Some(read(app.try_global()?, &app))
     }
 
@@ -229,6 +274,9 @@ impl AsyncApp {
     ) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         app.update(|cx| {
             cx.default_global::<G>();
         });
@@ -243,6 +291,9 @@ impl AsyncApp {
     ) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
+        if app.quitting {
+            bail!("app is quitting");
+        }
         Ok(app.update(|cx| cx.update_global(update)))
     }
 

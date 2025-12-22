@@ -123,8 +123,6 @@ pub fn assert_text_with_selections(
     assert_eq!(actual, marked_text, "Selections don't match");
 }
 
-// RA thinks this is dead code even though it is used in a whole lot of tests
-#[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(
     buffer: Entity<MultiBuffer>,

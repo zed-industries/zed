@@ -1173,10 +1173,9 @@ impl SettingsObserver {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
-                settings_observer.task_store.clone()
+                settings_observer.task_store.downgrade()
             }) else {
                 return;
             };
@@ -1204,7 +1203,7 @@ impl SettingsObserver {
                     break;
                 };
 
-                weak_entry
+                settings_observer
                     .update(cx, |_, cx| match result {
                         Ok(()) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
                             file_path.clone()
@@ -1228,10 +1227,9 @@ impl SettingsObserver {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
-                settings_observer.task_store.clone()
+                settings_observer.task_store.downgrade()
             }) else {
                 return;
             };
@@ -1259,7 +1257,7 @@ impl SettingsObserver {
                     break;
                 };
 
-                weak_entry
+                settings_observer
                     .update(cx, |_, cx| match result {
                         Ok(()) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
                             file_path.clone(),

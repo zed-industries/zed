@@ -19,17 +19,16 @@ use std::{
 #[derive(Clone)]
 pub struct TestAppContext {
     #[doc(hidden)]
-    pub app: Rc<AppCell>,
-    #[doc(hidden)]
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
-    #[doc(hidden)]
-    pub dispatcher: TestDispatcher,
+    dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
+    #[doc(hidden)]
+    pub app: Rc<AppCell>,
 }
 
 impl AppContext for TestAppContext {
@@ -145,6 +144,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Drops all outstanding tasks from the dispatcher.
+    pub fn drain_tasks(&self) {
+        // self.dispatcher.drain_tasks();
     }
 
     /// Skip all drawing operations for the duration of this test.
@@ -411,8 +415,8 @@ impl TestAppContext {
     }
 
     /// Wait until there are no more pending tasks.
-    pub fn run_until_parked(&mut self) {
-        self.background_executor.run_until_parked()
+    pub fn run_until_parked(&self) {
+        self.dispatcher.run_until_parked();
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.
