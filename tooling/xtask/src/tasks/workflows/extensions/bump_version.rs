@@ -72,6 +72,7 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
+        .permissions(Permissions::default())
         .runs_on(runners::LINUX_DEFAULT)
         .add_step(get_bump_type)
         .outputs([(output.name.to_owned(), output.to_string())]);
