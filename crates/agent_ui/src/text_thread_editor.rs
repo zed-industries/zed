@@ -2255,9 +2255,7 @@ impl TextThreadEditor {
         let tooltip = Tooltip::element({
             move |_, cx| {
                 let focus_handle = focus_handle.clone();
-                let show_cycle_row = !AgentSettings::get_global(cx)
-                    .favorite_model_ids()
-                    .is_empty();
+                let show_cycle_row = AgentSettings::get_global(cx).favorite_model_ids().len() > 1;
 
                 ModelSelectorTooltip::new(focus_handle)
                     .show_cycle_row(show_cycle_row)
