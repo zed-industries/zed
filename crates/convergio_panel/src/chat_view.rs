@@ -1088,3 +1088,80 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub fn init(_cx: &mut App) {
     // Register actions
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_handoff_passaggio() {
+        // Italian pattern with emoji
+        assert_eq!(
+            detect_handoff("🔄 Passaggio a Amy"),
+            Some("amy-cfo".to_string())
+        );
+
+        // Italian pattern without emoji
+        assert_eq!(
+            detect_handoff("Passaggio a Rex per la code review"),
+            Some("rex-code-reviewer".to_string())
+        );
+
+        // Case insensitive
+        assert_eq!(
+            detect_handoff("PASSAGGIO A DARIO"),
+            Some("dario-debugger".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_handoff_english() {
+        assert_eq!(
+            detect_handoff("Handoff to Baccio for architecture review"),
+            Some("baccio-tech-architect".to_string())
+        );
+
+        assert_eq!(
+            detect_handoff("Transferring to Paolo"),
+            Some("paolo-best-practices-enforcer".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_handoff_contact() {
+        assert_eq!(
+            detect_handoff("Ti metto in contatto con Marcello"),
+            Some("marcello-pm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_handoff_no_match() {
+        // No handoff pattern
+        assert_eq!(detect_handoff("Ciao, come posso aiutarti?"), None);
+
+        // Pattern exists but no valid agent
+        assert_eq!(detect_handoff("Passaggio a Giovanni"), None);
+
+        // Empty message
+        assert_eq!(detect_handoff(""), None);
+    }
+
+    #[test]
+    fn test_detect_handoff_ali() {
+        assert_eq!(
+            detect_handoff("Handoff to Ali for coordination"),
+            Some("ali-chief-of-staff".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_agent_display_name() {
+        assert_eq!(get_agent_display_name("amy-cfo"), "Amy - CFO");
+        assert_eq!(get_agent_display_name("rex-code-reviewer"), "Rex - Code Reviewer");
+        assert_eq!(get_agent_display_name("ali-chief-of-staff"), "Ali - Chief of Staff");
+
+        // Fallback for unknown agent
+        assert_eq!(get_agent_display_name("unknown-agent"), "Unknown Agent");
+    }
+}
