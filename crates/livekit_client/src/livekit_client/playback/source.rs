@@ -51,9 +51,17 @@ impl LiveKitStream {
             gpui::Priority::Realtime(gpui::RealtimePriority::Audio),
             {
                 async move {
+                    let mut last_print = std::time::Instant::now();
                     while let Some(frame) = stream.next().await {
                         let samples = frame_to_samplesbuffer(frame);
-                        queue_input.append(samples);
+                        let queued = queue_input.append(samples);
+
+                        if queued > 10 && last_print.elapsed().as_secs() > 5 {
+                            log::warn!(
+                                "More then 10 audio frames queued in the input, total: {queued}"
+                            );
+                            last_print = std::time::Instant::now();
+                        }
                     }
                 }
             },
