@@ -13,7 +13,7 @@ use ui::{Context, Window};
 use crate::{
     CsvPreviewView,
     cell_editor::ScrollOffset,
-    data_ordering::OrderedIndices,
+    sorting_by_column::OrderedIndices,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 

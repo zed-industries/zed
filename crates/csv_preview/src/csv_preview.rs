@@ -10,18 +10,17 @@ use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    data_ordering::{OrderedIndices, Ordering},
     nasty_code_duplication::ColumnWidths,
     parser::EditorState,
     performance_metrics_overlay::PerformanceMetrics,
     selection::TableSelection,
     settings::CsvPreviewSettings,
+    sorting_by_column::{OrderedIndices, Ordering},
     table_like_content::TableLikeContent,
 };
 
 mod cell_editor;
 mod copy_selected;
-mod data_ordering;
 mod data_table;
 mod nasty_code_duplication;
 mod parser;
@@ -32,6 +31,7 @@ mod row_identifiers;
 mod selection;
 mod selection_handlers;
 mod settings;
+mod sorting_by_column;
 mod table_cell;
 mod table_like_content;
 mod types;
@@ -127,7 +127,7 @@ impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn update_ordered_indices(&mut self) {
         let start_time = Instant::now();
-        self.ordered_indices = Arc::new(crate::data_ordering::generate_ordered_indices(
+        self.ordered_indices = Arc::new(crate::sorting_by_column::generate_ordered_indices(
             self.ordering,
             &self.contents,
         ));
@@ -177,7 +177,7 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
                 ordering: None,
-                ordered_indices: Arc::new(crate::data_ordering::generate_ordered_indices(
+                ordered_indices: Arc::new(crate::sorting_by_column::generate_ordered_indices(
                     None, &contents,
                 )),
                 selection: TableSelection::default(),
