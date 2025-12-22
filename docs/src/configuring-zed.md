@@ -628,7 +628,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 ## Edit Predictions
 
-- Description: Settings for edit predictions.
+- Description: Settings for edit predictions. Edit prediction providers can also be configured through the Settings Editor under **AI > Edit Predictions**.
 - Setting: `edit_predictions`
 - Default:
 

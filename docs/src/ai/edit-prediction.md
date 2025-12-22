@@ -307,6 +307,8 @@ To use GitHub Copilot as your provider, set this within `settings.json`:
 
 To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A popup window appears displaying a device code. Click the copy button to copy the code, then click "Connect to GitHub" to open the GitHub verification page in your browser. Paste the code when prompted. The popup window closes automatically after successful authorization.
 
+GitHub Copilot uses Next Edit Suggestions (NES) to provide intelligent, context-aware inline predictions. NES analyzes your editing patterns and cursor position to suggest the most relevant next edit, rather than offering multiple alternatives to cycle through.
+
 #### Using GitHub Copilot Enterprise
 
 If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your `settings.json`:
@@ -327,11 +329,6 @@ Once set, Zed will route Copilot requests through your enterprise endpoint.
 When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.
 
-Copilot can provide multiple completion alternatives, and these can be navigated with the following actions:
-
-- {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
-- {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
-
 ### Supermaven {#supermaven}
 
 To use Supermaven as your provider, set this within `settings.json`:
@@ -348,7 +345,11 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ### Codestral {#codestral}
 
+<<<<<<< Updated upstream
 To use Mistral's Codestral as your provider:
+=======
+To use Mistral's Codestral as your provider, you can configure it through the Settings UI. Open the Settings Editor with {#kb zed::OpenSettings}, navigate to **AI > Edit Predictions**, and configure your Codestral API key in the provider settings.
+>>>>>>> Stashed changes
 
 1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
 2. Search for "Edit Predictions" and click **Configure Providers**
