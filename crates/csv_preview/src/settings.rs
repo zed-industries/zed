@@ -1,12 +1,12 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Checkbox, Context, ContextMenu, DropdownMenu,
-    ElementId, IntoElement as _, ParentElement as _, Styled as _, ToggleState, Tooltip, Window,
-    div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonSize, ButtonStyle, Context, ContextMenu, DropdownMenu,
+    ElementId, IconButton, IconName, IconPosition, IconSize, IntoElement as _, ParentElement as _,
+    PopoverMenu, Styled as _, Tooltip, Window, div, h_flex,
 };
 
 use crate::CsvPreviewView;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub enum RowRenderMechanism {
     /// Default behaviour
     #[default]
@@ -64,6 +64,7 @@ pub(crate) enum CopyMode {
     Data,
 }
 
+#[derive(Clone)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
@@ -359,7 +360,6 @@ impl CsvPreviewView {
                         ),
                 )
                 .child(
-                    // TODO: Rewrite it to be a menu with checkable elements (✔️ next to it if checked)
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -367,53 +367,76 @@ impl CsvPreviewView {
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().colors().text_muted)
-                                .child("Debug Info:"),
+                                .child("Experimental:"),
                         )
-                        .child(
-                            Checkbox::new(
-                                "show-perf-metrics-overlay",
-                                if self.settings.show_perf_metrics_overlay {
-                                    ToggleState::Selected
-                                } else {
-                                    ToggleState::Unselected
-                                },
-                            )
-                            .label("Show perf metrics")
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.settings.show_perf_metrics_overlay = *checked == ToggleState::Selected;
-                                cx.notify();
-                            })),
-                        ).child(
-                            Checkbox::new(
-                                "show-cell-editor-row",
-                                if self.settings.show_cell_editor_row {
-                                    ToggleState::Selected
-                                } else {
-                                    ToggleState::Unselected
-                                },
-                            )
-                            .label("Show cell editor row")
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.settings.show_cell_editor_row = *checked == ToggleState::Selected;
-                                cx.notify();
-                            })),
-                        )
-                        .child(
-                            Checkbox::new(
-                                "show-debug-info",
-                                if self.settings.show_debug_info {
-                                    ToggleState::Selected
-                                } else {
-                                    ToggleState::Unselected
-                                },
-                            )
-                            .label("Show cell positions")
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.settings.show_debug_info = *checked == ToggleState::Selected;
-                                cx.notify();
-                            })),
-                        ),
+                        .child(create_experimental_popover_menu(cx))
                 )
                 .into_any_element()
     }
+}
+
+fn create_experimental_popover_menu(
+    cx: &mut Context<'_, CsvPreviewView>,
+) -> PopoverMenu<ContextMenu> {
+    PopoverMenu::new("debug-options-menu")
+        .trigger_with_tooltip(
+            IconButton::new("debug-options-trigger", IconName::Settings).icon_size(IconSize::Small),
+            Tooltip::text("Experimental"),
+        )
+        .menu({
+            let view_entity = cx.entity().clone();
+            move |window, cx| {
+                let view = view_entity.read(cx);
+                let settings = view.settings.clone();
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.toggleable_entry(
+                        "Show perf metrics",
+                        settings.show_perf_metrics_overlay,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let view_entity = view_entity.clone();
+                            move |_w, cx| {
+                                view_entity.update(cx, |view, cx| {
+                                    view.settings.show_perf_metrics_overlay =
+                                        !view.settings.show_perf_metrics_overlay;
+                                    cx.notify();
+                                })
+                            }
+                        },
+                    )
+                    .toggleable_entry(
+                        "Show cell editor row",
+                        settings.show_cell_editor_row,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let view_entity = view_entity.clone();
+                            move |_, cx| {
+                                view_entity.update(cx, |view, cx| {
+                                    view.settings.show_cell_editor_row =
+                                        !view.settings.show_cell_editor_row;
+                                    cx.notify();
+                                })
+                            }
+                        },
+                    )
+                    .toggleable_entry(
+                        "Show cell positions",
+                        settings.show_debug_info,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let view_entity = view_entity.clone();
+                            move |_, cx| {
+                                view_entity.update(cx, |view, cx| {
+                                    view.settings.show_debug_info = !view.settings.show_debug_info;
+                                    cx.notify();
+                                })
+                            }
+                        },
+                    )
+                }))
+            }
+        })
 }
