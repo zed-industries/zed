@@ -23,7 +23,8 @@ permissions:
 
 env:
   FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
-  DROID_MODEL: claude-opus-4-5-20251101
+  ANALYSIS_MODEL: gemini-3-flash-preview
+  WRITING_MODEL: claude-opus-4-5-20251101
 
 jobs:
   docs-automation:
@@ -83,114 +84,103 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # Phase 3: Analyze Changes (Read-Only - default)
-      - name: "Phase 3: Analyze Changes"
-        id: phase3
+      # Filter for docs-relevant files
+      - name: "Filter docs-relevant files"
+        id: filter
         run: |
-          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
-          echo "Analyzing changes in: $CHANGED_FILES"
-
-          "$DROID_BIN" exec \
-            -m "$DROID_MODEL" \
-            "$(cat .factory/prompts/docs-automation/phase3-analyze.md)
-
-            Changed files: $CHANGED_FILES" \
-            > /tmp/phase3-output.md 2>&1 || true
-          echo "Change analysis complete"
-          cat /tmp/phase3-output.md
-
-      # Phase 4: Plan Documentation Impact (Read-Only - default)
-      - name: "Phase 4: Plan Documentation Impact"
-        id: phase4
-        run: |
-          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
-          PHASE3_OUTPUT=$(cat /tmp/phase3-output.md)
+          # Patterns for files that could affect documentation
+          PATTERNS="crates/.*/src/.*\.rs|assets/settings/.*|assets/keymaps/.*|extensions/.*|docs/.*"
           
-          "$DROID_BIN" exec \
-            -m "$DROID_MODEL" \
-            "$(cat .factory/prompts/docs-automation/phase4-plan.md)
-
-            ## Context from Phase 3
-
-            ### Changed Files
-            $CHANGED_FILES
-
-            ### Phase 3 Analysis
-            $PHASE3_OUTPUT" \
-            > /tmp/phase4-plan.md 2>&1 || true
-          echo "Documentation plan complete"
-          cat /tmp/phase4-plan.md
-
-          # Check if updates are required
-          if grep -q "NO_UPDATES_REQUIRED" /tmp/phase4-plan.md; then
-            echo "updates_required=false" >> "$GITHUB_OUTPUT"
+          RELEVANT=$(grep -E "$PATTERNS" /tmp/changed_files.txt || true)
+          if [ -z "$RELEVANT" ]; then
+            echo "No docs-relevant files changed"
+            echo "has_relevant=false" >> "$GITHUB_OUTPUT"
           else
-            echo "updates_required=true" >> "$GITHUB_OUTPUT"
+            echo "Docs-relevant files found:"
+            echo "$RELEVANT"
+            echo "has_relevant=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Phase 5: Apply Plan (Write-Enabled with --auto medium)
-      - name: "Phase 5: Apply Documentation Plan"
-        id: phase5
-        if: steps.phase4.outputs.updates_required == 'true'
+      # Combined: Analyze + Plan (using fast model)
+      - name: "Analyze & Plan"
+        id: analyze
+        if: steps.filter.outputs.has_relevant == 'true'
         run: |
-          PHASE4_PLAN=$(cat /tmp/phase4-plan.md)
+          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
+          
+          GUIDELINES='## Documentation Guidelines
+          ### Requires Update: New features, changed keybindings, modified settings, deprecated functionality
+          ### No Update: Internal refactoring, performance fixes, bug fixes, test/CI changes
+          ### Output JSON: {"updates_required": bool, "summary": str, "planned_changes": [{file, section, change_type, description}]}'
           
           "$DROID_BIN" exec \
-            -m "$DROID_MODEL" \
-            --auto medium \
-            "$(cat .factory/prompts/docs-automation/phase5-apply.md)
+            -m "$ANALYSIS_MODEL" \
+            --auto low \
+            "Analyze code changes for documentation impact.
+            
+            $GUIDELINES
+            
+            Changed files: $CHANGED_FILES
+            
+            Output the JSON structure. Be conservative - only flag user-visible changes." \
+            > /tmp/analysis.json 2>&1 || true
+          
+          echo "Analysis complete:"
+          cat /tmp/analysis.json
+          
+          # Check if updates required
+          if grep -q '"updates_required":\s*true' /tmp/analysis.json; then
+            echo "updates_required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "updates_required=false" >> "$GITHUB_OUTPUT"
+          fi
 
-            ## Documentation Plan from Phase 4
-            $PHASE4_PLAN" \
-            > /tmp/phase5-report.md 2>&1 || true
-          echo "Documentation updates applied"
-          cat /tmp/phase5-report.md
+      # Combined: Apply + Summarize (using writing model)
+      - name: "Apply Documentation Changes"
+        id: apply
+        if: steps.analyze.outputs.updates_required == 'true'
+        run: |
+          ANALYSIS=$(cat /tmp/analysis.json)
+          
+          "$DROID_BIN" exec \
+            -m "$WRITING_MODEL" \
+            --auto medium \
+            "Apply documentation changes from this analysis:
+            
+            $ANALYSIS
+            
+            Instructions:
+            1. Edit each specified file
+            2. Follow mdBook format, use {#kb action::Name} for keybindings
+            3. Output summary:
+            
+            ## Changes Applied
+            - [file]: [change]
+            
+            ## Summary for PR
+            [2-3 sentences]" \
+            > /tmp/apply-report.md 2>&1 || true
+          
+          echo "Changes applied:"
+          cat /tmp/apply-report.md
+          cp /tmp/apply-report.md /tmp/phase6-summary.md
 
       # Phase 5b: Format with Prettier
-      - name: "Phase 5b: Format with Prettier"
-        id: phase5b
-        if: steps.phase4.outputs.updates_required == 'true'
+      # Format with Prettier (only changed files)
+      - name: "Format with Prettier"
+        id: format
+        if: steps.analyze.outputs.updates_required == 'true'
         run: |
-          echo "Formatting documentation with Prettier..."
-          cd docs && prettier --write src/
+          CHANGED_DOCS=$(git diff --name-only docs/src/ | sed 's|^docs/||' | tr '\n' ' ')
+          if [ -n "$CHANGED_DOCS" ]; then
+            echo "Formatting: $CHANGED_DOCS"
+            cd docs && prettier --write $CHANGED_DOCS
+          fi
 
-          echo "Verifying Prettier formatting passes..."
-          cd docs && prettier --check src/
-
-          echo "Prettier formatting complete"
-
-      # Phase 6: Summarize Changes (Read-Only - default)
-      - name: "Phase 6: Summarize Changes"
-        id: phase6
-        if: steps.phase4.outputs.updates_required == 'true'
-        run: |
-          # Get git diff of docs
-          git diff docs/src/ > /tmp/docs-diff.txt || true
-          
-          PHASE5_REPORT=$(cat /tmp/phase5-report.md)
-          DOCS_DIFF=$(cat /tmp/docs-diff.txt)
-
-          "$DROID_BIN" exec \
-            -m "$DROID_MODEL" \
-            "$(cat .factory/prompts/docs-automation/phase6-summarize.md)
-
-            ## Context
-
-            ### Phase 5 Report
-            $PHASE5_REPORT
-
-            ### Documentation Diff
-            \`\`\`diff
-            $DOCS_DIFF
-            \`\`\`" \
-            > /tmp/phase6-summary.md 2>&1 || true
-          echo "Summary generated"
-          cat /tmp/phase6-summary.md
-
-      # Phase 7: Commit and Open PR
-      - name: "Phase 7: Create PR"
-        id: phase7
-        if: steps.phase4.outputs.updates_required == 'true'
+      # Create PR
+      - name: "Create PR"
+        id: create_pr
+        if: steps.analyze.outputs.updates_required == 'true'
         run: |
           # Check if there are actual changes
           if git diff --quiet docs/src/; then
@@ -294,10 +284,12 @@ jobs:
           echo "## Documentation Automation Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "${{ steps.phase4.outputs.updates_required }}" == "false" ]; then
+          if [ "${{ steps.filter.outputs.has_relevant }}" == "false" ]; then
+            echo "No docs-relevant files changed. Skipped analysis." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.analyze.outputs.updates_required }}" == "false" ]; then
             echo "No documentation updates required for this change." >> "$GITHUB_STEP_SUMMARY"
           elif [ -f /tmp/phase6-summary.md ]; then
             cat /tmp/phase6-summary.md >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Workflow completed. Check individual phase outputs for details." >> "$GITHUB_STEP_SUMMARY"
+            echo "Workflow completed. Check individual step outputs for details." >> "$GITHUB_STEP_SUMMARY"
           fi

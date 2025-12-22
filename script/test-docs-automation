@@ -8,11 +8,22 @@ OUTPUT_DIR="${TMPDIR:-/tmp}/docs-automation-test"
 
 # Default values
 BASE_BRANCH="main"
-DROID_MODEL="${DROID_MODEL:-claude-opus-4-5-20251101}"
+# Use fast model for analysis, powerful model for writing
+ANALYSIS_MODEL="${ANALYSIS_MODEL:-gemini-3-flash-preview}"
+WRITING_MODEL="${WRITING_MODEL:-claude-opus-4-5-20251101}"
 DRY_RUN=false
 VERBOSE=false
 PR_NUMBER=""
 SOURCE_BRANCH=""
+
+# Patterns for files that could affect documentation
+DOCS_RELEVANT_PATTERNS=(
+    "crates/.*/src/.*\.rs"      # Rust source files
+    "assets/settings/.*"         # Settings schemas
+    "assets/keymaps/.*"          # Keymaps
+    "extensions/.*"              # Extensions
+    "docs/.*"                    # Docs themselves
+)
 
 usage() {
     cat << EOF
@@ -24,8 +35,7 @@ OPTIONS:
     -p, --pr NUMBER      PR number to analyze (uses gh pr diff)
     -r, --branch BRANCH  Remote branch to compare (e.g., origin/feature-branch)
     -b, --base BRANCH    Base branch to compare against (default: main)
-    -m, --model MODEL    Droid model to use (default: $DROID_MODEL)
-    -d, --dry-run        Run phases 2-4 only (no file modifications)
+    -d, --dry-run        Preview changes without modifying files
     -s, --skip-apply     Alias for --dry-run
     -v, --verbose        Show full output from each phase
     -o, --output DIR     Output directory for phase artifacts (default: $OUTPUT_DIR)
@@ -41,15 +51,10 @@ EXAMPLES:
     # Analyze a remote branch against main
     $(basename "$0") --branch origin/feature-branch
 
-    # Test current branch against main
-    $(basename "$0")
-
-    # Use a different model
-    $(basename "$0") --pr 12345 --model claude-sonnet-4-20250514
-
 ENVIRONMENT:
     FACTORY_API_KEY      Required: Your Factory API key
-    DROID_MODEL          Override default model
+    ANALYSIS_MODEL       Model for analysis (default: gemini-2.0-flash)
+    WRITING_MODEL        Model for writing (default: claude-opus-4-5-20251101)
     GH_TOKEN             Required for --pr option (or gh auth login)
 
 EOF
@@ -68,10 +73,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         -b|--base)
             BASE_BRANCH="$2"
-            shift 2
-            ;;
-        -m|--model)
-            DROID_MODEL="$2"
             shift 2
             ;;
         -d|--dry-run|-s|--skip-apply)
@@ -136,22 +137,11 @@ fi
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 echo "Output directory: $OUTPUT_DIR"
-echo "Model: $DROID_MODEL"
+echo "Analysis model: $ANALYSIS_MODEL"
+echo "Writing model: $WRITING_MODEL"
 echo ""
 
 cd "$REPO_ROOT"
-
-# Copy prompts to output directory BEFORE any branch checkout
-# This ensures we have access to prompts even if PR branch doesn't have them
-if [[ -d "$PROMPTS_DIR" ]]; then
-    cp -r "$PROMPTS_DIR" "$OUTPUT_DIR/prompts"
-    PROMPTS_DIR="$OUTPUT_DIR/prompts"
-    echo "Prompts copied to: $PROMPTS_DIR"
-else
-    echo "Error: Prompts directory not found: $PROMPTS_DIR"
-    exit 1
-fi
-echo ""
 
 # Get changed files based on mode
 echo "=== Getting changed files ==="
@@ -246,200 +236,221 @@ echo "Changed files ($(wc -l < "$OUTPUT_DIR/changed_files.txt" | tr -d ' ') file
 cat "$OUTPUT_DIR/changed_files.txt"
 echo ""
 
-# Phase 3: Analyze Changes
-echo "=== Phase 3: Analyze Changes ==="
-CHANGED_FILES=$(tr '\n' ' ' < "$OUTPUT_DIR/changed_files.txt")
+# Early exit: Filter for docs-relevant files only
+echo "=== Filtering for docs-relevant files ==="
+DOCS_RELEVANT_FILES=""
+while IFS= read -r file; do
+    for pattern in "${DOCS_RELEVANT_PATTERNS[@]}"; do
+        if [[ "$file" =~ $pattern ]]; then
+            DOCS_RELEVANT_FILES="$DOCS_RELEVANT_FILES $file"
+            break
+        fi
+    done
+done < "$OUTPUT_DIR/changed_files.txt"
 
-droid exec \
-    -m "$DROID_MODEL" \
-    --auto low \
-    "$(cat "$PROMPTS_DIR/phase3-analyze.md")
+# Trim leading space
+DOCS_RELEVANT_FILES="${DOCS_RELEVANT_FILES# }"
 
-    Changed files: $CHANGED_FILES" \
-    > "$OUTPUT_DIR/phase3-output.md" 2>&1 || true
-
-if [[ "$VERBOSE" == "true" ]]; then
-    cat "$OUTPUT_DIR/phase3-output.md"
-else
-    echo "Output saved to: $OUTPUT_DIR/phase3-output.md"
-fi
-echo ""
-
-# Phase 4: Plan Documentation Impact
-echo "=== Phase 4: Plan Documentation Impact ==="
-PHASE3_OUTPUT=$(cat "$OUTPUT_DIR/phase3-output.md")
-
-droid exec \
-    -m "$DROID_MODEL" \
-    --auto low \
-    "$(cat "$PROMPTS_DIR/phase4-plan.md")
-
-## Context from Phase 3
-
-### Changed Files
-$CHANGED_FILES
-
-### Phase 3 Analysis
-$PHASE3_OUTPUT" \
-    > "$OUTPUT_DIR/phase4-plan.md" 2>&1 || true
-
-if [[ "$VERBOSE" == "true" ]]; then
-    cat "$OUTPUT_DIR/phase4-plan.md"
-else
-    echo "Output saved to: $OUTPUT_DIR/phase4-plan.md"
-fi
-echo ""
-
-# Check if updates are required
-if grep -q "NO_UPDATES_REQUIRED" "$OUTPUT_DIR/phase4-plan.md" || \
-   grep -qi "Documentation Updates Required: No" "$OUTPUT_DIR/phase4-plan.md"; then
-    echo "=== No documentation updates required ==="
-    echo "Phase 4 determined no documentation changes are needed."
+if [[ -z "$DOCS_RELEVANT_FILES" ]]; then
+    echo "No docs-relevant files changed (only tests, configs, CI, etc.)"
+    echo "Skipping documentation analysis."
     exit 0
 fi
 
+echo "Docs-relevant files: $(echo "$DOCS_RELEVANT_FILES" | wc -w | tr -d ' ')"
+echo "$DOCS_RELEVANT_FILES" | tr ' ' '\n' | head -20
+echo ""
+
+# Combined Phase: Analyze + Plan (using fast model)
+echo "=== Analyzing Changes & Planning Documentation Impact ==="
+echo "Using model: $ANALYSIS_MODEL"
+
+CHANGED_FILES=$(tr '\n' ' ' < "$OUTPUT_DIR/changed_files.txt")
+
+# Embed AGENTS.md guidelines directly to avoid file read
+AGENTS_GUIDELINES='## Documentation Guidelines (from AGENTS.md)
+
+### Requires Documentation Update
+- New user-facing features or commands
+- Changed keybindings or default behaviors
+- Modified settings schema or options
+- Deprecated or removed functionality
+
+### Does NOT Require Documentation Update
+- Internal refactoring without behavioral changes
+- Performance optimizations (unless user-visible)
+- Bug fixes that restore documented behavior
+- Test changes, CI/CD changes
+
+### In-Scope: docs/src/**/*.md
+### Out-of-Scope: CHANGELOG.md, README.md, code comments, rustdoc
+
+### Output Format Required
+You MUST output a JSON object with this exact structure:
+```json
+{
+  "updates_required": true/false,
+  "summary": "Brief description of changes",
+  "planned_changes": [
+    {
+      "file": "docs/src/path/to/file.md",
+      "section": "Section name",
+      "change_type": "update|add|deprecate",
+      "description": "What to change"
+    }
+  ],
+  "skipped_files": ["reason1", "reason2"]
+}
+```
+'
+
+droid exec \
+    -m "$ANALYSIS_MODEL" \
+    --auto low \
+    "Analyze these code changes and determine if documentation updates are needed.
+
+$AGENTS_GUIDELINES
+
+## Changed Files
+$CHANGED_FILES
+
+## Task
+1. Review the changed files (read them if needed to understand the changes)
+2. Determine if any user-facing behavior, settings, or features changed
+3. Output the JSON structure above with your assessment
+
+Be conservative - only flag documentation updates for user-visible changes." \
+    > "$OUTPUT_DIR/analysis.json" 2>&1 || true
+
+if [[ "$VERBOSE" == "true" ]]; then
+    cat "$OUTPUT_DIR/analysis.json"
+else
+    echo "Output saved to: $OUTPUT_DIR/analysis.json"
+fi
+echo ""
+
+# Check if updates are required (parse JSON output)
+UPDATES_REQUIRED=$(grep -o '"updates_required":\s*true' "$OUTPUT_DIR/analysis.json" || echo "")
+
+if [[ -z "$UPDATES_REQUIRED" ]]; then
+    echo "=== No documentation updates required ==="
+    echo "Analysis determined no documentation changes are needed."
+    cat "$OUTPUT_DIR/analysis.json"
+    exit 0
+fi
+
+echo "Documentation updates ARE required."
+echo ""
+
+# Extract planned changes for the next phase
+ANALYSIS_OUTPUT=$(cat "$OUTPUT_DIR/analysis.json")
+
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo "=== Phase 5 (Preview): Generate Proposed Changes ==="
-    PHASE4_PLAN=$(cat "$OUTPUT_DIR/phase4-plan.md")
+    # Combined Preview Phase (dry-run): Show what would change
+    echo "=== Preview: Generating Proposed Changes ==="
+    echo "Using model: $WRITING_MODEL"
     
     droid exec \
-        -m "$DROID_MODEL" \
+        -m "$WRITING_MODEL" \
         --auto low \
-        "CRITICAL INSTRUCTION: You MUST output the ACTUAL markdown content, not a summary.
+        "Generate a PREVIEW of the documentation changes. Do NOT modify any files.
 
-Your task: Generate a preview showing EXACTLY what documentation changes would be made.
+Based on this analysis:
+$ANALYSIS_OUTPUT
 
-REQUIRED STEPS:
-1. Read the file docs/src/ai/edit-prediction.md using the Read tool
-2. Find the Codestral section (### Codestral {#codestral})
-3. Output the EXACT current text and your EXACT proposed replacement
+For each planned change:
+1. Read the current file
+2. Show the CURRENT section that would be modified
+3. Show the PROPOSED new content
+4. Generate a unified diff
 
-YOUR OUTPUT MUST FOLLOW THIS EXACT FORMAT (no deviations, no summaries):
-
+Output format:
 ---
-## File: docs/src/ai/edit-prediction.md
+## File: [path]
 
-### CURRENT CONTENT (copy exactly from file):
+### Current:
 \`\`\`markdown
-### Codestral {#codestral}
-
-[PASTE THE EXACT CURRENT CONTENT OF THIS SECTION HERE - EVERY LINE]
+[exact current content]
 \`\`\`
 
-### PROPOSED CONTENT (your changes):
+### Proposed:
 \`\`\`markdown
-### Codestral {#codestral}
-
-[WRITE YOUR COMPLETE REPLACEMENT FOR THIS SECTION HERE - EVERY LINE]
+[proposed new content]
 \`\`\`
 
-### UNIFIED DIFF:
+### Diff:
 \`\`\`diff
-[Generate a unified diff showing - lines removed and + lines added]
+[unified diff]
 \`\`\`
-
-### Why this change:
-[One sentence explanation]
 ---
 
-DO NOT:
-- Summarize the changes
-- Skip reading the actual file
-- Provide abbreviated content
-- Say 'the section that...' - show the ACTUAL text
-
-Context for what changed in the codebase:
-$PHASE3_OUTPUT
-
-Documentation plan:
-$PHASE4_PLAN" \
-        > "$OUTPUT_DIR/phase5-preview.md" 2>&1 || true
+Show the ACTUAL content, not summaries." \
+        > "$OUTPUT_DIR/preview.md" 2>&1 || true
     
-    echo "Preview saved to: $OUTPUT_DIR/phase5-preview.md"
     echo ""
-    echo "=== Preview Content ==="
-    cat "$OUTPUT_DIR/phase5-preview.md"
+    echo "=== Preview ==="
+    cat "$OUTPUT_DIR/preview.md"
     
     echo ""
     echo "=== Dry run complete ==="
-    echo "To apply changes for real, run without --dry-run flag."
-    echo ""
-    echo "All outputs saved to: $OUTPUT_DIR/"
+    echo "To apply changes, run without --dry-run flag."
+    echo "Output saved to: $OUTPUT_DIR/"
     exit 0
 fi
 
-# Phase 5: Apply Documentation Plan
-echo "=== Phase 5: Apply Documentation Plan ==="
-PHASE4_PLAN=$(cat "$OUTPUT_DIR/phase4-plan.md")
+# Combined Phase: Apply Changes + Generate Summary (using writing model)
+echo "=== Applying Documentation Changes ==="
+echo "Using model: $WRITING_MODEL"
 
 droid exec \
-    -m "$DROID_MODEL" \
+    -m "$WRITING_MODEL" \
     --auto medium \
-    "$(cat "$PROMPTS_DIR/phase5-apply.md")
+    "Apply the documentation changes specified in this analysis:
 
-## Documentation Plan from Phase 4
-$PHASE4_PLAN" \
-    > "$OUTPUT_DIR/phase5-report.md" 2>&1 || true
+$ANALYSIS_OUTPUT
+
+Instructions:
+1. For each planned change, edit the specified file
+2. Follow the mdBook format and style from docs/AGENTS.md
+3. Use {#kb action::Name} syntax for keybindings
+4. After making changes, output a brief summary
+
+Output format:
+## Changes Applied
+- [file]: [what was changed]
+
+## Summary for PR
+[2-3 sentence summary suitable for a PR description]" \
+    > "$OUTPUT_DIR/apply-report.md" 2>&1 || true
 
 if [[ "$VERBOSE" == "true" ]]; then
-    cat "$OUTPUT_DIR/phase5-report.md"
+    cat "$OUTPUT_DIR/apply-report.md"
 else
-    echo "Output saved to: $OUTPUT_DIR/phase5-report.md"
+    echo "Output saved to: $OUTPUT_DIR/apply-report.md"
 fi
 echo ""
 
-# Phase 5b: Format with Prettier (only changed files)
-echo "=== Phase 5b: Format with Prettier ==="
+# Format with Prettier (only changed files)
+echo "=== Formatting with Prettier ==="
 cd "$REPO_ROOT"
 
-# Get list of changed doc files (relative to docs/ directory)
 CHANGED_DOCS=$(git diff --name-only docs/src/ 2>/dev/null | sed 's|^docs/||' | tr '\n' ' ')
 
 if [[ -n "$CHANGED_DOCS" ]]; then
-    echo "Formatting changed files: $CHANGED_DOCS"
-    # Use pnpm dlx like the project's prettier script does
+    echo "Formatting: $CHANGED_DOCS"
     if command -v pnpm &> /dev/null; then
         (cd docs && pnpm dlx prettier@3.5.0 $CHANGED_DOCS --write) 2>/dev/null || true
     elif command -v prettier &> /dev/null; then
         (cd docs && prettier --write $CHANGED_DOCS) 2>/dev/null || true
-    else
-        echo "Warning: neither pnpm nor prettier found, skipping formatting"
     fi
-    echo "Prettier formatting applied"
+    echo "Done"
 else
     echo "No changed docs files to format"
 fi
 echo ""
 
-# Phase 6: Summarize Changes
-echo "=== Phase 6: Summarize Changes ==="
-git -C "$REPO_ROOT" diff docs/src/ > "$OUTPUT_DIR/docs-diff.txt" 2>/dev/null || true
-
-PHASE5_REPORT=$(cat "$OUTPUT_DIR/phase5-report.md")
-DOCS_DIFF=$(cat "$OUTPUT_DIR/docs-diff.txt")
-
-droid exec \
-    -m "$DROID_MODEL" \
-    --auto low \
-    "$(cat "$PROMPTS_DIR/phase6-summarize.md")
-
-## Context
-
-### Phase 5 Report
-$PHASE5_REPORT
-
-### Documentation Diff
-\`\`\`diff
-$DOCS_DIFF
-\`\`\`" \
-    > "$OUTPUT_DIR/phase6-summary.md" 2>&1 || true
-
-if [[ "$VERBOSE" == "true" ]]; then
-    cat "$OUTPUT_DIR/phase6-summary.md"
-else
-    echo "Output saved to: $OUTPUT_DIR/phase6-summary.md"
-fi
-echo ""
+# Generate summary from the apply report
+cp "$OUTPUT_DIR/apply-report.md" "$OUTPUT_DIR/phase6-summary.md"
 
 # Phase 7: Create Branch and PR
 echo "=== Phase 7: Create Branch and PR ==="
