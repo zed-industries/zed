@@ -109,7 +109,9 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
                 .await
                 .with_context(|| format!("extracting into file {path:?}"))?;
 
-            if let Some(perms) = entry.unix_permissions() {
+            if let Some(perms) = entry.unix_permissions()
+                && perms != 0o000
+            {
                 use std::os::unix::fs::PermissionsExt;
                 let permissions = std::fs::Permissions::from_mode(u32::from(perms));
                 file.set_permissions(permissions)
@@ -132,7 +134,19 @@ mod tests {
 
     use super::*;
 
-    async fn compress_zip(src_dir: &Path, dst: &Path) -> Result<()> {
+    #[derive(PartialEq)]
+    enum FilePermissions {
+        /// Keeps the permissions set for the files
+        Keep,
+        /// Sets the permissions to 0o000
+        Unset,
+    }
+
+    async fn compress_zip(
+        src_dir: &Path,
+        dst: &Path,
+        file_permissions: FilePermissions,
+    ) -> Result<()> {
         let mut out = smol::fs::File::create(dst).await?;
         let mut writer = ZipFileWriter::new(&mut out);
 
@@ -155,8 +169,9 @@ mod tests {
                     ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = std::fs::metadata(path)?;
-                let perms = metadata.permissions().mode() as u16;
-                builder = builder.unix_permissions(perms);
+                let perms = (file_permissions == FilePermissions::Keep)
+                    .then(|| metadata.permissions().mode() as u16);
+                builder = builder.unix_permissions(perms.unwrap_or_default());
                 writer.write_entry_whole(builder, &data).await?;
             }
             #[cfg(not(unix))]
@@ -206,7 +221,9 @@ mod tests {
         let zip_file = test_dir.path().join("test.zip");
 
         smol::block_on(async {
-            compress_zip(test_dir.path(), &zip_file).await.unwrap();
+            compress_zip(test_dir.path(), &zip_file, FilePermissions::Keep)
+                .await
+                .unwrap();
             let reader = read_archive(&zip_file).await;
 
             let dir = tempfile::tempdir().unwrap();
@@ -237,7 +254,9 @@ mod tests {
 
             // Create zip
             let zip_file = test_dir.path().join("test.zip");
-            compress_zip(test_dir.path(), &zip_file).await.unwrap();
+            compress_zip(test_dir.path(), &zip_file, FilePermissions::Keep)
+                .await
+                .unwrap();
 
             // Extract to new location
             let extract_dir = tempfile::tempdir().unwrap();
@@ -249,6 +268,41 @@ mod tests {
             assert!(extracted_path.exists());
             let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
             assert_eq!(extracted_perms.mode() & 0o777, 0o755);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_sets_default_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        smol::block_on(async {
+            let test_dir = tempfile::tempdir().unwrap();
+            let executable_path = test_dir.path().join("my_script");
+
+            // Create an executable file
+            std::fs::write(&executable_path, "#!/bin/bash\necho 'Hello'").unwrap();
+
+            // Create zip
+            let zip_file = test_dir.path().join("test.zip");
+            compress_zip(test_dir.path(), &zip_file, FilePermissions::Unset)
+                .await
+                .unwrap();
+
+            // Extract to new location
+            let extract_dir = tempfile::tempdir().unwrap();
+            let reader = read_archive(&zip_file).await;
+            extract_zip(extract_dir.path(), reader).await.unwrap();
+
+            // Check permissions are preserved
+            let extracted_path = extract_dir.path().join("my_script");
+            assert!(extracted_path.exists());
+            let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
+            assert_eq!(
+                extracted_perms.mode() & 0o777,
+                0o644,
+                "Expected default set of permissions for unzipped file with no permissions set."
+            );
         });
     }
 }
