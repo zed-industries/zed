@@ -15,7 +15,6 @@ pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
-    last_event_is_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
     let ep_store = EditPredictionStore::try_global(cx)?;
@@ -36,7 +35,7 @@ pub fn capture_example(
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
-    let mut events = ep_store.update(cx, |store, cx| {
+    let events = ep_store.update(cx, |store, cx| {
         store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
 
@@ -54,13 +53,6 @@ pub fn capture_example(
             .await;
 
         let mut edit_history = String::new();
-        let mut expected_patch = String::new();
-        if last_event_is_expected_patch {
-            if let Some(stored_event) = events.pop() {
-                zeta_prompt::write_event(&mut expected_patch, &stored_event.event);
-            }
-        }
-
         for stored_event in &events {
             zeta_prompt::write_event(&mut edit_history, &stored_event.event);
             if !edit_history.ends_with('\n') {
@@ -68,17 +60,15 @@ pub fn capture_example(
             }
         }
 
-        let name = generate_timestamp_name();
-
         Ok(ExampleSpec {
-            name,
+            name: generate_timestamp_name(),
             repository_url,
             revision,
             uncommitted_diff,
             cursor_path: cursor_path.as_std_path().into(),
             cursor_position: cursor_excerpt,
             edit_history,
-            expected_patch,
+            expected_patch: String::new(),
         })
     }))
 }
@@ -289,9 +279,7 @@ mod tests {
         cx.run_until_parked();
 
         let mut example = cx
-            .update(|cx| {
-                capture_example(project.clone(), buffer.clone(), Anchor::MIN, false, cx).unwrap()
-            })
+            .update(|cx| capture_example(project.clone(), buffer.clone(), Anchor::MIN, cx).unwrap())
             .await
             .unwrap();
         example.name = "test".to_string();
