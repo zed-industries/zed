@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
-use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
+use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
@@ -13,6 +13,7 @@ use gpui::{
     Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Task, WeakEntity,
 };
 use itertools::Itertools;
+use language_model::IconOrSvg;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -351,8 +352,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
                                 .map(|this| match &model_info.icon {
-                                    Some(AgentModelIcon::Path(path)) => this.icon_path(path.clone()),
-                                    Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
+                                    Some(IconOrSvg::Svg(path)) => this.icon_path(path.clone()),
+                                    Some(IconOrSvg::Icon(icon)) => this.icon(*icon),
                                     None => this,
                                 })
                                 .is_selected(is_selected)

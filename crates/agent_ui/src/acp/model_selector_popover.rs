@@ -1,11 +1,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
+use acp_thread::{AgentModelInfo, AgentModelSelector};
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
+use language_model::IconOrSvg;
 use picker::popover_menu::PickerPopoverMenu;
 use settings::Settings as _;
 use ui::{ButtonLike, KeyBinding, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
@@ -127,8 +128,8 @@ impl Render for AcpModelSelectorPopover {
                 .when_some(model_icon, |this, icon| {
                     this.child(
                         match icon {
-                            AgentModelIcon::Path(path) => Icon::from_external_svg(path),
-                            AgentModelIcon::Named(icon_name) => Icon::new(icon_name),
+                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                            IconOrSvg::Icon(icon_name) => Icon::new(icon_name),
                         }
                         .color(color)
                         .size(IconSize::XSmall),

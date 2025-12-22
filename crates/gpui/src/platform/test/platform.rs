@@ -6,7 +6,7 @@ use crate::{
     TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
-use collections::VecDeque;
+use collections::{HashMap, VecDeque};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
@@ -32,6 +32,7 @@ pub(crate) struct TestPlatform {
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
+    credentials: Mutex<HashMap<String, (String, Vec<u8>)>>,
     #[cfg(target_os = "macos")]
     current_find_pasteboard_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
@@ -119,6 +120,7 @@ impl TestPlatform {
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
+            credentials: Mutex::new(HashMap::default()),
             #[cfg(target_os = "macos")]
             current_find_pasteboard_item: Mutex::new(None),
             weak: weak.clone(),
@@ -430,15 +432,20 @@ impl Platform for TestPlatform {
         *self.current_find_pasteboard_item.lock() = Some(item);
     }
 
-    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        self.credentials
+            .lock()
+            .insert(url.to_string(), (username.to_string(), password.to_vec()));
         Task::ready(Ok(()))
     }
 
-    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        Task::ready(Ok(None))
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        let result = self.credentials.lock().get(url).cloned();
+        Task::ready(Ok(result))
     }
 
-    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        self.credentials.lock().remove(url);
         Task::ready(Ok(()))
     }
 

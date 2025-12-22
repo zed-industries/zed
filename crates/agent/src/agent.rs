@@ -30,7 +30,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -153,10 +153,7 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(match provider.icon() {
-                IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
-                IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
-            }),
+            icon: Some(provider.icon()),
         }
     }
 
@@ -1633,9 +1630,7 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(acp_thread::AgentModelIcon::Named(
-                        ui::IconName::ZedAssistant
-                    )),
+                    icon: Some(language_model::IconOrSvg::Icon(ui::IconName::ZedAssistant)),
                 }]
             )])
         );

@@ -2,10 +2,9 @@ use std::{cmp::Reverse, sync::Arc};
 
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
+use futures::{StreamExt, channel::mpsc};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
-};
+use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Task};
 use language_model::{
     AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
@@ -76,7 +75,7 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    let all = providers
+    let all: Vec<ModelInfo> = providers
         .iter()
         .flat_map(|provider| {
             provider
@@ -124,7 +123,7 @@ pub struct LanguageModelPickerDelegate {
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
     _authenticate_all_providers_task: Task<()>,
-    _subscriptions: Vec<Subscription>,
+    _refresh_models_task: Task<()>,
     popover_styles: bool,
     focus_handle: FocusHandle,
 }
@@ -151,24 +150,42 @@ impl LanguageModelPickerDelegate {
             get_active_model: Arc::new(get_active_model),
             on_toggle_favorite: Arc::new(on_toggle_favorite),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
-            _subscriptions: vec![cx.subscribe_in(
-                &LanguageModelRegistry::global(cx),
-                window,
-                |picker, _, event, window, cx| {
-                    match event {
-                        language_model::Event::ProviderStateChanged(_)
-                        | language_model::Event::AddedProvider(_)
-                        | language_model::Event::RemovedProvider(_) => {
-                            let query = picker.query(cx);
-                            picker.delegate.all_models = Arc::new(all_models(cx));
-                            // Update matches will automatically drop the previous task
-                            // if we get a provider event again
-                            picker.update_matches(query, window, cx)
-                        }
-                        _ => {}
+            _refresh_models_task: {
+                // Create a channel to signal when models need refreshing
+                let (refresh_tx, mut refresh_rx) = mpsc::unbounded::<()>();
+
+                // Subscribe to registry events and send refresh signals through the channel
+                let registry = LanguageModelRegistry::global(cx);
+                cx.subscribe(&registry, move |_picker, _, event, _cx| match event {
+                    language_model::Event::ProviderStateChanged(_)
+                    | language_model::Event::AddedProvider(_)
+                    | language_model::Event::RemovedProvider(_)
+                    | language_model::Event::ProvidersChanged => {
+                        refresh_tx.unbounded_send(()).ok();
                     }
-                },
-            )],
+                    language_model::Event::DefaultModelChanged
+                    | language_model::Event::InlineAssistantModelChanged
+                    | language_model::Event::CommitMessageModelChanged
+                    | language_model::Event::ThreadSummaryModelChanged => {}
+                })
+                .detach();
+
+                // Spawn a task that listens for refresh signals and updates the picker
+                cx.spawn_in(window, async move |this, cx| {
+                    while let Some(()) = refresh_rx.next().await {
+                        if this
+                            .update_in(cx, |picker, window, cx| {
+                                picker.delegate.all_models = Arc::new(all_models(cx));
+                                picker.refresh(window, cx);
+                            })
+                            .is_err()
+                        {
+                            // Picker was dropped, exit the loop
+                            break;
+                        }
+                    }
+                })
+            },
             popover_styles,
             focus_handle,
         }

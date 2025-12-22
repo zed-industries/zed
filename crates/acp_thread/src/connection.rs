@@ -3,11 +3,11 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
-use language_model::LanguageModelProviderId;
+use language_model::{IconOrSvg, LanguageModelProviderId};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
-use ui::{App, IconName};
+use ui::App;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -210,21 +210,12 @@ pub trait AgentModelSelector: 'static {
     }
 }
 
-/// Icon for a model in the model selector.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentModelIcon {
-    /// A built-in icon from Zed's icon set.
-    Named(IconName),
-    /// Path to a custom SVG icon file.
-    Path(SharedString),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
-    pub icon: Option<AgentModelIcon>,
+    pub icon: Option<IconOrSvg>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {

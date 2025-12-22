@@ -1,18 +1,19 @@
-use crate::wasm_host::wit::since_v0_6_0::{
+use crate::wasm_host::wit::since_v0_8_0::{
     dap::{
         BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, StartDebuggingRequestArguments,
         TcpArguments, TcpArgumentsTemplate,
     },
+    lsp::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind},
     slash_command::SlashCommandOutputSection,
 };
-use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
-use ::settings::{Settings, WorktreeId};
+use ::settings::{ModelMode, Settings, SettingsStore, WorktreeId};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use credentials_provider::CredentialsProvider;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
@@ -22,12 +23,14 @@ use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semver::Version;
+use smol::net::TcpListener;
 use std::{
     env,
     net::Ipv4Addr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
@@ -615,6 +618,19 @@ impl http_client::Host for WasmState {
         .to_wasmtime_result()
     }
 
+    async fn fetch_fallible(
+        &mut self,
+        request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<http_client::HttpResponseWithStatus, String>> {
+        maybe!(async {
+            let request = convert_request(&request)?;
+            let mut response = self.host.http_client.send(request).await?;
+            convert_response_with_status(&mut response).await
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
     async fn fetch_stream(
         &mut self,
         request: http_client::HttpRequest,
@@ -716,6 +732,26 @@ async fn convert_response(
         .await?;
 
     Ok(extension_response)
+}
+
+async fn convert_response_with_status(
+    response: &mut ::http_client::Response<AsyncBody>,
+) -> anyhow::Result<http_client::HttpResponseWithStatus> {
+    let status = response.status().as_u16();
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
+    Ok(http_client::HttpResponseWithStatus {
+        status,
+        headers,
+        body,
+    })
 }
 
 impl nodejs::Host for WasmState {
@@ -1107,5 +1143,371 @@ impl ExtensionImports for WasmState {
             .await
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
+    }
+}
+
+impl llm_provider::Host for WasmState {
+    async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
+        let extension_id = self.manifest.id.clone();
+        let is_legacy_extension = crate::LEGACY_LLM_EXTENSION_IDS.contains(&extension_id.as_ref());
+
+        // Check if this provider has env vars configured and if the user has allowed any of them
+        let env_vars = self
+            .manifest
+            .language_model_providers
+            .get(&Arc::<str>::from(provider_id.as_str()))
+            .and_then(|entry| entry.auth.as_ref())
+            .and_then(|auth| auth.env_vars.clone());
+
+        if let Some(env_vars) = env_vars {
+            let full_provider_id = format!("{}:{}", extension_id, provider_id);
+
+            // Check each env var to see if it's allowed and set
+            for env_var_name in &env_vars {
+                let settings_key: Arc<str> =
+                    format!("{}:{}", full_provider_id, env_var_name).into();
+
+                // For legacy extensions, auto-allow if env var is set
+                let env_var_is_set = env::var(env_var_name)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
+
+                let is_allowed = self
+                    .on_main_thread({
+                        let settings_key = settings_key.clone();
+                        move |cx| {
+                            async move {
+                                cx.update(|cx| {
+                                    crate::extension_settings::ExtensionSettings::get_global(cx)
+                                        .allowed_env_var_providers
+                                        .contains(&settings_key)
+                                })
+                            }
+                            .boxed_local()
+                        }
+                    })
+                    .await
+                    .unwrap_or(false);
+
+                if is_allowed || (is_legacy_extension && env_var_is_set) {
+                    if let Ok(value) = env::var(env_var_name) {
+                        if !value.is_empty() {
+                            return Ok(Some(value));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to credential store
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
+
+        self.on_main_thread(move |cx| {
+            async move {
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                let result = credentials_provider
+                    .read_credentials(&credential_key, cx)
+                    .await
+                    .ok()
+                    .flatten();
+                Ok(result.map(|(_, password)| String::from_utf8_lossy(&password).to_string()))
+            }
+            .boxed_local()
+        })
+        .await
+    }
+
+    async fn store_credential(
+        &mut self,
+        provider_id: String,
+        value: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let extension_id = self.manifest.id.clone();
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
+
+        self.on_main_thread(move |cx| {
+            async move {
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                credentials_provider
+                    .write_credentials(&credential_key, "api_key", value.as_bytes(), cx)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn delete_credential(
+        &mut self,
+        provider_id: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let extension_id = self.manifest.id.clone();
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
+
+        self.on_main_thread(move |cx| {
+            async move {
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                credentials_provider
+                    .delete_credentials(&credential_key, cx)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn get_env_var(&mut self, name: String) -> wasmtime::Result<Option<String>> {
+        let extension_id = self.manifest.id.clone();
+
+        // Find which provider (if any) declares this env var in its auth config
+        let mut allowed_provider_id: Option<Arc<str>> = None;
+        for (provider_id, provider_entry) in &self.manifest.language_model_providers {
+            if let Some(auth_config) = &provider_entry.auth {
+                if let Some(env_vars) = &auth_config.env_vars {
+                    if env_vars.iter().any(|v| v == &name) {
+                        allowed_provider_id = Some(provider_id.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If no provider declares this env var, deny access
+        let Some(provider_id) = allowed_provider_id else {
+            log::warn!(
+                "Extension {} attempted to read env var {} which is not declared in any provider auth config",
+                extension_id,
+                name
+            );
+            return Ok(None);
+        };
+
+        // Check if the user has allowed this specific env var
+        let settings_key: Arc<str> = format!("{}:{}:{}", extension_id, provider_id, name).into();
+        let is_legacy_extension = crate::LEGACY_LLM_EXTENSION_IDS.contains(&extension_id.as_ref());
+
+        // For legacy extensions, auto-allow if env var is set
+        let env_var_is_set = env::var(&name).map(|v| !v.is_empty()).unwrap_or(false);
+
+        let is_allowed = self
+            .on_main_thread({
+                let settings_key = settings_key.clone();
+                move |cx| {
+                    async move {
+                        cx.update(|cx| {
+                            crate::extension_settings::ExtensionSettings::get_global(cx)
+                                .allowed_env_var_providers
+                                .contains(&settings_key)
+                        })
+                    }
+                    .boxed_local()
+                }
+            })
+            .await
+            .unwrap_or(false);
+
+        if !is_allowed && !(is_legacy_extension && env_var_is_set) {
+            log::debug!(
+                "Extension {} provider {} is not allowed to read env var {}",
+                extension_id,
+                provider_id,
+                name
+            );
+            return Ok(None);
+        }
+
+        Ok(env::var(&name).ok())
+    }
+
+    async fn oauth_start_web_auth(
+        &mut self,
+        config: llm_provider::OauthWebAuthConfig,
+    ) -> wasmtime::Result<Result<llm_provider::OauthWebAuthResult, String>> {
+        let auth_url = config.auth_url;
+        let callback_path = config.callback_path;
+        let timeout_secs = config.timeout_secs.unwrap_or(300);
+
+        self.on_main_thread(move |cx| {
+            async move {
+                // Bind to port 0 to let the OS assign an available port, then substitute
+                // it into the auth URL's {port} placeholder for the OAuth callback.
+                let listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to bind localhost server: {}", e))?;
+                let port = listener
+                    .local_addr()
+                    .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
+                    .port();
+
+                let auth_url_with_port = auth_url.replace("{port}", &port.to_string());
+                cx.update(|cx| {
+                    cx.open_url(&auth_url_with_port);
+                })?;
+
+                let accept_future = async {
+                    let (mut stream, _) = listener
+                        .accept()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to accept connection: {}", e))?;
+
+                    let mut request_line = String::new();
+                    {
+                        let mut reader = smol::io::BufReader::new(&mut stream);
+                        smol::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Failed to read request: {}", e))?;
+                    }
+
+                    let path = request_line
+                        .split_whitespace()
+                        .nth(1)
+                        .ok_or_else(|| anyhow::anyhow!("Malformed HTTP request"))?;
+
+                    let callback_url = if path.starts_with(&callback_path)
+                        || path.starts_with(&format!("/{}", callback_path.trim_start_matches('/')))
+                    {
+                        format!("http://localhost:{}{}", port, path)
+                    } else {
+                        return Err(anyhow::anyhow!("Unexpected callback path: {}", path));
+                    };
+
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        include_str!("../oauth_callback_response.html")
+                    );
+
+                    smol::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes())
+                        .await
+                        .ok();
+                    smol::io::AsyncWriteExt::flush(&mut stream).await.ok();
+
+                    Ok(callback_url)
+                };
+
+                let timeout_duration = Duration::from_secs(timeout_secs as u64);
+                let callback_url = smol::future::or(accept_future, async {
+                    smol::Timer::after(timeout_duration).await;
+                    Err(anyhow::anyhow!(
+                        "OAuth callback timed out after {} seconds",
+                        timeout_secs
+                    ))
+                })
+                .await?;
+
+                Ok(llm_provider::OauthWebAuthResult {
+                    callback_url,
+                    port: port as u32,
+                })
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn oauth_send_http_request(
+        &mut self,
+        request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<http_client::HttpResponseWithStatus, String>> {
+        maybe!(async {
+            let request = convert_request(&request)?;
+            let mut response = self.host.http_client.send(request).await?;
+            convert_response_with_status(&mut response).await
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn oauth_open_browser(&mut self, url: String) -> wasmtime::Result<Result<(), String>> {
+        self.on_main_thread(move |cx| {
+            async move {
+                cx.update(|cx| {
+                    cx.open_url(&url);
+                })?;
+                Ok(())
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn get_provider_settings(
+        &mut self,
+        provider_id: String,
+    ) -> wasmtime::Result<Option<llm_provider::ProviderSettings>> {
+        let extension_id = self.manifest.id.clone();
+
+        let result = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        let settings_store = cx.global::<SettingsStore>();
+                        let user_settings = settings_store.raw_user_settings();
+                        let language_models =
+                            user_settings.and_then(|s| s.content.language_models.as_ref());
+
+                        // Map provider IDs to their settings
+                        // The provider_id from the extension is just the provider part (e.g., "google-ai")
+                        // We need to match this to the appropriate settings
+                        match provider_id.as_str() {
+                            "google-ai" => {
+                                let google = language_models.and_then(|lm| lm.google.as_ref());
+                                let google = google?;
+
+                                let api_url = google.api_url.clone().filter(|s| !s.is_empty());
+
+                                let available_models = google
+                                    .available_models
+                                    .as_ref()
+                                    .map(|models| {
+                                        models
+                                            .iter()
+                                            .map(|m| {
+                                                let thinking_budget = match &m.mode {
+                                                    Some(ModelMode::Thinking { budget_tokens }) => {
+                                                        *budget_tokens
+                                                    }
+                                                    _ => None,
+                                                };
+                                                llm_provider::CustomModelConfig {
+                                                    name: m.name.clone(),
+                                                    display_name: m.display_name.clone(),
+                                                    max_tokens: m.max_tokens,
+                                                    max_output_tokens: None,
+                                                    thinking_budget,
+                                                }
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+
+                                Some(llm_provider::ProviderSettings {
+                                    api_url,
+                                    available_models,
+                                })
+                            }
+                            _ => {
+                                log::debug!(
+                                    "Extension {} requested settings for unknown provider: {}",
+                                    extension_id,
+                                    provider_id
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .ok()
+                    .flatten()
+                }
+                .boxed_local()
+            })
+            .await;
+
+        Ok(result)
     }
 }

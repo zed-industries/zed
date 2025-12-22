@@ -8,11 +8,12 @@ use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod extension;
+mod google_ai_api_key;
 pub mod provider;
 mod settings;
 
 pub use crate::extension::init_proxy as init_extension_proxy;
-
+pub use crate::google_ai_api_key::api_key_for_gemini_cli;
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
@@ -38,36 +39,41 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
         cx.subscribe(&extension_store, {
             let registry = registry.clone();
-            move |extension_store, event, cx| match event {
-                extension_host::Event::ExtensionInstalled(extension_id) => {
-                    if let Some(manifest) = extension_store
-                        .read(cx)
-                        .extension_manifest_for_id(extension_id)
-                    {
-                        if !manifest.language_model_providers.is_empty() {
-                            registry.update(cx, |registry, cx| {
-                                registry.extension_installed(extension_id.clone(), cx);
-                            });
+            move |extension_store, event, cx| {
+                match event {
+                    extension_host::Event::ExtensionInstalled(extension_id) => {
+                        // Check if this extension has language_model_providers
+                        if let Some(manifest) = extension_store
+                            .read(cx)
+                            .extension_manifest_for_id(extension_id)
+                        {
+                            if !manifest.language_model_providers.is_empty() {
+                                registry.update(cx, |registry, cx| {
+                                    registry.extension_installed(extension_id.clone(), cx);
+                                });
+                            }
                         }
                     }
-                }
-                extension_host::Event::ExtensionUninstalled(extension_id) => {
-                    registry.update(cx, |registry, cx| {
-                        registry.extension_uninstalled(extension_id, cx);
-                    });
-                }
-                extension_host::Event::ExtensionsUpdated => {
-                    let mut new_ids = HashSet::default();
-                    for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                        if !entry.manifest.language_model_providers.is_empty() {
-                            new_ids.insert(extension_id.clone());
-                        }
+                    extension_host::Event::ExtensionUninstalled(extension_id) => {
+                        registry.update(cx, |registry, cx| {
+                            registry.extension_uninstalled(extension_id, cx);
+                        });
                     }
-                    registry.update(cx, |registry, cx| {
-                        registry.sync_installed_llm_extensions(new_ids, cx);
-                    });
+                    extension_host::Event::ExtensionsUpdated => {
+                        // Re-sync installed extensions on bulk updates
+                        let mut new_ids = HashSet::default();
+                        for (extension_id, entry) in extension_store.read(cx).installed_extensions()
+                        {
+                            if !entry.manifest.language_model_providers.is_empty() {
+                                new_ids.insert(extension_id.clone());
+                            }
+                        }
+                        registry.update(cx, |registry, cx| {
+                            registry.sync_installed_llm_extensions(new_ids, cx);
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         })
         .detach();

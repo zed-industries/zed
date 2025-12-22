@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
-use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
@@ -32,7 +31,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use language_model::{ApiKey, ApiKeyState};
+use language_model::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -114,22 +113,6 @@ impl GoogleLanguageModelProvider {
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
-        })
-    }
-
-    pub fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
-        if let Some(key) = API_KEY_ENV_VAR.value.clone() {
-            return Task::ready(Ok(key));
-        }
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = Self::api_url(cx).to_string();
-        cx.spawn(async move |cx| {
-            Ok(
-                ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
-                    .await?
-                    .key()
-                    .to_string(),
-            )
         })
     }
 
@@ -707,7 +690,7 @@ pub fn count_google_tokens(
             })
             .collect::<Vec<_>>();
 
-        // Tiktoken doesn't yet support these models, so we manually use the
+        // Tiktoken doesn't support these models, so we manually use the
         // same tokenizer as GPT-4.
         tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
     })
@@ -858,6 +841,7 @@ impl Render for ConfigurationView {
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
                     ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI".into(),
+                    ConfigurationViewTargetAgent::EditPrediction => "Google AI for edit predictions".into(),
                     ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
                 })))
                 .child(
