@@ -611,6 +611,46 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_fuzzy_match(cx: &mut TestAppContext) {
+        let models = create_model_list(vec![
+            (
+                "zed",
+                vec![
+                    "Claude 3.7 Sonnet",
+                    "Claude 3.7 Sonnet Thinking",
+                    "gpt-4.1",
+                    "gpt-4.1-nano",
+                ],
+            ),
+            ("openai", vec!["gpt-3.5-turbo", "gpt-4.1", "gpt-4.1-nano"]),
+            ("ollama", vec!["mistral", "deepseek"]),
+        ]);
+
+        // Results should preserve models order whenever possible.
+        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
+        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // so it should appear first in the results.
+        let results = fuzzy_search(models.clone(), "41".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![
+                ("zed", vec!["gpt-4.1", "gpt-4.1-nano"]),
+                ("openai", vec!["gpt-4.1", "gpt-4.1-nano"]),
+            ],
+        );
+
+        // Fuzzy search
+        let results = fuzzy_search(models.clone(), "4n".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![
+                ("zed", vec!["gpt-4.1-nano"]),
+                ("openai", vec!["gpt-4.1-nano"]),
+            ],
+        );
+    }
+
+    #[gpui::test]
     fn test_favorites_section_appears_when_favorites_exist(_cx: &mut TestAppContext) {
         let models = create_model_list(vec![
             ("zed", vec!["zed/claude", "zed/gemini"]),
@@ -746,42 +786,48 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_fuzzy_match(cx: &mut TestAppContext) {
-        let models = create_model_list(vec![
-            (
-                "zed",
-                vec![
-                    "Claude 3.7 Sonnet",
-                    "Claude 3.7 Sonnet Thinking",
-                    "gpt-4.1",
-                    "gpt-4.1-nano",
-                ],
-            ),
-            ("openai", vec!["gpt-3.5-turbo", "gpt-4.1", "gpt-4.1-nano"]),
-            ("ollama", vec!["mistral", "deepseek"]),
+    fn test_favorites_count_returns_correct_count(_cx: &mut TestAppContext) {
+        let empty_favorites: HashSet<ModelId> = HashSet::default();
+        assert_eq!(empty_favorites.len(), 0);
+
+        let one_favorite = create_favorites(vec!["model-a"]);
+        assert_eq!(one_favorite.len(), 1);
+
+        let multiple_favorites = create_favorites(vec!["model-a", "model-b", "model-c"]);
+        assert_eq!(multiple_favorites.len(), 3);
+
+        let with_duplicates = create_favorites(vec!["model-a", "model-a", "model-b"]);
+        assert_eq!(with_duplicates.len(), 2);
+    }
+
+    #[gpui::test]
+    fn test_is_favorite_flag_set_correctly_in_entries(_cx: &mut TestAppContext) {
+        let models = AgentModelList::Flat(vec![
+            acp_thread::AgentModelInfo {
+                id: acp::ModelId::new("favorite-model".to_string()),
+                name: "Favorite".into(),
+                description: None,
+                icon: None,
+            },
+            acp_thread::AgentModelInfo {
+                id: acp::ModelId::new("regular-model".to_string()),
+                name: "Regular".into(),
+                description: None,
+                icon: None,
+            },
         ]);
+        let favorites = create_favorites(vec!["favorite-model"]);
 
-        // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
-        // so it should appear first in the results.
-        let results = fuzzy_search(models.clone(), "41".into(), cx.executor()).await;
-        assert_models_eq(
-            results,
-            vec![
-                ("zed", vec!["gpt-4.1", "gpt-4.1-nano"]),
-                ("openai", vec!["gpt-4.1", "gpt-4.1-nano"]),
-            ],
-        );
+        let entries = info_list_to_picker_entries(models, &favorites);
 
-        // Fuzzy search
-        let results = fuzzy_search(models.clone(), "4n".into(), cx.executor()).await;
-        assert_models_eq(
-            results,
-            vec![
-                ("zed", vec!["gpt-4.1-nano"]),
-                ("openai", vec!["gpt-4.1-nano"]),
-            ],
-        );
+        for entry in &entries {
+            if let AcpModelPickerEntry::Model(info, is_favorite) = entry {
+                if info.id.0.as_ref() == "favorite-model" {
+                    assert!(*is_favorite, "favorite-model should have is_favorite=true");
+                } else if info.id.0.as_ref() == "regular-model" {
+                    assert!(!*is_favorite, "regular-model should have is_favorite=false");
+                }
+            }
+        }
     }
 }
