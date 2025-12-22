@@ -134,19 +134,8 @@ mod tests {
 
     use super::*;
 
-    #[derive(PartialEq)]
-    enum FilePermissions {
-        /// Keeps the permissions set for the files
-        Keep,
-        /// Sets the permissions to 0o000
-        Unset,
-    }
-
-    async fn compress_zip(
-        src_dir: &Path,
-        dst: &Path,
-        file_permissions: FilePermissions,
-    ) -> Result<()> {
+    #[allow(unused_variables)]
+    async fn compress_zip(src_dir: &Path, dst: &Path, keep_file_permissions: bool) -> Result<()> {
         let mut out = smol::fs::File::create(dst).await?;
         let mut writer = ZipFileWriter::new(&mut out);
 
@@ -169,8 +158,7 @@ mod tests {
                     ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = std::fs::metadata(path)?;
-                let perms = (file_permissions == FilePermissions::Keep)
-                    .then(|| metadata.permissions().mode() as u16);
+                let perms = keep_file_permissions.then(|| metadata.permissions().mode() as u16);
                 builder = builder.unix_permissions(perms.unwrap_or_default());
                 writer.write_entry_whole(builder, &data).await?;
             }
@@ -221,7 +209,7 @@ mod tests {
         let zip_file = test_dir.path().join("test.zip");
 
         smol::block_on(async {
-            compress_zip(test_dir.path(), &zip_file, FilePermissions::Keep)
+            compress_zip(test_dir.path(), &zip_file, true)
                 .await
                 .unwrap();
             let reader = read_archive(&zip_file).await;
@@ -254,7 +242,7 @@ mod tests {
 
             // Create zip
             let zip_file = test_dir.path().join("test.zip");
-            compress_zip(test_dir.path(), &zip_file, FilePermissions::Keep)
+            compress_zip(test_dir.path(), &zip_file, true)
                 .await
                 .unwrap();
 
@@ -285,7 +273,7 @@ mod tests {
 
             // Create zip
             let zip_file = test_dir.path().join("test.zip");
-            compress_zip(test_dir.path(), &zip_file, FilePermissions::Unset)
+            compress_zip(test_dir.path(), &zip_file, false)
                 .await
                 .unwrap();
 
