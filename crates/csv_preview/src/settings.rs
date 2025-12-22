@@ -73,6 +73,7 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) copy_mode: CopyMode,
     pub(crate) show_debug_info: bool,
     pub(crate) show_perf_metrics_overlay: bool,
+    pub(crate) show_cell_editor_row: bool,
 }
 
 impl Default for CsvPreviewSettings {
@@ -86,6 +87,7 @@ impl Default for CsvPreviewSettings {
             copy_mode: CopyMode::default(),
             show_debug_info: false,
             show_perf_metrics_overlay: false,
+            show_cell_editor_row: false,
         }
     }
 }
@@ -357,7 +359,7 @@ impl CsvPreviewView {
                         ),
                 )
                 .child(
-                    // TODO: Rewrite it to be a menu with checkables
+                    // TODO: Rewrite it to be a menu with checkable elements (✔️ next to it if checked)
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -379,6 +381,20 @@ impl CsvPreviewView {
                             .label("Show perf metrics")
                             .on_click(cx.listener(|this, checked, _window, cx| {
                                 this.settings.show_perf_metrics_overlay = *checked == ToggleState::Selected;
+                                cx.notify();
+                            })),
+                        ).child(
+                            Checkbox::new(
+                                "show-cell-editor-row",
+                                if self.settings.show_cell_editor_row {
+                                    ToggleState::Selected
+                                } else {
+                                    ToggleState::Unselected
+                                },
+                            )
+                            .label("Show cell editor row")
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.settings.show_cell_editor_row = *checked == ToggleState::Selected;
                                 cx.notify();
                             })),
                         )
