@@ -319,6 +319,56 @@ impl ConvergioDb {
         // Create new session
         self.create_session(agent_name)
     }
+
+    /// Insert an assistant message into a session
+    pub fn insert_assistant_message(
+        &self,
+        session_id: &str,
+        sender_name: &str,
+        content: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cost_usd: f64,
+    ) -> Result<i64> {
+        let conn = self.connection.lock()
+            .map_err(|e| anyhow!("Failed to lock connection: {}", e))?;
+
+        let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let query = r#"
+            INSERT INTO messages (session_id, type, sender_name, content, input_tokens, output_tokens, cost_usd, created_at)
+            VALUES (?, 2, ?, ?, ?, ?, ?, ?)
+        "#;
+
+        conn.exec_bound::<(ArcStr, ArcStr, ArcStr, i64, i64, f64, ArcStr)>(query)?((
+            ArcStr::from(session_id),
+            ArcStr::from(sender_name),
+            ArcStr::from(content),
+            input_tokens,
+            output_tokens,
+            cost_usd,
+            ArcStr::from(now.as_str()),
+        ))?;
+
+        // Get the last inserted row ID
+        let id_query = "SELECT last_insert_rowid()";
+        let mut stmt = conn.select_bound::<(), i64>(id_query)?;
+        let rows = stmt(())?;
+
+        // Update session stats
+        let update_query = r#"
+            UPDATE sessions
+            SET total_messages = total_messages + 1,
+                total_cost = total_cost + ?
+            WHERE id = ?
+        "#;
+        let _ = conn.exec_bound::<(f64, ArcStr)>(update_query)?((
+            cost_usd,
+            ArcStr::from(session_id),
+        ));
+
+        Ok(rows.into_iter().next().unwrap_or(0))
+    }
 }
 
 /// Parse datetime string from SQLite

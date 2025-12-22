@@ -3,8 +3,10 @@
 //! This component displays chat messages from convergio.db and handles
 //! user input for sending messages to Convergio agents.
 
+use crate::agent_invoke;
 use crate::convergio_db::{ChatMessage, ConvergioDb, MessageType};
 use chrono::{DateTime, Local, Utc};
+use client::Client;
 use collections::HashMap;
 use editor::Editor;
 use gpui::{
@@ -14,6 +16,7 @@ use gpui::{
     SharedString, Styled, StyleRefinement, Subscription, Task, TextStyleRefinement, WeakEntity,
     Window,
 };
+use http_client::HttpClient;
 use language::LanguageRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use std::sync::Arc;
@@ -39,6 +42,7 @@ pub struct ConvergioChatView {
     input_editor: Entity<Editor>,
     scroll_handle: ScrollHandle,
     db: Option<Arc<ConvergioDb>>,
+    http_client: Option<Arc<dyn HttpClient>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
@@ -47,6 +51,7 @@ pub struct ConvergioChatView {
     last_message_count: i64,
     _input_subscription: Subscription,
     _poll_task: Option<Task<()>>,
+    _invoke_task: Option<Task<()>>,
 }
 
 impl ConvergioChatView {
@@ -85,6 +90,9 @@ impl ConvergioChatView {
             }
         };
 
+        // Get HTTP client for API calls
+        let http_client = Client::global(cx).http_client();
+
         let mut view = Self {
             focus_handle,
             agent_name: agent_name.clone(),
@@ -95,6 +103,7 @@ impl ConvergioChatView {
             input_editor,
             scroll_handle: ScrollHandle::new(),
             db,
+            http_client: Some(http_client),
             language_registry,
             workspace,
             is_loading: true,
@@ -102,6 +111,7 @@ impl ConvergioChatView {
             last_message_count: 0,
             _input_subscription: subscription,
             _poll_task: None,
+            _invoke_task: None,
         };
 
         // Load initial messages
@@ -250,7 +260,7 @@ impl ConvergioChatView {
         }
     }
 
-    /// Send a message to the agent via database
+    /// Send a message to the agent via database and invoke the agent
     fn send(&mut self, _: &Send, window: &mut Window, cx: &mut Context<Self>) {
         let content = self.input_editor.read(cx).text(cx);
         if content.trim().is_empty() {
@@ -267,10 +277,24 @@ impl ConvergioChatView {
             return;
         };
 
-        let agent_name = self.agent_name.clone();
-        let session_id = self.session_id.clone();
+        let Some(http_client) = self.http_client.clone() else {
+            log::error!("HTTP client not available");
+            return;
+        };
 
-        // Insert message into database
+        // Get API key
+        let Some(api_key) = agent_invoke::get_api_key() else {
+            log::error!("ANTHROPIC_API_KEY not set");
+            // Still insert the message even without API key
+            self.insert_message_only(&db, &content, cx);
+            return;
+        };
+
+        let agent_name = self.agent_name.to_string();
+        let session_id = self.session_id.clone();
+        let executor = cx.background_executor().clone();
+
+        // Insert message and invoke agent
         cx.spawn(async move |this, cx| {
             // Get or create session
             let session_id = match session_id {
@@ -290,12 +314,47 @@ impl ConvergioChatView {
             match db.insert_user_message(&session_id, &content) {
                 Ok(msg_id) => {
                     log::info!("Inserted user message {} to session {}", msg_id, session_id);
+
                     // Update session ID and reload messages
                     let _ = this.update(cx, |this, cx| {
                         this.session_id = Some(session_id.clone());
                         this.is_streaming = true;
                         this.load_messages_for_session(&session_id, cx);
                     });
+
+                    // Get all messages for context
+                    let messages = db.messages_for_session(&session_id).unwrap_or_default();
+
+                    // Invoke the agent
+                    log::info!("Invoking agent {} for session {}", agent_name, session_id);
+                    let invoke_task = agent_invoke::invoke_agent(
+                        db.clone(),
+                        http_client,
+                        api_key,
+                        session_id.clone(),
+                        agent_name.clone(),
+                        messages,
+                        executor,
+                    );
+
+                    // Wait for agent response
+                    match invoke_task.await {
+                        Ok(()) => {
+                            log::info!("Agent {} responded successfully", agent_name);
+                            // Reload messages and clear streaming state
+                            let _ = this.update(cx, |this, cx| {
+                                this.is_streaming = false;
+                                this.load_messages_for_session(&session_id, cx);
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Agent invocation failed: {}", e);
+                            let _ = this.update(cx, |this, cx| {
+                                this.is_streaming = false;
+                                cx.notify();
+                            });
+                        }
+                    }
                 }
                 Err(e) => {
                     log::error!("Failed to insert message: {}", e);
@@ -304,6 +363,37 @@ impl ConvergioChatView {
         }).detach();
 
         cx.notify();
+    }
+
+    /// Insert a message without invoking the agent (fallback when no API key)
+    fn insert_message_only(&mut self, db: &Arc<ConvergioDb>, content: &str, cx: &mut Context<Self>) {
+        let db = db.clone();
+        let agent_name = self.agent_name.to_string();
+        let session_id = self.session_id.clone();
+        let content = content.to_string();
+
+        cx.spawn(async move |this, cx| {
+            let session_id = match session_id {
+                Some(id) => id,
+                None => {
+                    match db.get_or_create_session(&agent_name) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            log::error!("Failed to create session: {}", e);
+                            return;
+                        }
+                    }
+                }
+            };
+
+            if let Ok(msg_id) = db.insert_user_message(&session_id, &content) {
+                log::info!("Inserted user message {} (no agent response - API key missing)", msg_id);
+                let _ = this.update(cx, |this, cx| {
+                    this.session_id = Some(session_id.clone());
+                    this.load_messages_for_session(&session_id, cx);
+                });
+            }
+        }).detach();
     }
 
     fn scroll_to_bottom(&mut self, _cx: &mut Context<Self>) {

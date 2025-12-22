@@ -45,3 +45,6 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+anthropic.workspace = true
+http_client.workspace = true
+client.workspace = true

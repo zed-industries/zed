@@ -9,6 +9,7 @@
 //! Convergio's SQLite database, ensuring full synchronization between
 //! the Zed panel and the Convergio CLI.
 
+mod agent_invoke;
 mod chat_view;
 mod convergio_db;
 mod panel;
