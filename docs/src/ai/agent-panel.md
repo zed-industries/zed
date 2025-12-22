@@ -100,6 +100,8 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
+If you have favorited models configured, you can cycle through them with {#kb agent::CycleFavoriteModels} without opening the model selector.
+
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
