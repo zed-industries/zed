@@ -72,6 +72,7 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) copy_format: CopyFormat,
     pub(crate) copy_mode: CopyMode,
     pub(crate) show_debug_info: bool,
+    pub(crate) show_perf_metrics_overlay: bool,
 }
 
 impl Default for CsvPreviewSettings {
@@ -84,6 +85,7 @@ impl Default for CsvPreviewSettings {
             copy_format: CopyFormat::default(),
             copy_mode: CopyMode::default(),
             show_debug_info: false,
+            show_perf_metrics_overlay: false,
         }
     }
 }
@@ -355,6 +357,7 @@ impl CsvPreviewView {
                         ),
                 )
                 .child(
+                    // TODO: Rewrite it to be a menu with checkables
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -363,6 +366,21 @@ impl CsvPreviewView {
                                 .text_sm()
                                 .text_color(cx.theme().colors().text_muted)
                                 .child("Debug Info:"),
+                        )
+                        .child(
+                            Checkbox::new(
+                                "show-perf-metrics-overlay",
+                                if self.settings.show_perf_metrics_overlay {
+                                    ToggleState::Selected
+                                } else {
+                                    ToggleState::Unselected
+                                },
+                            )
+                            .label("Show perf metrics")
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.settings.show_perf_metrics_overlay = *checked == ToggleState::Selected;
+                                cx.notify();
+                            })),
                         )
                         .child(
                             Checkbox::new(
