@@ -1216,7 +1216,6 @@ pub struct Editor {
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
-    is_multibuffer_collapsed: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -2407,7 +2406,6 @@ impl Editor {
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             use_base_text_line_numbers: false,
-            is_multibuffer_collapsed: false,
         };
 
         if is_minimap {
