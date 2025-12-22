@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ui::{ScrollAxes, WithScrollbar, div, prelude::*};
 
-use crate::{CsvPreviewView, KEY_CONTEXT_NAME, settings::FontType};
+use crate::{CELL_EDITOR_CONTEXT_NAME, CsvPreviewView, TABLE_CONTEXT_NAME, settings::FontType};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -15,7 +15,7 @@ impl Render for CsvPreviewView {
             .bg(theme.colors().editor_background)
             // Apparently, this should make newly created CSV preview to get focus automatically
             .track_focus(&self.focus_handle)
-            .key_context(KEY_CONTEXT_NAME)
+            .key_context(TABLE_CONTEXT_NAME)
             .on_action(cx.listener(Self::copy_selected))
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::select_up))

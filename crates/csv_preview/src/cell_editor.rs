@@ -1,13 +1,14 @@
 use editor::Editor;
-use gpui::{AppContext as _, Entity, ScrollStrategy};
+use gpui::{AppContext as _, Entity, FocusHandle, Focusable, ScrollStrategy};
 use text::ToOffset;
 use ui::{
-    ActiveTheme as _, Context, IntoElement, ParentElement as _, Styled as _, StyledTypography as _,
-    Window, div, h_flex,
+    ActiveTheme as _, App, Context, InteractiveElement, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, StyledTypography as _, Window, div, h_flex,
 };
 
 use crate::{
-    CancelCellEditing, CsvPreviewView, FinishCellEditing, StartCellEditing,
+    CELL_EDITOR_CONTEXT_NAME, CancelCellEditing, CsvPreviewView, FinishCellEditing,
+    StartCellEditing,
     copy_selected::EscapedCellString,
     table_cell::CellContentSpan,
     types::{DataCellId, DisplayCellId},
@@ -141,6 +142,8 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
         apply_scroll: Option<ScrollOffset>,
     ) {
+        self.clear_cell_editor();
+
         // Follow focused cell in list viewport
         if let Some(focused_cell) = self.selection.get_focused_cell()
             && let Some(scroll) = apply_scroll
@@ -198,7 +201,7 @@ impl CsvPreviewView {
         };
 
         let (row, col) = data_cid.to_raw();
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         // Get focused cell info for display
         let edited_cell_info = if let Some(position) = self.get_cell_content_span(data_cid) {
             let buffer_snapshot = active_editor_state
@@ -227,7 +230,14 @@ impl CsvPreviewView {
             format!("R{}C{}", row + 1, col + 1) // 1-based for display
         };
 
+        // Must wrap into entity. Without it, CellEditor is not renderable
+        let e = cx.new(|cx| CellEditor {
+            cell_editor: editor.clone(),
+            focus_handle: cx.focus_handle(),
+        });
+
         div()
+            // .track_focus(&self.focus_handle)
             .p_2()
             .bg(theme.colors().panel_background)
             .border_1()
@@ -243,14 +253,7 @@ impl CsvPreviewView {
                             .text_color(theme.colors().text)
                             .child(format!("Editing cell {edited_cell_info}:")),
                     )
-                    .child({
-                        div()
-                            .flex_1()
-                            .min_w_48()
-                            .bg(theme.colors().editor_background)
-                            .child(editor.clone())
-                            .into_any_element()
-                    })
+                    .child(e)
                     .child(
                         div()
                             .text_ui(cx)
@@ -265,7 +268,33 @@ impl CsvPreviewView {
     }
 }
 
-///// Handlers /////
+pub(crate) struct CellEditor {
+    cell_editor: Entity<Editor>,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for CellEditor {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for CellEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let cell_editor = self.cell_editor.clone();
+        let theme = cx.theme();
+
+        div()
+            .track_focus(&self.focus_handle)
+            .flex_1()
+            .min_w_48()
+            .key_context(CELL_EDITOR_CONTEXT_NAME)
+            .bg(theme.colors().editor_background)
+            .child(cell_editor)
+            .into_any_element()
+    }
+}
+
 impl CsvPreviewView {
     pub(crate) fn start_cell_editing(
         &mut self,
@@ -289,6 +318,9 @@ impl CsvPreviewView {
             editor.set_text(&*initial_content, window, cx);
             editor
         });
+
+        // Focus the editor immediately after creation
+        editor.read(cx).focus_handle(cx).focus(window);
 
         self.cell_editor = Some(CellEditorCtx {
             editor,
@@ -314,6 +346,7 @@ impl CsvPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        println!("Cancel cell editing");
         self.clear_cell_editor();
         cx.notify();
     }
