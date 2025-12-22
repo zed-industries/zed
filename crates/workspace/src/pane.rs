@@ -1313,7 +1313,36 @@ impl Pane {
             item,
             activate_pane,
             focus_item,
-            true,
+            activate_pane,
+            destination_index,
+            window,
+            cx,
+        )
+    }
+
+    /// Adds an item to the pane without switching to its tab.
+    ///
+    /// Unlike `add_item`, this method adds the item in the background without
+    /// making it the active tab. The `activate_pane` parameter still controls
+    /// whether the pane itself becomes active.
+    pub fn add_item_behind(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        activate_pane: bool,
+        focus_item: bool,
+        destination_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            telemetry::event!(text);
+        }
+
+        self.add_item_inner(
+            item,
+            activate_pane,
+            focus_item,
+            false,
             destination_index,
             window,
             cx,
