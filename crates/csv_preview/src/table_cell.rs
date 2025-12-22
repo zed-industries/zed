@@ -7,7 +7,7 @@ use std::{cmp::Ordering, time::Instant};
 
 use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
 use text::{Anchor, BufferId};
-use ui::{SharedString, div, prelude::*};
+use ui::{SharedString, Tooltip, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -144,7 +144,7 @@ impl CsvPreviewView {
     /// Create selectable table cell with mouse event handlers.
     pub fn create_selectable_cell(
         display_cell_id: DisplayCellId,
-        cell_content: impl IntoElement,
+        cell_content: SharedString,
         view_entity: Entity<CsvPreviewView>,
         selected_bg_color: gpui::Hsla,
         is_selected: bool,
@@ -265,7 +265,7 @@ impl CsvPreviewView {
 /// Create styled table cell div element.
 fn create_table_cell(
     display_cell_id: DisplayCellId,
-    cell_content: impl IntoElement,
+    cell_content: SharedString,
     selected_bg_color: gpui::Hsla,
     is_selected: bool,
     is_focused: bool,
@@ -309,5 +309,6 @@ fn create_table_cell(
             FontType::Ui => div.font_ui(cx),
             FontType::Monospace => div.font_buffer(cx),
         })
+        .tooltip(Tooltip::text(cell_content.clone()))
         .child(cell_content)
 }

@@ -11,7 +11,7 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [ ] feat: Add multiline cells (variable list) / single line cells (unified list) modes
-- [ ] feat: Add tooltip for truncated values / show full value on selection
+- [x] feat: Add tooltip to show full value on hover
 - [ ] feat: Optional headers (c1 c2 c3) toggle
 - [x] feat: Add performance metrics (timings for ordering, parsing, copying, selection, etc)
 - [ ] feat: Horizontal scroll vs fit all columns
