@@ -349,7 +349,8 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 To use Mistral's Codestral as your provider:
 =======
 To use Mistral's Codestral as your provider, you can configure it through the Settings UI. Open the Settings Editor with {#kb zed::OpenSettings}, navigate to **AI > Edit Predictions**, and configure your Codestral API key in the provider settings.
->>>>>>> Stashed changes
+
+> > > > > > > Stashed changes
 
 1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
 2. Search for "Edit Predictions" and click **Configure Providers**
