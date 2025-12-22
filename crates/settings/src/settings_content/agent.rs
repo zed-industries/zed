@@ -368,6 +368,7 @@ pub struct BuiltinAgentServerSettings {
     /// These are the model IDs as reported by the agent.
     ///
     /// Default: []
+    #[serde(default)]
     pub favorite_models: Vec<String>,
 }
 
@@ -398,6 +399,7 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
+        #[serde(default)]
         favorite_models: Vec<String>,
     },
     Extension {
@@ -418,6 +420,7 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
+        #[serde(default)]
         favorite_models: Vec<String>,
     },
 }
