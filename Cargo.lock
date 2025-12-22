@@ -5900,6 +5900,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cli",
  "collections",
  "dap",
  "fs",
@@ -16521,6 +16522,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "ctor",
+ "extension",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "parking_lot",
+ "project",
+ "serde_json",
+ "settings",
+ "task",
+ "terminal",
+ "zlog",
+]
+
+[[package]]
 name = "terminal_size"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16543,6 +16564,7 @@ dependencies = [
  "db",
  "dirs 4.0.0",
  "editor",
+ "extension",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -20773,6 +20795,8 @@ dependencies = [
  "task",
  "tasks_ui",
  "telemetry",
+ "terminal",
+ "terminal_extension",
  "terminal_view",
  "theme",
  "theme_extension",
