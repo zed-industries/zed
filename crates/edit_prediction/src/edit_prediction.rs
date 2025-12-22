@@ -60,6 +60,7 @@ pub mod sweep_ai;
 
 pub mod udiff;
 
+mod capture_example;
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
@@ -74,6 +75,7 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -235,7 +237,7 @@ pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 #[derive(Clone)]
 pub struct StoredEvent {
     pub event: Arc<zeta_prompt::Event>,
-    pub edit: text::Edit<usize>,
+    pub old_snapshot: TextBufferSnapshot,
 }
 
 struct ProjectState {
@@ -437,7 +439,7 @@ impl LastEvent {
                     })
                 });
 
-        let (edit, diff) = compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
+        let diff = compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
 
         if path == old_path && diff.is_empty() {
             None
@@ -451,7 +453,7 @@ impl LastEvent {
                     // TODO: Actually detect if this edit was predicted or not
                     predicted: false,
                 }),
-                edit,
+                old_snapshot: self.old_snapshot.clone(),
             })
         }
     }
@@ -488,7 +490,7 @@ impl LastEvent {
 pub(crate) fn compute_diff_between_snapshots(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
-) -> Option<(Edit<usize>, String)> {
+) -> Option<String> {
     let edits: Vec<Edit<usize>> = new_snapshot
         .edits_since::<usize>(&old_snapshot.version)
         .collect();
@@ -532,13 +534,7 @@ pub(crate) fn compute_diff_between_snapshots(
         new_context_start_row,
     );
 
-    Some((
-        Edit {
-            old: old_edit_range,
-            new: new_edit_range,
-        },
-        diff,
-    ))
+    Some(diff)
 }
 
 fn buffer_path_with_id_fallback(

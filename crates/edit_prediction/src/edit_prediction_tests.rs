@@ -2128,7 +2128,7 @@ fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
 
     let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
 
-    let (edit, diff) = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
+    let diff = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
 
     assert_eq!(
         diff,
@@ -2147,15 +2147,6 @@ fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
              thirteen
              fourteen
             "}
-    );
-
-    assert_eq!(
-        old_snapshot.offset_to_point(edit.old.start)..old_snapshot.offset_to_point(edit.old.end),
-        Point::new(5, 0)..Point::new(17, 0)
-    );
-    assert_eq!(
-        new_snapshot.offset_to_point(edit.new.start)..new_snapshot.offset_to_point(edit.new.end),
-        Point::new(5, 0)..Point::new(19, 0)
     );
 }
 

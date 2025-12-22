@@ -151,39 +151,6 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
     Ok(text)
 }
 
-pub fn invert_diff(diff_str: &str) -> String {
-    diff_str
-        .lines()
-        .map(|line| {
-            let parsed = DiffLine::parse(line);
-            match parsed {
-                DiffLine::Deletion(content) => format!("+{content}"),
-                DiffLine::Addition(content) => format!("-{content}"),
-                _ => line.to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Apply a diff using a known edit range instead of context matching.
-/// The edit_range specifies the bounding region that was edited:
-/// - `edit_range.new` is the range in the current text where the edit lives
-/// - When applying an inverted diff, hunks are applied relative to edit_range.new.start
-pub fn apply_diff_at_range(
-    diff_str: &str,
-    text: &str,
-    edit_range: &Range<usize>,
-) -> Result<String> {
-    let prefix = &text[..edit_range.start];
-    let slice = &text[edit_range.start..edit_range.end.min(text.len())];
-    let suffix = &text[edit_range.end.min(text.len())..];
-
-    let modified_slice = apply_diff_to_string(diff_str, slice)?;
-
-    Ok(format!("{prefix}{modified_slice}{suffix}"))
-}
-
 struct PatchFile<'a> {
     old_path: Cow<'a, str>,
     new_path: Cow<'a, str>,

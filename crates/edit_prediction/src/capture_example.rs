@@ -1,27 +1,23 @@
-use anyhow::{Context as _, Result};
+use crate::{
+    EditPredictionStore, StoredEvent,
+    cursor_excerpt::editable_and_context_ranges_for_cursor_position, example_spec::ExampleSpec,
+};
+use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
-use edit_prediction::{EditPredictionStore, StoredEvent, example_spec::ExampleSpec, udiff};
-use editor::Editor;
-use gpui::{App, Entity, Task, Window, prelude::*};
-use language::ToPoint as _;
-use log;
-use project::{Project, ProjectPath};
-use std::{fmt::Write as _, path::Path, sync::Arc};
-use text::ToOffset as _;
-use workspace::Workspace;
+use collections::HashMap;
+use gpui::{App, Entity, Task};
+use language::{Buffer, ToPoint as _};
+use project::Project;
+use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
+use text::{BufferSnapshot as TextBufferSnapshot, ToOffset as _};
 
-pub(crate) fn capture_example(
-    editor: Entity<Editor>,
+pub fn capture_example(
+    project: Entity<Project>,
+    buffer: Entity<Buffer>,
+    cursor_anchor: language::Anchor,
     last_event_is_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
-    let editor = editor.read(cx);
-    let project = editor.project().cloned()?;
-    let multibuffer = editor.buffer();
-    let (buffer, cursor_anchor) = multibuffer
-        .read(cx)
-        .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
-
     let snapshot = buffer.read(cx).snapshot();
     let file = snapshot.file()?;
     let cursor_path: Arc<Path> = file.path().as_std_path().into();
@@ -42,7 +38,7 @@ pub(crate) fn capture_example(
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
     let ep_store = EditPredictionStore::try_global(cx)?;
-    let events = ep_store.update(cx, |store, cx| {
+    let mut events = ep_store.update(cx, |store, cx| {
         store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
 
@@ -51,12 +47,27 @@ pub(crate) fn capture_example(
     let git_store = project.read(cx).git_store().clone();
 
     Some(cx.spawn(async move |mut cx| {
-        let file_data = collect_file_data(&project, &git_store, &events, &mut cx).await?;
+        let snapshots_by_path = collect_file_data(&project, &git_store, &events, &mut cx).await?;
 
-        let (uncommitted_diff, edit_history, expected_patch) = cx
+        let uncommitted_diff = cx
             .background_executor()
-            .spawn(async move { compute_diffs(file_data, events, last_event_is_expected_patch) })
+            .spawn(async move { compute_uncommitted_diff(snapshots_by_path) })
             .await;
+
+        let mut edit_history = String::new();
+        let mut expected_patch = String::new();
+        if last_event_is_expected_patch {
+            if let Some(stored_event) = events.pop() {
+                zeta_prompt::write_event(&mut expected_patch, &stored_event.event);
+            }
+        }
+
+        for stored_event in &events {
+            zeta_prompt::write_event(&mut edit_history, &stored_event.event);
+            if !edit_history.ends_with('\n') {
+                edit_history.push('\n');
+            }
+        }
 
         let name = generate_timestamp_name();
 
@@ -79,12 +90,7 @@ fn compute_cursor_excerpt(
 ) -> String {
     let cursor_point = cursor_anchor.to_point(snapshot);
     let (_editable_range, context_range) =
-        edit_prediction::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-            cursor_point,
-            snapshot,
-            100,
-            50,
-        );
+        editable_and_context_ranges_for_cursor_position(cursor_point, snapshot, 100, 50);
 
     let context_start_offset = context_range.start.to_offset(snapshot);
     let cursor_offset = cursor_anchor.to_offset(snapshot);
@@ -96,125 +102,58 @@ fn compute_cursor_excerpt(
     excerpt
 }
 
-struct FileData {
-    full_path: Arc<Path>,
-    buffer_snapshot: text::BufferSnapshot,
-    diff_snapshot: BufferDiffSnapshot,
-}
-
 async fn collect_file_data(
     project: &Entity<Project>,
     git_store: &Entity<project::git_store::GitStore>,
     events: &[StoredEvent],
     cx: &mut gpui::AsyncApp,
-) -> Result<Vec<FileData>> {
-    let edited_paths: Vec<(ProjectPath, Arc<Path>)> = events
-        .iter()
-        .filter_map(|stored_event| {
-            let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-            let project_path = project
-                .read_with(cx, |project, cx| project.find_project_path(path, cx))
-                .ok()
-                .flatten()?;
-            Some((project_path, path.clone()))
-        })
-        .collect();
-
-    let mut file_data = Vec::new();
-
-    for (project_path, full_path) in edited_paths {
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer(project_path.clone(), cx)
-            })?
-            .await?;
-
-        let diff = git_store
-            .update(cx, |git_store, cx| {
-                git_store.open_uncommitted_diff(buffer.clone(), cx)
-            })?
-            .await?;
-
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
-        let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx))?;
-
-        file_data.push(FileData {
-            full_path,
-            buffer_snapshot,
-            diff_snapshot,
-        });
+) -> Result<HashMap<Arc<Path>, (TextBufferSnapshot, BufferDiffSnapshot)>> {
+    let mut snapshots_by_path = HashMap::default();
+    for stored_event in events {
+        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+        if let Some(project_path) = project
+            .read_with(cx, |project, cx| project.find_project_path(path, cx))
+            .ok()
+            .flatten()
+        {
+            if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(path.clone()) {
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer(project_path.clone(), cx)
+                    })?
+                    .await?;
+                let diff = git_store
+                    .update(cx, |git_store, cx| {
+                        git_store.open_uncommitted_diff(buffer.clone(), cx)
+                    })?
+                    .await?;
+                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx))?;
+                entry.insert((stored_event.old_snapshot.clone(), diff_snapshot));
+            }
+        }
     }
-
-    Ok(file_data)
+    Ok(snapshots_by_path)
 }
 
-fn compute_diffs(
-    file_data: Vec<FileData>,
-    mut events: Vec<StoredEvent>,
-    last_event_is_expected_patch: bool,
-) -> (String, String, String) {
+fn compute_uncommitted_diff(
+    snapshots_by_path: HashMap<Arc<Path>, (TextBufferSnapshot, BufferDiffSnapshot)>,
+) -> String {
     let mut uncommitted_diff = String::new();
-
-    for data in &file_data {
-        if let Some(head_text) = &data.diff_snapshot.base_text_string() {
-            if let Ok(before_text) = compute_text_before_edit_history(
-                &data.buffer_snapshot.text(),
-                &data.full_path,
-                &events,
-            ) {
-                let file_diff = language::unified_diff(head_text, &before_text);
-                if !file_diff.is_empty() {
-                    let path_str = data.full_path.to_string_lossy();
-                    writeln!(uncommitted_diff, "--- a/{path_str}").ok();
-                    writeln!(uncommitted_diff, "+++ b/{path_str}").ok();
-                    uncommitted_diff.push_str(&file_diff);
-                    if !uncommitted_diff.ends_with('\n') {
-                        uncommitted_diff.push('\n');
-                    }
+    for (full_path, (before_text, diff_snapshot)) in snapshots_by_path {
+        if let Some(head_text) = &diff_snapshot.base_text_string() {
+            let file_diff = language::unified_diff(head_text, &before_text.text());
+            if !file_diff.is_empty() {
+                let path_str = full_path.to_string_lossy();
+                writeln!(uncommitted_diff, "--- a/{path_str}").ok();
+                writeln!(uncommitted_diff, "+++ b/{path_str}").ok();
+                uncommitted_diff.push_str(&file_diff);
+                if !uncommitted_diff.ends_with('\n') {
+                    uncommitted_diff.push('\n');
                 }
             }
         }
     }
-
-    let mut edit_history = String::new();
-    let mut expected_patch = String::new();
-
-    if last_event_is_expected_patch {
-        if let Some(stored_event) = events.pop() {
-            zeta_prompt::write_event(&mut expected_patch, &stored_event.event);
-        }
-    }
-
-    for stored_event in &events {
-        zeta_prompt::write_event(&mut edit_history, &stored_event.event);
-        if !edit_history.ends_with('\n') {
-            edit_history.push('\n');
-        }
-    }
-
-    (uncommitted_diff, edit_history, expected_patch)
-}
-
-fn compute_text_before_edit_history(
-    current_text: &str,
-    cursor_path: &Path,
-    events: &[StoredEvent],
-) -> Result<String> {
-    let mut text = current_text.to_string();
-
-    for stored_event in events.iter().rev() {
-        let zeta_prompt::Event::BufferChange { path, diff, .. } = stored_event.event.as_ref();
-        if path.as_ref() != cursor_path {
-            continue;
-        }
-
-        let full_diff = format!("--- a/file\n+++ b/file\n{diff}");
-        let inverted_diff = udiff::invert_diff(&full_diff);
-        text = udiff::apply_diff_at_range(&inverted_diff, &text, &stored_event.edit.new)
-            .with_context(|| format!("failed to apply inverted diff for {cursor_path:?}"))?;
-    }
-
-    Ok(text)
+    uncommitted_diff
 }
 
 fn generate_timestamp_name() -> String {
@@ -230,67 +169,19 @@ fn generate_timestamp_name() -> String {
     }
 }
 
-pub(crate) fn capture_example_as_markdown(
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let markdown_language = workspace
-        .app_state()
-        .languages
-        .language_for_name("Markdown");
-
-    let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
-        log::error!("no active editor");
-        return;
-    };
-
-    let Some(example) = capture_example(editor, true, cx) else {
-        return;
-    };
-
-    let project = workspace.project().clone();
-
-    cx.spawn_in(window, async move |workspace_entity, cx| {
-        let markdown_language = markdown_language.await?;
-        let example_spec = example.await?;
-        let markdown = example_spec.to_markdown();
-
-        let buffer = project
-            .update(cx, |project, cx| project.create_buffer(false, cx))?
-            .await?;
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_text(markdown, cx);
-            buffer.set_language(Some(markdown_language), cx);
-        })?;
-
-        workspace_entity.update_in(cx, |workspace, window, cx| {
-            workspace.add_item_to_active_pane(
-                Box::new(
-                    cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx)),
-                ),
-                None,
-                true,
-                window,
-                cx,
-            );
-        })
-    })
-    .detach_and_log_err(cx);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use client::{Client, UserStore};
     use clock::FakeSystemClock;
-    use gpui::{Entity, TestAppContext, http_client::FakeHttpClient};
+    use gpui::{AppContext as _, TestAppContext, http_client::FakeHttpClient};
     use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
+    use text::Anchor;
     use workspace::AppState;
 
     #[gpui::test]
@@ -352,9 +243,6 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer("/project/src/main.rs", cx)
@@ -397,17 +285,10 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let editor: Entity<Editor> = workspace.update_in(cx, |workspace, window, cx| {
-            let editor =
-                cx.new(|cx| Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor
-        });
-        cx.run_until_parked();
-
         let mut example = cx
-            .update(|_, cx| capture_example(editor, false, cx))
-            .unwrap()
+            .update(|cx| {
+                capture_example(project.clone(), buffer.clone(), Anchor::MIN, false, cx).unwrap()
+            })
             .await
             .unwrap();
         example.name = "test".to_string();
@@ -490,8 +371,6 @@ mod tests {
             EditPredictionStore::global(&client, &user_store, cx);
 
             let app_state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            editor::init(cx);
             workspace::init(app_state.clone(), cx);
             app_state
         })
