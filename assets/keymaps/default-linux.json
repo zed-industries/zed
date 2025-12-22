@@ -792,7 +792,7 @@
     },
   },
   {
-    "context": "PromptEditor",
+    "context": "InlineAssistant",
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",

@@ -852,7 +852,7 @@
     },
   },
   {
-    "context": "PromptEditor",
+    "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",

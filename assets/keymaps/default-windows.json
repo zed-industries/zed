@@ -796,7 +796,7 @@
     },
   },
   {
-    "context": "PromptEditor",
+    "context": "InlineAssistant",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
