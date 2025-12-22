@@ -14,15 +14,14 @@ use futures::{
 };
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use project::Project;
 use project::buffer_store::BufferStoreEvent;
-use project::{Project, ProjectPath};
 use std::{
     cell::RefCell,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::CURSOR_MARKER;
 
 pub async fn run_load_project(

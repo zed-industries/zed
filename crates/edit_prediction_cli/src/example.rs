@@ -190,7 +190,11 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                     .collect::<Vec<Example>>(),
             ),
             "md" => {
-                examples.push(parse_markdown_example(filename, &content).unwrap());
+                let mut example = parse_markdown_example(&content).unwrap();
+                if example.spec.name.is_empty() {
+                    example.spec.name = filename;
+                }
+                examples.push(example);
             }
             ext => {
                 panic!("{} has invalid example extension `{ext}`", path.display())
@@ -236,8 +240,8 @@ pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>
     examples_by_repo.into_values().collect()
 }
 
-fn parse_markdown_example(name: String, input: &str) -> Result<Example> {
-    let spec = ExampleSpec::from_markdown(name, input)?;
+fn parse_markdown_example(input: &str) -> Result<Example> {
+    let spec = ExampleSpec::from_markdown(input)?;
     Ok(Example {
         spec,
         buffer: None,

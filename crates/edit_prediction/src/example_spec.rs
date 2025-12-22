@@ -104,11 +104,11 @@ impl ExampleSpec {
     }
 
     /// Parse an example spec from markdown.
-    pub fn from_markdown(name: String, mut input: &str) -> anyhow::Result<Self> {
+    pub fn from_markdown(mut input: &str) -> anyhow::Result<Self> {
         use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
 
         let mut spec = ExampleSpec {
-            name,
+            name: String::new(),
             repository_url: String::new(),
             revision: String::new(),
             uncommitted_diff: String::new(),
@@ -149,6 +149,9 @@ impl ExampleSpec {
             match event {
                 Event::Text(line) => {
                     text.push_str(&line);
+                }
+                Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
+                    spec.name = mem::take(&mut text);
                 }
                 Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
                     let title = mem::take(&mut text);
