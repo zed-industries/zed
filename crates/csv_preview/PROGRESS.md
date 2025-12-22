@@ -121,14 +121,15 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [ ] feat: Implement initial filtering by column
-- [ ] feat: Add search bar for filtering modal
+- [ ] feat: Add search bar for filtering popover
 
 **Fixes:**
 
 ### Editing
 
 **Features:**
-- [ ] feat: Inline edits (click cell to enter editor mode. Edit text, hit enter, and changes applied to original file)
+- [x] feat: Inline edits (click cell to enter editor mode. Edit text, hit enter, and changes applied to original file)
+  - [ ] fix: Allow overflow for the editor. Style editor to have background, border and paddings
 - [ ] feat: Apply ordering settings (permanently write to buffer current rows and columns order)
 - [ ] feat: Paste from clipboard over several cells (parse based on defined separator). Allow only in `AllCells` / `SingleChunk` selection modes
 
