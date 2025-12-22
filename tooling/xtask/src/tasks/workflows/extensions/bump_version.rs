@@ -1,6 +1,6 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob,
-    Workflow, WorkflowDispatch,
+    Event, Expression, Input, Job, Level, Permissions, PullRequest, PullRequestType, Push, Run,
+    Step, UsesJob, Workflow, WorkflowDispatch,
 };
 use indexmap::IndexMap;
 use indoc::indoc;
@@ -40,6 +40,12 @@ pub(crate) fn call_bump_version(
             "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
+        .permissions(
+            Permissions::default()
+                .contents(Level::Write)
+                .issues(Level::Write)
+                .pull_requests(Level::Write),
+        )
         .uses(
             "zed-industries",
             "zed",
