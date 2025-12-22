@@ -31,6 +31,76 @@ use workspace::{
 
 actions!(convergio_chat, [Send, Refresh]);
 
+/// Agent name mapping for handoff detection
+/// Maps (short_name, full_name, display_name)
+static AGENT_NAME_MAP: &[(&str, &str, &str)] = &[
+    ("amy", "amy-cfo", "Amy - CFO"),
+    ("ali", "ali-chief-of-staff", "Ali - Chief of Staff"),
+    ("rex", "rex-code-reviewer", "Rex - Code Reviewer"),
+    ("dario", "dario-debugger", "Dario - Debugger"),
+    ("baccio", "baccio-tech-architect", "Baccio - Tech Architect"),
+    ("paolo", "paolo-best-practices-enforcer", "Paolo - Best Practices"),
+    ("marcello", "marcello-pm", "Marcello - Product Manager"),
+];
+
+/// Get display name for an agent
+fn get_agent_display_name(agent_name: &str) -> String {
+    AGENT_NAME_MAP
+        .iter()
+        .find(|(_, full, _)| *full == agent_name)
+        .map(|(_, _, display)| display.to_string())
+        .unwrap_or_else(|| {
+            // Fallback: capitalize and format the name
+            agent_name
+                .split('-')
+                .map(|s| {
+                    let mut c = s.chars();
+                    match c.next() {
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+}
+
+/// Detect handoff patterns in agent response
+/// Returns the target agent name if a handoff is detected
+fn detect_handoff(message: &str) -> Option<String> {
+    let message_lower = message.to_lowercase();
+
+    // Check for handoff patterns
+    let handoff_patterns = [
+        "passaggio a ",
+        "🔄 passaggio a ",
+        "ti metto in contatto con ",
+        "handoff to ",
+        "transferring to ",
+    ];
+
+    for pattern in handoff_patterns {
+        if let Some(pos) = message_lower.find(pattern) {
+            let after_pattern = &message_lower[pos + pattern.len()..];
+            // Extract the agent name (first word after pattern)
+            let agent_mention = after_pattern
+                .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                .next()
+                .unwrap_or("")
+                .trim();
+
+            // Map the mentioned name to the full agent name
+            for (short, full, _) in AGENT_NAME_MAP {
+                if agent_mention == *short || agent_mention.starts_with(short) {
+                    return Some(full.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Custom chat view that reads from convergio.db
 pub struct ConvergioChatView {
     focus_handle: FocusHandle,
@@ -53,6 +123,8 @@ pub struct ConvergioChatView {
     _input_subscription: Subscription,
     _poll_task: Option<Task<()>>,
     _invoke_task: Option<Task<()>>,
+    /// Pending handoff target agent name
+    pending_handoff: Option<String>,
 }
 
 impl ConvergioChatView {
@@ -114,6 +186,7 @@ impl ConvergioChatView {
             _input_subscription: subscription,
             _poll_task: None,
             _invoke_task: None,
+            pending_handoff: None,
         };
 
         // Load initial messages
@@ -350,11 +423,31 @@ impl ConvergioChatView {
                     match invoke_task.await {
                         Ok(()) => {
                             log::info!("Agent {} responded successfully", agent_name);
+
+                            // Check for handoff in the response
+                            let handoff_target = if let Ok(messages) = db.messages_for_session(&session_id) {
+                                // Get the last assistant message
+                                messages.iter()
+                                    .rev()
+                                    .find(|m| m.message_type == crate::convergio_db::MessageType::Assistant)
+                                    .and_then(|m| detect_handoff(&m.content))
+                            } else {
+                                None
+                            };
+
                             // Reload messages and clear streaming state
                             let _ = this.update(cx, |this, cx| {
                                 this.is_streaming = false;
                                 this.load_messages_for_session(&session_id, cx);
                             });
+
+                            // If handoff detected, open the target agent's chat
+                            if let Some(target_agent) = handoff_target {
+                                log::info!("Handoff detected to agent: {}", target_agent);
+                                let _ = this.update(cx, |this, cx| {
+                                    this.open_handoff_chat(&target_agent, cx);
+                                });
+                            }
                         }
                         Err(e) => {
                             let error_msg = format!("Agent error: {}", e);
@@ -409,6 +502,48 @@ impl ConvergioChatView {
 
     fn scroll_to_bottom(&mut self, _cx: &mut Context<Self>) {
         self.scroll_handle.scroll_to_bottom();
+    }
+
+    /// Queue a handoff to another agent (will be processed on next render)
+    fn open_handoff_chat(&mut self, target_agent: &str, cx: &mut Context<Self>) {
+        log::info!("Queueing handoff to agent: {}", target_agent);
+        self.pending_handoff = Some(target_agent.to_string());
+        cx.notify();
+    }
+
+    /// Process any pending handoff (called from render with window context)
+    fn process_pending_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target_agent) = self.pending_handoff.take() else {
+            return;
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            log::warn!("Cannot open handoff chat: workspace not available");
+            return;
+        };
+
+        let agent_name: SharedString = target_agent.clone().into();
+        let display_name: SharedString = get_agent_display_name(&target_agent).into();
+        let language_registry = self.language_registry.clone();
+        let workspace_weak = self.workspace.clone();
+
+        log::info!("Processing handoff to agent: {} ({})", target_agent, display_name);
+
+        workspace.update(cx, |workspace, cx| {
+            let chat_view = cx.new(|cx| {
+                ConvergioChatView::new(
+                    agent_name.clone(),
+                    display_name,
+                    workspace_weak,
+                    language_registry,
+                    window,
+                    cx,
+                )
+            });
+
+            // Open the chat view as a workspace item
+            workspace.add_item_to_active_pane(Box::new(chat_view), None, true, window, cx);
+        });
     }
 
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
@@ -740,6 +875,9 @@ impl Item for ConvergioChatView {
 
 impl Render for ConvergioChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Process any pending handoff (requires window context)
+        self.process_pending_handoff(window, cx);
+
         // Check if database is available
         if self.db.is_none() {
             return div()

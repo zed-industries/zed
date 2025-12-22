@@ -186,6 +186,11 @@ static AGENTS: &[AgentDefinition] = &[
         system_prompt: include_str!("prompts/ali-chief-of-staff.md"),
     },
     AgentDefinition {
+        name: "amy-cfo",
+        display_name: "Amy - CFO",
+        system_prompt: include_str!("prompts/amy-cfo.md"),
+    },
+    AgentDefinition {
         name: "rex-code-reviewer",
         display_name: "Rex - Code Reviewer",
         system_prompt: include_str!("prompts/rex-code-reviewer.md"),
