@@ -10,6 +10,7 @@ use project::Project;
 use std::sync::Arc;
 use project::agent_server_store::AgentServerCommand;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use settings::Settings as _;
 use task::ShellBuilder;
 
@@ -388,8 +389,16 @@ impl AgentConnection for AcpConnection {
         };
 
         cx.spawn(async move |cx| {
+            // Convergio: Pass agent name via _meta for session resume
+            let mut meta = serde_json::Map::new();
+            meta.insert("agentName".to_string(), json!(name.as_ref()));
+
             let response = conn
-                .new_session(acp::NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
+                .new_session(
+                    acp::NewSessionRequest::new(cwd)
+                        .mcp_servers(mcp_servers)
+                        .meta(meta)
+                )
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AuthRequired {

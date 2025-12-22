@@ -316,10 +316,11 @@ impl ThreadsDatabase {
 
         // Migration: Add agent_name column for Convergio agent persistence
         // This allows finding existing conversations by agent name
-        connection.exec(indoc! {"
-            ALTER TABLE threads ADD COLUMN agent_name TEXT
-        "})
-        .ok(); // Ignore error if column already exists
+        let _ = connection
+            .exec(indoc! {"
+                ALTER TABLE threads ADD COLUMN agent_name TEXT
+            "})
+            .and_then(|mut f| f()); // Execute and ignore error if column already exists
 
         let db = Self {
             executor,

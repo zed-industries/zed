@@ -1,8 +1,9 @@
 //! Convergio Panel - displays list of AI agents organized by category
 
-use crate::ConvergioPanelSettings;
+use crate::chat_view::ConvergioChatView;
+use crate::ConvergioSettings;
 use agent::HistoryStore;
-use agent_ui::{AgentPanel, ExternalAgent, NewExternalAgentThread};
+use agent_ui::AgentPanel;
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
@@ -15,6 +16,7 @@ use gpui::{
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::Fs;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use ui::{prelude::*, checkbox, Disclosure, Icon, IconName, Label, ListHeader, ListItem, ToggleState};
 use util::ResultExt;
@@ -486,18 +488,34 @@ impl ConvergioPanel {
             }
         });
 
-        // Get history store from AgentPanel if available
-        let (history_store, history_subscription) = workspace
-            .panel::<AgentPanel>(cx)
-            .map(|panel| {
-                let store = panel.read(cx).history_store().clone();
-                // Use observe instead of subscribe since HistoryStore uses cx.notify()
-                let sub = cx.observe(&store, |this, _, cx| {
-                    this.process_pending_thread_opens(cx);
+        // History store will be initialized asynchronously to avoid reentrancy
+        // during workspace update
+        let history_store: Option<Entity<HistoryStore>> = None;
+        let history_subscription: Option<Subscription> = None;
+
+        // Defer history store lookup to avoid reentrancy crash
+        let workspace_for_history = workspace_handle.clone();
+        cx.spawn(async move |this, mut cx| {
+            // Wait a tick to ensure workspace initialization is complete
+            cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+
+            let result = workspace_for_history.update_in(&mut cx, |workspace, _window, cx| {
+                workspace.panel::<AgentPanel>(cx).map(|panel| {
+                    panel.read(cx).history_store().clone()
+                })
+            });
+
+            if let Ok(Some(store)) = result {
+                let _ = this.update(&mut cx, |this, cx| {
+                    let sub = cx.observe(&store, |this, _, cx| {
+                        this.process_pending_thread_opens(cx);
+                    });
+                    this.history_store = Some(store);
+                    this._history_subscription = Some(sub);
+                    log::info!("ConvergioPanel: History store connected");
                 });
-                (Some(store), Some(sub))
-            })
-            .unwrap_or((None, None));
+            }
+        }).detach();
 
         // Load persisted agent sessions asynchronously
         cx.spawn(async move |this, cx| {
@@ -599,54 +617,35 @@ impl ConvergioPanel {
         }
     }
 
-    /// Opens a Convergio agent thread, attempting to resume an existing conversation if available.
+    /// Opens a Convergio agent chat using the custom ConvergioChatView.
+    /// This reads directly from convergio.db for full synchronization with CLI.
     fn open_agent_thread(&mut self, agent_name: &str, server_name: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Mark agent as active
         self.active_agents.insert(agent_name.to_string().into());
-        log::info!("Opening Convergio agent chat: {}", agent_name);
+        log::info!("Opening Convergio agent chat: {} (custom chat view)", agent_name);
 
-        // Try to find existing thread in history by agent_name using stored history_store
-        let found_thread_id: Option<String> = self.history_store
-            .as_ref()
-            .and_then(|store| {
-                store.read(cx).thread_by_agent_name(server_name)
-                    .map(|thread| {
-                        log::info!("Found existing thread {} for agent {}", thread.id, server_name);
-                        thread.id.to_string()
-                    })
-            });
+        let workspace = self._workspace.clone();
+        let agent_name: SharedString = agent_name.to_string().into();
+        let display_name: SharedString = server_name.to_string().into();
 
-        // Check if history might still be loading (empty entries)
-        let history_might_be_loading = self.history_store
-            .as_ref()
-            .map(|store| store.read(cx).is_empty(cx))
-            .unwrap_or(true);
+        // Create the custom chat view
+        if let Some(workspace) = workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                let chat_view = cx.new(|cx| {
+                    ConvergioChatView::new(
+                        agent_name.clone(),
+                        display_name,
+                        self._workspace.clone(),
+                        window,
+                        cx,
+                    )
+                });
 
-        if let Some(thread_id) = found_thread_id {
-            // Resume existing conversation
-            log::info!("Resuming thread {} for {}", thread_id, agent_name);
-            let action = NewExternalAgentThread::resume(
-                ExternalAgent::Custom { name: server_name.to_string().into() },
-                thread_id
-            );
-            window.dispatch_action(action.boxed_clone(), cx);
-        } else if history_might_be_loading {
-            // History not loaded yet - add to pending and create new thread for now
-            // When history loads, if we find an existing thread, subsequent opens will resume
-            log::info!("History may not be loaded yet for {}, creating new thread (will resume on next open)", agent_name);
-            self.pending_thread_opens.push((agent_name.to_string().into(), server_name.to_string().into()));
-            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-                name: server_name.to_string().into()
+                // Open the chat view as a workspace item
+                workspace.add_item_to_active_pane(Box::new(chat_view), None, true, window, cx);
             });
-            window.dispatch_action(action.boxed_clone(), cx);
-        } else {
-            // History is loaded but no existing thread - create new
-            log::info!("Creating new thread for {}", agent_name);
-            let action = NewExternalAgentThread::with_agent(ExternalAgent::Custom {
-                name: server_name.to_string().into()
-            });
-            window.dispatch_action(action.boxed_clone(), cx);
         }
+
         cx.notify();
     }
 
@@ -1260,7 +1259,7 @@ impl Panel for ConvergioPanel {
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        ConvergioPanelSettings::get_global(cx).dock
+        ConvergioSettings::get_global(cx).dock.into()
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -1273,7 +1272,7 @@ impl Panel for ConvergioPanel {
 
     fn size(&self, _window: &Window, cx: &App) -> Pixels {
         self.width
-            .unwrap_or_else(|| ConvergioPanelSettings::get_global(cx).default_width)
+            .unwrap_or_else(|| ConvergioSettings::get_global(cx).default_width)
     }
 
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
@@ -1285,7 +1284,7 @@ impl Panel for ConvergioPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        ConvergioPanelSettings::get_global(cx)
+        ConvergioSettings::get_global(cx)
             .button
             .then_some(IconName::Convergio)
     }

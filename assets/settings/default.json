@@ -848,6 +848,46 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "convergio": {
+    // Whether the Convergio panel is enabled.
+    "enabled": true,
+    // Whether to show the Convergio button in the status bar.
+    "button": true,
+    // Where to dock the Convergio panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width in pixels when the panel is docked.
+    "default_width": 260,
+    // The Convergio edition to use.
+    // Choices: base, education, enterprise
+    "edition": "base",
+    // Which agent pack to use.
+    // Choices: enterprise, startup, developer, education, minimal, custom
+    "agent_pack": "enterprise",
+    // Custom list of agent names when using Custom pack.
+    // Example: ["ali", "baccio-tech-architect", "dario-debugger"]
+    "custom_agents": [],
+    // How often to poll for new messages.
+    // Choices: fast (500ms), normal (2s), slow (5s), manual
+    "polling_interval": "normal",
+    // Show token usage in chat messages.
+    "show_token_usage": true,
+    // Show cost information in chat messages.
+    "show_cost": true,
+    // Show message timestamps.
+    "show_timestamps": true,
+    // Maximum width of chat messages in rem units.
+    "message_max_width": 40,
+    // Play sound when agent responds.
+    "play_sound_on_response": false,
+    // Show notification when agent responds while Zed is not focused.
+    "notify_on_response": true,
+    // Whether to show categories in the agent list.
+    "show_categories": true,
+    // Whether categories are collapsed by default.
+    "collapse_categories": false,
+    // Whether to show agent descriptions in the list.
+    "show_agent_descriptions": true,
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,

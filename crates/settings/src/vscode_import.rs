@@ -178,6 +178,7 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            convergio: None,
             debugger: None,
             diagnostics: None,
             disable_ai: None,

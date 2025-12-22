@@ -4466,6 +4466,215 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Convergio Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Convergio Enabled",
+                    description: "Whether the Convergio panel is enabled.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.enabled"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.enabled.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Convergio Panel Button",
+                    description: "Show the Convergio panel button in the status bar.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.button"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.button.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().button = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Convergio Panel Dock",
+                    description: "Where to dock the Convergio panel.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.dock"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.dock.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().dock = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Convergio Panel Default Width",
+                    description: "Default width of the Convergio panel in pixels.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.default_width"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.default_width.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().default_width = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Convergio Edition",
+                    description: "The Convergio edition to use (base, education, enterprise).",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.edition"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.edition.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().edition = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Pack",
+                    description: "Which agent pack to use (enterprise, startup, developer, education, minimal, custom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.agent_pack"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.agent_pack.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().agent_pack = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Polling Interval",
+                    description: "How often to poll for new messages (fast, normal, slow, manual).",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.polling_interval"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.polling_interval.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().polling_interval = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Token Usage",
+                    description: "Show token usage in chat messages.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.show_token_usage"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.show_token_usage.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().show_token_usage = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Cost",
+                    description: "Show cost information in chat messages.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.show_cost"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.show_cost.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().show_cost = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Timestamps",
+                    description: "Show message timestamps in chat.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.show_timestamps"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.show_timestamps.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().show_timestamps = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Message Max Width",
+                    description: "Maximum width of chat messages in rem units.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.message_max_width"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.message_max_width.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().message_max_width = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Play Sound on Response",
+                    description: "Play a sound when an agent responds.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.play_sound_on_response"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.play_sound_on_response.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().play_sound_on_response = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notify on Response",
+                    description: "Show notification when agent responds while Zed is not focused.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.notify_on_response"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.notify_on_response.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().notify_on_response = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Categories",
+                    description: "Show categories in the agent list.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.show_categories"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.show_categories.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().show_categories = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collapse Categories",
+                    description: "Whether categories are collapsed by default.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.collapse_categories"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.collapse_categories.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().collapse_categories = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Agent Descriptions",
+                    description: "Show agent descriptions in the list.",
+                    field: Box::new(SettingField {
+                        json_path: Some("convergio.show_agent_descriptions"),
+                        pick: |settings_content| settings_content.convergio.as_ref()?.show_agent_descriptions.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.convergio.get_or_insert_default().show_agent_descriptions = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Debugger Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Debugger Panel Dock",

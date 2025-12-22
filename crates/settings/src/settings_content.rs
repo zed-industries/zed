@@ -1,4 +1,5 @@
 mod agent;
+mod convergio;
 mod editor;
 mod extension;
 mod language;
@@ -9,6 +10,7 @@ mod theme;
 mod workspace;
 
 pub use agent::*;
+pub use convergio::*;
 pub use editor::*;
 pub use extension::*;
 pub use language::*;
@@ -83,6 +85,9 @@ pub struct SettingsContent {
 
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
+
+    /// Configuration for the Convergio AI agents panel.
+    pub convergio: Option<ConvergioSettingsContent>,
 
     pub debugger: Option<DebuggerSettingsContent>,
 

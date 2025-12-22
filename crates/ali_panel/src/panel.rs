@@ -2,41 +2,36 @@
 //!
 //! A bottom-docked panel that provides always-on access to Ali,
 //! the Chief of Staff who orchestrates all Convergio agents.
-//! This panel embeds a full chat interface directly in the bottom dock.
+//! This panel embeds a terminal running `convergio` CLI directly.
 
 use crate::AliPanelSettings;
-use agent::HistoryStore;
-use agent_servers::CustomAgentServer;
-use agent_ui::acp::AcpThreadView;
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
-use fs::Fs;
 use gpui::{
     actions, div, prelude::*, Action, App, AsyncWindowContext, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, ParentElement, Pixels,
-    Render, Styled, Subscription, WeakEntity, Window,
+    Render, Styled, Subscription, Task, WeakEntity, Window,
 };
 use project::Project;
-use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
-use std::sync::Arc;
+use collections::HashMap;
+use task::{Shell, SpawnInTerminal, TaskId};
+use terminal_view::TerminalView;
 use ui::{prelude::*, Button, Icon, IconName, IconSize, Label, Tooltip};
 use util::ResultExt;
 use workspace::{
-    Workspace,
+    Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
 const ALI_PANEL_KEY: &str = "AliPanel";
-const ALI_SERVER_NAME: &str = "Convergio-Ali";
+const ALI_BUILD_VERSION: &str = "v1.0.1 build 2025-12-21 21:00";
 
 actions!(
     ali_panel,
     [
         ToggleFocus,
-        InvokeAli,
-        NewConversation,
+        RestartConvergio,
     ]
 );
 
@@ -48,15 +43,11 @@ struct SerializedAliPanel {
 pub struct AliPanel {
     focus_handle: FocusHandle,
     height: Option<Pixels>,
-    thread_view: Option<Entity<AcpThreadView>>,
+    terminal_view: Option<Entity<TerminalView>>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    history_store: Entity<HistoryStore>,
-    prompt_store: Option<Entity<PromptStore>>,
-    _fs: Arc<dyn Fs>,
-    tried_resume: bool,
-    pending_resume_thread: Option<agent::DbThreadMetadata>,
-    _history_subscription: Subscription,
+    workspace_id: Option<WorkspaceId>,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub fn init(cx: &mut App) {
@@ -68,11 +59,11 @@ pub fn init(cx: &mut App) {
             workspace.toggle_panel_focus::<AliPanel>(window, cx);
         });
 
-        // NewConversation starts a fresh conversation with Ali
-        workspace.register_action(|workspace, _: &NewConversation, window, cx| {
+        // RestartConvergio restarts the convergio CLI process
+        workspace.register_action(|workspace, _: &RestartConvergio, window, cx| {
             if let Some(panel) = workspace.panel::<AliPanel>(cx) {
                 panel.update(cx, |ali_panel, cx| {
-                    ali_panel.new_conversation(window, cx);
+                    ali_panel.restart_convergio(window, cx);
                 });
             }
         });
@@ -84,125 +75,94 @@ impl AliPanel {
     pub fn new(
         workspace: &Workspace,
         project: Entity<Project>,
-        history_store: Entity<HistoryStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        fs: Arc<dyn Fs>,
+        workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let weak_workspace = workspace.weak_handle();
 
-        // Observe history store changes to catch when threads are loaded
-        let history_subscription = cx.observe(&history_store, |this, _, cx| {
-            // When history changes, try to resume if we haven't already
-            this.try_resume_existing_thread(cx);
-        });
-
-        // Create the Ali thread view immediately (without resume - threads not loaded yet)
-        let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
-
-        // Try immediate resume (might work if history already loaded)
-        let resume_thread = history_store.read(cx).thread_by_agent_name(ALI_SERVER_NAME).cloned();
-        let tried_resume = resume_thread.is_some();
-
-        let thread_view = cx.new(|cx| {
-            AcpThreadView::new(
-                server,
-                resume_thread,
-                None,
-                weak_workspace.clone(),
-                project.clone(),
-                history_store.clone(),
-                prompt_store.clone(),
-                true, // focus
-                window,
-                cx,
-            )
-        });
-
-        Self {
+        let mut panel = Self {
             focus_handle,
             height: None,
-            thread_view: Some(thread_view),
+            terminal_view: None,
             workspace: weak_workspace,
             project,
-            history_store,
-            prompt_store,
-            _fs: fs,
-            tried_resume,
-            pending_resume_thread: None,
-            _history_subscription: history_subscription,
-        }
+            workspace_id,
+            _subscriptions: Vec::new(),
+        };
+
+        // Spawn convergio CLI terminal
+        panel.spawn_convergio_terminal(window, cx);
+
+        panel
     }
 
-    /// Try to resume an existing Ali thread when history becomes available
-    fn try_resume_existing_thread(&mut self, cx: &mut Context<Self>) {
-        // Only try once to avoid recreating the view repeatedly
-        if self.tried_resume {
-            return;
-        }
+    /// Spawn a terminal running `convergio` CLI
+    fn spawn_convergio_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+        let workspace_id = self.workspace_id;
 
-        // Check if we now have an Ali thread in history
-        let resume_thread = self.history_store.read(cx).thread_by_agent_name(ALI_SERVER_NAME).cloned();
+        // Get the working directory from the project
+        let cwd = project.read(cx).worktrees(cx).next()
+            .and_then(|wt| wt.read(cx).abs_path().to_path_buf().into())
+            .or_else(|| std::env::current_dir().ok());
 
-        if let Some(thread_metadata) = resume_thread {
-            log::info!("Ali panel: Found existing thread {} to resume", thread_metadata.id);
-            self.tried_resume = true;
+        // Create a SpawnInTerminal for convergio CLI
+        let spawn_task = SpawnInTerminal {
+            id: TaskId("ali-convergio".into()),
+            full_label: "Convergio CLI".into(),
+            label: "Ali Command Center".into(),
+            command: Some("convergio".into()),
+            args: vec![],
+            command_label: "convergio".into(),
+            cwd,
+            env: HashMap::default(),
+            use_new_terminal: true,
+            allow_concurrent_runs: false,
+            reveal: task::RevealStrategy::Always,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            show_command: false,
+            show_summary: false,
+            show_rerun: false,
+            shell: Shell::System,
+        };
 
-            // Store the thread metadata to use when we have window access
-            // The thread view will be recreated on next render with the proper context
-            self.pending_resume_thread = Some(thread_metadata);
-            cx.notify();
-        }
-    }
-
-    /// Called during render to handle pending resume
-    fn handle_pending_resume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread_metadata) = self.pending_resume_thread.take() {
-            let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
-
-            let new_thread_view = cx.new(|cx| {
-                AcpThreadView::new(
-                    server,
-                    Some(thread_metadata),
-                    None,
-                    self.workspace.clone(),
-                    self.project.clone(),
-                    self.history_store.clone(),
-                    self.prompt_store.clone(),
-                    false, // don't focus - we're resuming in background
-                    window,
-                    cx,
-                )
-            });
-            self.thread_view = Some(new_thread_view);
-        }
-    }
-
-    /// Start a new conversation with Ali (clears current thread)
-    pub fn new_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("Ali panel: Starting new conversation");
-
-        // Create a fresh Ali thread view (no resume)
-        let server = Rc::new(CustomAgentServer::new(ALI_SERVER_NAME.into()));
-
-        let new_thread_view = cx.new(|cx| {
-            AcpThreadView::new(
-                server,
-                None, // No resume - start fresh
-                None,
-                self.workspace.clone(),
-                self.project.clone(),
-                self.history_store.clone(),
-                self.prompt_store.clone(),
-                true, // focus the new conversation
-                window,
-                cx,
-            )
+        let project_weak = project.downgrade();
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal_task(spawn_task, cx)
         });
-        self.thread_view = Some(new_thread_view);
-        self.tried_resume = true; // Don't try to resume after this
+
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal_task.await?;
+
+            this.update_in(cx, |this, window, cx| {
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace,
+                        workspace_id,
+                        project_weak,
+                        window,
+                        cx,
+                    )
+                });
+                this.terminal_view = Some(terminal_view);
+                cx.notify();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    /// Restart the convergio CLI process
+    pub fn restart_convergio(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("Ali Command Center: Restarting convergio CLI");
+        self.terminal_view = None;
+        self.spawn_convergio_terminal(window, cx);
         cx.notify();
     }
 
@@ -212,18 +172,9 @@ impl AliPanel {
     ) -> Result<Entity<Self>> {
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let project = workspace.project().clone();
-            let fs = workspace.app_state().fs.clone();
+            let workspace_id = workspace.database_id();
 
-            // Get history store from AgentPanel (required)
-            let agent_panel = workspace
-                .panel::<agent_ui::AgentPanel>(cx)
-                .ok_or_else(|| anyhow::anyhow!("AgentPanel must be registered before AliPanel"))?;
-            let history_store = agent_panel.read(cx).history_store().clone();
-
-            // Get prompt store if available
-            let prompt_store = agent_panel.read(cx).prompt_store().cloned();
-
-            Ok(cx.new(|cx| AliPanel::new(workspace, project, history_store, prompt_store, fs, window, cx)))
+            Ok(cx.new(|cx| AliPanel::new(workspace, project, workspace_id, window, cx)))
         })?
     }
 
@@ -264,7 +215,7 @@ impl AliPanel {
                             .color(Color::Accent)
                     )
                     .child(
-                        Label::new("ALI - Command Center")
+                        Label::new(format!("ALI - Command Center [{}]", ALI_BUILD_VERSION))
                             .size(LabelSize::Small)
                             .weight(gpui::FontWeight::BOLD)
                             .color(Color::Success) // Terminal-style green text
@@ -276,14 +227,14 @@ impl AliPanel {
                     .items_center()
                     .gap_1()
                     .child(
-                        Button::new("new-conversation", "New")
-                            .icon(IconName::Plus)
+                        Button::new("restart-convergio", "Restart")
+                            .icon(IconName::RotateCw)
                             .icon_size(IconSize::Small)
                             .icon_position(ui::IconPosition::Start)
                             .style(ui::ButtonStyle::Subtle)
-                            .tooltip(Tooltip::text("Start a new conversation"))
+                            .tooltip(Tooltip::text("Restart Convergio CLI"))
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(NewConversation), cx);
+                                window.dispatch_action(Box::new(RestartConvergio), cx);
                             })
                     )
             )
@@ -292,9 +243,9 @@ impl AliPanel {
 
 impl Focusable for AliPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        // Delegate focus to the thread view if it exists
-        if let Some(thread_view) = &self.thread_view {
-            thread_view.focus_handle(cx)
+        // Delegate focus to the terminal view if it exists
+        if let Some(terminal_view) = &self.terminal_view {
+            terminal_view.focus_handle(cx)
         } else {
             self.focus_handle.clone()
         }
@@ -357,10 +308,7 @@ impl Panel for AliPanel {
 }
 
 impl Render for AliPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Handle pending resume if we have one
-        self.handle_pending_resume(window, cx);
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("ali-panel")
             .key_context("AliPanel")
@@ -377,8 +325,8 @@ impl Render for AliPanel {
                     .overflow_hidden()
                     .bg(gpui::rgb(0x0d0d0d)) // Consistent terminal background
                     .map(|this| {
-                        if let Some(thread_view) = &self.thread_view {
-                            this.child(thread_view.clone())
+                        if let Some(terminal_view) = &self.terminal_view {
+                            this.child(terminal_view.clone())
                         } else {
                             this.child(
                                 div()
@@ -387,7 +335,7 @@ impl Render for AliPanel {
                                     .items_center()
                                     .justify_center()
                                     .child(
-                                        Label::new("$ Initializing Ali...")
+                                        Label::new("$ Starting Convergio CLI...")
                                             .color(Color::Success) // Terminal green
                                     )
                             )
