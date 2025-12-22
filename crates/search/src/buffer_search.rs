@@ -1758,12 +1758,10 @@ mod tests {
         DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
-    use futures::channel::mpsc::UnboundedReceiver;
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    use settings::{SearchSettingsContent, SettingsStore, initial_local_debug_tasks_content};
+    use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
-    use tracing::instrument::WithSubscriber;
     use unindent::Unindent as _;
     use util_macros::perf;
 
@@ -3280,7 +3278,7 @@ mod tests {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, cx| search_bar.is_collapsed);
+        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
 
         assert!(!is_collapsed);
     }

@@ -10,7 +10,7 @@ use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
-    actions::{Backtab, FoldAll, SelectAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -42,7 +42,7 @@ use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
@@ -2699,6 +2699,32 @@ pub mod tests {
                 (dp(5, 6)..dp(5, 9), "match"),
             ],
         );
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.fold_all(&FoldAll, window, cx);
+                })
+            })
+            .expect("Should fold fine");
+
+        let results_collapsed = search_view
+            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .expect("got results_collapsed");
+
+        assert!(results_collapsed);
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.results_editor.update(cx, |editor, cx| {
+                    editor.unfold_all(&UnfoldAll, window, cx);
+                })
+            })
+            .expect("Should unfold fine");
+
+        let results_collapsed = search_view
+            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .expect("got results_collapsed");
+
+        assert!(!results_collapsed);
     }
 
     #[perf]
