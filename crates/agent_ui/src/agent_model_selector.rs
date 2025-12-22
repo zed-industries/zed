@@ -3,12 +3,11 @@ use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::ModelSelectorTooltip,
 };
-use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 use language_model::IconOrSvg;
 use picker::popover_menu::PickerPopoverMenu;
-use settings::{Settings, update_settings_file};
+use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 
@@ -105,14 +104,13 @@ impl Render for AgentModelSelector {
             Color::Muted
         };
 
+        let show_cycle_row = self.selector.read(cx).delegate.favorites_count() > 1;
+
         let focus_handle = self.focus_handle.clone();
 
         let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let show_cycle_row = AgentSettings::get_global(cx).favorite_model_ids().len() > 1;
-
-                ModelSelectorTooltip::new(focus_handle)
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }

@@ -2,7 +2,7 @@ use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -2252,12 +2252,16 @@ impl TextThreadEditor {
         .color(color)
         .size(IconSize::XSmall);
 
-        let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let show_cycle_row = AgentSettings::get_global(cx).favorite_model_ids().len() > 1;
+        let show_cycle_row = self
+            .language_model_selector
+            .read(cx)
+            .delegate
+            .favorites_count()
+            > 1;
 
-                ModelSelectorTooltip::new(focus_handle)
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }

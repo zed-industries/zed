@@ -251,6 +251,10 @@ impl LanguageModelPickerDelegate {
         (self.get_active_model)(cx)
     }
 
+    pub fn favorites_count(&self) -> usize {
+        self.all_models.favorites.len()
+    }
+
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.all_models.favorites.is_empty() {
             return;
