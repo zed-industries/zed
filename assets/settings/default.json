@@ -1701,6 +1701,8 @@
         "conda_manager": "auto",
       },
     },
+    // Allow the `zed` CLI to create, read, and control terminal instances.
+    "cli_enabled": false,
     "toolbar": {
       // Whether to display the terminal title in its toolbar's breadcrumbs.
       // Only shown if the terminal title is not empty.

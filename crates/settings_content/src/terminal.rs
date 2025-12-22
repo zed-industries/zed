@@ -171,6 +171,10 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+    /// Allow the `zed` CLI to create, read, and control terminal instances.
+    ///
+    /// Default: false
+    pub cli_enabled: Option<bool>,
 }
 
 /// Shell configuration to open the terminal with.
