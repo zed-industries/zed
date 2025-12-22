@@ -305,7 +305,7 @@ To use GitHub Copilot as your provider, set this within `settings.json`:
 }
 ```
 
-You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
+To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A popup window appears displaying a device code. Click the copy button to copy the code, then click "Connect to GitHub" to open the GitHub verification page in your browser. Paste the code when prompted. The popup window closes automatically after successful authorization.
 
 #### Using GitHub Copilot Enterprise
 
@@ -348,10 +348,22 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ### Codestral {#codestral}
 
-To use Mistral's Codestral as your provider, start by going to the Agent Panel settings view by running the {#action agent::OpenSettings} action.
-Look for the Mistral item and add a Codestral API key in the corresponding text input.
+<<<<<<< Updated upstream
+To use Mistral's Codestral as your provider:
+=======
+To use Mistral's Codestral as your provider, open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to the Edit Predictions section. Select Codestral as your provider and enter your API key in the corresponding field.
 
-After that, you should be able to switch your provider to it in your `settings.json` file:
+> > > > > > > Stashed changes
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Codestral section and enter your API key from the
+   [Codestral dashboard](https://console.mistral.ai/codestral)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, set Codestral as your provider in `settings.json`:
 
 ```json [settings]
 {
