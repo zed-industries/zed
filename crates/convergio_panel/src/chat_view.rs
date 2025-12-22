@@ -48,6 +48,7 @@ pub struct ConvergioChatView {
     workspace: WeakEntity<Workspace>,
     is_loading: bool,
     is_streaming: bool,
+    error_message: Option<String>,
     last_message_count: i64,
     _input_subscription: Subscription,
     _poll_task: Option<Task<()>>,
@@ -108,6 +109,7 @@ impl ConvergioChatView {
             workspace,
             is_loading: true,
             is_streaming: false,
+            error_message: None,
             last_message_count: 0,
             _input_subscription: subscription,
             _poll_task: None,
@@ -279,16 +281,23 @@ impl ConvergioChatView {
 
         let Some(http_client) = self.http_client.clone() else {
             log::error!("HTTP client not available");
+            self.error_message = Some("HTTP client not available".to_string());
+            cx.notify();
             return;
         };
 
         // Get API key
         let Some(api_key) = agent_invoke::get_api_key() else {
             log::error!("ANTHROPIC_API_KEY not set");
+            self.error_message = Some("ANTHROPIC_API_KEY not set. Export it in your shell.".to_string());
             // Still insert the message even without API key
             self.insert_message_only(&db, &content, cx);
+            cx.notify();
             return;
         };
+
+        // Clear any previous error
+        self.error_message = None;
 
         let agent_name = self.agent_name.to_string();
         let session_id = self.session_id.clone();
@@ -348,9 +357,11 @@ impl ConvergioChatView {
                             });
                         }
                         Err(e) => {
-                            log::error!("Agent invocation failed: {}", e);
+                            let error_msg = format!("Agent error: {}", e);
+                            log::error!("{}", error_msg);
                             let _ = this.update(cx, |this, cx| {
                                 this.is_streaming = false;
+                                this.error_message = Some(error_msg);
                                 cx.notify();
                             });
                         }
@@ -585,6 +596,29 @@ impl ConvergioChatView {
                             Label::new("Waiting for response...")
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
+                        )
+                )
+            })
+            // Show error message if present
+            .when_some(self.error_message.clone(), |this, error| {
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(cx.theme().status().error_background)
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Error)
+                        )
+                        .child(
+                            Label::new(error)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Error)
                         )
                 )
             })

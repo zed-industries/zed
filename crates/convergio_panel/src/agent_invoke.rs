@@ -26,8 +26,25 @@ pub struct AgentDefinition {
 }
 
 /// Get the system prompt for an agent by name
+/// Matches by exact name or by prefix (e.g., "ali" matches "ali-chief-of-staff")
 pub fn get_agent_prompt(agent_name: &str) -> Option<&'static AgentDefinition> {
-    AGENTS.iter().find(|a| a.name == agent_name)
+    // Try exact match first
+    if let Some(agent) = AGENTS.iter().find(|a| a.name == agent_name) {
+        return Some(agent);
+    }
+
+    // Try prefix match (e.g., "ali" matches "ali-chief-of-staff")
+    AGENTS.iter().find(|a| a.name.starts_with(&format!("{}-", agent_name)))
+}
+
+/// Get a generic system prompt for unknown agents
+pub fn get_generic_prompt(agent_name: &str) -> String {
+    format!(
+        "You are {}, an AI assistant in the Convergio ecosystem. \
+         Provide helpful, accurate, and professional responses. \
+         Be concise but thorough. If you don't know something, say so.",
+        agent_name
+    )
 }
 
 /// Invoke an agent with a user message
@@ -42,9 +59,14 @@ pub fn invoke_agent(
     executor: BackgroundExecutor,
 ) -> Task<Result<()>> {
     executor.spawn(async move {
-        // Get agent definition
-        let agent = get_agent_prompt(&agent_name)
-            .ok_or_else(|| anyhow!("Unknown agent: {}", agent_name))?;
+        // Get agent definition or use generic prompt
+        let system_prompt = match get_agent_prompt(&agent_name) {
+            Some(agent) => agent.system_prompt.to_string(),
+            None => {
+                log::warn!("No specific prompt for agent '{}', using generic", agent_name);
+                get_generic_prompt(&agent_name)
+            }
+        };
 
         // Build message history for API
         let api_messages: Vec<Message> = messages
@@ -71,7 +93,7 @@ pub fn invoke_agent(
             tools: vec![],
             thinking: None,
             tool_choice: None,
-            system: Some(anthropic::StringOrContents::String(agent.system_prompt.to_string())),
+            system: Some(anthropic::StringOrContents::String(system_prompt)),
             metadata: None,
             stop_sequences: vec![],
             temperature: Some(0.7),
