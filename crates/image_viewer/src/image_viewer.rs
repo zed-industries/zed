@@ -487,6 +487,26 @@ impl Render for ImageView {
 
         let border_color = cx.theme().colors().border;
 
+        let (mut left, mut top) = (px(0.0), px(0.0));
+        let mut is_centered_by_flex = true;
+
+        if let (Some(bounds), Some((scaled_w, scaled_h))) = (self.container_bounds, scaled_size) {
+            is_centered_by_flex = false;
+
+            // Convert Pixels to f32 for calculation
+            let bounds_w_f32 = f32::from(bounds.size.width);
+            let bounds_h_f32 = f32::from(bounds.size.height);
+            let scaled_w_f32 = f32::from(scaled_w);
+            let scaled_h_f32 = f32::from(scaled_h);
+
+            let center_x = bounds_w_f32 / 2.0;
+            let center_y = bounds_h_f32 / 2.0;
+
+            // Calculate offset and wrap back in px()
+            left = px(center_x - scaled_w_f32 / 2.0) + pan_offset.x;
+            top = px(center_y - scaled_h_f32 / 2.0) + pan_offset.y;
+        }
+
         div()
             .track_focus(&self.focus_handle(cx))
             .key_context("ImageViewer")
@@ -497,16 +517,12 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::zoom_to_actual_size))
             .size_full()
             .relative()
+            .bg(cx.theme().colors().editor_background)
             .child(
                 div()
                     .id("image-container")
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .w_full()
-                    .h_full()
+                    .size_full()
                     .overflow_hidden()
-                    .bg(cx.theme().colors().editor_background)
                     .cursor(if self.is_dragging {
                         gpui::CursorStyle::ClosedHand
                     } else {
@@ -524,7 +540,9 @@ impl Render for ImageView {
                             move |bounds, _, cx| {
                                 if let Some(entity) = entity.upgrade() {
                                     entity.update(cx, |this, _| {
-                                        this.container_bounds = Some(bounds);
+                                        if this.container_bounds != Some(bounds) {
+                                            this.container_bounds = Some(bounds);
+                                        }
                                     });
                                 }
                             },
@@ -536,17 +554,21 @@ impl Render for ImageView {
                     .child(
                         div()
                             .relative()
+                            .when(is_centered_by_flex, |div| {
+                                div.flex().justify_center().items_center().size_full()
+                            })
+                            .when(!is_centered_by_flex, |div| {
+                                div.absolute().left(left).top(top)
+                            })
                             .when_some(scaled_size, |div, (scaled_width, scaled_height)| {
                                 div.w(scaled_width).h(scaled_height)
                             })
-                            .ml(pan_offset.x)
-                            .mt(pan_offset.y)
                             .child({
                                 // draw checkerboard pattern behind the image for transparency
                                 canvas(
                                     |_, _, _| {},
                                     move |bounds, _, window, _cx| {
-                                        let square_size: f32 = 12.0;
+                                        let square_size: f32 = 12.0 * zoom_level;
 
                                         let bounds_x: f32 = bounds.origin.x.into();
                                         let bounds_y: f32 = bounds.origin.y.into();
@@ -628,9 +650,11 @@ impl Render for ImageView {
                             if phase == DispatchPhase::Bubble {
                                 if let Some(entity) = entity.upgrade() {
                                     entity.update(cx, |this, cx| {
-                                        this.is_dragging = false;
-                                        this.last_mouse_position = None;
-                                        cx.notify();
+                                        if this.is_dragging {
+                                            this.is_dragging = false;
+                                            this.last_mouse_position = None;
+                                            cx.notify();
+                                        }
                                     });
                                 }
                             }
