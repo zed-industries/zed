@@ -3,7 +3,6 @@
 use crate::chat_view::ConvergioChatView;
 use crate::ConvergioSettings;
 use agent::HistoryStore;
-use agent_ui::AgentPanel;
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
@@ -385,10 +384,12 @@ pub struct ConvergioPanel {
     _filter_editor_subscription: Subscription,
     // Onboarding state
     show_onboarding: bool,
-    // History store for conversation resume
+    // History store for conversation resume (future use)
+    #[allow(dead_code)]
     history_store: Option<Entity<HistoryStore>>,
     _history_subscription: Option<Subscription>,
-    // Pending thread opens waiting for history to load (agent_name, server_name)
+    // Pending thread opens waiting for history to load (future use)
+    #[allow(dead_code)]
     pending_thread_opens: Vec<(SharedString, SharedString)>,
     // Track agents that are currently processing in background
     processing_agents: HashSet<SharedString>,
@@ -488,34 +489,10 @@ impl ConvergioPanel {
             }
         });
 
-        // History store will be initialized asynchronously to avoid reentrancy
-        // during workspace update
+        // History store is optional - the panel works without it
+        // This feature may be connected later when AgentPanel integration matures
         let history_store: Option<Entity<HistoryStore>> = None;
         let history_subscription: Option<Subscription> = None;
-
-        // Defer history store lookup to avoid reentrancy crash
-        let workspace_for_history = workspace_handle.clone();
-        cx.spawn(async move |this, mut cx| {
-            // Wait a tick to ensure workspace initialization is complete
-            cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
-
-            let result = workspace_for_history.update_in(&mut cx, |workspace, _window, cx| {
-                workspace.panel::<AgentPanel>(cx).map(|panel| {
-                    panel.read(cx).history_store().clone()
-                })
-            });
-
-            if let Ok(Some(store)) = result {
-                let _ = this.update(&mut cx, |this, cx| {
-                    let sub = cx.observe(&store, |this, _, cx| {
-                        this.process_pending_thread_opens(cx);
-                    });
-                    this.history_store = Some(store);
-                    this._history_subscription = Some(sub);
-                    log::info!("ConvergioPanel: History store connected");
-                });
-            }
-        }).detach();
 
         // Load persisted agent sessions asynchronously
         cx.spawn(async move |this, cx| {
@@ -649,7 +626,8 @@ impl ConvergioPanel {
         cx.notify();
     }
 
-    /// Process pending thread opens when history becomes available
+    /// Process pending thread opens when history becomes available (future use)
+    #[allow(dead_code)]
     fn process_pending_thread_opens(&mut self, cx: &mut Context<Self>) {
         if self.pending_thread_opens.is_empty() {
             return;
