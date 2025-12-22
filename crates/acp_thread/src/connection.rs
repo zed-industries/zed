@@ -202,12 +202,6 @@ pub trait AgentModelSelector: 'static {
     fn should_render_footer(&self) -> bool {
         false
     }
-
-    /// Whether this selector supports the favorites feature.
-    /// Only the native agent uses the model ID format that maps to settings.
-    fn supports_favorites(&self) -> bool {
-        false
-    }
 }
 
 /// Icon for a model in the model selector.

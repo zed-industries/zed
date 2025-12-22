@@ -1370,6 +1370,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 env: Some(HashMap::default()),
                                 default_mode: None,
                                 default_model: None,
+                                favorite_models: vec![],
                             },
                         );
                 }
