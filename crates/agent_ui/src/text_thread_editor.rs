@@ -1,6 +1,6 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::BurnModeTooltip,
+    ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
@@ -2255,40 +2255,13 @@ impl TextThreadEditor {
         let tooltip = Tooltip::element({
             move |_, cx| {
                 let focus_handle = focus_handle.clone();
-                let should_show_cycle_row = !AgentSettings::get_global(cx)
+                let show_cycle_row = !AgentSettings::get_global(cx)
                     .favorite_model_ids()
                     .is_empty();
 
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Change Model"))
-                            .child(KeyBinding::for_action_in(
-                                &ToggleModelSelector,
-                                &focus_handle,
-                                cx,
-                            )),
-                    )
-                    .when(should_show_cycle_row, |this| {
-                        this.child(
-                            h_flex()
-                                .pt_1()
-                                .gap_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .justify_between()
-                                .child(Label::new("Cycle Favorited Models"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleFavoriteModels,
-                                    &focus_handle,
-                                    cx,
-                                )),
-                        )
-                    })
-                    .into_any()
+                ModelSelectorTooltip::new(focus_handle)
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
             }
         });
 
