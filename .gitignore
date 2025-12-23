@@ -44,5 +44,3 @@ crates/docs_preprocessor/actions.json
 
 # `nix build` output
 /result
-.worktrees/
-.beads/
