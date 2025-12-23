@@ -502,6 +502,7 @@ pub struct Table<const COLS: usize = 3> {
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
+    disable_base_cell_style: bool,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -517,7 +518,15 @@ impl<const COLS: usize> Table<COLS> {
             use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
+            disable_base_cell_style: false,
         }
+    }
+
+    /// Disables based styling of row cell (paddings, overflow hidden, etc), keeping width settings
+    /// Doesn't affect base style of header cell
+    pub fn disable_base_style(mut self) -> Self {
+        self.disable_base_cell_style = true;
+        self
     }
 
     /// Enables uniform list rendering.
@@ -697,10 +706,17 @@ pub fn render_table_row<const COLS: usize>(
             .into_iter()
             .zip(column_widths)
             .map(|(cell, width)| {
-                base_cell_style_text(width, table_context.use_ui_font, cx)
-                    .px_1()
-                    .py_0p5()
-                    .child(cell)
+                if table_context.disable_base_cell_style {
+                    div()
+                        .when_some(width, |this, width| this.w(width))
+                        .when(width.is_none(), |this| this.flex_1())
+                        .child(cell)
+                } else {
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .px_1()
+                        .py_0p5()
+                        .child(cell)
+                }
             }),
     );
 
@@ -785,6 +801,7 @@ pub struct TableRenderContext<const COLS: usize> {
     pub column_widths: Option<[Length; COLS]>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     pub use_ui_font: bool,
+    pub disable_base_cell_style: bool,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -795,6 +812,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
             use_ui_font: table.use_ui_font,
+            disable_base_cell_style: table.disable_base_cell_style,
         }
     }
 }
