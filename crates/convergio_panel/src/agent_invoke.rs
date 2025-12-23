@@ -178,8 +178,9 @@ pub fn get_api_key() -> Option<String> {
 }
 
 // Agent definitions with system prompts
-// These are simplified versions - full prompts are in the CLI
+// Complete list of all 62 Convergio agents
 static AGENTS: &[AgentDefinition] = &[
+    // Core Leadership
     AgentDefinition {
         name: "ali-chief-of-staff",
         display_name: "Ali - Chief of Staff",
@@ -190,6 +191,18 @@ static AGENTS: &[AgentDefinition] = &[
         display_name: "Amy - CFO",
         system_prompt: include_str!("prompts/amy-cfo.md"),
     },
+    AgentDefinition {
+        name: "satya-board-of-directors",
+        display_name: "Satya - Board Advisor",
+        system_prompt: include_str!("prompts/satya-board-of-directors.md"),
+    },
+    AgentDefinition {
+        name: "dan-engineering-gm",
+        display_name: "Dan - Engineering GM",
+        system_prompt: include_str!("prompts/dan-engineering-gm.md"),
+    },
+
+    // Engineering & Development
     AgentDefinition {
         name: "rex-code-reviewer",
         display_name: "Rex - Code Reviewer",
@@ -211,8 +224,308 @@ static AGENTS: &[AgentDefinition] = &[
         system_prompt: include_str!("prompts/paolo-best-practices-enforcer.md"),
     },
     AgentDefinition {
+        name: "marco-devops-engineer",
+        display_name: "Marco - DevOps Engineer",
+        system_prompt: include_str!("prompts/marco-devops-engineer.md"),
+    },
+    AgentDefinition {
+        name: "otto-performance-optimizer",
+        display_name: "Otto - Performance Optimizer",
+        system_prompt: include_str!("prompts/otto-performance-optimizer.md"),
+    },
+
+    // Product Management
+    AgentDefinition {
         name: "marcello-pm",
         display_name: "Marcello - Product Manager",
         system_prompt: include_str!("prompts/marcello-pm.md"),
+    },
+    AgentDefinition {
+        name: "oliver-pm",
+        display_name: "Oliver - Senior PM",
+        system_prompt: include_str!("prompts/oliver-pm.md"),
+    },
+
+    // Security & Compliance
+    AgentDefinition {
+        name: "luca-security-expert",
+        display_name: "Luca - Security Expert",
+        system_prompt: include_str!("prompts/luca-security-expert.md"),
+    },
+    AgentDefinition {
+        name: "elena-legal-compliance-expert",
+        display_name: "Elena - Legal & Compliance",
+        system_prompt: include_str!("prompts/elena-legal-compliance-expert.md"),
+    },
+    AgentDefinition {
+        name: "dr-enzo-healthcare-compliance-manager",
+        display_name: "Dr. Enzo - Healthcare Compliance",
+        system_prompt: include_str!("prompts/dr-enzo-healthcare-compliance-manager.md"),
+    },
+    AgentDefinition {
+        name: "guardian-ai-security-validator",
+        display_name: "Guardian - AI Security",
+        system_prompt: include_str!("prompts/guardian-ai-security-validator.md"),
+    },
+    AgentDefinition {
+        name: "thor-quality-assurance-guardian",
+        display_name: "Thor - QA Guardian",
+        system_prompt: include_str!("prompts/thor-quality-assurance-guardian.md"),
+    },
+
+    // Design & UX
+    AgentDefinition {
+        name: "sara-ux-ui-designer",
+        display_name: "Sara - UX/UI Designer",
+        system_prompt: include_str!("prompts/sara-ux-ui-designer.md"),
+    },
+    AgentDefinition {
+        name: "jenny-inclusive-accessibility-champion",
+        display_name: "Jenny - Accessibility Champion",
+        system_prompt: include_str!("prompts/jenny-inclusive-accessibility-champion.md"),
+    },
+    AgentDefinition {
+        name: "jony-creative-director",
+        display_name: "Jony - Creative Director",
+        system_prompt: include_str!("prompts/jony-creative-director.md"),
+    },
+    AgentDefinition {
+        name: "stefano-design-thinking-facilitator",
+        display_name: "Stefano - Design Thinking",
+        system_prompt: include_str!("prompts/stefano-design-thinking-facilitator.md"),
+    },
+
+    // Data & Analytics
+    AgentDefinition {
+        name: "omri-data-scientist",
+        display_name: "Omri - Data Scientist",
+        system_prompt: include_str!("prompts/omri-data-scientist.md"),
+    },
+    AgentDefinition {
+        name: "ava-analytics-insights-virtuoso",
+        display_name: "Ava - Analytics Virtuoso",
+        system_prompt: include_str!("prompts/ava-analytics-insights-virtuoso.md"),
+    },
+    AgentDefinition {
+        name: "diana-performance-dashboard",
+        display_name: "Diana - Performance Dashboard",
+        system_prompt: include_str!("prompts/diana-performance-dashboard.md"),
+    },
+
+    // Finance & Investment
+    AgentDefinition {
+        name: "fiona-market-analyst",
+        display_name: "Fiona - Market Analyst",
+        system_prompt: include_str!("prompts/fiona-market-analyst.md"),
+    },
+    AgentDefinition {
+        name: "wiz-investor-venture-capital",
+        display_name: "Wiz - VC Investor",
+        system_prompt: include_str!("prompts/wiz-investor-venture-capital.md"),
+    },
+    AgentDefinition {
+        name: "michael-vc",
+        display_name: "Michael - VC Analyst",
+        system_prompt: include_str!("prompts/michael-vc.md"),
+    },
+
+    // Strategy & Decision Making
+    AgentDefinition {
+        name: "angela-da",
+        display_name: "Angela - Decision Architect",
+        system_prompt: include_str!("prompts/angela-da.md"),
+    },
+    AgentDefinition {
+        name: "ethan-da",
+        display_name: "Ethan - Senior DA",
+        system_prompt: include_str!("prompts/ethan-da.md"),
+    },
+    AgentDefinition {
+        name: "evan-ic6da",
+        display_name: "Evan - Principal DA (IC6)",
+        system_prompt: include_str!("prompts/evan-ic6da.md"),
+    },
+    AgentDefinition {
+        name: "domik-mckinsey-strategic-decision-maker",
+        display_name: "Domik - McKinsey Strategist",
+        system_prompt: include_str!("prompts/domik-mckinsey-strategic-decision-maker.md"),
+    },
+    AgentDefinition {
+        name: "matteo-strategic-business-architect",
+        display_name: "Matteo - Business Architect",
+        system_prompt: include_str!("prompts/matteo-strategic-business-architect.md"),
+    },
+    AgentDefinition {
+        name: "antonio-strategy-expert",
+        display_name: "Antonio - Strategy Expert",
+        system_prompt: include_str!("prompts/antonio-strategy-expert.md"),
+    },
+    AgentDefinition {
+        name: "socrates-first-principles-reasoning",
+        display_name: "Socrates - First Principles",
+        system_prompt: include_str!("prompts/socrates-first-principles-reasoning.md"),
+    },
+
+    // Marketing & Sales
+    AgentDefinition {
+        name: "sofia-marketing-strategist",
+        display_name: "Sofia - Marketing Strategist",
+        system_prompt: include_str!("prompts/sofia-marketing-strategist.md"),
+    },
+    AgentDefinition {
+        name: "fabio-sales-business-development",
+        display_name: "Fabio - Sales & BD",
+        system_prompt: include_str!("prompts/fabio-sales-business-development.md"),
+    },
+    AgentDefinition {
+        name: "riccardo-storyteller",
+        display_name: "Riccardo - Storyteller",
+        system_prompt: include_str!("prompts/riccardo-storyteller.md"),
+    },
+    AgentDefinition {
+        name: "steve-executive-communication-strategist",
+        display_name: "Steve - Exec Communications",
+        system_prompt: include_str!("prompts/steve-executive-communication-strategist.md"),
+    },
+
+    // Project & Program Management
+    AgentDefinition {
+        name: "davide-project-manager",
+        display_name: "Davide - Project Manager",
+        system_prompt: include_str!("prompts/davide-project-manager.md"),
+    },
+    AgentDefinition {
+        name: "luke-program-manager",
+        display_name: "Luke - Program Manager",
+        system_prompt: include_str!("prompts/luke-program-manager.md"),
+    },
+    AgentDefinition {
+        name: "taskmaster-strategic-task-decomposition-master",
+        display_name: "Taskmaster - Task Decomposition",
+        system_prompt: include_str!("prompts/taskmaster-strategic-task-decomposition-master.md"),
+    },
+    AgentDefinition {
+        name: "strategic-planner",
+        display_name: "Strategic Planner",
+        system_prompt: include_str!("prompts/strategic-planner.md"),
+    },
+
+    // HR & Team
+    AgentDefinition {
+        name: "giulia-hr-talent-acquisition",
+        display_name: "Giulia - HR & Talent",
+        system_prompt: include_str!("prompts/giulia-hr-talent-acquisition.md"),
+    },
+    AgentDefinition {
+        name: "coach-team-coach",
+        display_name: "Coach - Team Coach",
+        system_prompt: include_str!("prompts/coach-team-coach.md"),
+    },
+    AgentDefinition {
+        name: "behice-cultural-coach",
+        display_name: "Behice - Cultural Coach",
+        system_prompt: include_str!("prompts/behice-cultural-coach.md"),
+    },
+
+    // Operations & Process
+    AgentDefinition {
+        name: "enrico-business-process-engineer",
+        display_name: "Enrico - Process Engineer",
+        system_prompt: include_str!("prompts/enrico-business-process-engineer.md"),
+    },
+    AgentDefinition {
+        name: "dave-change-management-specialist",
+        display_name: "Dave - Change Management",
+        system_prompt: include_str!("prompts/dave-change-management-specialist.md"),
+    },
+    AgentDefinition {
+        name: "andrea-customer-success-manager",
+        display_name: "Andrea - Customer Success",
+        system_prompt: include_str!("prompts/andrea-customer-success-manager.md"),
+    },
+
+    // Government & Legal
+    AgentDefinition {
+        name: "sophia-govaffairs",
+        display_name: "Sophia - Government Affairs",
+        system_prompt: include_str!("prompts/sophia-govaffairs.md"),
+    },
+
+    // Startup & VC
+    AgentDefinition {
+        name: "sam-startupper",
+        display_name: "Sam - Startup Expert",
+        system_prompt: include_str!("prompts/sam-startupper.md"),
+    },
+
+    // AI & Prompts
+    AgentDefinition {
+        name: "po-prompt-optimizer",
+        display_name: "PO - Prompt Optimizer",
+        system_prompt: include_str!("prompts/po-prompt-optimizer.md"),
+    },
+
+    // Orchestration & Coordination
+    AgentDefinition {
+        name: "wanda-workflow-orchestrator",
+        display_name: "Wanda - Workflow Orchestrator",
+        system_prompt: include_str!("prompts/wanda-workflow-orchestrator.md"),
+    },
+    AgentDefinition {
+        name: "xavier-coordination-patterns",
+        display_name: "Xavier - Coordination Patterns",
+        system_prompt: include_str!("prompts/xavier-coordination-patterns.md"),
+    },
+    AgentDefinition {
+        name: "marcus-context-memory-keeper",
+        display_name: "Marcus - Memory Keeper",
+        system_prompt: include_str!("prompts/marcus-context-memory-keeper.md"),
+    },
+    AgentDefinition {
+        name: "anna-executive-assistant",
+        display_name: "Anna - Executive Assistant",
+        system_prompt: include_str!("prompts/anna-executive-assistant.md"),
+    },
+
+    // System Agents
+    AgentDefinition {
+        name: "general-purpose",
+        display_name: "General Purpose Agent",
+        system_prompt: include_str!("prompts/general-purpose.md"),
+    },
+    AgentDefinition {
+        name: "explore",
+        display_name: "Explore Agent",
+        system_prompt: include_str!("prompts/explore.md"),
+    },
+    AgentDefinition {
+        name: "plan",
+        display_name: "Plan Agent",
+        system_prompt: include_str!("prompts/plan.md"),
+    },
+    AgentDefinition {
+        name: "feature-release-manager",
+        display_name: "Feature Release Manager",
+        system_prompt: include_str!("prompts/feature-release-manager.md"),
+    },
+    AgentDefinition {
+        name: "app-release-manager",
+        display_name: "App Release Manager",
+        system_prompt: include_str!("prompts/app-release-manager.md"),
+    },
+    AgentDefinition {
+        name: "mckinsey-strategic-consultant",
+        display_name: "McKinsey Consultant",
+        system_prompt: include_str!("prompts/mckinsey-strategic-consultant.md"),
+    },
+    AgentDefinition {
+        name: "claude-code-guide",
+        display_name: "Claude Code Guide",
+        system_prompt: include_str!("prompts/claude-code-guide.md"),
+    },
+    AgentDefinition {
+        name: "statusline-setup",
+        display_name: "Statusline Setup",
+        system_prompt: include_str!("prompts/statusline-setup.md"),
     },
 ];

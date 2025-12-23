@@ -34,13 +34,76 @@ actions!(convergio_chat, [Send, Refresh]);
 /// Agent name mapping for handoff detection
 /// Maps (short_name, full_name, display_name)
 static AGENT_NAME_MAP: &[(&str, &str, &str)] = &[
-    ("amy", "amy-cfo", "Amy - CFO"),
+    // Core Leadership
     ("ali", "ali-chief-of-staff", "Ali - Chief of Staff"),
+    ("amy", "amy-cfo", "Amy - CFO"),
+    ("satya", "satya-board-of-directors", "Satya - Board Advisor"),
+    ("dan", "dan-engineering-gm", "Dan - Engineering GM"),
+    // Engineering & Development
     ("rex", "rex-code-reviewer", "Rex - Code Reviewer"),
     ("dario", "dario-debugger", "Dario - Debugger"),
     ("baccio", "baccio-tech-architect", "Baccio - Tech Architect"),
     ("paolo", "paolo-best-practices-enforcer", "Paolo - Best Practices"),
+    ("marco", "marco-devops-engineer", "Marco - DevOps Engineer"),
+    ("otto", "otto-performance-optimizer", "Otto - Performance Optimizer"),
+    // Product Management
     ("marcello", "marcello-pm", "Marcello - Product Manager"),
+    ("oliver", "oliver-pm", "Oliver - Senior PM"),
+    // Security & Compliance
+    ("luca", "luca-security-expert", "Luca - Security Expert"),
+    ("elena", "elena-legal-compliance-expert", "Elena - Legal & Compliance"),
+    ("enzo", "dr-enzo-healthcare-compliance-manager", "Dr. Enzo - Healthcare"),
+    ("guardian", "guardian-ai-security-validator", "Guardian - AI Security"),
+    ("thor", "thor-quality-assurance-guardian", "Thor - QA Guardian"),
+    // Design & UX
+    ("sara", "sara-ux-ui-designer", "Sara - UX/UI Designer"),
+    ("jenny", "jenny-inclusive-accessibility-champion", "Jenny - Accessibility"),
+    ("jony", "jony-creative-director", "Jony - Creative Director"),
+    ("stefano", "stefano-design-thinking-facilitator", "Stefano - Design Thinking"),
+    // Data & Analytics
+    ("omri", "omri-data-scientist", "Omri - Data Scientist"),
+    ("ava", "ava-analytics-insights-virtuoso", "Ava - Analytics Virtuoso"),
+    ("diana", "diana-performance-dashboard", "Diana - Performance Dashboard"),
+    // Finance & Investment
+    ("fiona", "fiona-market-analyst", "Fiona - Market Analyst"),
+    ("wiz", "wiz-investor-venture-capital", "Wiz - VC Investor"),
+    ("michael", "michael-vc", "Michael - VC Analyst"),
+    // Strategy & Decision Making
+    ("angela", "angela-da", "Angela - Decision Architect"),
+    ("ethan", "ethan-da", "Ethan - Senior DA"),
+    ("evan", "evan-ic6da", "Evan - Principal DA (IC6)"),
+    ("domik", "domik-mckinsey-strategic-decision-maker", "Domik - McKinsey Strategist"),
+    ("matteo", "matteo-strategic-business-architect", "Matteo - Business Architect"),
+    ("antonio", "antonio-strategy-expert", "Antonio - Strategy Expert"),
+    ("socrates", "socrates-first-principles-reasoning", "Socrates - First Principles"),
+    // Marketing & Sales
+    ("sofia", "sofia-marketing-strategist", "Sofia - Marketing Strategist"),
+    ("fabio", "fabio-sales-business-development", "Fabio - Sales & BD"),
+    ("riccardo", "riccardo-storyteller", "Riccardo - Storyteller"),
+    ("steve", "steve-executive-communication-strategist", "Steve - Exec Communications"),
+    // Project & Program Management
+    ("davide", "davide-project-manager", "Davide - Project Manager"),
+    ("luke", "luke-program-manager", "Luke - Program Manager"),
+    ("taskmaster", "taskmaster-strategic-task-decomposition-master", "Taskmaster - Tasks"),
+    // HR & Team
+    ("giulia", "giulia-hr-talent-acquisition", "Giulia - HR & Talent"),
+    ("coach", "coach-team-coach", "Coach - Team Coach"),
+    ("behice", "behice-cultural-coach", "Behice - Cultural Coach"),
+    // Operations & Process
+    ("enrico", "enrico-business-process-engineer", "Enrico - Process Engineer"),
+    ("dave", "dave-change-management-specialist", "Dave - Change Management"),
+    ("andrea", "andrea-customer-success-manager", "Andrea - Customer Success"),
+    // Government & Legal
+    ("sophia", "sophia-govaffairs", "Sophia - Government Affairs"),
+    // Startup & VC
+    ("sam", "sam-startupper", "Sam - Startup Expert"),
+    // AI & Prompts
+    ("po", "po-prompt-optimizer", "PO - Prompt Optimizer"),
+    // Orchestration & Coordination
+    ("wanda", "wanda-workflow-orchestrator", "Wanda - Workflow Orchestrator"),
+    ("xavier", "xavier-coordination-patterns", "Xavier - Coordination Patterns"),
+    ("marcus", "marcus-context-memory-keeper", "Marcus - Memory Keeper"),
+    ("anna", "anna-executive-assistant", "Anna - Executive Assistant"),
 ];
 
 /// Get display name for an agent
