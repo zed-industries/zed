@@ -5402,7 +5402,8 @@ impl AcpThreadView {
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
-            acp_thread::TokenUsageRatio::Normal | acp_thread::TokenUsageRatio::Warning => (
+            acp_thread::TokenUsageRatio::Normal => return None,
+            acp_thread::TokenUsageRatio::Warning => (
                 Severity::Warning,
                 IconName::Warning,
                 "Thread reaching the token limit soon",
