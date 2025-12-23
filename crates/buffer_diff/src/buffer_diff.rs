@@ -61,6 +61,22 @@ pub enum DiffHunkStatusKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiffRowSide {
+    Buffer,
+    Base,
+}
+
+impl DiffRowSide {
+    pub fn for_main_buffer(is_main_buffer: bool) -> Self {
+        if is_main_buffer {
+            Self::Buffer
+        } else {
+            Self::Base
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Diff of Working Copy vs Index
 /// aka 'is this hunk staged or not'
 pub enum DiffHunkSecondaryStatus {
@@ -456,6 +472,18 @@ impl BufferDiffSnapshot {
         Some(self.build_diff_line(index, buffer))
     }
 
+    pub fn line_for_row(
+        &self,
+        side: DiffRowSide,
+        row: u32,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<DiffLine> {
+        match side {
+            DiffRowSide::Buffer => self.line_for_buffer_row(row, buffer),
+            DiffRowSide::Base => self.line_for_base_row(row, buffer),
+        }
+    }
+
     pub fn line_for_base_row(
         &self,
         row: u32,
@@ -465,16 +493,25 @@ impl BufferDiffSnapshot {
         Some(self.build_diff_line(index, buffer))
     }
 
+    pub fn line_status_for_row(
+        &self,
+        side: DiffRowSide,
+        row: u32,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<DiffHunkStatus> {
+        self.line_for_row(side, row, buffer)
+            .map(|line| DiffHunkStatus {
+                kind: line.kind,
+                secondary: line.secondary_status,
+            })
+    }
+
     pub fn line_status_for_buffer_row(
         &self,
         row: u32,
         buffer: &text::BufferSnapshot,
     ) -> Option<DiffHunkStatus> {
-        self.line_for_buffer_row(row, buffer)
-            .map(|line| DiffHunkStatus {
-                kind: line.kind,
-                secondary: line.secondary_status,
-            })
+        self.line_status_for_row(DiffRowSide::Buffer, row, buffer)
     }
 
     pub fn line_status_for_base_row(
@@ -482,11 +519,19 @@ impl BufferDiffSnapshot {
         row: u32,
         buffer: &text::BufferSnapshot,
     ) -> Option<DiffHunkStatus> {
-        self.line_for_base_row(row, buffer)
-            .map(|line| DiffHunkStatus {
-                kind: line.kind,
-                secondary: line.secondary_status,
-            })
+        self.line_status_for_row(DiffRowSide::Base, row, buffer)
+    }
+
+    pub fn base_text_row_for_row(
+        &self,
+        side: DiffRowSide,
+        row: u32,
+        buffer: &text::BufferSnapshot,
+    ) -> u32 {
+        match side {
+            DiffRowSide::Buffer => self.row_to_base_text_row(row, buffer),
+            DiffRowSide::Base => row,
+        }
     }
 
     pub fn base_text(&self) -> &language::BufferSnapshot {

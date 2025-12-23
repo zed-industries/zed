@@ -7,11 +7,10 @@ mod transaction;
 use self::transaction::History;
 
 pub use anchor::{Anchor, AnchorRangeExt};
-
 use anyhow::{Result, anyhow};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
-    DiffHunkStatusKind,
+    DiffHunkStatusKind, DiffRowSide,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -7697,35 +7696,46 @@ impl Iterator for MultiBufferRows<'_> {
         let diff_hunk_status = region
             .diff_hunk_status
             .filter(|_| self.point < region.range.end);
-        let diff_status = diff_hunk_status.and_then(|status| {
-                self.cursor
-                    .snapshot
-                    .diffs
-                    .get(&region.excerpt.buffer_id)
-                    .and_then(|diff| {
-                        if region.is_main_buffer {
-                            diff.line_status_for_buffer_row(
-                                buffer_point.row,
-                                &region.excerpt.buffer.text,
-                            )
-                        } else {
-                            diff.line_status_for_base_row(
-                                buffer_point.row,
-                                &region.excerpt.buffer.text,
-                            )
-                        }
-                    })
-                    .or(Some(status))
-            })
-            .or(diff_hunk_status);
-        let base_text_row = match diff_status {
+        let side = DiffRowSide::for_main_buffer(region.is_main_buffer);
+        let mut line_is_paired = false;
+        let line_status = if diff_hunk_status.is_some() {
+            self.cursor
+                .snapshot
+                .diffs
+                .get(&region.excerpt.buffer_id)
+                .and_then(|diff| {
+                    diff.line_for_row(side, buffer_point.row, &region.excerpt.buffer.text)
+                        .map(|line| {
+                            line_is_paired = line.paired_line_id.is_some();
+                            DiffHunkStatus {
+                                kind: line.kind,
+                                secondary: line.secondary_status,
+                            }
+                        })
+                })
+        } else {
+            None
+        };
+        let diff_status = line_status.or(diff_hunk_status);
+        let status_for_base = match (diff_hunk_status, line_status, line_is_paired) {
+            (Some(hunk_status), Some(line_status), true)
+                if hunk_status.kind == DiffHunkStatusKind::Modified =>
+            {
+                Some(DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: line_status.secondary,
+                })
+            }
+            _ => diff_status,
+        };
+        let base_text_row = match status_for_base {
             // TODO(split-diff) perf
             None => self
                 .cursor
                 .snapshot
                 .diffs
                 .get(&region.excerpt.buffer_id)
-                .map(|diff| diff.row_to_base_text_row(buffer_point.row, &region.buffer))
+                .map(|diff| diff.base_text_row_for_row(side, buffer_point.row, &region.buffer))
                 .map(BaseTextRow),
             Some(DiffHunkStatus {
                 kind: DiffHunkStatusKind::Added,
@@ -7743,7 +7753,7 @@ impl Iterator for MultiBufferRows<'_> {
                 .snapshot
                 .diffs
                 .get(&region.excerpt.buffer_id)
-                .map(|diff| diff.row_to_base_text_row(buffer_point.row, &region.buffer))
+                .map(|diff| diff.base_text_row_for_row(side, buffer_point.row, &region.buffer))
                 .map(BaseTextRow),
         };
         let expand_info = if self.is_singleton {

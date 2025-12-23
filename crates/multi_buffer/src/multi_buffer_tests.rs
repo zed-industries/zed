@@ -3883,6 +3883,43 @@ async fn test_base_text_line_numbers(cx: &mut TestAppContext) {
     )
 }
 
+#[gpui::test]
+fn test_base_view_row_infos_with_deletion(cx: &mut App) {
+    let base_text = "one\ntwo\n";
+    let buffer_text = "two\n";
+    let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_diff(diff, cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+    });
+
+    let follower = multibuffer.update(cx, |multibuffer, cx| {
+        let follower = multibuffer.get_or_create_follower(cx);
+        follower.update(cx, |follower, _| {
+            follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+        });
+        follower
+    });
+
+    let row_infos = follower
+        .read(cx)
+        .snapshot(cx)
+        .row_infos(MultiBufferRow(0))
+        .collect::<Vec<_>>();
+
+    let base_text_rows = row_infos
+        .iter()
+        .map(|row_info| row_info.base_text_row)
+        .collect::<Vec<_>>();
+    let expected_rows = (0..row_infos.len())
+        .map(|row| Some(BaseTextRow(row as u32)))
+        .collect::<Vec<_>>();
+    assert_eq!(base_text_rows, expected_rows);
+}
+
 #[track_caller]
 fn assert_excerpts_match(
     multibuffer: &Entity<MultiBuffer>,
