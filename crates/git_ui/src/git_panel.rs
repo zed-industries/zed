@@ -10,7 +10,7 @@ use crate::{
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -3098,7 +3098,8 @@ impl GitPanel {
                 .as_ref()
                 .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
                 .and_then(|upstream| upstream.branch_name())
-                .map(|name| name.to_string());
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let source_branch = source_branch.to_string();
 
             let remote_url = branch
                 .upstream
