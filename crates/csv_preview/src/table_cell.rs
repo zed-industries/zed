@@ -264,6 +264,7 @@ fn create_table_cell(
         .flex()
         .h_full()
         .px_1()
+        .bg(cx.theme().colors().editor_background)
         .border_b_1()
         .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
