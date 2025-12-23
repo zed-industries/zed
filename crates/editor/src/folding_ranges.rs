@@ -29,13 +29,11 @@ impl Editor {
                 let id = buffer.read(cx).remote_id();
                 (for_buffer.is_none_or(|target| target == id))
                     && self.registered_buffers.contains_key(&id)
-                    && language_settings(
-                        buffer.read(cx).language().map(|l| l.name()),
-                        buffer.read(cx).file(),
-                        cx,
-                    )
-                    .document_folding_ranges
-                    .enabled()
+                    && language_settings(cx)
+                        .buffer(buffer.read(cx))
+                        .get()
+                        .document_folding_ranges
+                        .enabled()
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
@@ -104,7 +102,9 @@ impl Editor {
             .into_iter()
             .filter(|buffer| {
                 let buffer = buffer.read(cx);
-                !language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                !language_settings(cx)
+                    .buffer(buffer)
+                    .get()
                     .document_folding_ranges
                     .enabled()
             })

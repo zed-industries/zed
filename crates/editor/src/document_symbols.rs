@@ -239,7 +239,9 @@ impl Editor {
 }
 
 fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
-    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+    language_settings(cx)
+        .buffer(buffer)
+        .get()
         .document_symbols
         .lsp_enabled()
 }

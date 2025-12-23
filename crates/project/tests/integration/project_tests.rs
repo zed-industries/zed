@@ -253,7 +253,11 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
-            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+            language_settings(cx)
+                .language(Some(file_language.name()))
+                .file(Some(&file))
+                .get()
+                .into_owned()
         };
 
         let settings_a = settings_for("a.rs");
@@ -331,7 +335,11 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
-            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+            language_settings(cx)
+                .language(Some(file_language.name()))
+                .file(Some(&file))
+                .get()
+                .into_owned()
         };
 
         let settings_rs = settings_for("main.rs");
@@ -391,7 +399,11 @@ async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
     });
@@ -436,7 +448,11 @@ async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
@@ -484,7 +500,11 @@ async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -544,8 +564,11 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
                 .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
-            let settings =
-                language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+            let settings = language_settings(cx)
+                .language(Some(file_language.name()))
+                .file(Some(&file))
+                .get()
+                .into_owned();
 
             // Both worktrees should get indent_size = 5 from shared parent .editorconfig
             assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
@@ -593,7 +616,11 @@ async fn test_external_editorconfig_not_loaded_without_internal_config(
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
         // because without an internal .editorconfig, external configs are not loaded
@@ -640,7 +667,11 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // Test initial settings: tab_size = 4 from parent's external .editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -668,7 +699,11 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // Test settings updated: tab_size = 8
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
@@ -717,7 +752,11 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // Test existing worktree has tab_size = 7
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -745,7 +784,11 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // Verify new worktree also has tab_size = 7 from shared parent editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -899,7 +942,11 @@ async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
             .block_on(file_language)
             .expect("Failed to get file language");
         let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = language_settings(cx)
+            .language(Some(file_language.name()))
+            .file(Some(&file))
+            .get()
+            .into_owned();
 
         // Test worktree_b still has correct settings
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
@@ -1034,12 +1081,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 tree.entry_for_path(rel_path("a/a.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
-            let settings_a = language_settings(None, Some(&file_a), cx);
+            let settings_a = language_settings(cx).file(Some(&file_a)).get();
             let file_b = File::for_entry(
                 tree.entry_for_path(rel_path("b/b.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
-            let settings_b = language_settings(None, Some(&file_b), cx);
+            let settings_b = language_settings(cx).file(Some(&file_b)).get();
 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);

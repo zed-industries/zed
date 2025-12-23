@@ -211,7 +211,9 @@ impl LspAdapter for GoLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let semantic_tokens_enabled = cx.update(|cx| {
-            language_settings(Some(LanguageName::new("Go")), None, cx)
+            language_settings(cx)
+                .language(Some(LanguageName::new("Go")))
+                .get()
                 .semantic_tokens
                 .enabled()
         });

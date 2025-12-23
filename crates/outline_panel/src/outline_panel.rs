@@ -862,12 +862,8 @@ impl OutlinePanel {
                                     .read(cx)
                                     .buffer_for_id(*buffer_id, cx)?;
                                 let buffer = buffer.read(cx);
-                                let doc_symbols = language_settings(
-                                    buffer.language().map(|l| l.name()),
-                                    buffer.file(),
-                                    cx,
-                                )
-                                .document_symbols;
+                                let doc_symbols =
+                                    language_settings(cx).buffer(buffer).get().document_symbols;
                                 Some((*buffer_id, doc_symbols))
                             })
                             .collect();

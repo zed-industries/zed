@@ -674,7 +674,9 @@ impl EditPredictionButton {
         let language_state = self.language.as_ref().map(|language| {
             (
                 language.clone(),
-                language_settings::language_settings(Some(language.name()), None, cx)
+                language_settings::language_settings(cx)
+                    .language(Some(language.name()))
+                    .get()
                     .show_edit_predictions,
             )
         });
@@ -1598,9 +1600,10 @@ fn emit_edit_prediction_menu_opened(
     cx: &App,
 ) {
     let language_name = language.as_ref().map(|l| l.name());
-    let edit_predictions_enabled_for_language =
-        language_settings::language_settings(language_name, file.as_ref(), cx)
-            .show_edit_predictions;
+    let edit_predictions_enabled_for_language = language_settings::language_settings(cx)
+        .language(language_name)
+        .get()
+        .show_edit_predictions;
     let file_extension = file
         .as_ref()
         .and_then(|f| {

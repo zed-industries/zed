@@ -155,13 +155,11 @@ impl Editor {
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 if self.registered_buffers.contains_key(&editor_buffer_id)
-                    && language_settings(
-                        editor_buffer.read(cx).language().map(|l| l.name()),
-                        editor_buffer.read(cx).file(),
-                        cx,
-                    )
-                    .semantic_tokens
-                    .enabled()
+                    && language_settings(cx)
+                        .buffer(editor_buffer.read(cx))
+                        .get()
+                        .semantic_tokens
+                        .enabled()
                 {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
@@ -184,7 +182,9 @@ impl Editor {
                     .buffer(*buffer_id)
                     .is_some_and(|buffer| {
                         let buffer = buffer.read(cx);
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                        language_settings(cx)
+                            .buffer(buffer)
+                            .get()
                             .semantic_tokens
                             .enabled()
                     })
