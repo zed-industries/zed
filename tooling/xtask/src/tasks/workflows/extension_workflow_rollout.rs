@@ -92,7 +92,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
     fn get_short_sha() -> (Step<Run>, StepOutput) {
         let step = named::bash(indoc! {r#"
-            echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+            echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
         "#})
         .id("short-sha")
         .working_directory("zed");
