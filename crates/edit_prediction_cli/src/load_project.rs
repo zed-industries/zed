@@ -22,7 +22,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use zeta_prompt::CURSOR_MARKER;
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -98,16 +97,9 @@ async fn cursor_position(
     let cursor_buffer = project
         .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
         .await?;
-    let cursor_offset_within_excerpt = example
-        .spec
-        .cursor_position
-        .find(CURSOR_MARKER)
-        .context("missing cursor marker")?;
-    let mut cursor_excerpt = example.spec.cursor_position.clone();
-    cursor_excerpt.replace_range(
-        cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
-        "",
-    );
+
+    let (cursor_excerpt, cursor_offset_within_excerpt) = example.spec.cursor_excerpt()?;
+
     let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
         let text = buffer.text();
 

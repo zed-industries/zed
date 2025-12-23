@@ -1,5 +1,8 @@
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, mem, path::Path, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
+
+pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -223,5 +226,250 @@ impl ExampleSpec {
         }
 
         Ok(spec)
+    }
+
+    /// Returns the excerpt of text around the cursor, and the offset of the cursor within that
+    /// excerpt.
+    ///
+    /// The cursor's position is marked with a special comment that appears
+    /// below the cursor line, which contains the string `[CURSOR_POSITION]`,
+    /// preceded by an arrow marking the cursor's column. The arrow can be
+    /// either:
+    /// - `^` - The cursor column is at the position of the `^` character (pointing up to the cursor)
+    /// - `<` - The cursor column is at the first non-whitespace character on that line.
+    pub fn cursor_excerpt(&self) -> Result<(String, usize)> {
+        let input = &self.cursor_position;
+
+        let marker_offset = input
+            .find(CURSOR_POSITION_MARKER)
+            .context("missing [CURSOR_POSITION] marker")?;
+        let marker_line_start = input[..marker_offset]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let marker_line_end = input[marker_line_start..]
+            .find('\n')
+            .map(|pos| marker_line_start + pos + 1)
+            .unwrap_or(input.len());
+        let marker_line = &input[marker_line_start..marker_line_end].trim_end_matches('\n');
+
+        let cursor_column = if let Some(cursor_offset) = marker_line.find('^') {
+            cursor_offset
+        } else if let Some(less_than_pos) = marker_line.find('<') {
+            marker_line
+                .find(|c: char| !c.is_whitespace())
+                .unwrap_or(less_than_pos)
+        } else {
+            anyhow::bail!(
+                "cursor position marker line must contain '^' or '<' before [CURSOR_POSITION]"
+            );
+        };
+
+        let mut excerpt = input[..marker_line_start].to_string() + &input[marker_line_end..];
+        excerpt.truncate(excerpt.trim_end_matches('\n').len());
+
+        // The cursor is on the line above the marker line.
+        let cursor_line_end = marker_line_start.saturating_sub(1);
+        let cursor_line_start = excerpt[..cursor_line_end]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let cursor_offset = cursor_line_start + cursor_column;
+
+        Ok((excerpt, cursor_offset))
+    }
+
+    /// Sets the cursor position excerpt from a plain excerpt and cursor byte offset.
+    ///
+    /// The `line_comment_prefix` is used to format the marker line as a comment.
+    /// If the cursor column is less than the comment prefix length, the `<` format is used.
+    /// Otherwise, the `^` format is used.
+    pub fn set_cursor_excerpt(
+        &mut self,
+        excerpt: &str,
+        cursor_offset: usize,
+        line_comment_prefix: &str,
+    ) {
+        // Find which line the cursor is on and its column
+        let cursor_line_start = excerpt[..cursor_offset]
+            .rfind('\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
+        let cursor_line_end = excerpt[cursor_line_start..]
+            .find('\n')
+            .map(|pos| cursor_line_start + pos + 1)
+            .unwrap_or(excerpt.len());
+        let cursor_line = &excerpt[cursor_line_start..cursor_line_end];
+        let cursor_line_indent = &cursor_line[..cursor_line.len() - cursor_line.trim_start().len()];
+        let cursor_column = cursor_offset - cursor_line_start;
+
+        // Build the marker line
+        let mut marker_line = String::new();
+        if cursor_column < line_comment_prefix.len() {
+            for _ in 0..cursor_column {
+                marker_line.push(' ');
+            }
+            marker_line.push_str(line_comment_prefix);
+            write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
+        } else {
+            if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
+                marker_line.push_str(cursor_line_indent);
+            }
+            marker_line.push_str(line_comment_prefix);
+            while marker_line.len() < cursor_column {
+                marker_line.push(' ');
+            }
+            write!(marker_line, "^{}", CURSOR_POSITION_MARKER).unwrap();
+        }
+
+        // Build the final cursor_position string
+        let mut result = String::with_capacity(excerpt.len() + marker_line.len() + 2);
+        result.push_str(&excerpt[..cursor_line_end]);
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&marker_line);
+        if cursor_line_end < excerpt.len() {
+            result.push('\n');
+            result.push_str(&excerpt[cursor_line_end..]);
+        }
+
+        self.cursor_position = result;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+
+    #[test]
+    fn test_cursor_excerpt_with_caret() {
+        let mut spec = ExampleSpec {
+            name: String::new(),
+            repository_url: String::new(),
+            revision: String::new(),
+            uncommitted_diff: String::new(),
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patch: String::new(),
+        };
+
+        // Cursor before `42`
+        let excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+                println!(\"{}\", x);
+            }"
+        };
+        let offset = excerpt.find("42").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //      ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor after `l` in `let`
+        let offset = excerpt.find("et x").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            //   ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor before `let`
+        let offset = excerpt.find("let").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            //  ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor at beginning of the line with `let`
+        let offset = excerpt.find("    let").unwrap();
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+            // <[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Cursor at end of line, after the semicolon
+        let offset = excerpt.find(';').unwrap() + 1;
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //         ^[CURSOR_POSITION]
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
+
+        // Caret at end of file (no trailing newline)
+        let excerpt = indoc! {"
+            fn main() {
+                let x = 42;"
+        };
+        let offset = excerpt.find(';').unwrap() + 1;
+        let position_string = indoc! {"
+            fn main() {
+                let x = 42;
+                //         ^[CURSOR_POSITION]"
+        }
+        .to_string();
+
+        spec.set_cursor_excerpt(excerpt, offset, "//");
+        assert_eq!(spec.cursor_position, position_string);
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (excerpt.to_string(), offset)
+        );
     }
 }

@@ -9,7 +9,7 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
 use project::Project;
 use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
-use text::{BufferSnapshot as TextBufferSnapshot, ToOffset as _};
+use text::BufferSnapshot as TextBufferSnapshot;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -43,7 +43,13 @@ pub fn capture_example(
 
     Some(cx.spawn(async move |mut cx| {
         let snapshots_by_path = collect_snapshots(&project, &git_store, &events, &mut cx).await?;
-        let cursor_excerpt = cx
+
+        let line_comment_prefix = snapshot
+            .language()
+            .and_then(|lang| lang.config().line_comments.first())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let (cursor_excerpt, cursor_offset) = cx
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
@@ -60,35 +66,35 @@ pub fn capture_example(
             }
         }
 
-        Ok(ExampleSpec {
+        let mut spec = ExampleSpec {
             name: generate_timestamp_name(),
             repository_url,
             revision,
             uncommitted_diff,
             cursor_path: cursor_path.as_std_path().into(),
-            cursor_position: cursor_excerpt,
+            cursor_position: String::new(),
             edit_history,
             expected_patch: String::new(),
-        })
+        };
+        spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
+        Ok(spec)
     }))
 }
 
 fn compute_cursor_excerpt(
     snapshot: &language::BufferSnapshot,
     cursor_anchor: language::Anchor,
-) -> String {
+) -> (String, usize) {
+    use text::ToOffset as _;
+
     let cursor_point = cursor_anchor.to_point(snapshot);
     let (_editable_range, context_range) =
         editable_and_context_ranges_for_cursor_position(cursor_point, snapshot, 100, 50);
-
     let context_start_offset = context_range.start.to_offset(snapshot);
     let cursor_offset = cursor_anchor.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset.saturating_sub(context_start_offset);
-    let mut excerpt = snapshot.text_for_range(context_range).collect::<String>();
-    if cursor_offset_in_excerpt <= excerpt.len() {
-        excerpt.insert_str(cursor_offset_in_excerpt, zeta_prompt::CURSOR_MARKER);
-    }
-    excerpt
+    let excerpt = snapshot.text_for_range(context_range).collect::<String>();
+    (excerpt, cursor_offset_in_excerpt)
 }
 
 async fn collect_snapshots(
@@ -310,7 +316,8 @@ mod tests {
                 .to_string(),
                 cursor_path: Path::new("project/src/main.rs").into(),
                 cursor_position: indoc! {"
-                    <|user_cursor|>fn main() {
+                    fn main() {
+                    ^[CURSOR_POSITION]
                         // comment 1
                         one();
                         two();
