@@ -193,7 +193,15 @@ impl MetadataCache {
     ) -> Result<Self> {
         let mut cache = MetadataCache::default();
         for result in db.iter(txn)? {
-            let (prompt_id, metadata) = result?;
+            // Fail-open: skip records that can't be decoded (e.g. from a different branch)
+            // rather than failing the entire prompt store initialization.
+            let Ok((prompt_id, metadata)) = result else {
+                log::warn!(
+                    "Skipping unreadable prompt record in database: {:?}",
+                    result.err()
+                );
+                continue;
+            };
             cache.metadata.push(metadata.clone());
             cache.metadata_by_id.insert(prompt_id, metadata);
         }
@@ -677,7 +685,86 @@ mod tests {
         assert_eq!(
             loaded_after_reset.trim(),
             expected_content_after_reset.trim(),
-            "After saving default content, load should return default"
+            "Content should be back to default after saving default content"
+        );
+    }
+
+    /// Test that the prompt store initializes successfully even when the database
+    /// contains records with incompatible/undecodable PromptId keys (e.g., from
+    /// a different branch that used a different serialization format).
+    ///
+    /// This is a regression test for the "fail-open" behavior: we should skip
+    /// bad records rather than failing the entire store initialization.
+    #[gpui::test]
+    async fn test_prompt_store_handles_incompatible_db_records(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("prompts-db-with-bad-records");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        // First, create the DB and write an incompatible record directly.
+        // We simulate a record written by a different branch that used
+        // `{"kind":"CommitMessage"}` instead of `{"kind":"BuiltIn", ...}`.
+        {
+            let db_env = unsafe {
+                heed::EnvOpenOptions::new()
+                    .map_size(1024 * 1024 * 1024)
+                    .max_dbs(4)
+                    .open(&db_path)
+                    .unwrap()
+            };
+
+            let mut txn = db_env.write_txn().unwrap();
+            // Create the metadata.v2 database with raw bytes so we can write
+            // an incompatible key format.
+            let metadata_db: Database<heed::types::Bytes, heed::types::Bytes> = db_env
+                .create_database(&mut txn, Some("metadata.v2"))
+                .unwrap();
+
+            // Write an incompatible PromptId key: `{"kind":"CommitMessage"}`
+            // This is the old/branch format that current code can't decode.
+            let bad_key = br#"{"kind":"CommitMessage"}"#;
+            let dummy_metadata = br#"{"id":{"kind":"CommitMessage"},"title":"Bad Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
+            metadata_db.put(&mut txn, bad_key, dummy_metadata).unwrap();
+
+            // Also write a valid record to ensure we can still read good data.
+            let good_key = br#"{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"}"#;
+            let good_metadata = br#"{"id":{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"},"title":"Good Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
+            metadata_db.put(&mut txn, good_key, good_metadata).unwrap();
+
+            txn.commit().unwrap();
+        }
+
+        // Now try to create a PromptStore from this DB.
+        // With fail-open behavior, this should succeed and skip the bad record.
+        // Without fail-open, this would return an error.
+        let store_result = cx.update(|cx| PromptStore::new(db_path, cx)).await;
+
+        assert!(
+            store_result.is_ok(),
+            "PromptStore should initialize successfully even with incompatible DB records. \
+             Got error: {:?}",
+            store_result.err()
+        );
+
+        let store = cx.new(|_cx| store_result.unwrap());
+
+        // Verify the good record was loaded.
+        let good_id = PromptId::User {
+            uuid: UserPromptId("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()),
+        };
+        let metadata = store.read_with(cx, |store, _| store.metadata(good_id));
+        assert!(
+            metadata.is_some(),
+            "Valid records should still be loaded after skipping bad ones"
+        );
+        assert_eq!(
+            metadata
+                .as_ref()
+                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
+            Some("Good Record"),
+            "Valid record should have correct title"
         );
     }
 }

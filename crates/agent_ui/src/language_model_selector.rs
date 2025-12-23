@@ -20,14 +20,14 @@ use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem}
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
-type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &App) + 'static>;
+type OnToggleFavorite = Arc<dyn Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static>;
 
 pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
+    on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -133,7 +133,7 @@ impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &App) + 'static,
+        on_toggle_favorite: impl Fn(Arc<dyn LanguageModel>, bool, &mut App) + 'static,
         popover_styles: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -248,6 +248,10 @@ impl LanguageModelPickerDelegate {
 
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
         (self.get_active_model)(cx)
+    }
+
+    pub fn favorites_count(&self) -> usize {
+        self.all_models.favorites.len()
     }
 
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -561,7 +565,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let handle_action_click = {
                     let model = model_info.model.clone();
                     let on_toggle_favorite = self.on_toggle_favorite.clone();
-                    move |cx: &App| on_toggle_favorite(model.clone(), !is_favorite, cx)
+                    cx.listener(move |picker, _, window, cx| {
+                        on_toggle_favorite(model.clone(), !is_favorite, cx);
+                        picker.refresh(window, cx);
+                    })
                 };
 
                 Some(

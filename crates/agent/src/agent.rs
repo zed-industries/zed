@@ -1167,10 +1167,6 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn should_render_footer(&self) -> bool {
         true
     }
-
-    fn supports_favorites(&self) -> bool {
-        true
-    }
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {

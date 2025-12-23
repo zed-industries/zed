@@ -151,7 +151,14 @@ impl BatchedTextRun {
                 std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
             )
-            .paint(pos, dimensions.line_height, window, cx);
+            .paint(
+                pos,
+                dimensions.line_height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
     }
 }
 
@@ -1326,8 +1333,14 @@ impl Element for TerminalElement {
                                     }],
                                     None
                                 );
-                                shaped_line
-                                    .paint(ime_position, layout.dimensions.line_height, window, cx)
+                                shaped_line.paint(
+                                    ime_position,
+                                    layout.dimensions.line_height,
+                                    gpui::TextAlign::Left,
+                                    None,
+                                    window,
+                                    cx,
+                                )
                                     .log_err();
                             }
 

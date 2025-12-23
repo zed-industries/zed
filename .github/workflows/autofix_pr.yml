@@ -54,6 +54,10 @@ jobs:
     - name: autofix_pr::run_autofix::run_cargo_fmt
       run: cargo fmt --all
       shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_cargo_fix
+      if: ${{ inputs.run_clippy }}
+      run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged
+      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}
       run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
