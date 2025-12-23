@@ -11,7 +11,7 @@ use ui::{SharedString, Tooltip, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
-    cell_editor::ScrollOffset,
+    selection::ScrollOffset,
     settings::{FontType, VerticalAlignment},
     types::DisplayCellId,
 };

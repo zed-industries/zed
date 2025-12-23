@@ -10,8 +10,9 @@ use crate::{
     ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
     ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
     SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
-    cell_editor::ScrollOffset,
-    selection::{NavigationDirection as ND, NavigationOperation as NO, TableSelection},
+    selection::{
+        NavigationDirection as ND, NavigationOperation as NO, ScrollOffset, TableSelection,
+    },
 };
 
 impl CsvPreviewView {
