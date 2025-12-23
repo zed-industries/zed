@@ -44,6 +44,7 @@ This document outlines the current state of the POC feature. It might not be the
 **Fixes:**
 - [x] fix: Vertical scrolling doesn't work in variable list rendering mode
   - [ ] fix: Variable and Uniform lists have the separate scrolls. TODO: sync them
+  - [ ] fix: VariableList has no scroll bar, and scroll step is different from UniformList
 
 ### Table: Minor UI Tweaks
 
@@ -127,7 +128,15 @@ This document outlines the current state of the POC feature. It might not be the
 - [x] feat: Inline edits (click cell to enter editor mode. Edit text, hit enter, and changes applied to original file)
   - [x] fix: Allow overflow for the editor. Style editor to have background, border and paddings
     - [ ] fix: Add z-index, to be on top of adjacent cells
+    - [ ] fix: Overflow doesn't work correctly if it's set in any child div instead of parent div
+    ```rust
+    // Works correctly
+    div().overflow_hidden().child(div().child(some_child));
+    // Broken: on overflow, few pixels is still visible, is dynamic, depends on overall width of the cell
+    div().child(div().overflow_hidden().child(some_child));
+    ```
 - [ ] feat: Apply ordering settings (permanently write to buffer current rows and columns order)
 - [ ] feat: Paste from clipboard over several cells (parse based on defined separator). Allow only in `AllCells` / `SingleChunk` selection modes
+- [ ] feat: Add edit history with undo/redo
 
 **Fixes:**
