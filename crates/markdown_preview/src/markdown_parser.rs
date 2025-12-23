@@ -269,9 +269,23 @@ impl<'a> MarkdownParser<'a> {
                     text.push('\n');
                 }
 
-                // We want to ignore any inline HTML tags in the text but keep
-                // the text between them
-                Event::InlineHtml(_) => {}
+                Event::InlineHtml(html) => {
+                    let (_, html_range) = self.current().unwrap();
+                    let html_range = html_range.clone();
+
+                    if let Some(image) = self.extract_inline_html_image(&html, html_range) {
+                        if !text.is_empty() {
+                            let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                                source_range: source_range.clone(),
+                                contents: mem::take(&mut text).into(),
+                                highlights: mem::take(&mut highlights),
+                                regions: mem::take(&mut regions),
+                            });
+                            markdown_text_like.push(parsed_regions);
+                        }
+                        markdown_text_like.push(MarkdownParagraphChunk::Image(image));
+                    }
+                }
 
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
@@ -1312,6 +1326,45 @@ impl<'a> MarkdownParser<'a> {
         }
 
         Some(image)
+    }
+
+    fn extract_inline_html_image(&self, html: &str, source_range: Range<usize>) -> Option<Image> {
+        let trimmed = html.trim();
+        if !trimmed.to_lowercase().starts_with("<img") {
+            return None;
+        }
+
+        let bytes = cleanup_html(html);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let dom = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut cursor)
+            .ok()?;
+
+        self.find_image_in_node(&dom.document, source_range)
+    }
+
+    fn find_image_in_node(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<Image> {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if local_name!("img") == name.local {
+                    return self.extract_image(source_range, attrs);
+                }
+            }
+            _ => {}
+        }
+
+        for child in node.children.borrow().iter() {
+            if let Some(image) = self.find_image_in_node(child, source_range.clone()) {
+                return Some(image);
+            }
+        }
+
+        None
     }
 
     fn extract_html_list(
@@ -2618,6 +2671,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_inline_html_image_without_blank_line() {
+        // This is the bug case: <img> after text with no blank line
+        // The newline becomes a soft break (space) before the image
+        let parsed = parse("Some text\n<img src=\"http://example.com/foo.png\" />").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..50,
+                        contents: "Some text ".into(),
+                        highlights: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 10..50,
+                        link: Link::Web {
+                            url: "http://example.com/foo.png".to_string(),
+                        },
+                        alt_text: None,
+                        height: None,
+                        width: None,
+                    }),
+                ])]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
@@ -2902,6 +2985,44 @@ Some other content
                 1,
                 Unordered,
                 vec![p("This is a list item with an inline HTML tag.", 4..44),],
+            ),],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_item_with_inline_html_image() {
+        // Bug report case: <img> tag indented under a list item without blank line
+        let parsed = parse(
+            "\
+- Some list item
+  <img src=\"http://example.com/foo.png\" width=\"100\" />
+",
+        )
+        .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![list_item(
+                0..71,
+                1,
+                Unordered,
+                vec![ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 2..16,
+                        contents: "Some list item ".into(),
+                        highlights: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 19..71,
+                        link: Link::Web {
+                            url: "http://example.com/foo.png".to_string(),
+                        },
+                        alt_text: None,
+                        height: None,
+                        width: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.)))),
+                    }),
+                ])],
             ),],
         );
     }
