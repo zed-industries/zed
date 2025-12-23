@@ -194,7 +194,7 @@ When using `--wait`, the exit code reflects whether the files were saved before 
 
 The `zed terminal` subcommands enable programmatic control of Zed's integrated terminals, allowing external tools, scripts, and AI agents to create, manage, and interact with terminal sessions.
 
-> **Security:** This feature is opt-in and disabled by default. Enable it by adding `"terminal": { "cli_enabled": true }` to your Zed settings (Settings → Open Settings or {#kb zed::OpenSettings}). When enabled, any process running as your user can control terminals—this grants the same access you already have but through a programmatic interface.
+> **Note:** This feature is opt-in and disabled by default. Enable it in Settings > Terminal > CLI, or add `"terminal": { "cli_enabled": true }` to your settings. When enabled, any process running as your user can control terminals—this grants the same access you already have but through a programmatic interface.
 
 ### Environment Variables
 
@@ -242,16 +242,27 @@ zed terminal create --title "Build Server" --env PORT=3000
 Send text input to a terminal.
 
 ```sh
-zed terminal send <id> <text>
+zed terminal send <terminal> <text>
+```
+
+The `<terminal>` argument can be an entity ID or a terminal title.
+
+Examples:
+
+```sh
+zed terminal send 12345 "npm run build"
+zed terminal send "Build Server" "exit"
 ```
 
 #### `zed terminal key`
 
-Send a keystroke to a terminal. Uses Zed's keybinding format (e.g., `enter`, `ctrl-c`, `alt-x`).
+Send a special key to a terminal.
 
 ```sh
-zed terminal key <id> <key>
+zed terminal key <terminal> <key>
 ```
+
+Keys use the same format as Zed keybindings. Modifiers (`ctrl`, `alt`, `shift`) can be combined with `-`. Examples: `enter`, `ctrl-c`, `alt-f`, `ctrl-shift-up`.
 
 Examples:
 
@@ -262,28 +273,30 @@ zed terminal key 12345 ctrl-c
 
 #### `zed terminal read`
 
-Read the current screen content of a terminal. Returns JSON with the visible buffer content.
+Read the current screen content of a terminal.
 
 ```sh
-zed terminal read <id>
+zed terminal read <terminal>
 ```
+
+Returns JSON with `lines` (array of strings), `cursor_row`, and `cursor_col`.
 
 #### `zed terminal list`
 
-List all terminals with their entity IDs and metadata.
+List all terminals with their entity IDs and titles.
 
 ```sh
 zed terminal list
 ```
 
-Returns JSON with a `workspaces` array containing terminal information. The terminal you're running from (if any) is marked with `you_are_here: true`.
+Returns JSON with workspaces containing terminal arrays. The terminal you're running from (if any) is marked with `you_are_here: true`.
 
 #### `zed terminal cwd`
 
 Get the current working directory of a terminal.
 
 ```sh
-zed terminal cwd <id>
+zed terminal cwd <terminal>
 ```
 
 #### `zed terminal idle`
@@ -291,7 +304,7 @@ zed terminal cwd <id>
 Check if a terminal is idle (no running foreground process).
 
 ```sh
-zed terminal idle <id>
+zed terminal idle <terminal>
 ```
 
 Returns JSON with `idle: true/false`.
@@ -301,7 +314,7 @@ Returns JSON with `idle: true/false`.
 Close a terminal.
 
 ```sh
-zed terminal close <id>
+zed terminal close <terminal>
 ```
 
 #### `zed terminal split`
@@ -309,10 +322,16 @@ zed terminal close <id>
 Split a terminal pane in a given direction, creating a new terminal.
 
 ```sh
-zed terminal split <id> --direction <direction>
+zed terminal split <terminal> [--direction <direction>] [--title <title>]
 ```
 
 Directions: `up`, `down`, `left`, `right` (default: `right`)
+
+Example:
+
+```sh
+zed terminal split 12345 --direction right --title "Tests"
+```
 
 #### `zed terminal layout`
 
@@ -333,7 +352,7 @@ zed terminal layout --consolidate      # All in one pane as tabs
 Focus a specific terminal.
 
 ```sh
-zed terminal focus <id>
+zed terminal focus <terminal>
 ```
 
 #### `zed terminal title`
@@ -341,14 +360,36 @@ zed terminal focus <id>
 Set or clear the title override for a terminal.
 
 ```sh
-zed terminal title <id> --set <title>  # Set title
-zed terminal title <id>                 # Clear title override
+zed terminal title <terminal> [--set <title>]
 ```
+
+If `--set` is omitted, clears any title override.
 
 #### `zed terminal move`
 
 Move a terminal to another pane.
 
 ```sh
-zed terminal move <id> --to-pane-of <other-id>
+zed terminal move <terminal> --to-pane-of <other-terminal>
+```
+
+### Example: Automated Build Pipeline
+
+```sh
+#!/bin/bash
+# Create terminals for a development workflow
+
+# Create build terminal
+zed terminal create --title "Build" --cwd ~/project
+BUILD_ID=$(zed terminal list | jq -r '.workspaces[].terminals[] | select(.title=="Build") | .entity_id')
+
+# Create test terminal in same pane
+zed terminal create --title "Tests" --in-pane-of "$BUILD_ID" --no-activate
+
+# Split for logs
+zed terminal split "$BUILD_ID" --direction right --title "Logs"
+
+# Start build
+zed terminal send "Build" "npm run watch"
+zed terminal key "Build" enter
 ```
