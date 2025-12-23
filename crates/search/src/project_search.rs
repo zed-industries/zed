@@ -1988,7 +1988,7 @@ impl Render for ProjectSearchBar {
             return div().into_any_element();
         };
         let search = search.read(cx);
-        let focus_handle = search.focus_handle(cx).clone();
+        let focus_handle = search.focus_handle(cx);
 
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
