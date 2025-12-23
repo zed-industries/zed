@@ -47,8 +47,9 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    Callout, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
+    KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Workspace};
@@ -2038,7 +2039,7 @@ impl AcpThreadView {
                                         }
                                     })
                                     .text_xs()
-                                    .child(editor.clone().into_any_element()),
+                                    .child(editor.clone().into_any_element())
                             )
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
@@ -2154,7 +2155,6 @@ impl AcpThreadView {
                                     if this_is_blank {
                                         return None;
                                     }
-
                                     Some(
                                         self.render_thinking_block(
                                             entry_ix,
@@ -2180,7 +2180,18 @@ impl AcpThreadView {
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(message_body)
+                        .child(
+                            right_click_menu(format!("agent_context_menu-{}", entry_ix))
+                                .trigger(move |_, _, _| message_body)
+                                .menu(move |window, cx| {
+                                    let focus = window.focused(cx);
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.action("Copy", Box::new(markdown::CopyAsMarkdown))
+                                            .when_some(focus, |menu, focus| menu.context(focus))
+                                    })
+                                })
+                                .into_any_element(),
+                        )
                         .into_any()
                 }
             }
