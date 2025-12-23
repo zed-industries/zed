@@ -2263,27 +2263,69 @@ impl EditorElement {
         let mut gutter_statuses = Vec::with_capacity(row_infos.len());
 
         for row_info in row_infos {
-            let status = row_info.diff_status.or_else(|| {
-                let buffer_id = row_info.buffer_id?;
-                let buffer_row = row_info.buffer_row?;
+            let mut hunk_status = row_info.diff_hunk_status;
+            let mut line_status = row_info.diff_status;
+
+            let buffer_row = row_info.buffer_row;
+            let (buffer, diff) = if let (Some(buffer_id), Some(_)) =
+                (row_info.buffer_id, buffer_row)
+            {
                 if last_buffer_id != Some(buffer_id) {
                     last_buffer_id = Some(buffer_id);
                     last_buffer_snapshot = buffer_snapshot.buffer_snapshot_for_id(buffer_id);
                     last_diff = buffer_snapshot.diff_for_buffer_id(buffer_id);
                 }
-                let buffer = last_buffer_snapshot?;
-                let diff = last_diff?;
-                let line = diff.line_for_buffer_row(buffer_row, buffer)?;
-                let kind = if line.paired_line_id.is_some() {
-                    DiffHunkStatusKind::Modified
-                } else {
-                    line.kind
-                };
-                Some(DiffHunkStatus {
-                    kind,
-                    secondary: line.secondary_status,
-                })
-            });
+                (last_buffer_snapshot, last_diff)
+            } else {
+                (None, None)
+            };
+
+            if line_status.is_none() {
+                line_status = buffer
+                    .zip(diff)
+                    .and_then(|(buffer, diff)| {
+                        let buffer_row = buffer_row?;
+                        diff.line_for_buffer_row(buffer_row, buffer).map(|line| DiffHunkStatus {
+                            kind: line.kind,
+                            secondary: line.secondary_status,
+                        })
+                    });
+            }
+            if hunk_status.is_none() {
+                hunk_status = buffer
+                    .zip(diff)
+                    .and_then(|(buffer, diff)| {
+                        let buffer_row = buffer_row?;
+                        let line_end = buffer.line_len(buffer_row);
+                        let start = buffer.anchor_before(Point::new(buffer_row, 0));
+                        let end = buffer.anchor_after(Point::new(buffer_row, line_end));
+                        diff.hunks_intersecting_range(start..end, buffer)
+                            .find(|hunk| {
+                                let start_row = hunk.range.start.row;
+                                let mut end_row = hunk.range.end.row;
+                                if hunk.range.end.column > 0 {
+                                    end_row += 1;
+                                }
+                                buffer_row >= start_row && buffer_row < end_row
+                            })
+                            .map(|hunk| hunk.status())
+                    });
+            }
+
+            let status = match (hunk_status, line_status) {
+                (Some(hunk_status), Some(line_status))
+                    if hunk_status.kind == DiffHunkStatusKind::Modified =>
+                {
+                    Some(DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Modified,
+                        secondary: line_status.secondary,
+                    })
+                }
+                (Some(_), Some(line_status)) => Some(line_status),
+                (Some(hunk_status), None) => Some(hunk_status),
+                (None, Some(line_status)) => Some(line_status),
+                (None, None) => None,
+            };
             gutter_statuses.push(status);
         }
 
@@ -2354,8 +2396,15 @@ impl EditorElement {
                             gutter_hitbox.bounds,
                             hunk,
                         );
+                        let expanded_bounds = Bounds::new(
+                            point(
+                                hunk_bounds.origin.x - hunk_bounds.size.width,
+                                hunk_bounds.origin.y,
+                            ),
+                            size(hunk_bounds.size.width * 2., hunk_bounds.size.height),
+                        );
                         segments.push(GutterDiffSegment {
-                            bounds: hunk_bounds,
+                            bounds: expanded_bounds,
                             status: *status,
                             corner_radii: Corners::all(1. * line_height),
                         });

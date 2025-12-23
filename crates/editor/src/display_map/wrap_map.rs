@@ -1104,6 +1104,7 @@ impl Iterator for WrapRows<'_> {
         let buffer_row = self.input_buffer_row;
         let soft_wrapped = self.soft_wrapped;
         let diff_status = self.input_buffer_row.diff_status;
+        let diff_hunk_status = self.input_buffer_row.diff_hunk_status;
 
         self.output_row += WrapRow(1);
         self.transforms
@@ -1122,6 +1123,7 @@ impl Iterator for WrapRows<'_> {
                 base_text_row: None,
                 multibuffer_row: None,
                 diff_status,
+                diff_hunk_status,
                 expand_info: None,
                 wrapped_buffer_row: buffer_row.buffer_row,
             }
