@@ -7682,7 +7682,27 @@ impl Iterator for MultiBufferRows<'_> {
         let buffer_point = region.buffer_range.start + overshoot;
         let diff_status = region
             .diff_hunk_status
-            .filter(|_| self.point < region.range.end);
+            .filter(|_| self.point < region.range.end)
+            .and_then(|status| {
+                self.cursor
+                    .snapshot
+                    .diffs
+                    .get(&region.excerpt.buffer_id)
+                    .and_then(|diff| {
+                        if region.is_main_buffer {
+                            diff.line_status_for_buffer_row(
+                                buffer_point.row,
+                                &region.excerpt.buffer.text,
+                            )
+                        } else {
+                            diff.line_status_for_base_row(
+                                buffer_point.row,
+                                &region.excerpt.buffer.text,
+                            )
+                        }
+                    })
+                    .or(Some(status))
+            });
         let base_text_row = match diff_status {
             // TODO(split-diff) perf
             None => self

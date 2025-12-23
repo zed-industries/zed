@@ -77,7 +77,7 @@ use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::Fil
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{BufferDiff, DiffHunkStatus};
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
@@ -19786,7 +19786,11 @@ impl Editor {
             .map(|s| s.range())
             .collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, ranges, cx);
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.stage_or_unstage_diff_lines(stage, ranges, cx);
+        } else {
+            self.stage_or_unstage_diff_hunks(stage, ranges, cx);
+        }
     }
 
     pub fn set_render_diff_hunk_controls(
@@ -19832,6 +19836,142 @@ impl Editor {
                     .chunk_by(|hunk| hunk.buffer_id);
                 for (buffer_id, hunks) in &chunk_by {
                     this.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn stage_or_unstage_diff_lines(
+        &mut self,
+        stage: bool,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |this, cx| {
+                let (lines_by_buffer, buffer_info) = {
+                    let multibuffer = this.buffer.read(cx);
+                    let snapshot = multibuffer.snapshot(cx);
+                    let mut lines_by_buffer: HashMap<BufferId, HashMap<usize, buffer_diff::DiffLine>> =
+                        HashMap::default();
+                    let mut buffer_info: HashMap<
+                        BufferId,
+                        (Entity<BufferDiff>, text::BufferSnapshot, bool),
+                    > = HashMap::default();
+
+                    let selection_rows_for_range =
+                        |range: Range<Point>| -> Range<MultiBufferRow> {
+                            let start_row = range.start.row;
+                            let mut end_row = range.end.row;
+                            if range.start == range.end {
+                                end_row = start_row;
+                            } else if range.end.column == 0 && end_row > start_row {
+                                end_row -= 1;
+                            }
+                            let end_row = end_row.saturating_add(1);
+                            MultiBufferRow(start_row)..MultiBufferRow(end_row)
+                        };
+
+                    for range in ranges {
+                        let selection_rows = selection_rows_for_range(range.clone().to_point(&snapshot));
+                        for hunk in snapshot.diff_hunks_in_range(range) {
+                            let hunk_rows = hunk.row_range.clone();
+                            let start_row = if selection_rows.start > hunk_rows.start {
+                                selection_rows.start
+                            } else {
+                                hunk_rows.start
+                            };
+                            let end_row = if selection_rows.end < hunk_rows.end {
+                                selection_rows.end
+                            } else {
+                                hunk_rows.end
+                            };
+                            if start_row >= end_row {
+                                continue;
+                            }
+
+                            let row_range = start_row..end_row;
+                            let mut row_infos = snapshot.row_infos(row_range.start);
+                            for _ in 0..row_range.len() {
+                                let Some(row_info) = row_infos.next() else {
+                                    break;
+                                };
+                                let Some(diff_status) = row_info.diff_status else {
+                                    continue;
+                                };
+                                let Some(buffer_id) = row_info.buffer_id else {
+                                    continue;
+                                };
+                                let Some(buffer_row) = row_info.buffer_row else {
+                                    continue;
+                                };
+                                let Some(diff_snapshot) = snapshot.diff_for_buffer_id(buffer_id) else {
+                                    continue;
+                                };
+
+                                if let std::collections::hash_map::Entry::Vacant(entry) =
+                                    buffer_info.entry(buffer_id)
+                                {
+                                    let Some(buffer_entity) = multibuffer.buffer(buffer_id) else {
+                                        continue;
+                                    };
+                                    let buffer_snapshot = buffer_entity.read(cx).snapshot();
+                                    let Some(diff) = multibuffer.diff_for(buffer_id) else {
+                                        continue;
+                                    };
+                                    let file_exists = buffer_snapshot
+                                        .file()
+                                        .is_some_and(|file| file.disk_state().exists());
+                                    entry.insert((diff, buffer_snapshot.text.clone(), file_exists));
+                                }
+
+                                let Some((_, buffer_text, _)) = buffer_info.get(&buffer_id) else {
+                                    continue;
+                                };
+
+                                let line = if diff_status.is_deleted() {
+                                    diff_snapshot.line_for_base_row(buffer_row, buffer_text)
+                                } else {
+                                    diff_snapshot.line_for_buffer_row(buffer_row, buffer_text)
+                                };
+                                if let Some(line) = line {
+                                    lines_by_buffer
+                                        .entry(buffer_id)
+                                        .or_default()
+                                        .insert(line.id, line);
+                                }
+                            }
+                        }
+                    }
+
+                    let lines_by_buffer: HashMap<BufferId, Vec<buffer_diff::DiffLine>> =
+                        lines_by_buffer
+                            .into_iter()
+                            .map(|(buffer_id, lines)| {
+                                (buffer_id, lines.into_values().collect::<Vec<_>>())
+                            })
+                            .collect();
+
+                    (lines_by_buffer, buffer_info)
+                };
+
+                for (buffer_id, lines) in lines_by_buffer {
+                    let Some((diff, buffer_text, file_exists)) = buffer_info.get(&buffer_id)
+                    else {
+                        continue;
+                    };
+                    diff.update(cx, |diff, cx| {
+                        diff.stage_or_unstage_lines(
+                            stage,
+                            &lines,
+                            buffer_text,
+                            *file_exists,
+                            cx,
+                        );
+                    });
                 }
             })
         })
