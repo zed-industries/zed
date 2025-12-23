@@ -1,6 +1,6 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu,
-    ElementId, IconButton, IconName, IconPosition, IconSize, IntoElement as _, ParentElement as _,
+    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
+    IconButton, IconName, IconPosition, IconSize, IntoElement as _, ParentElement as _,
     PopoverMenu, Styled as _, Tooltip, Window, div, h_flex,
 };
 
@@ -64,8 +64,7 @@ pub(crate) enum CopyMode {
     Data,
 }
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
@@ -76,8 +75,8 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) show_debug_info: bool,
     pub(crate) show_perf_metrics_overlay: bool,
     pub(crate) show_cell_editor_row: bool,
+    pub(crate) multiline_cells_enabled: bool,
 }
-
 
 ///// Settings related /////
 impl CsvPreviewView {
@@ -121,6 +120,7 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.rendering_with = RowRenderMechanism::VariableList;
+                        this.settings.multiline_cells_enabled = true;
                         cx.notify();
                     });
                 }
@@ -130,6 +130,7 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.rendering_with = RowRenderMechanism::UniformList;
+                        this.settings.multiline_cells_enabled = false; // Uniform list doesn't support multiline properly
                         cx.notify();
                     });
                 }
