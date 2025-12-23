@@ -1,12 +1,14 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use extension::{ExtensionHostProxy, ExtensionTerminalProxy};
 use futures::StreamExt;
-use gpui::{App, AsyncApp, BackgroundExecutor, Entity, Task, WeakEntity};
+use gpui::{App, AsyncApp, BackgroundExecutor, Entity, Keystroke, Task, WeakEntity};
 use project::Project;
 use task::SpawnInTerminal;
 use terminal::Terminal;
+use terminal::mappings::keys::to_esc_str;
 
 type MainThreadSender = futures::channel::mpsc::UnboundedSender<MainThreadCall>;
 type MainThreadCall =
@@ -265,33 +267,34 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                                     })?;
 
                                 if let Some(terminal) = weak_terminal.upgrade() {
-                                    // Convert key names to terminal escape sequences
-                                    let bytes = match key.to_lowercase().as_str() {
-                                        "enter" | "return" => vec![b'\r'],
-                                        "tab" => vec![b'\t'],
-                                        "escape" | "esc" => vec![0x1b],
-                                        "backspace" => vec![0x7f],
-                                        "delete" => vec![0x1b, b'[', b'3', b'~'],
-                                        "up" => vec![0x1b, b'[', b'A'],
-                                        "down" => vec![0x1b, b'[', b'B'],
-                                        "right" => vec![0x1b, b'[', b'C'],
-                                        "left" => vec![0x1b, b'[', b'D'],
-                                        "home" => vec![0x1b, b'[', b'H'],
-                                        "end" => vec![0x1b, b'[', b'F'],
-                                        "pageup" => vec![0x1b, b'[', b'5', b'~'],
-                                        "pagedown" => vec![0x1b, b'[', b'6', b'~'],
-                                        "ctrl-c" => vec![0x03],
-                                        "ctrl-d" => vec![0x04],
-                                        "ctrl-z" => vec![0x1a],
-                                        "ctrl-l" => vec![0x0c],
-                                        "ctrl-a" => vec![0x01],
-                                        "ctrl-e" => vec![0x05],
-                                        "ctrl-k" => vec![0x0b],
-                                        "ctrl-u" => vec![0x15],
-                                        "ctrl-w" => vec![0x17],
-                                        // Unknown key - send as raw bytes
-                                        _ => key.as_bytes().to_vec(),
+                                    let key_normalized = match key.to_lowercase().as_str() {
+                                        "esc" => "escape".to_string(),
+                                        "return" => "enter".to_string(),
+                                        _ => key,
                                     };
+
+                                    let keystroke = match Keystroke::parse(&key_normalized) {
+                                        Ok(ks) => ks,
+                                        Err(_) => {
+                                            terminal.update(cx, |terminal, _cx| {
+                                                terminal.input(key_normalized.as_bytes().to_vec());
+                                            });
+                                            return Ok(());
+                                        }
+                                    };
+
+                                    let term_mode = terminal.read(cx).last_content().mode;
+                                    let esc_seq = to_esc_str(&keystroke, &term_mode, true);
+
+                                    let bytes = if let Some(cow_str) = esc_seq {
+                                        match cow_str {
+                                            Cow::Borrowed(s) => s.as_bytes().to_vec(),
+                                            Cow::Owned(s) => s.into_bytes(),
+                                        }
+                                    } else {
+                                        keystroke.key.as_bytes().to_vec()
+                                    };
+
                                     terminal.update(cx, |terminal, _cx| {
                                         terminal.input(bytes);
                                     });
