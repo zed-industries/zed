@@ -1162,11 +1162,12 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
-        self.set_preview_item_id(None, cx);
+        self.preview_item_id = None;
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
         self.active_item_index = prev_active_item_index;
+        self.nav_history.0.lock().preview_item_id = None;
 
         if item_idx < self.items.len() {
             Some(item_idx)
@@ -2131,7 +2132,6 @@ impl Pane {
         item.deactivated(window, cx);
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
-
         self.unpreview_item_if_preview(item.item_id());
 
         if let Some(path) = item.project_path(cx) {
