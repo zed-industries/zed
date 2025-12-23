@@ -568,49 +568,43 @@ impl Render for ImageView {
                                 canvas(
                                     |_, _, _| {},
                                     move |bounds, _, window, _cx| {
-                                        let square_size: f32 = 12.0 * zoom_level;
-
                                         let bounds_x: f32 = bounds.origin.x.into();
                                         let bounds_y: f32 = bounds.origin.y.into();
                                         let bounds_width: f32 = bounds.size.width.into();
                                         let bounds_height: f32 = bounds.size.height.into();
 
-                                        let start_col =
-                                            ((0.0_f32).max(-bounds_x) / square_size).floor() as i32;
-                                        let end_col = ((bounds_width / square_size).ceil() as i32)
-                                            .min(((bounds_width) / square_size).ceil() as i32 + 1);
-                                        let start_row =
-                                            ((0.0_f32).max(-bounds_y) / square_size).floor() as i32;
-                                        let end_row = ((bounds_height / square_size).ceil() as i32)
-                                            .min(((bounds_height) / square_size).ceil() as i32 + 1);
+                                        // muchh larger squares
+                                        let square_size = 48.0 * zoom_level;
 
-                                        for row in start_row..end_row {
-                                            for col in start_col..end_col {
+                                        let cols = (bounds_width / square_size).ceil() as i32 + 1;
+                                        let rows = (bounds_height / square_size).ceil() as i32 + 1;
+
+                                        for row in 0..rows {
+                                            for col in 0..cols {
+                                                if (row + col) % 2 == 0 {
+                                                    continue; // skipping alternate squares
+                                                }
+
                                                 let x = bounds_x + col as f32 * square_size;
                                                 let y = bounds_y + row as f32 * square_size;
 
-                                                let square_width =
+                                                // clamp to bounds
+                                                let w =
                                                     square_size.min(bounds_x + bounds_width - x);
-                                                let square_height =
+                                                let h =
                                                     square_size.min(bounds_y + bounds_height - y);
 
-                                                if square_width <= 0.0 || square_height <= 0.0 {
-                                                    continue;
+                                                if w > 0.0 && h > 0.0 {
+                                                    let rect = Bounds::new(
+                                                        point(px(x), px(y)),
+                                                        size(px(w), px(h)),
+                                                    );
+
+                                                    window.paint_quad(gpui::fill(
+                                                        rect,
+                                                        opaque_grey(0.6, 1.0),
+                                                    ));
                                                 }
-
-                                                let rect = Bounds::new(
-                                                    point(px(x), px(y)),
-                                                    size(px(square_width), px(square_height)),
-                                                );
-
-                                                let is_light = (row + col) % 2 == 0;
-                                                let color = if is_light {
-                                                    opaque_grey(0.8, 1.0)
-                                                } else {
-                                                    opaque_grey(0.6, 1.0)
-                                                };
-
-                                                window.paint_quad(gpui::fill(rect, color));
                                             }
                                         }
 
