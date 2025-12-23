@@ -4,6 +4,7 @@
 **/venv
 **/.direnv
 *.wasm
+*.cwasm
 *.xcodeproj
 .DS_Store
 .blob_store
