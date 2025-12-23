@@ -2352,6 +2352,69 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
     None
 }
 
+const BRACKET_PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+fn get_bracket_pair(ch: char) -> Option<(char, char, bool)> {
+    for (open, close) in BRACKET_PAIRS {
+        if ch == open {
+            return Some((open, close, true));
+        }
+        if ch == close {
+            return Some((open, close, false));
+        }
+    }
+    None
+}
+
+fn find_matching_bracket_text_based(
+    map: &DisplaySnapshot,
+    offset: MultiBufferOffset,
+    line_range: Range<MultiBufferOffset>,
+) -> Option<MultiBufferOffset> {
+    let mut bracket_info = None;
+
+    for (ch, char_offset) in map.buffer_chars_at(offset) {
+        if char_offset >= line_range.end {
+            break;
+        }
+        if let Some(info) = get_bracket_pair(ch) {
+            bracket_info = Some((info, char_offset));
+            break;
+        }
+    }
+
+    let (open, close, is_opening) = bracket_info?.0;
+    let bracket_offset = bracket_info?.1;
+
+    if is_opening {
+        let mut depth = 0i32;
+        for (ch, char_offset) in map.buffer_chars_at(bracket_offset) {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    } else {
+        let mut depth = 0i32;
+        for (ch, char_offset) in map.reverse_buffer_chars_at(bracket_offset + close.len_utf8()) {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     if !map.is_singleton() {
         return display_point;
@@ -2447,9 +2510,17 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
+            .unwrap_or_else(|| {
+                find_matching_bracket_text_based(map, offset, line_range)
+                    .map(|o| o.to_display_point(map))
+                    .unwrap_or(display_point)
+            })
     } else {
-        display_point
+        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+            ..line_range.end.to_offset(&map.buffer_snapshot());
+        find_matching_bracket_text_based(map, offset, line_range)
+            .map(|o| o.to_display_point(map))
+            .unwrap_or(display_point)
     }
 }
 
