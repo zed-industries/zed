@@ -5,10 +5,10 @@ use std::{
     str::FromStr,
 };
 
-use editor::Editor;
+use editor::{Editor, actions::MoveDown, actions::MoveUp};
 use gpui::{
     ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
-    TextStyleRefinement,
+    TextStyleRefinement, WeakEntity,
 };
 
 use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
@@ -238,12 +238,14 @@ impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
 impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 impl_numeric_stepper_nonzero_int!(NonZero<usize>, usize);
 
-#[derive(RegisterComponent)]
-pub struct NumberField<T = usize> {
+#[derive(IntoElement, RegisterComponent)]
+pub struct NumberField<T: NumberFieldType = usize> {
     id: ElementId,
     value: T,
     focus_handle: FocusHandle,
     mode: Entity<NumberFieldMode>,
+    /// Stores a weak reference to the editor when in edit mode, so buttons can update its text
+    edit_editor: Entity<Option<WeakEntity<Editor>>>,
     format: Box<dyn FnOnce(&T) -> String>,
     large_step: T,
     small_step: T,
@@ -259,15 +261,17 @@ impl<T: NumberFieldType> NumberField<T> {
     pub fn new(id: impl Into<ElementId>, value: T, window: &mut Window, cx: &mut App) -> Self {
         let id = id.into();
 
-        let (mode, focus_handle) = window.with_id(id.clone(), |window| {
+        let (mode, focus_handle, edit_editor) = window.with_id(id.clone(), |window| {
             let mode = window.use_state(cx, |_, _| NumberFieldMode::default());
             let focus_handle = window.use_state(cx, |_, cx| cx.focus_handle());
-            (mode, focus_handle)
+            let edit_editor = window.use_state(cx, |_, _| None);
+            (mode, focus_handle, edit_editor)
         });
 
         Self {
             id,
             mode,
+            edit_editor,
             value,
             focus_handle: focus_handle.read(cx).clone(),
             format: Box::new(T::default_format),
@@ -336,17 +340,16 @@ impl<T: NumberFieldType> NumberField<T> {
     }
 }
 
-impl<T: NumberFieldType> IntoElement for NumberField<T> {
-    type Element = gpui::Component<Self>;
-
-    fn into_element(self) -> Self::Element {
-        gpui::Component::new(self)
-    }
+#[derive(Clone, Copy)]
+enum ValueChangeDirection {
+    Increment,
+    Decrement,
 }
 
 impl<T: NumberFieldType> RenderOnce for NumberField<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut tab_index = self.tab_index;
+        let is_edit_mode = matches!(*self.mode.read(cx), NumberFieldMode::Edit);
 
         let get_step = {
             let large_step = self.large_step;
@@ -361,6 +364,67 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                     step
                 }
             }
+        };
+
+        let clamp_value = {
+            let min = self.min_value;
+            let max = self.max_value;
+            move |value: T| -> T {
+                if value < min {
+                    min
+                } else if value > max {
+                    max
+                } else {
+                    value
+                }
+            }
+        };
+
+        let change_value = {
+            move |current: T, step: T, direction: ValueChangeDirection| -> T {
+                let new_value = match direction {
+                    ValueChangeDirection::Increment => current.saturating_add(step),
+                    ValueChangeDirection::Decrement => current.saturating_sub(step),
+                };
+                clamp_value(new_value)
+            }
+        };
+
+        let get_current_value = {
+            let value = self.value;
+            let edit_editor = self.edit_editor.clone();
+
+            Rc::new(move |cx: &App| -> T {
+                if !is_edit_mode {
+                    return value;
+                }
+                edit_editor
+                    .read(cx)
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                    .and_then(|editor| editor.read(cx).text(cx).parse::<T>().ok())
+                    .unwrap_or(value)
+            })
+        };
+
+        let update_editor_text = {
+            let edit_editor = self.edit_editor.clone();
+
+            Rc::new(move |new_value: T, window: &mut Window, cx: &mut App| {
+                if !is_edit_mode {
+                    return;
+                }
+                let Some(editor) = edit_editor
+                    .read(cx)
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                else {
+                    return;
+                };
+                editor.update(cx, |editor, cx| {
+                    editor.set_text(format!("{}", new_value), window, cx);
+                });
+            })
         };
 
         let bg_color = cx.theme().colors().surface_background;
@@ -403,13 +467,20 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 h_flex()
                     .map(|decrement| {
                         let decrement_handler = {
-                            let value = self.value;
                             let on_change = self.on_change.clone();
-                            let min = self.min_value;
+                            let get_current_value = get_current_value.clone();
+                            let update_editor_text = update_editor_text.clone();
+
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let current_value = get_current_value(cx);
                                 let step = get_step(click.modifiers());
-                                let new_value = value.saturating_sub(step);
-                                let new_value = if new_value < min { min } else { new_value };
+                                let new_value = change_value(
+                                    current_value,
+                                    step,
+                                    ValueChangeDirection::Decrement,
+                                );
+
+                                update_editor_text(new_value, window, cx);
                                 on_change(&new_value, window, cx);
                             }
                         };
@@ -446,18 +517,10 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     .justify_center()
                                     .child(Label::new((self.format)(&self.value)))
                                     .into_any_element(),
-                                // Edit mode is disabled until we implement center text alignment for editor
-                                // mode.write(cx, NumberFieldMode::Edit);
-                                //
-                                // When we get to making Edit mode work, we shouldn't even focus the decrement/increment buttons.
-                                // Focus should go instead straight to the editor, avoiding any double-step focus.
-                                // In this world, the buttons become a mouse-only interaction, given users should be able
-                                // to do everything they'd do with the buttons straight in the editor anyway.
                                 NumberFieldMode::Edit => h_flex()
                                     .flex_1()
                                     .child(window.use_state(cx, {
                                         |window, cx| {
-                                            let previous_focus_handle = window.focused(cx);
                                             let mut editor = Editor::single_line(window, cx);
 
                                             editor.set_text_style_refinement(TextStyleRefinement {
@@ -466,28 +529,85 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                             });
 
                                             editor.set_text(format!("{}", self.value), window, cx);
+
+                                            let editor_weak = cx.entity().downgrade();
+
+                                            self.edit_editor.update(cx, |state, _| {
+                                                *state = Some(editor_weak);
+                                            });
+
+                                            editor
+                                                .register_action::<MoveUp>({
+                                                    let on_change = self.on_change.clone();
+                                                    let editor_handle = cx.entity().downgrade();
+                                                    move |_, window, cx| {
+                                                        let Some(editor) = editor_handle.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        editor.update(cx, |editor, cx| {
+                                                            if let Ok(current_value) =
+                                                                editor.text(cx).parse::<T>()
+                                                            {
+                                                                let step =
+                                                                    get_step(window.modifiers());
+                                                                let new_value = change_value(
+                                                                    current_value,
+                                                                    step,
+                                                                    ValueChangeDirection::Increment,
+                                                                );
+                                                                editor.set_text(
+                                                                    format!("{}", new_value),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                                on_change(&new_value, window, cx);
+                                                            }
+                                                        });
+                                                    }
+                                                })
+                                                .detach();
+
+                                            editor
+                                                .register_action::<MoveDown>({
+                                                    let on_change = self.on_change.clone();
+                                                    let editor_handle = cx.entity().downgrade();
+                                                    move |_, window, cx| {
+                                                        let Some(editor) = editor_handle.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        editor.update(cx, |editor, cx| {
+                                                            if let Ok(current_value) =
+                                                                editor.text(cx).parse::<T>()
+                                                            {
+                                                                let step =
+                                                                    get_step(window.modifiers());
+                                                                let new_value = change_value(
+                                                                    current_value,
+                                                                    step,
+                                                                    ValueChangeDirection::Decrement,
+                                                                );
+                                                                editor.set_text(
+                                                                    format!("{}", new_value),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                                on_change(&new_value, window, cx);
+                                                            }
+                                                        });
+                                                    }
+                                                })
+                                                .detach();
+
                                             cx.on_focus_out(&editor.focus_handle(cx), window, {
                                                 let mode = self.mode.clone();
-                                                let min = self.min_value;
-                                                let max = self.max_value;
                                                 let on_change = self.on_change.clone();
                                                 move |this, _, window, cx| {
-                                                    if let Ok(new_value) =
+                                                    if let Ok(parsed_value) =
                                                         this.text(cx).parse::<T>()
                                                     {
-                                                        let new_value = if new_value < min {
-                                                            min
-                                                        } else if new_value > max {
-                                                            max
-                                                        } else {
-                                                            new_value
-                                                        };
-
-                                                        if let Some(previous) =
-                                                            previous_focus_handle.as_ref()
-                                                        {
-                                                            window.focus(previous, cx);
-                                                        }
+                                                        let new_value = clamp_value(parsed_value);
                                                         on_change(&new_value, window, cx);
                                                     };
                                                     mode.write(cx, NumberFieldMode::Read);
@@ -510,13 +630,20 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                     )
                     .map(|increment| {
                         let increment_handler = {
-                            let value = self.value;
                             let on_change = self.on_change.clone();
-                            let max = self.max_value;
+                            let get_current_value = get_current_value.clone();
+                            let update_editor_text = update_editor_text.clone();
+
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let current_value = get_current_value(cx);
                                 let step = get_step(click.modifiers());
-                                let new_value = value.saturating_add(step);
-                                let new_value = if new_value > max { max } else { new_value };
+                                let new_value = change_value(
+                                    current_value,
+                                    step,
+                                    ValueChangeDirection::Increment,
+                                );
+
+                                update_editor_text(new_value, window, cx);
                                 on_change(&new_value, window, cx);
                             }
                         };
@@ -551,48 +678,40 @@ impl Component for NumberField<usize> {
         "Number Field"
     }
 
-    fn sort_name() -> &'static str {
-        Self::name()
-    }
-
     fn description() -> Option<&'static str> {
         Some("A numeric input element with increment and decrement buttons.")
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let stepper_example = window.use_state(cx, |_, _| 100.0);
+        let default_ex = window.use_state(cx, |_, _| 100.0);
+        let edit_ex = window.use_state(cx, |_, _| 500.0);
 
         Some(
             v_flex()
                 .gap_6()
                 .children(vec![
                     single_example(
-                        "Default Number Field",
-                        NumberField::new("number-field", *stepper_example.read(cx), window, cx)
+                        "Button-Only Number Field",
+                        NumberField::new("number-field", *default_ex.read(cx), window, cx)
                             .on_change({
-                                let stepper_example = stepper_example.clone();
-                                move |value, _, cx| stepper_example.write(cx, *value)
+                                let default_ex = default_ex.clone();
+                                move |value, _, cx| default_ex.write(cx, *value)
                             })
                             .min(1.0)
                             .max(100.0)
                             .into_any_element(),
                     ),
                     single_example(
-                        "Read-Only Number Field",
-                        NumberField::new(
-                            "editable-number-field",
-                            *stepper_example.read(cx),
-                            window,
-                            cx,
-                        )
-                        .on_change({
-                            let stepper_example = stepper_example.clone();
-                            move |value, _, cx| stepper_example.write(cx, *value)
-                        })
-                        .min(1.0)
-                        .max(100.0)
-                        .mode(NumberFieldMode::Edit, cx)
-                        .into_any_element(),
+                        "Editable Number Field",
+                        NumberField::new("editable-number-field", *edit_ex.read(cx), window, cx)
+                            .on_change({
+                                let edit_ex = edit_ex.clone();
+                                move |value, _, cx| edit_ex.write(cx, *value)
+                            })
+                            .min(100.0)
+                            .max(500.0)
+                            .mode(NumberFieldMode::Edit, cx)
+                            .into_any_element(),
                     ),
                 ])
                 .into_any_element(),

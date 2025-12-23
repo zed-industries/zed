@@ -1468,24 +1468,28 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             action.range.replace(range.clone());
             Some(Box::new(action))
         }),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).filename(|_, filename| {
-            Some(
-                VimSplit {
-                    vertical: false,
-                    filename,
-                }
-                .boxed_clone(),
-            )
-        }),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical).filename(|_, filename| {
-            Some(
-                VimSplit {
-                    vertical: true,
-                    filename,
-                }
-                .boxed_clone(),
-            )
-        }),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal::default()).filename(
+            |_, filename| {
+                Some(
+                    VimSplit {
+                        vertical: false,
+                        filename,
+                    }
+                    .boxed_clone(),
+                )
+            },
+        ),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical::default()).filename(
+            |_, filename| {
+                Some(
+                    VimSplit {
+                        vertical: true,
+                        filename,
+                    }
+                    .boxed_clone(),
+                )
+            },
+        ),
         VimCommand::new(("tabe", "dit"), workspace::NewFile)
             .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
         VimCommand::new(("tabnew", ""), workspace::NewFile)

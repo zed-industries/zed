@@ -35,6 +35,7 @@ use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
+use text::Edit;
 use workspace::Workspace;
 
 use std::ops::Range;
@@ -57,9 +58,9 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-#[cfg(any(test, feature = "test-support", feature = "cli-support"))]
 pub mod udiff;
 
+mod capture_example;
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
@@ -74,6 +75,7 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -231,8 +233,15 @@ pub struct EditPredictionFinishedDebugEvent {
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
+/// An event with associated metadata for reconstructing buffer state.
+#[derive(Clone)]
+pub struct StoredEvent {
+    pub event: Arc<zeta_prompt::Event>,
+    pub old_snapshot: TextBufferSnapshot,
+}
+
 struct ProjectState {
-    events: VecDeque<Arc<zeta_prompt::Event>>,
+    events: VecDeque<StoredEvent>,
     last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -248,7 +257,7 @@ struct ProjectState {
 }
 
 impl ProjectState {
-    pub fn events(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
+    pub fn events(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
             .cloned()
@@ -260,7 +269,7 @@ impl ProjectState {
             .collect()
     }
 
-    pub fn events_split_by_pause(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
+    pub fn events_split_by_pause(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
             .cloned()
@@ -415,7 +424,7 @@ impl LastEvent {
         &self,
         license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
         cx: &App,
-    ) -> Option<Arc<zeta_prompt::Event>> {
+    ) -> Option<StoredEvent> {
         let path = buffer_path_with_id_fallback(self.new_file.as_ref(), &self.new_snapshot, cx);
         let old_path = buffer_path_with_id_fallback(self.old_file.as_ref(), &self.old_snapshot, cx);
 
@@ -430,19 +439,22 @@ impl LastEvent {
                     })
                 });
 
-        let diff = language::unified_diff(&self.old_snapshot.text(), &self.new_snapshot.text());
+        let diff = compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
 
         if path == old_path && diff.is_empty() {
             None
         } else {
-            Some(Arc::new(zeta_prompt::Event::BufferChange {
-                old_path,
-                path,
-                diff,
-                in_open_source_repo,
-                // TODO: Actually detect if this edit was predicted or not
-                predicted: false,
-            }))
+            Some(StoredEvent {
+                event: Arc::new(zeta_prompt::Event::BufferChange {
+                    old_path,
+                    path,
+                    diff,
+                    in_open_source_repo,
+                    // TODO: Actually detect if this edit was predicted or not
+                    predicted: false,
+                }),
+                old_snapshot: self.old_snapshot.clone(),
+            })
         }
     }
 
@@ -473,6 +485,52 @@ impl LastEvent {
 
         (before, Some(after))
     }
+}
+
+pub(crate) fn compute_diff_between_snapshots(
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+) -> Option<String> {
+    let edits: Vec<Edit<usize>> = new_snapshot
+        .edits_since::<usize>(&old_snapshot.version)
+        .collect();
+
+    let (first_edit, last_edit) = edits.first().zip(edits.last())?;
+
+    let old_start_point = old_snapshot.offset_to_point(first_edit.old.start);
+    let old_end_point = old_snapshot.offset_to_point(last_edit.old.end);
+    let new_start_point = new_snapshot.offset_to_point(first_edit.new.start);
+    let new_end_point = new_snapshot.offset_to_point(last_edit.new.end);
+
+    const CONTEXT_LINES: u32 = 3;
+
+    let old_context_start_row = old_start_point.row.saturating_sub(CONTEXT_LINES);
+    let new_context_start_row = new_start_point.row.saturating_sub(CONTEXT_LINES);
+    let old_context_end_row =
+        (old_end_point.row + 1 + CONTEXT_LINES).min(old_snapshot.max_point().row);
+    let new_context_end_row =
+        (new_end_point.row + 1 + CONTEXT_LINES).min(new_snapshot.max_point().row);
+
+    let old_start_line_offset = old_snapshot.point_to_offset(Point::new(old_context_start_row, 0));
+    let new_start_line_offset = new_snapshot.point_to_offset(Point::new(new_context_start_row, 0));
+    let old_end_line_offset = old_snapshot
+        .point_to_offset(Point::new(old_context_end_row + 1, 0).min(old_snapshot.max_point()));
+    let new_end_line_offset = new_snapshot
+        .point_to_offset(Point::new(new_context_end_row + 1, 0).min(new_snapshot.max_point()));
+    let old_edit_range = old_start_line_offset..old_end_line_offset;
+    let new_edit_range = new_start_line_offset..new_end_line_offset;
+
+    let old_region_text: String = old_snapshot.text_for_range(old_edit_range).collect();
+    let new_region_text: String = new_snapshot.text_for_range(new_edit_range).collect();
+
+    let diff = language::unified_diff_with_offsets(
+        &old_region_text,
+        &new_region_text,
+        old_context_start_row,
+        new_context_start_row,
+    );
+
+    Some(diff)
 }
 
 fn buffer_path_with_id_fallback(
@@ -643,7 +701,7 @@ impl EditPredictionStore {
         &self,
         project: &Entity<Project>,
         cx: &App,
-    ) -> Vec<Arc<zeta_prompt::Event>> {
+    ) -> Vec<StoredEvent> {
         self.projects
             .get(&project.entity_id())
             .map(|project_state| project_state.events(cx))
@@ -654,7 +712,7 @@ impl EditPredictionStore {
         &self,
         project: &Entity<Project>,
         cx: &App,
-    ) -> Vec<Arc<zeta_prompt::Event>> {
+    ) -> Vec<StoredEvent> {
         self.projects
             .get(&project.entity_id())
             .map(|project_state| project_state.events_split_by_pause(cx))
@@ -1536,8 +1594,10 @@ impl EditPredictionStore {
 
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
-        let events = project_state.events(cx);
-        let has_events = !events.is_empty();
+        let stored_events = project_state.events(cx);
+        let has_events = !stored_events.is_empty();
+        let events: Vec<Arc<zeta_prompt::Event>> =
+            stored_events.into_iter().map(|e| e.event).collect();
         let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();

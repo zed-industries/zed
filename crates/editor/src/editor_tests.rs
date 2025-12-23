@@ -18346,7 +18346,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             "Some other server name".into(),
             LspSettings {
                 binary: None,
@@ -18367,7 +18367,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18388,7 +18388,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -18409,7 +18409,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     );
 
     update_test_project_settings(cx, |project_settings| {
-        project_settings.lsp.insert(
+        project_settings.lsp.0.insert(
             language_server_name.into(),
             LspSettings {
                 binary: None,
@@ -29599,6 +29599,17 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [x] completed task
+        - [ ] ˇ
+    "});
+
+    // Case 2.1: Works with uppercase checked marker too
+    cx.set_state(indoc! {"
+        - [X] completed taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [X] completed task
         - [ ] ˇ
     "});
 

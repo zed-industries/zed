@@ -22,7 +22,7 @@ rewrap_prefixes = [
 ]
 unordered_list = ["- ", "* ", "+ "]
 ordered_list = [{ pattern = "(\\d+)\\. ", format = "{1}. " }]
-task_list = { prefixes = ["- [ ] ", "- [x] "], continuation = "- [ ] " }
+task_list = { prefixes = ["- [ ] ", "- [x] ", "- [X] "], continuation = "- [ ] " }
 
 auto_indent_on_paste = false
 auto_indent_using_last_non_empty_line = false
