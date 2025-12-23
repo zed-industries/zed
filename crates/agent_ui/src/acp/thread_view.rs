@@ -47,9 +47,9 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
+    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider, DividerColor,
+    ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar,
+    prelude::*, right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Workspace};
@@ -2180,18 +2180,7 @@ impl AcpThreadView {
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(
-                            right_click_menu(format!("agent_context_menu-{}", entry_ix))
-                                .trigger(move |_, _, _| message_body)
-                                .menu(move |window, cx| {
-                                    let focus = window.focused(cx);
-                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        menu.action("Copy", Box::new(markdown::CopyAsMarkdown))
-                                            .when_some(focus, |menu, focus| menu.context(focus))
-                                    })
-                                })
-                                .into_any_element(),
-                        )
+                        .child(self.render_message_context_menu(entry_ix, message_body, cx))
                         .into_any()
                 }
             }
@@ -2296,6 +2285,70 @@ impl AcpThreadView {
         } else {
             primary
         }
+    }
+
+    fn render_message_context_menu(
+        &self,
+        entry_ix: usize,
+        message_body: AnyElement,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let workspace = self.workspace.clone();
+
+        right_click_menu(format!("agent_context_menu-{}", entry_ix))
+            .trigger(move |_, _, _| message_body)
+            .menu(move |window, cx| {
+                let focus = window.focused(cx);
+                let entity = entity.clone();
+                let workspace = workspace.clone();
+
+                ContextMenu::build(window, cx, move |menu, _, cx| {
+                    let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
+
+                    let scroll_item = if is_at_top {
+                        ContextMenuEntry::new("Scroll to Bottom").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.scroll_to_bottom(cx);
+                                });
+                            }
+                        })
+                    } else {
+                        ContextMenuEntry::new("Scroll to Top").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.scroll_to_top(cx);
+                                });
+                            }
+                        })
+                    };
+
+                    let open_thread_as_markdown = ContextMenuEntry::new("Open Thread as Markdown")
+                        .handler({
+                            let entity = entity.clone();
+                            let workspace = workspace.clone();
+                            move |window, cx| {
+                                if let Some(workspace) = workspace.upgrade() {
+                                    entity
+                                        .update(cx, |this, cx| {
+                                            this.open_thread_as_markdown(workspace, window, cx)
+                                        })
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        });
+
+                    menu.when_some(focus, |menu, focus| menu.context(focus))
+                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .separator()
+                        .item(scroll_item)
+                        .item(open_thread_as_markdown)
+                })
+            })
+            .into_any_element()
     }
 
     fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
