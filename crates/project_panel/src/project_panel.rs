@@ -3326,6 +3326,111 @@ impl ProjectPanel {
         sanitized_entries
     }
 
+    /// Filters a slice of selections to remove entries that are children of other selected directories.
+    /// This is used by drag and drop operations to match VSCode's behavior - when both a parent folder
+    /// and its child are selected, only the parent should be operated on.
+    fn filter_disjoint_selections(
+        &self,
+        selections: &[SelectedEntry],
+        cx: &App,
+    ) -> Vec<SelectedEntry> {
+        if selections.is_empty() {
+            return Vec::new();
+        }
+
+        let project = self.project.read(cx);
+
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = selections
+            .iter()
+            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+            .fold(HashMap::default(), |mut map, entry| {
+                map.entry(entry.worktree_id).or_default().push(*entry);
+                map
+            });
+
+        let mut result = Vec::new();
+        for (worktree_id, entries) in entries_by_worktree {
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
+                let worktree = worktree.read(cx);
+
+                let dir_paths: BTreeSet<_> = entries
+                    .iter()
+                    .filter_map(|entry| {
+                        worktree.entry_for_id(entry.entry_id).and_then(|e| {
+                            if e.is_dir() {
+                                Some(e.path.as_ref())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                result.extend(entries.into_iter().filter(|entry| {
+                    let Some(entry_info) = worktree.entry_for_id(entry.entry_id) else {
+                        return false;
+                    };
+                    let entry_path = entry_info.path.as_ref();
+                    let inside_selected_dir = dir_paths.iter().any(|&dir_path| {
+                        entry_path != dir_path && entry_path.starts_with(dir_path)
+                    });
+                    !inside_selected_dir
+                }));
+            }
+        }
+
+        result
+    }
+
+    fn detect_move_conflicts(
+        &self,
+        selections: &[SelectedEntry],
+        destination_entry: ProjectEntryId,
+        destination_is_file: bool,
+        cx: &App,
+    ) -> Vec<String> {
+        let project = self.project.read(cx);
+        let Some(destination_path) = project.path_for_entry(destination_entry, cx) else {
+            return Vec::new();
+        };
+        let Some(worktree) = project.worktree_for_id(destination_path.worktree_id, cx) else {
+            return Vec::new();
+        };
+        let worktree = worktree.read(cx);
+
+        let mut destination_dir = destination_path.path.as_ref();
+        if destination_is_file {
+            destination_dir = match destination_dir.parent() {
+                Some(parent) => parent,
+                None => return Vec::new(),
+            };
+        }
+
+        let mut conflicts = Vec::new();
+        let mut proposed_paths = Vec::new();
+
+        for selection in selections {
+            if let Some(source_path) = project.path_for_entry(selection.entry_id, cx) {
+                if let Some(file_name) = source_path.path.file_name() {
+                    let mut new_path = destination_dir.to_rel_path_buf();
+                    new_path.push(RelPath::unix(file_name).unwrap());
+
+                    // Ensure we aren't moving a file onto itself or conflict with itself
+                    // (though we filtered disjoint selections, so we are moving source to dest/source_name)
+                    // If source_path.path == new_path, it's a no-op, not a conflict.
+                    if (worktree.entry_for_path(&new_path).is_some()
+                        || proposed_paths.contains(&new_path))
+                        && source_path.path.as_ref() != new_path.as_rel_path()
+                    {
+                        conflicts.push(file_name.to_string());
+                    }
+                    proposed_paths.push(new_path);
+                }
+            }
+        }
+        conflicts
+    }
+
     fn effective_entries(&self) -> BTreeSet<SelectedEntry> {
         if let Some(selection) = self.state.selection {
             let selection = SelectedEntry {
@@ -3909,6 +4014,12 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Filter out entries that are children of other selected directories.
+        // This matches VSCode behavior: when both a parent folder and its child are selected,
+        // only the parent folder is operated on.
+        let all_selections: Vec<SelectedEntry> = selections.items().cloned().collect();
+        let filtered_selections = self.filter_disjoint_selections(&all_selections, cx);
+
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -3921,7 +4032,7 @@ impl ProjectPanel {
 
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
-                for selection in selections.items() {
+                for selection in &filtered_selections {
                     let (new_path, new_disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
@@ -3965,8 +4076,40 @@ impl ProjectPanel {
                 Some(())
             });
         } else {
-            for selection in selections.items() {
-                self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
+            let conflicts =
+                self.detect_move_conflicts(&filtered_selections, target_entry_id, is_file, cx);
+
+            if !conflicts.is_empty() {
+                let message = format!(
+                    "The following files already exist:\n\n{}\n\nDo you want to replace them?",
+                    conflicts.join("\n")
+                );
+                let prompt = window.prompt(
+                    PromptLevel::Warning,
+                    &message,
+                    None,
+                    &["Replace", "Cancel"],
+                    cx,
+                );
+
+                cx.spawn_in(window, move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
+                    let mut cx = cx.clone();
+                    async move {
+                        if let Ok(0) = prompt.await {
+                            this.update(&mut cx, |this: &mut Self, cx: &mut Context<Self>| {
+                                for selection in filtered_selections {
+                                    this.move_entry(selection.entry_id, target_entry_id, is_file, cx);
+                                }
+                            })?;
+                        }
+                        anyhow::Ok(())
+                    }
+                })
+                .detach_and_log_err(cx);
+            } else {
+                for selection in filtered_selections {
+                    self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
+                }
             }
         }
     }
