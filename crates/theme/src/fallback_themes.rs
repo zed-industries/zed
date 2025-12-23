@@ -158,6 +158,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 editor_gutter_background: editor,
                 editor_subheader_background: bg,
                 editor_active_line_background: hsla(222.9 / 360., 13.5 / 100., 20.4 / 100., 1.0),
+                editor_active_line_border: hsla(222.9 / 360., 13.5 / 100., 20.4 / 100., 1.0),
                 editor_highlighted_line_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.1),
                 editor_debugger_active_line_background: hsla(
                     207.8 / 360.,

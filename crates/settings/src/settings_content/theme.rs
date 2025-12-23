@@ -661,6 +661,9 @@ pub struct ThemeColorsContent {
 
     #[serde(rename = "editor.active_line.background")]
     pub editor_active_line_background: Option<String>,
+    
+    #[serde(rename = "editor.active_line.border")]
+    pub editor_active_line_border: Option<String>,
 
     #[serde(rename = "editor.highlighted_line.background")]
     pub editor_highlighted_line_background: Option<String>,

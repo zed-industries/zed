@@ -544,6 +544,10 @@ pub fn theme_colors_refinement(
             .editor_active_line_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        editor_active_line_border: this
+            .editor_active_line_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         editor_highlighted_line_background: this
             .editor_highlighted_line_background
             .as_ref()
