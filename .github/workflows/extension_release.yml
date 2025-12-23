@@ -13,7 +13,7 @@ on:
 jobs:
   create_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
       name: extension_bump::generate_token

@@ -7,7 +7,7 @@ use indoc::indoc;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{NamedJob, named},
+    steps::{CommonJobConditions, NamedJob, named},
     vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
@@ -72,6 +72,7 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
+        .with_repository_owner_guard()
         .permissions(Permissions::default())
         .runs_on(runners::LINUX_SMALL)
         .add_step(get_bump_type)
