@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageName, LanguageServerName};
+use crate::{Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -18,18 +18,73 @@ pub use settings::{
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use text::ToOffset;
 
-/// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
+pub struct LanguageSettingsBuilder<'a> {
+    cx: &'a App,
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a App,
-) -> Cow<'a, LanguageSettings> {
-    let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
-        path: f.path().as_ref(),
-    });
-    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
+}
+
+impl<'a> LanguageSettingsBuilder<'a> {
+    pub fn language(mut self, language: Option<LanguageName>) -> Self {
+        self.language = language;
+        self
+    }
+
+    pub fn file(mut self, file: Option<&'a Arc<dyn File>>) -> Self {
+        self.file = file;
+        self
+    }
+
+    pub fn buffer(mut self, buffer: &'a Buffer) -> Self {
+        self.language = buffer.language().map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn buffer_at<D: ToOffset>(mut self, buffer: &'a Buffer, position: D) -> Self {
+        self.language = buffer.language_at(position).map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn buffer_snapshot(mut self, buffer: &'a BufferSnapshot) -> Self {
+        self.language = buffer.language().map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn buffer_snapshot_at<D: ToOffset>(
+        mut self,
+        buffer: &'a BufferSnapshot,
+        position: D,
+    ) -> Self {
+        self.language = buffer.language_at(position).map(|l| l.name());
+        self.file = buffer.file();
+        self
+    }
+
+    pub fn get(self) -> Cow<'a, LanguageSettings> {
+        let location = self.file.map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(self.cx),
+            path: f.path().as_ref(),
+        });
+        AllLanguageSettings::get(location, self.cx).language(
+            location,
+            self.language.as_ref(),
+            self.cx,
+        )
+    }
+}
+
+/// Returns the settings for the specified language from the provided file.
+pub fn language_settings<'a>(cx: &'a App) -> LanguageSettingsBuilder<'a> {
+    LanguageSettingsBuilder {
+        cx,
+        language: None,
+        file: None,
+    }
 }
 
 /// Returns the settings for all languages from the provided file.

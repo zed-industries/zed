@@ -302,17 +302,17 @@ impl Inventory {
         let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
-            let (file, language) = {
-                let buffer = location.buffer.read(cx);
-                (buffer.file(), buffer.language())
-            };
-            let language_name = language.as_ref().map(|l| l.name());
-            let adapter = language_settings(language_name, file, cx)
+            let buffer = location.buffer.read(cx);
+            let adapter = language_settings(cx)
+                .buffer(buffer)
+                .get()
                 .debuggers
                 .first()
                 .map(SharedString::from)
                 .or_else(|| {
-                    language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
+                    buffer
+                        .language()
+                        .and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
             adapter.map(|adapter| (adapter, DapRegistry::global(cx).locators()))
         });
@@ -394,7 +394,10 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
+                language_settings(cx)
+                    .language(Some(language.name()))
+                    .file(file.as_ref())
+                    .get()
                     .tasks
                     .enabled
             })
@@ -478,7 +481,10 @@ impl Inventory {
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
+                language_settings(cx)
+                    .language(Some(language.name()))
+                    .file(file.as_ref())
+                    .get()
                     .tasks
                     .enabled
             })

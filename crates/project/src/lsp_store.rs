@@ -1489,9 +1489,7 @@ impl LocalLspStore {
                     .language_servers_for_buffer(buffer, cx)
                     .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                     .collect::<Vec<_>>();
-                let settings =
-                    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                        .into_owned();
+                let settings = language_settings(cx).buffer(buffer).get().into_owned();
                 (adapters_and_servers, settings)
             })
         })?;
@@ -4555,8 +4553,11 @@ impl LspStore {
             }
         });
 
-        let settings =
-            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
+        let settings = language_settings(cx)
+            .buffer(buffer_entity.read(cx))
+            .language(Some(new_language.name()))
+            .get()
+            .into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -4863,10 +4864,9 @@ impl LspStore {
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.buffer_store.read(cx).buffers() {
             let buffer = buffer.read(cx);
-            let buffer_file = File::from_dyn(buffer.file());
-            let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
-            if buffer_language.is_some() {
+            let settings = language_settings(cx).buffer(buffer).get();
+            if buffer.language().is_some() {
+                let buffer_file = File::from_dyn(buffer.file());
                 language_formatters_to_check.push((
                     buffer_file.map(|f| f.worktree_id(cx)),
                     settings.into_owned(),
@@ -5440,9 +5440,11 @@ impl LspStore {
             })
             .filter(|_| {
                 maybe!({
-                    let language = buffer.read(cx).language_at(position)?;
+                    buffer.read(cx).language_at(position)?;
                     Some(
-                        language_settings(Some(language.name()), buffer.read(cx).file(), cx)
+                        language_settings(cx)
+                            .buffer_at(buffer.read(cx), position)
+                            .get()
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -5546,12 +5548,10 @@ impl LspStore {
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
-                language_settings(
-                    buffer.language_at(position).map(|l| l.name()),
-                    buffer.file(),
-                    cx,
-                )
-                .as_ref(),
+                language_settings(cx)
+                    .buffer_at(buffer, position)
+                    .get()
+                    .as_ref(),
             )
         });
 
@@ -6238,13 +6238,12 @@ impl LspStore {
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
-            let completion_settings = language_settings(
-                language.as_ref().map(|language| language.name()),
-                buffer.read(cx).file(),
-                cx,
-            )
-            .completions
-            .clone();
+            let completion_settings = language_settings(cx)
+                .buffer(buffer.read(cx))
+                .language(language.as_ref().map(|language| language.name()))
+                .get()
+                .completions
+                .clone();
             if !completion_settings.lsp {
                 return Task::ready(Ok(Vec::new()));
             }

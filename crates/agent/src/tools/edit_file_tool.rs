@@ -428,14 +428,12 @@ impl AgentTool for EditFileTool {
             }
 
             // If format_on_save is enabled, format the buffer
-            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                let settings = language_settings::language_settings(
-                    buffer.language().map(|l| l.name()),
-                    buffer.file(),
-                    cx,
-                );
-                settings.format_on_save != FormatOnSave::Off
-            });
+            let format_on_save_enabled = buffer
+                .read_with(cx, |buffer, cx| {
+                    let settings = language_settings::language_settings(cx).buffer(buffer)
+                        .get();
+                    settings.format_on_save != FormatOnSave::Off
+                });
 
             let edit_agent_output = output.await?;
 

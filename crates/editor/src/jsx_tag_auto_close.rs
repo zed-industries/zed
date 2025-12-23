@@ -323,11 +323,10 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
-                let language_settings = language::language_settings::language_settings(
-                    Some(language.name()),
-                    snapshot.file(),
-                    cx,
-                );
+                let language_settings = language::language_settings::language_settings(cx)
+                    .buffer_snapshot(&snapshot)
+                    .language(Some(language.name()))
+                    .get();
                 if language_settings.jsx_tag_auto_close {
                     found_enabled = true;
                 }

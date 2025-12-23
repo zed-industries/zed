@@ -369,9 +369,12 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     });
 
     cx.read(|cx| {
-        let file = buffer.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(cx)
+                .buffer(buffer.read(cx))
+                .language(Some("Rust".into()))
+                .get()
+                .language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -516,9 +519,12 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
-        let file = buffer.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(cx)
+                .buffer(buffer.read(cx))
+                .language(Some("Rust".into()))
+                .get()
+                .language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });

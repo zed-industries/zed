@@ -170,9 +170,12 @@ async fn test_sharing_an_ssh_remote_project(
     executor.run_until_parked();
 
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(cx)
+                .buffer(buffer_b.read(cx))
+                .language(Some("Rust".into()))
+                .get()
+                .language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -1027,9 +1030,12 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     let fake_language_server = fake_language_servers.next();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(cx)
+                .buffer(buffer_before_approval.read(cx))
+                .language(Some("Rust".into()))
+                .get()
+                .language_servers,
             ["...".to_string()],
             "remote .zed/settings.json must not sync before trust approval"
         )
@@ -1056,9 +1062,12 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.run_until_parked();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            language_settings(cx)
+                .buffer(buffer_before_approval.read(cx))
+                .language(Some("Rust".into()))
+                .get()
+                .language_servers,
             ["override-rust-analyzer".to_string()],
             "remote .zed/settings.json should sync after trust approval"
         )

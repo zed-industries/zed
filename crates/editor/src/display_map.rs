@@ -699,12 +699,11 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
-        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
-        let language = buffer
-            .and_then(|buffer| buffer.language())
-            .map(|l| l.name());
-        let file = buffer.and_then(|buffer| buffer.file());
-        language_settings(language, file, cx).tab_size
+        let mut language_settings = language_settings(cx);
+        if let Some(buffer) = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx)) {
+            language_settings = language_settings.buffer(buffer)
+        }
+        language_settings.get().tab_size
     }
 
     #[cfg(test)]

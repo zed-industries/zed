@@ -215,7 +215,11 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .block(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
-            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+            language_settings(cx)
+                .language(Some(file_language.name()))
+                .file(Some(&file))
+                .get()
+                .into_owned()
         };
 
         let settings_a = settings_for("a.rs");
@@ -373,12 +377,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 tree.entry_for_path(rel_path("a/a.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
-            let settings_a = language_settings(None, Some(&file_a), cx);
+            let settings_a = language_settings(cx).file(Some(&file_a)).get();
             let file_b = File::for_entry(
                 tree.entry_for_path(rel_path("b/b.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
-            let settings_b = language_settings(None, Some(&file_b), cx);
+            let settings_b = language_settings(cx).file(Some(&file_b)).get();
 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
