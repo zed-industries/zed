@@ -10,6 +10,7 @@
 //! the Zed panel and the Convergio CLI.
 
 mod agent_invoke;
+mod agent_tools;
 mod chat_view;
 mod convergio_db;
 mod panel;

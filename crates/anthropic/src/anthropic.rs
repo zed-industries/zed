@@ -731,20 +731,20 @@ pub struct CacheControl {
     pub cache_type: CacheControlType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<RequestContent>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Assistant,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum RequestContent {
     #[serde(rename = "text")]
@@ -786,14 +786,14 @@ pub enum RequestContent {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ToolResultContent {
     Plain(String),
     Multipart(Vec<ToolResultPart>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolResultPart {
     Text { text: String },
@@ -817,7 +817,7 @@ pub enum ResponseContent {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageSource {
     #[serde(rename = "type")]
     pub source_type: String,
@@ -825,7 +825,7 @@ pub struct ImageSource {
     pub data: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,

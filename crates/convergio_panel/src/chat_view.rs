@@ -462,6 +462,17 @@ impl ConvergioChatView {
         let session_id = self.session_id.clone();
         let executor = cx.background_executor().clone();
 
+        // Get workspace root for tool access
+        let workspace_root = self
+            .workspace
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx)
+                    .worktrees(cx)
+                    .next()
+                    .map(|wt| wt.read(cx).abs_path().to_path_buf())
+            });
+
         // Insert message and invoke agent
         cx.spawn(async move |this, cx| {
             // Get or create session
@@ -502,6 +513,7 @@ impl ConvergioChatView {
                         session_id.clone(),
                         agent_name.clone(),
                         messages,
+                        workspace_root,
                         executor,
                     );
 

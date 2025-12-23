@@ -2,16 +2,21 @@
 //!
 //! Handles invoking Convergio agents via the Anthropic API
 //! and streaming responses back to the database.
+//!
+//! Supports tool use: agents can read/write files, run commands, and search code.
 
 use anyhow::{anyhow, Result};
 use anthropic::{
-    Event, Message, Request, RequestContent, Role, ANTHROPIC_API_URL,
+    ContentDelta, Event, Message, Request, RequestContent, ResponseContent, Role,
+    ToolChoice, ANTHROPIC_API_URL,
 };
 use futures::StreamExt;
 use gpui::{BackgroundExecutor, Task};
 use http_client::HttpClient;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::agent_tools::{create_tool_result, execute_tool, get_agent_tools};
 use crate::convergio_db::{ChatMessage, ConvergioDb, MessageType};
 
 /// Default model for Convergio agents
@@ -47,6 +52,9 @@ pub fn get_generic_prompt(agent_name: &str) -> String {
     )
 }
 
+/// Maximum number of tool use iterations to prevent infinite loops
+const MAX_TOOL_ITERATIONS: usize = 20;
+
 /// Invoke an agent with a user message
 /// Returns a task that streams the response and updates the database
 pub fn invoke_agent(
@@ -56,6 +64,7 @@ pub fn invoke_agent(
     session_id: String,
     agent_name: String,
     messages: Vec<ChatMessage>,
+    workspace_root: Option<PathBuf>,
     executor: BackgroundExecutor,
 ) -> Task<Result<()>> {
     executor.spawn(async move {
@@ -68,8 +77,8 @@ pub fn invoke_agent(
             }
         };
 
-        // Build message history for API
-        let api_messages: Vec<Message> = messages
+        // Build initial message history for API
+        let mut api_messages: Vec<Message> = messages
             .iter()
             .filter(|m| m.message_type == MessageType::User || m.message_type == MessageType::Assistant)
             .map(|m| Message {
@@ -85,85 +94,214 @@ pub fn invoke_agent(
             })
             .collect();
 
-        // Build request
-        let request = Request {
-            model: DEFAULT_MODEL.to_string(),
-            max_tokens: MAX_TOKENS,
-            messages: api_messages,
-            tools: vec![],
-            thinking: None,
-            tool_choice: None,
-            system: Some(anthropic::StringOrContents::String(system_prompt)),
-            metadata: None,
-            stop_sequences: vec![],
-            temperature: Some(0.7),
-            top_k: None,
-            top_p: None,
-        };
+        // Get available tools
+        let tools = get_agent_tools();
 
-        // Stream completion
-        let mut stream = anthropic::stream_completion(
-            http_client.as_ref(),
-            ANTHROPIC_API_URL,
-            &api_key,
-            request,
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("Failed to start stream: {:?}", e))?;
+        // Track total tokens for cost calculation
+        let mut total_input_tokens: i64 = 0;
+        let mut total_output_tokens: i64 = 0;
+        let mut final_response_text = String::new();
 
-        // Collect response text
-        let mut response_text = String::new();
-        let mut input_tokens: i64 = 0;
-        let mut output_tokens: i64 = 0;
+        // Tool use loop - continue until model stops using tools
+        for iteration in 0..MAX_TOOL_ITERATIONS {
+            log::debug!(
+                "Agent '{}' iteration {} with {} messages",
+                agent_name,
+                iteration,
+                api_messages.len()
+            );
 
-        while let Some(event_result) = stream.next().await {
-            match event_result {
-                Ok(event) => match event {
-                    Event::ContentBlockDelta { delta, .. } => {
-                        if let anthropic::ContentDelta::TextDelta { text } = delta {
-                            response_text.push_str(&text);
+            // Build request with tools
+            let request = Request {
+                model: DEFAULT_MODEL.to_string(),
+                max_tokens: MAX_TOKENS,
+                messages: api_messages.clone(),
+                tools: tools.clone(),
+                thinking: None,
+                tool_choice: Some(ToolChoice::Auto),
+                system: Some(anthropic::StringOrContents::String(system_prompt.clone())),
+                metadata: None,
+                stop_sequences: vec![],
+                temperature: Some(0.7),
+                top_k: None,
+                top_p: None,
+            };
+
+            // Stream completion
+            let mut stream = anthropic::stream_completion(
+                http_client.as_ref(),
+                ANTHROPIC_API_URL,
+                &api_key,
+                request,
+                None,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to start stream: {:?}", e))?;
+
+            // Collect response content
+            let mut response_text = String::new();
+            let mut tool_uses: Vec<(String, String, serde_json::Value)> = vec![];
+            let mut current_tool_id = String::new();
+            let mut current_tool_name = String::new();
+            let mut current_tool_input_json = String::new();
+            let mut stop_reason: Option<String> = None;
+
+            while let Some(event_result) = stream.next().await {
+                match event_result {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart { content_block, .. } => {
+                            match content_block {
+                                ResponseContent::ToolUse { id, name, input } => {
+                                    current_tool_id = id;
+                                    current_tool_name = name;
+                                    // If input is already provided, use it
+                                    if !input.is_null() {
+                                        current_tool_input_json =
+                                            serde_json::to_string(&input).unwrap_or_default();
+                                    } else {
+                                        current_tool_input_json.clear();
+                                    }
+                                }
+                                ResponseContent::Text { text } => {
+                                    response_text.push_str(&text);
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    Event::MessageDelta { usage, .. } => {
-                        if let Some(tokens) = usage.output_tokens {
-                            output_tokens = tokens as i64;
+                        Event::ContentBlockDelta { delta, .. } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                response_text.push_str(&text);
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                current_tool_input_json.push_str(&partial_json);
+                            }
+                            _ => {}
+                        },
+                        Event::ContentBlockStop { .. } => {
+                            // If we have a pending tool use, finalize it
+                            if !current_tool_id.is_empty() && !current_tool_name.is_empty() {
+                                let input: serde_json::Value =
+                                    serde_json::from_str(&current_tool_input_json)
+                                        .unwrap_or(serde_json::Value::Null);
+                                tool_uses.push((
+                                    current_tool_id.clone(),
+                                    current_tool_name.clone(),
+                                    input,
+                                ));
+                                current_tool_id.clear();
+                                current_tool_name.clear();
+                                current_tool_input_json.clear();
+                            }
                         }
-                    }
-                    Event::MessageStart { message } => {
-                        if let Some(tokens) = message.usage.input_tokens {
-                            input_tokens = tokens as i64;
+                        Event::MessageDelta { delta, usage } => {
+                            stop_reason = delta.stop_reason;
+                            if let Some(tokens) = usage.output_tokens {
+                                total_output_tokens += tokens as i64;
+                            }
                         }
+                        Event::MessageStart { message } => {
+                            if let Some(tokens) = message.usage.input_tokens {
+                                total_input_tokens += tokens as i64;
+                            }
+                        }
+                        Event::MessageStop => {
+                            break;
+                        }
+                        Event::Error { error } => {
+                            log::error!("API error: {:?}", error);
+                            return Err(anyhow!("API error: {:?}", error));
+                        }
+                        _ => {}
+                    },
+                    Err(e) => {
+                        log::error!("Stream error: {:?}", e);
+                        return Err(anyhow!("Stream error: {:?}", e));
                     }
-                    Event::MessageStop => {
-                        // Done streaming
-                        break;
-                    }
-                    Event::Error { error } => {
-                        log::error!("API error: {:?}", error);
-                        return Err(anyhow!("API error: {:?}", error));
-                    }
-                    _ => {}
-                },
-                Err(e) => {
-                    log::error!("Stream error: {:?}", e);
-                    return Err(anyhow!("Stream error: {:?}", e));
                 }
             }
+
+            // Accumulate text responses
+            if !response_text.is_empty() {
+                if !final_response_text.is_empty() {
+                    final_response_text.push_str("\n\n");
+                }
+                final_response_text.push_str(&response_text);
+            }
+
+            // If no tool uses, we're done
+            if tool_uses.is_empty() || stop_reason.as_deref() != Some("tool_use") {
+                log::debug!(
+                    "Agent '{}' completed after {} iterations (stop_reason: {:?})",
+                    agent_name,
+                    iteration + 1,
+                    stop_reason
+                );
+                break;
+            }
+
+            // Execute tools and build response
+            log::info!(
+                "Agent '{}' using {} tool(s): {:?}",
+                agent_name,
+                tool_uses.len(),
+                tool_uses.iter().map(|(_, n, _)| n.as_str()).collect::<Vec<_>>()
+            );
+
+            // Build assistant message with tool uses
+            let mut assistant_content: Vec<RequestContent> = vec![];
+            if !response_text.is_empty() {
+                assistant_content.push(RequestContent::Text {
+                    text: response_text,
+                    cache_control: None,
+                });
+            }
+            for (id, name, input) in &tool_uses {
+                assistant_content.push(RequestContent::ToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                    cache_control: None,
+                });
+            }
+
+            api_messages.push(Message {
+                role: Role::Assistant,
+                content: assistant_content,
+            });
+
+            // Execute tools and build user message with results
+            let mut tool_results: Vec<RequestContent> = vec![];
+            for (id, name, input) in &tool_uses {
+                log::debug!("Executing tool '{}' with input: {:?}", name, input);
+                let result = execute_tool(name, input, workspace_root.as_deref());
+                let (content, is_error) = match result {
+                    Ok(c) => (c, false),
+                    Err(e) => {
+                        log::error!("Tool '{}' failed: {}", name, e);
+                        (anthropic::ToolResultContent::Plain(format!("Error: {}", e)), true)
+                    }
+                };
+                tool_results.push(create_tool_result(id, content, is_error));
+            }
+
+            api_messages.push(Message {
+                role: Role::User,
+                content: tool_results,
+            });
         }
 
-        // Insert assistant message into database
-        if !response_text.is_empty() {
+        // Insert final assistant message into database
+        if !final_response_text.is_empty() {
             // Calculate approximate cost (Claude Sonnet 4.5 pricing)
-            let cost_usd = (input_tokens as f64 * 0.003 / 1000.0)
-                + (output_tokens as f64 * 0.015 / 1000.0);
+            let cost_usd = (total_input_tokens as f64 * 0.003 / 1000.0)
+                + (total_output_tokens as f64 * 0.015 / 1000.0);
 
             db.insert_assistant_message(
                 &session_id,
                 &agent_name,
-                &response_text,
-                input_tokens,
-                output_tokens,
+                &final_response_text,
+                total_input_tokens,
+                total_output_tokens,
                 cost_usd,
             )?;
         }
