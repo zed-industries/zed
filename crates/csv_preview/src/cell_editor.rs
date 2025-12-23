@@ -2,7 +2,8 @@ use editor::Editor;
 use gpui::{AppContext as _, Entity, FocusHandle, Focusable, ScrollStrategy};
 use text::ToOffset;
 use ui::{
-    ActiveTheme as _, App, Context, InteractiveElement, IntoElement, ParentElement as _, Render, Styled as _, StyledTypography as _, Window, div, h_flex,
+    ActiveTheme as _, App, Context, InteractiveElement, IntoElement, ParentElement as _, Render,
+    Styled as _, StyledTypography as _, Window, div, h_flex,
 };
 
 use crate::{
