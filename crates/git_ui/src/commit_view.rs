@@ -469,8 +469,6 @@ impl CommitView {
                                     .gap_1()
                                     .child(Label::new(author_name).color(Color::Default))
                                     .child({
-                                        let commit_sha = commit_sha.clone();
-
                                         ButtonLike::new("sha")
                                             .child(
                                                 h_flex()
