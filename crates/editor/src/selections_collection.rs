@@ -411,6 +411,56 @@ impl SelectionsCollection {
         })
     }
 
+    /// Attempts to build a selection in the provided buffer row using the
+    /// same buffer column range as specified.
+    /// Returns `None` if the range is not empty but it starts past the line's
+    /// length, meaning that the line isn't long enough to be contained within
+    /// part of the provided range.
+    pub fn build_columnar_selection_from_buffer_columns(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        buffer_row: u32,
+        positions: &Range<u32>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let is_empty = positions.start == positions.end;
+        let line_len = display_map
+            .buffer_snapshot()
+            .line_len(multi_buffer::MultiBufferRow(buffer_row));
+
+        let (start, end) = if is_empty {
+            let column = std::cmp::min(positions.start, line_len);
+            let point = Point::new(buffer_row, column);
+            (point, point)
+        } else {
+            if positions.start >= line_len {
+                return None;
+            }
+
+            let start = Point::new(buffer_row, positions.start);
+            let end_column = std::cmp::min(positions.end, line_len);
+            let end = Point::new(buffer_row, end_column);
+            (start, end)
+        };
+
+        let start_display_point = start.to_display_point(display_map);
+        let end_display_point = end.to_display_point(display_map);
+        let start_x = display_map.x_for_display_point(start_display_point, text_layout_details);
+        let end_x = display_map.x_for_display_point(end_display_point, text_layout_details);
+
+        Some(Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start,
+            end,
+            reversed,
+            goal: SelectionGoal::HorizontalRange {
+                start: start_x.min(end_x).into(),
+                end: start_x.max(end_x).into(),
+            },
+        })
+    }
+
     pub fn change_with<R>(
         &mut self,
         snapshot: &DisplaySnapshot,
