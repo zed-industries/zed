@@ -183,6 +183,8 @@ pub struct ConvergioChatView {
     is_streaming: bool,
     error_message: Option<String>,
     last_message_count: i64,
+    /// Last known database modification time for efficient change detection
+    last_db_modified: Option<std::time::SystemTime>,
     _input_subscription: Subscription,
     _poll_task: Option<Task<()>>,
     _invoke_task: Option<Task<()>>,
@@ -246,6 +248,7 @@ impl ConvergioChatView {
             is_streaming: false,
             error_message: None,
             last_message_count: 0,
+            last_db_modified: None,
             _input_subscription: subscription,
             _poll_task: None,
             _invoke_task: None,
@@ -336,18 +339,38 @@ impl ConvergioChatView {
         }).detach();
     }
 
-    /// Start polling for new messages
+    /// Start polling for new messages using efficient modification time checking
+    /// Polls every 200ms but only queries database when file is modified
     fn start_polling(&mut self, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
             loop {
-                // Poll every 2 seconds
-                cx.background_executor().timer(Duration::from_secs(2)).await;
+                // Fast polling interval - 200ms for near real-time updates
+                cx.background_executor().timer(Duration::from_millis(200)).await;
 
-                let should_refresh = this.update(cx, |this, _| {
+                // Check if we should poll (has session and database)
+                let should_check = this.update(cx, |this, _| {
                     this.session_id.is_some() && this.db.is_some()
                 }).unwrap_or(false);
 
-                if should_refresh {
+                if !should_check {
+                    continue;
+                }
+
+                // Efficient change detection: check file modification time first
+                let needs_update = this.update(cx, |this, _| {
+                    if let Some(db) = &this.db {
+                        if let Some(current_mtime) = db.modification_time() {
+                            if Some(current_mtime) != this.last_db_modified {
+                                this.last_db_modified = Some(current_mtime);
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                }).unwrap_or(false);
+
+                // Only query database if file was modified
+                if needs_update {
                     let _ = this.update(cx, |this, cx| {
                         this.check_for_updates(cx);
                     });

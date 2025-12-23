@@ -110,6 +110,14 @@ impl ConvergioDb {
         &self.db_path
     }
 
+    /// Get database file modification time
+    /// Used for efficient change detection without querying
+    pub fn modification_time(&self) -> Option<std::time::SystemTime> {
+        std::fs::metadata(&self.db_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+    }
+
     /// Get all sessions, optionally filtered by agent name
     pub fn sessions(&self, agent_name: Option<&str>) -> Result<Vec<SessionMetadata>> {
         let conn = self.connection.lock()
