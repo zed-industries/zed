@@ -6577,6 +6577,13 @@ impl MultiBufferSnapshot {
         self.show_headers
     }
 
+    pub fn buffer_snapshot_for_id(&self, buffer_id: BufferId) -> Option<&BufferSnapshot> {
+        self.excerpts
+            .iter()
+            .find(|excerpt| excerpt.buffer_id == buffer_id)
+            .map(|excerpt| &excerpt.buffer)
+    }
+
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id)
     }
@@ -7723,7 +7730,13 @@ impl Iterator for MultiBufferRows<'_> {
             Some(DiffHunkStatus {
                 kind: DiffHunkStatusKind::Modified,
                 ..
-            }) => unreachable!(),
+            }) => self
+                .cursor
+                .snapshot
+                .diffs
+                .get(&region.excerpt.buffer_id)
+                .map(|diff| diff.row_to_base_text_row(buffer_point.row, &region.buffer))
+                .map(BaseTextRow),
         };
         let expand_info = if self.is_singleton {
             None

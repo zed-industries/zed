@@ -2256,19 +2256,50 @@ impl EditorElement {
 
         let segment_key = |status: DiffHunkStatus| (status.kind, status.has_secondary_hunk());
 
-        for (row_index, row_info) in row_infos.iter().enumerate() {
+        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+        let mut last_buffer_id = None;
+        let mut last_buffer_snapshot = None;
+        let mut last_diff = None;
+        let mut gutter_statuses = Vec::with_capacity(row_infos.len());
+
+        for row_info in row_infos {
+            let status = row_info.diff_status.or_else(|| {
+                let buffer_id = row_info.buffer_id?;
+                let buffer_row = row_info.buffer_row?;
+                if last_buffer_id != Some(buffer_id) {
+                    last_buffer_id = Some(buffer_id);
+                    last_buffer_snapshot = buffer_snapshot.buffer_snapshot_for_id(buffer_id);
+                    last_diff = buffer_snapshot.diff_for_buffer_id(buffer_id);
+                }
+                let buffer = last_buffer_snapshot?;
+                let diff = last_diff?;
+                let line = diff.line_for_buffer_row(buffer_row, buffer)?;
+                let kind = if line.paired_line_id.is_some() {
+                    DiffHunkStatusKind::Modified
+                } else {
+                    line.kind
+                };
+                Some(DiffHunkStatus {
+                    kind,
+                    secondary: line.secondary_status,
+                })
+            });
+            gutter_statuses.push(status);
+        }
+
+        for (row_index, status) in gutter_statuses.iter().enumerate() {
             let display_row = display_rows.start + DisplayRow(row_index as u32);
-            match row_info.diff_status {
+            match status {
                 Some(status) => {
-                    let key = segment_key(status);
+                    let key = segment_key(*status);
                     match current_segment {
                         Some((current_status, current_key, start_row)) if current_key == key => {}
                         Some((current_status, _, start_row)) => {
-                        push_segment(&mut segments, start_row, display_row, current_status);
-                        current_segment = Some((status, key, display_row));
-                    }
+                            push_segment(&mut segments, start_row, display_row, current_status);
+                            current_segment = Some((*status, key, display_row));
+                        }
                         None => {
-                            current_segment = Some((status, key, display_row));
+                            current_segment = Some((*status, key, display_row));
                         }
                     }
                 }
@@ -2288,9 +2319,9 @@ impl EditorElement {
 
         let row_has_status = |row: DisplayRow| {
             let row_index = row.0.saturating_sub(display_rows.start.0) as usize;
-            row_infos
+            gutter_statuses
                 .get(row_index)
-                .is_some_and(|row_info| row_info.diff_status.is_some())
+                .is_some_and(|status| status.is_some())
         };
 
         for (hunk, _) in display_hunks {
@@ -5738,16 +5769,15 @@ impl EditorElement {
                 row_infos
                     .get(start_row_offset)
                     .and_then(|row_info| row_info.diff_status)
-                    .and_then(|diff_status| {
+                    .map(|diff_status| {
                         let background_color = match diff_status.kind {
                             DiffHunkStatusKind::Added => colors.version_control_word_added,
                             DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
                             DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                return None;
+                                colors.version_control_modified
                             }
                         };
-                        Some((start_point..end_point, background_color))
+                        (start_point..end_point, background_color)
                     })
             });
 
@@ -9413,10 +9443,8 @@ impl Element for EditorElement {
                                 cx.theme().colors().version_control_added,
                             DiffHunkStatusKind::Deleted =>
                                 cx.theme().colors().version_control_deleted,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                continue;
-                            }
+                            DiffHunkStatusKind::Modified =>
+                                cx.theme().colors().version_control_modified,
                         };
 
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
