@@ -113,6 +113,7 @@ impl CsvPreviewView {
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
             .header(headers_array)
+            .disable_base_style()
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
@@ -219,20 +220,25 @@ impl CsvPreviewView {
                 div()
                     .relative()
                     .child(div().absolute().child(ctx.editor.clone()))
-                    .into_any_element()
             } else {
-                CsvPreviewView::create_selectable_cell(
-                    display_cell_id,
-                    cell_content,
-                    cx.entity(),
-                    selected_bg,
-                    is_selected,
-                    is_focused,
-                    is_anchor,
-                    this.settings.vertical_alignment,
-                    this.settings.font_type,
-                    cx,
-                )
+                div()
+                    .size_full()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_ui(cx)
+                    .overflow_hidden()
+                    .child(CsvPreviewView::create_selectable_cell(
+                        display_cell_id,
+                        cell_content,
+                        cx.entity(),
+                        selected_bg,
+                        is_selected,
+                        is_focused,
+                        is_anchor,
+                        this.settings.vertical_alignment,
+                        this.settings.font_type,
+                        cx,
+                    ))
             };
 
             elements.push(
