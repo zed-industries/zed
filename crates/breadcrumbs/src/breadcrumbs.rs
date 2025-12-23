@@ -47,14 +47,8 @@ impl Render for Breadcrumbs {
             return element.into_any_element();
         };
         let prefix_element = active_item.breadcrumb_prefix(window, cx);
-        render_breadcrumb_text(
-            segments,
-            prefix_element,
-            Box::new(active_item.as_ref()),
-            window,
-            cx,
-        )
-        .into_any_element()
+        render_breadcrumb_text(segments, prefix_element, active_item.as_ref(), window, cx)
+            .into_any_element()
     }
 }
 

@@ -3880,7 +3880,7 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let multi_buffer = editor.buffer.read(cx);
         let is_read_only = self.editor.read(cx).read_only(cx);
-        let editor_handle: Box<&dyn ItemHandle> = Box::new(&self.editor);
+        let editor_handle: &dyn ItemHandle = &self.editor;
 
         let breadcrumbs = if is_selected {
             editor.breadcrumbs_inner(cx.theme(), cx)
@@ -7901,7 +7901,7 @@ impl EditorElement {
 pub fn render_breadcrumb_text(
     mut segments: Vec<BreadcrumbText>,
     prefix: Option<gpui::AnyElement>,
-    active_item: Box<&dyn ItemHandle>,
+    active_item: &dyn ItemHandle,
     window: &mut Window,
     cx: &App,
 ) -> impl IntoElement {
