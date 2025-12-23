@@ -685,13 +685,21 @@ impl BufferDiffSnapshot {
                 pending_range.end.row += 1;
                 pending_range.end.column = 0;
             }
-
-            pending_range.start <= line_range.start
+            let range_matches = pending_range.start <= line_range.start
                 && line_range.end <= pending_range.end
                 && !buffer.has_edits_since_in_range(
                     &pending.buffer_version,
                     pending.buffer_range.clone(),
-                )
+                );
+            if !range_matches {
+                return false;
+            }
+            if line.kind == DiffHunkStatusKind::Deleted
+                && line.diff_base_byte_range != pending.diff_base_byte_range
+            {
+                return false;
+            }
+            true
         };
 
         let mut cursor = self.inner.pending_hunks.cursor::<DiffHunkSummary>(buffer);
@@ -2850,6 +2858,62 @@ mod tests {
             second.secondary_status,
             DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
         );
+    }
+
+    #[gpui::test]
+    async fn test_pending_stage_targets_only_paired_deletion(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let head_text = "A\nX\nX\nB\n".to_string();
+        let index_text = head_text.clone();
+        let buffer_text = "A\nY\nB\n".to_string();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let unstaged = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
+        let uncommitted = BufferDiffSnapshot::new_sync(buffer.clone(), head_text, cx);
+
+        let unstaged_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&buffer, cx);
+            diff.set_snapshot(unstaged, &buffer, cx);
+            diff
+        });
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&buffer, cx);
+            diff.set_snapshot(uncommitted, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff.clone());
+            diff
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            let snapshot = diff.snapshot(cx);
+            let added_line = snapshot
+                .line_for_buffer_row(1, &buffer)
+                .expect("added line");
+            assert_eq!(added_line.kind, DiffHunkStatusKind::Added);
+            let paired_id = added_line.paired_line_id.expect("paired deletion");
+            let paired_deleted = snapshot.build_diff_line(paired_id, &buffer);
+            let paired_base_row = paired_deleted.base_row.expect("base row");
+
+            diff.stage_or_unstage_lines(true, std::slice::from_ref(&added_line), &buffer, true, cx);
+
+            let snapshot = diff.snapshot(cx);
+            let paired_after = snapshot
+                .line_for_base_row(paired_base_row, &buffer)
+                .expect("paired deletion after staging");
+            assert_eq!(
+                paired_after.secondary_status,
+                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+            );
+
+            let other_base_row = if paired_base_row == 1 { 2 } else { 1 };
+            let other_deleted = snapshot
+                .line_for_base_row(other_base_row, &buffer)
+                .expect("other deletion");
+            assert_eq!(
+                other_deleted.secondary_status,
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+            );
+        });
     }
 
     #[gpui::test]
