@@ -266,6 +266,7 @@ fn create_table_cell(
         .px_1()
         .bg(cx.theme().colors().editor_background)
         .border_b_1()
+        .border_r_1()
         .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
             VerticalAlignment::Top => div.items_start(),
