@@ -4,7 +4,7 @@ use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
 use settings::Settings;
 use text::Point;
-use vim_mode_setting::HelixModeSetting;
+use vim_mode_setting::ModalEditing;
 use workspace::searchable::Direction;
 
 actions!(
@@ -50,7 +50,7 @@ impl Vim {
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), window, cx);
 
-            if HelixModeSetting::get_global(cx).0 {
+            if ModalEditing::get_global(cx).is_helix() {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.dismiss_menus_and_popups(false, window, cx);
                 });

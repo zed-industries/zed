@@ -100,9 +100,18 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
+    /// The modal editing mode to use.
+    ///
+    /// Options: "none", "vim", "helix"
+    ///
+    /// Default: none(Standar editind)
+    pub modal_editing: Option<ModalEditingContent>,
+
     /// Whether or not to enable Helix mode.
+    /// DEPRECATED: Use `modal_editing` instead.
     ///
     /// Default: false
+    #[serde(skip_serializing)]
     pub helix_mode: Option<bool>,
 
     pub journal: Option<JournalSettingsContent>,
@@ -146,8 +155,10 @@ pub struct SettingsContent {
     pub title_bar: Option<TitleBarSettingsContent>,
 
     /// Whether or not to enable Vim mode.
+    /// DEPRECATED: Use `modal_editing` instead.
     ///
     /// Default: false
+    #[serde(skip_serializing)]
     pub vim_mode: Option<bool>,
 
     // Settings related to calls in Zed
@@ -260,6 +271,37 @@ impl strum::VariantNames for BaseKeymapContent {
         "Cursor",
         "None",
     ];
+}
+
+/// Modal editing mode selection.
+///
+/// Default: None (standard editing)
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ModalEditingContent {
+    /// Standard editing mode
+    #[default]
+    None,
+    /// Vim-style modal editing
+    Vim,
+    /// Helix-style modal editing
+    Helix,
+}
+
+impl strum::VariantNames for ModalEditingContent {
+    const VARIANTS: &'static [&'static str] = &["None", "Vim", "Helix"];
 }
 
 #[with_fallible_options]
