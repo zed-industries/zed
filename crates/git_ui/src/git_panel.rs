@@ -3077,11 +3077,12 @@ impl GitPanel {
     }
 
     pub fn create_pull_request(&self, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.as_ref() else {
-            return;
-        };
-
         let result = (|| -> anyhow::Result<()> {
+            let repo = self
+                .active_repository
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
+
             let (branch, remote_origin, remote_upstream) = {
                 let repository = repo.read(cx);
                 (
@@ -3095,32 +3096,24 @@ impl GitPanel {
             let source_branch = branch
                 .upstream
                 .as_ref()
-                .and_then(|upstream| {
-                    if let UpstreamTracking::Tracked(_) = upstream.tracking {
-                        upstream.branch_name().map(|name| name.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| branch.name().to_string());
+                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .and_then(|upstream| upstream.branch_name())
+                .map(|name| name.to_string());
 
             let remote_url = branch
                 .upstream
                 .as_ref()
-                .and_then(|upstream| {
-                    let remote_name = upstream.remote_name();
-                    match remote_name {
-                        Some("upstream") => remote_upstream.as_deref(),
-                        Some(_) => remote_origin.as_deref(),
-                        None => None,
-                    }
+                .and_then(|upstream| match upstream.remote_name() {
+                    Some("upstream") => remote_upstream.as_deref(),
+                    Some(_) => remote_origin.as_deref(),
+                    None => None,
                 })
-                .or_else(|| remote_origin.as_deref())
-                .or_else(|| remote_upstream.as_deref())
+                .or(remote_origin.as_deref())
+                .or(remote_upstream.as_deref())
                 .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
             let remote_url = remote_url.to_string();
 
-            let provider_registry = git::GitHostingProviderRegistry::global(cx);
+            let provider_registry = GitHostingProviderRegistry::global(cx);
             let Some((provider, parsed_remote)) =
                 git::parse_git_remote_url(provider_registry, &remote_url)
             else {
