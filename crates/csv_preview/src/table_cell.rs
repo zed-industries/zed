@@ -263,6 +263,9 @@ fn create_table_cell(
         .cursor_pointer()
         .flex()
         .h_full()
+        .px_1()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),

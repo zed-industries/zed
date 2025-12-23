@@ -157,9 +157,12 @@ impl CsvPreviewView {
 
         let value = div()
             .flex()
-            .child(row_identifier)
+            .px_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
             .text_color(text_color)
             .h_full()
+            .text_ui(cx)
             // Row identifiers are always centered
             .items_center()
             .justify_end()
@@ -167,6 +170,7 @@ impl CsvPreviewView {
                 FontType::Ui => div.font_ui(cx),
                 FontType::Monospace => div.font_buffer(cx),
             })
+            .child(row_identifier)
             .into_any_element();
         Some(value)
     }
