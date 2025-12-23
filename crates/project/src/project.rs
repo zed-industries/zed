@@ -1293,34 +1293,13 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
             if init_worktree_trust {
-                let trust_remote_project = match &connection_options {
-                    RemoteConnectionOptions::Ssh(..) | RemoteConnectionOptions::Wsl(..) => false,
-                    RemoteConnectionOptions::Docker(..) => true,
-                };
-                let remote_host = RemoteHostLocation::from(connection_options);
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
-                    Some(remote_host.clone()),
+                    Some(RemoteHostLocation::from(connection_options)),
                     None,
                     Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
                     cx,
                 );
-                if trust_remote_project {
-                    if let Some(trusted_worktres) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktres.update(cx, |trusted_worktres, cx| {
-                            trusted_worktres.trust(
-                                worktree_store
-                                    .read(cx)
-                                    .worktrees()
-                                    .map(|worktree| worktree.read(cx).id())
-                                    .map(PathTrust::Worktree)
-                                    .collect(),
-                                Some(remote_host),
-                                cx,
-                            );
-                        })
-                    }
-                }
             }
 
             let weak_self = cx.weak_entity();
