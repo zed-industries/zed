@@ -624,6 +624,7 @@ impl Render for ImageView {
                                 .absolute()
                                 .top_0()
                                 .left_0()
+                                .bg(gpui::rgb(0xCCCCCD))
                             })
                             .child({
                                 let image_element = img(image).id("img");
