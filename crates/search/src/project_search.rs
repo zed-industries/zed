@@ -2251,7 +2251,7 @@ impl Render for ProjectSearchBar {
                 .child(SearchOption::IncludeIgnored.as_button(
                     search.search_options,
                     SearchSource::Project(cx),
-                    focus_handle.clone(),
+                    focus_handle,
                 ));
             h_flex()
                 .w_full()

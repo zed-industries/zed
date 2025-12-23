@@ -2336,12 +2336,9 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.14.0",
- "settings",
  "theme",
  "ui",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
