@@ -77,7 +77,7 @@ use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::Fil
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
-use buffer_diff::{BufferDiff, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkStatus, DiffRowSide};
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
@@ -19932,11 +19932,26 @@ impl Editor {
                                     continue;
                                 };
 
-                                let line = if diff_status.is_deleted() {
-                                    diff_snapshot.line_for_base_row(buffer_row, buffer_text)
-                                } else {
-                                    diff_snapshot.line_for_buffer_row(buffer_row, buffer_text)
-                                };
+                                let row_side = row_info.diff_row_side.unwrap_or_else(|| {
+                                    if diff_status.is_deleted() {
+                                        DiffRowSide::Base
+                                    } else {
+                                        DiffRowSide::Buffer
+                                    }
+                                });
+                                let line = diff_snapshot
+                                    .line_for_row(row_side, buffer_row, buffer_text)
+                                    .or_else(|| {
+                                        let fallback_side = match row_side {
+                                            DiffRowSide::Buffer => DiffRowSide::Base,
+                                            DiffRowSide::Base => DiffRowSide::Buffer,
+                                        };
+                                        diff_snapshot.line_for_row(
+                                            fallback_side,
+                                            buffer_row,
+                                            buffer_text,
+                                        )
+                                    });
                                 if let Some(line) = line {
                                     lines_by_buffer
                                         .entry(buffer_id)

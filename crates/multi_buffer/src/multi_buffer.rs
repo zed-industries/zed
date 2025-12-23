@@ -669,6 +669,7 @@ pub struct RowInfo {
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub diff_hunk_status: Option<buffer_diff::DiffHunkStatus>,
+    pub diff_row_side: Option<buffer_diff::DiffRowSide>,
     pub expand_info: Option<ExpandInfo>,
     pub wrapped_buffer_row: Option<u32>,
 }
@@ -7610,6 +7611,7 @@ impl Iterator for MultiBufferRows<'_> {
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
                 diff_hunk_status: None,
+                diff_row_side: Some(DiffRowSide::Buffer),
                 expand_info: None,
                 wrapped_buffer_row: None,
             });
@@ -7683,6 +7685,7 @@ impl Iterator for MultiBufferRows<'_> {
                     multibuffer_row: Some(multibuffer_row),
                     diff_status: None,
                     diff_hunk_status: None,
+                    diff_row_side: Some(DiffRowSide::Buffer),
                     wrapped_buffer_row: None,
                     expand_info,
                 });
@@ -7790,6 +7793,7 @@ impl Iterator for MultiBufferRows<'_> {
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
             diff_status,
             diff_hunk_status,
+            diff_row_side: Some(side),
             expand_info,
             wrapped_buffer_row: None,
         });

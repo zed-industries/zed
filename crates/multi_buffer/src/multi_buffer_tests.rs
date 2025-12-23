@@ -1,5 +1,5 @@
 use super::*;
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind, DiffRowSide};
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -33,6 +33,7 @@ fn test_empty_singleton(cx: &mut App) {
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             diff_hunk_status: None,
+            diff_row_side: Some(DiffRowSide::Buffer),
             expand_info: None,
             wrapped_buffer_row: None,
         }]
@@ -2590,6 +2591,13 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             diff_hunk_status: region.status,
+                            diff_row_side: Some(match region.status {
+                                Some(DiffHunkStatus {
+                                    kind: DiffHunkStatusKind::Deleted,
+                                    ..
+                                }) => DiffRowSide::Base,
+                                _ => DiffRowSide::Buffer,
+                            }),
                             buffer_row,
                             base_text_row,
                             wrapped_buffer_row: None,

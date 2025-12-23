@@ -34,7 +34,7 @@ use crate::{
         scroll_amount::ScrollAmount,
     },
 };
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind, DiffRowSide};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -2265,6 +2265,7 @@ impl EditorElement {
         for row_info in row_infos {
             let mut hunk_status = row_info.diff_hunk_status;
             let mut line_status = row_info.diff_status;
+            let row_side = row_info.diff_row_side.unwrap_or(DiffRowSide::Buffer);
 
             let buffer_row = row_info.buffer_row;
             let (buffer, diff) = if let (Some(buffer_id), Some(_)) =
@@ -2280,12 +2281,14 @@ impl EditorElement {
                 (None, None)
             };
 
-            if line_status.is_none() {
+            if line_status.is_none()
+                || line_status.is_some_and(|status| status.kind == DiffHunkStatusKind::Modified)
+            {
                 line_status = buffer
                     .zip(diff)
                     .and_then(|(buffer, diff)| {
                         let buffer_row = buffer_row?;
-                        diff.line_for_buffer_row(buffer_row, buffer).map(|line| DiffHunkStatus {
+                        diff.line_for_row(row_side, buffer_row, buffer).map(|line| DiffHunkStatus {
                             kind: line.kind,
                             secondary: line.secondary_status,
                         })
