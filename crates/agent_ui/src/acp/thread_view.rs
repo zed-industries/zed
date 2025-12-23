@@ -278,6 +278,7 @@ pub struct AcpThreadView {
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
+    token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -430,13 +431,13 @@ impl AcpThreadView {
             message_editor,
             model_selector: None,
             profile_selector: None,
-
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -1394,6 +1395,7 @@ impl AcpThreadView {
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
         self.thread_error_markdown = None;
+        self.token_limit_callout_dismissed = true;
         cx.notify();
     }
 
@@ -5391,22 +5393,26 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_token_limit_callout(
-        &self,
-        line_height: Pixels,
-        cx: &mut Context<Self>,
-    ) -> Option<Callout> {
+    fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.token_limit_callout_dismissed {
+            return None;
+        }
+
         let token_usage = self.thread()?.read(cx).token_usage()?;
         let ratio = token_usage.ratio();
 
-        let (severity, title) = match ratio {
+        let (severity, icon, title) = match ratio {
             acp_thread::TokenUsageRatio::Normal => return None,
-            acp_thread::TokenUsageRatio::Warning => {
-                (Severity::Warning, "Thread reaching the token limit soon")
-            }
-            acp_thread::TokenUsageRatio::Exceeded => {
-                (Severity::Error, "Thread reached the token limit")
-            }
+            acp_thread::TokenUsageRatio::Warning => (
+                Severity::Warning,
+                IconName::Warning,
+                "Thread reaching the token limit soon",
+            ),
+            acp_thread::TokenUsageRatio::Exceeded => (
+                Severity::Error,
+                IconName::XCircle,
+                "Thread reached the token limit",
+            ),
         };
 
         let burn_mode_available = self.as_native_thread(cx).is_some_and(|thread| {
@@ -5426,7 +5432,7 @@ impl AcpThreadView {
         Some(
             Callout::new()
                 .severity(severity)
-                .line_height(line_height)
+                .icon(icon)
                 .title(title)
                 .description(description)
                 .actions_slot(
@@ -5458,7 +5464,8 @@ impl AcpThreadView {
                                     })),
                             )
                         }),
-                ),
+                )
+                .dismiss_action(self.dismiss_error_button(cx)),
         )
     }
 
@@ -5892,7 +5899,7 @@ impl AcpThreadView {
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         IconButton::new("dismiss", IconName::Close)
             .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Dismiss Error"))
+            .tooltip(Tooltip::text("Dismiss"))
             .on_click(cx.listener({
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
@@ -6152,7 +6159,7 @@ impl Render for AcpThreadView {
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
                     Some(usage_callout.into_any_element())
                 } else {
-                    self.render_token_limit_callout(line_height, cx)
+                    self.render_token_limit_callout(cx)
                         .map(|token_limit_callout| token_limit_callout.into_any_element())
                 },
             )
