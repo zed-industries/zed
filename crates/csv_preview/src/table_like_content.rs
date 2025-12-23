@@ -4,7 +4,7 @@ use ui::SharedString;
 #[cfg(test)]
 use text::{Buffer, BufferId, ReplicaId};
 
-use crate::{row_identifiers::LineNumber, table_cell::TableCell};
+use crate::{row_identifiers::LineNumber, table_cell::TableCell, types::DataCellId};
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
 #[derive(Default, Clone)]
@@ -16,6 +16,9 @@ pub struct TableLikeContent {
 }
 
 impl TableLikeContent {
+    pub fn get_cell(&self, id: &DataCellId) -> Option<&TableCell> {
+        self.rows.get(*id.row)?.get(*id.col)
+    }
     pub fn from_buffer(buffer_snapshot: BufferSnapshot) -> Self {
         let text = buffer_snapshot.text();
 
