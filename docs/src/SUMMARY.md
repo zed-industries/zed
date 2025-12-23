@@ -74,6 +74,10 @@
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
 
+# Development
+
+- [Agent tools](./development/agent-tools/read-file-content-windows.md)
+
 # Extensions
 
 - [Overview](./extensions.md)

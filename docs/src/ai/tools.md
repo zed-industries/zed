@@ -6,7 +6,8 @@ Zed's built-in agent has access to a variety of tools that allow it to interact 
 
 ### `diagnostics`
 
-Gets errors and warnings for either a specific file or the entire project, useful after making edits to determine if further changes are needed.
+Gets errors and warnings for either a specific file or the entire project.
+
 When a path is provided, shows all diagnostics for that specific file.
 When no path is provided, shows a summary of error and warning counts for all files in the project.
 
@@ -36,7 +37,24 @@ Opens a file or URL with the default application associated with it on the user'
 
 ### `read_file`
 
-Reads the content of a specified file in the project, allowing access to file contents.
+Reads the content of a specified file in the project.
+
+This tool supports two primary ways of reading text:
+
+- **Line range mode** (best when you already have line numbers, e.g. from an outline):
+  - Provide `start_line` and/or `end_line` (1-based, inclusive end).
+- **Byte window mode** (best for paging efficiently and avoiding repeated small reads):
+  - Provide `start_byte` (0-based) and/or `max_bytes`.
+  - The returned content is **rounded to whole line boundaries** so it doesn’t start or end mid-line.
+
+For large files, calling `read_file` without a range may return a **file outline** with line numbers instead of full content. To read large files efficiently without line-number paging, use **byte window mode**.
+
+#### Byte window paging recommendations
+
+- Prefer setting a larger `max_bytes` when you expect to read multiple adjacent sections, to reduce tool calls and avoid rate limiting.
+- Use `start_byte` to page forward/backward deterministically.
+
+When using byte window mode, the output includes a small header describing the effective returned window (requested/rounded/returned byte ranges and line ranges). Use the returned byte range to pick the next `start_byte` for continued paging.
 
 ### `thinking`
 

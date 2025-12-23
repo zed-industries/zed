@@ -1799,6 +1799,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         path: "project/b.txt".into(),
         start_line: None,
         end_line: None,
+        start_byte: None,
+        max_bytes: None,
     };
     let read_tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
     let (event_stream, _) = ToolCallEventStream::test();
@@ -1811,6 +1813,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         path: "project/c.txt".into(),
         start_line: None,
         end_line: None,
+        start_byte: None,
+        max_bytes: None,
     };
     let does_not_exist_result = cx.update(|cx| read_tool.run(input, event_stream, cx));
     does_not_exist_result.await.unwrap_err();

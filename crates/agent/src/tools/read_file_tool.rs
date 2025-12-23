@@ -10,9 +10,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
+use text::OffsetRangeExt as _;
 use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+
+const DEFAULT_MAX_BYTES: usize = 64 * 1024;
+const HARD_MAX_BYTES: usize = 256 * 1024;
+const MAX_SYNTAX_EXPANSION_ROWS: u32 = 500;
 
 /// Reads the content of the given file in the project.
 ///
@@ -20,6 +25,17 @@ use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 /// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
 ///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
+///
+/// This tool supports two ways of reading text:
+///
+/// - **Line range mode**: provide `start_line` and/or `end_line` (1-based, inclusive end).
+/// - **Byte window mode**: provide `start_byte` and/or `max_bytes` (0-based byte offsets).
+///   Byte window results are rounded to whole line boundaries, prefer syntactic expansion when available,
+///   and are bounded by a server-side hard cap.
+///
+/// Byte window mode is intended for efficient paging and reducing repeated small reads. When used,
+/// the returned content includes a brief header with the requested/rounded/returned byte ranges and line range,
+/// which can be used to choose the next `start_byte` deterministically.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -42,6 +58,26 @@ pub struct ReadFileToolInput {
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<u32>,
+
+    /// Optional byte offset to start reading on (0-based index).
+    ///
+    /// When provided (or when `max_bytes` is provided), this call uses **byte window mode**.
+    /// The returned content is rounded to whole line boundaries (no partial lines).
+    ///
+    /// For efficient paging, use the byte-range header included in byte window outputs to choose the next
+    /// `start_byte` deterministically.
+    #[serde(default)]
+    pub start_byte: Option<u64>,
+
+    /// Optional maximum number of bytes to read.
+    ///
+    /// When provided (or when `start_byte` is provided), this call uses **byte window mode**.
+    /// The requested size is bounded by a server-side hard cap.
+    ///
+    /// Prefer setting a larger `max_bytes` (up to the hard cap) when you expect to read adjacent sections, to reduce
+    /// repeated paging calls.
+    #[serde(default)]
+    pub max_bytes: Option<u32>,
 }
 
 pub struct ReadFileTool {
@@ -238,6 +274,132 @@ impl AgentTool for ReadFileTool {
                 })?;
 
                 Ok(result.into())
+            } else if input.start_byte.is_some() || input.max_bytes.is_some() {
+                let (window_text, window_anchor) = buffer.read_with(cx, |buffer, _cx| {
+                    let snapshot = buffer.snapshot();
+
+                    let requested_start_offset = input
+                        .start_byte
+                        .unwrap_or(0)
+                        .min(snapshot.len() as u64) as usize;
+
+                    let requested_len = input
+                        .max_bytes
+                        .map(|bytes| bytes as usize)
+                        .unwrap_or(DEFAULT_MAX_BYTES);
+
+                    let requested_len = requested_len.min(HARD_MAX_BYTES);
+
+                    let requested_start_offset =
+                        snapshot.as_rope().floor_char_boundary(requested_start_offset);
+                    let requested_end_offset = snapshot
+                        .as_rope()
+                        .floor_char_boundary(
+                            requested_start_offset
+                                .saturating_add(requested_len)
+                                .min(snapshot.len()),
+                        );
+
+                    let requested_byte_range = requested_start_offset..requested_end_offset;
+                    let mut range = requested_byte_range.to_point(&snapshot);
+
+                    // Round to line boundaries: no partial lines.
+                    range.start.column = 0;
+                    range.end.column = snapshot.line_len(range.end.row);
+
+                    let rounded_byte_range = range.to_offset(&snapshot);
+
+                    // Prefer syntactic expansion (clean boundaries) when available, but only if it stays bounded.
+                    let mut used_syntactic_expansion = false;
+                    if let Some(ancestor_node) = snapshot.syntax_ancestor(range.clone()) {
+                        let mut ancestor_range = ancestor_node.byte_range().to_point(&snapshot);
+                        ancestor_range.start.column = 0;
+
+                        let max_end_row = (ancestor_range.start.row + MAX_SYNTAX_EXPANSION_ROWS)
+                            .min(snapshot.max_point().row);
+                        let capped_end_row = ancestor_range.end.row.min(max_end_row);
+                        ancestor_range.end =
+                            Point::new(capped_end_row, snapshot.line_len(capped_end_row));
+
+                        let ancestor_byte_range = ancestor_range.to_offset(&snapshot);
+                        if ancestor_byte_range.len() <= HARD_MAX_BYTES {
+                            range = ancestor_range;
+                            used_syntactic_expansion = true;
+                        }
+                    }
+
+                    let effective_byte_range = range.to_offset(&snapshot);
+
+                    let start_anchor = buffer.anchor_before(Point::new(range.start.row, 0));
+                    let end_row_exclusive = (range.end.row + 1).min(snapshot.max_point().row + 1);
+                    let end_anchor = buffer.anchor_before(Point::new(end_row_exclusive, 0));
+                    let mut text = buffer.text_for_range(start_anchor..end_anchor).collect::<String>();
+
+                    let mut header = String::new();
+                    header.push_str("SUCCESS: Byte-window read.\n");
+                    header.push_str(&format!(
+                        "Requested bytes: [{}-{}) (len {})\n",
+                        requested_byte_range.start,
+                        requested_byte_range.end,
+                        requested_byte_range.len()
+                    ));
+                    header.push_str(&format!(
+                        "Rounded bytes:   [{}-{}) (len {})\n",
+                        rounded_byte_range.start,
+                        rounded_byte_range.end,
+                        rounded_byte_range.len()
+                    ));
+                    header.push_str(&format!(
+                        "Returned bytes:  [{}-{}) (len {})\n",
+                        effective_byte_range.start,
+                        effective_byte_range.end,
+                        effective_byte_range.len()
+                    ));
+                    header.push_str(&format!(
+                        "Returned lines:  {}-{}\n",
+                        range.start.row + 1,
+                        range.end.row + 1
+                    ));
+                    header.push_str(&format!(
+                        "Syntactic expansion: {}\n\n",
+                        if used_syntactic_expansion { "yes" } else { "no" }
+                    ));
+
+                    // Enforce a hard output cap. If the chosen range expanded beyond the cap (e.g. large lines),
+                    // fall back to the rounded byte window and cap to HARD_MAX_BYTES on a UTF-8 boundary.
+                    if effective_byte_range.len() > HARD_MAX_BYTES {
+                        let fallback_end = snapshot.as_rope().floor_char_boundary(
+                            (rounded_byte_range.start + HARD_MAX_BYTES).min(snapshot.len()),
+                        );
+                        let fallback_range =
+                            (rounded_byte_range.start..fallback_end).to_point(&snapshot);
+
+                        let fallback_start_anchor =
+                            buffer.anchor_before(Point::new(fallback_range.start.row, 0));
+                        let fallback_end_anchor =
+                            buffer.anchor_before(Point::new(fallback_range.end.row, 0));
+                        text = buffer
+                            .text_for_range(fallback_start_anchor..fallback_end_anchor)
+                            .collect::<String>();
+
+                        header.push_str(
+                            "NOTE: Returned content exceeded the hard cap after rounding/expansion; \
+falling back to a capped byte window.\n\n",
+                        );
+                    }
+
+                    (format!("{header}{text}"), Some(start_anchor))
+                })?;
+
+                if let Some(a) = window_anchor {
+                    anchor = Some(a);
+                }
+
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer.clone(), cx);
+                })?;
+
+                Ok(window_text.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
@@ -339,6 +501,8 @@ mod test {
                     path: "root/nonexistent_file.txt".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.run(input, event_stream, cx)
             })
@@ -383,6 +547,8 @@ mod test {
                     path: "root/small_file.txt".into(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
@@ -426,6 +592,8 @@ mod test {
                     path: "root/large_file.rs".into(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -451,6 +619,8 @@ mod test {
                     path: "root/large_file.rs".into(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
@@ -511,11 +681,78 @@ mod test {
                     path: "root/multiline.txt".to_string(),
                     start_line: Some(2),
                     end_line: Some(4),
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
+    }
+
+    #[gpui::test]
+    async fn test_read_file_with_byte_window_rounds_to_whole_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+
+        // Request a byte window that starts in the middle of "Line 2", which should round to whole lines.
+        let line_1 = "Line 1\n";
+        let start_byte = (line_1.len() + 2) as u64;
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/multiline.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                    start_byte: Some(start_byte),
+                    max_bytes: Some(6),
+                };
+                tool.run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        assert!(
+            result.contains("Line 2\n"),
+            "Expected rounded output to include full line 2, got: {result:?}"
+        );
+        assert!(
+            result.ends_with('\n'),
+            "Expected rounded output to end on a line boundary, got: {result:?}"
+        );
+        assert!(
+            result.contains("\n\nLine 2\n"),
+            "Expected rounded output to include full line 2 after the byte-window header, got: {result:?}"
+        );
     }
 
     #[gpui::test]
@@ -554,6 +791,8 @@ mod test {
                     path: "root/multiline.txt".to_string(),
                     start_line: Some(0),
                     end_line: Some(2),
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -567,6 +806,8 @@ mod test {
                     path: "root/multiline.txt".to_string(),
                     start_line: Some(1),
                     end_line: Some(0),
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -580,6 +821,8 @@ mod test {
                     path: "root/multiline.txt".to_string(),
                     start_line: Some(3),
                     end_line: Some(2),
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -668,6 +911,8 @@ mod test {
                     path: "/outside_project/sensitive_file.txt".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -684,6 +929,8 @@ mod test {
                     path: "project_root/allowed_file.txt".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -700,6 +947,8 @@ mod test {
                     path: "project_root/.secretdir/config".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -715,6 +964,8 @@ mod test {
                     path: "project_root/.mymetadata".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -731,6 +982,8 @@ mod test {
                     path: "project_root/.mysecrets".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -746,6 +999,8 @@ mod test {
                     path: "project_root/subdir/special.privatekey".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -761,6 +1016,8 @@ mod test {
                     path: "project_root/subdir/data.mysensitive".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -777,6 +1034,8 @@ mod test {
                     path: "project_root/subdir/normal_file.txt".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -791,6 +1050,8 @@ mod test {
                     path: "project_root/../outside_project/sensitive_file.txt".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
@@ -899,6 +1160,8 @@ mod test {
                     path: "worktree1/src/main.rs".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -917,6 +1180,8 @@ mod test {
                     path: "worktree1/src/secret.rs".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -938,6 +1203,8 @@ mod test {
                     path: "worktree1/tests/fixture.sql".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -959,6 +1226,8 @@ mod test {
                     path: "worktree2/lib/public.js".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -977,6 +1246,8 @@ mod test {
                     path: "worktree2/lib/private.js".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -998,6 +1269,8 @@ mod test {
                     path: "worktree2/docs/internal.md".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
@@ -1020,6 +1293,8 @@ mod test {
                     path: "worktree1/src/config.toml".to_string(),
                     start_line: None,
                     end_line: None,
+                    start_byte: None,
+                    max_bytes: None,
                 };
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
