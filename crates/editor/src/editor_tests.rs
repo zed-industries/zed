@@ -29602,6 +29602,17 @@ async fn test_newline_task_list_continuation(cx: &mut TestAppContext) {
         - [ ] ˇ
     "});
 
+    // Case 2.1: Works with uppercase checked marker too
+    cx.set_state(indoc! {"
+        - [X] completed taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - [X] completed task
+        - [ ] ˇ
+    "});
+
     // Case 3: Cursor position doesn't matter - content after marker is what counts
     cx.set_state(indoc! {"
         - [ ] taˇsk
