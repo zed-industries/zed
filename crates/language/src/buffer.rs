@@ -2610,8 +2610,10 @@ impl Buffer {
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent =
-                            language_settings(language.map(|l| l.name()), None, cx).auto_indent;
+                        let auto_indent = language_settings(cx)
+                            .language(language.map(|l| l.name()))
+                            .get()
+                            .auto_indent;
                         previous_setting = Some((language_id, auto_indent));
                         auto_indent
                     }
@@ -3202,11 +3204,9 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
-        let settings = language_settings(
-            self.language_at(position).map(|l| l.name()),
-            self.file(),
-            cx,
-        );
+        let settings = language_settings(cx)
+            .buffer_snapshot_at(self, position)
+            .get();
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -3676,11 +3676,9 @@ impl BufferSnapshot {
         position: D,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        language_settings(
-            self.language_at(position).map(|l| l.name()),
-            self.file.as_ref(),
-            cx,
-        )
+        language_settings(cx)
+            .buffer_snapshot_at(self, position)
+            .get()
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {

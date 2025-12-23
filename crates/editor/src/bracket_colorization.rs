@@ -47,12 +47,10 @@ impl Editor {
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
-                if language_settings::language_settings(
-                    buffer_snapshot.language().map(|language| language.name()),
-                    buffer_snapshot.file(),
-                    cx,
-                )
-                .colorize_brackets
+                if language_settings::language_settings(cx)
+                    .buffer_snapshot(&buffer_snapshot)
+                    .get()
+                    .colorize_brackets
                 {
                     let fetched_chunks = self
                         .fetched_tree_sitter_chunks
