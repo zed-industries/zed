@@ -1,6 +1,8 @@
 //! Provides `language`-related settings.
 
-use crate::{Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName};
+use crate::{
+    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -24,6 +26,7 @@ pub struct LanguageSettingsBuilder<'a> {
     cx: &'a App,
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
+    modeline: Option<&'a ModelineSettings>,
 }
 
 impl<'a> LanguageSettingsBuilder<'a> {
@@ -40,6 +43,7 @@ impl<'a> LanguageSettingsBuilder<'a> {
     pub fn buffer(mut self, buffer: &'a Buffer) -> Self {
         self.language = buffer.language().map(|l| l.name());
         self.file = buffer.file();
+        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
         self
     }
 
@@ -52,6 +56,12 @@ impl<'a> LanguageSettingsBuilder<'a> {
     pub fn buffer_snapshot(mut self, buffer: &'a BufferSnapshot) -> Self {
         self.language = buffer.language().map(|l| l.name());
         self.file = buffer.file();
+        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
+        self
+    }
+
+    pub fn modeline(mut self, modeline: Option<&'a ModelineSettings>) -> Self {
+        self.modeline = modeline;
         self
     }
 
@@ -70,11 +80,17 @@ impl<'a> LanguageSettingsBuilder<'a> {
             worktree_id: f.worktree_id(self.cx),
             path: f.path().as_ref(),
         });
-        AllLanguageSettings::get(location, self.cx).language(
+        let mut settings = AllLanguageSettings::get(location, self.cx).language(
             location,
             self.language.as_ref(),
             self.cx,
-        )
+        );
+
+        if let Some(modeline) = self.modeline {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
     }
 }
 
@@ -84,6 +100,7 @@ pub fn language_settings<'a>(cx: &'a App) -> LanguageSettingsBuilder<'a> {
         cx,
         language: None,
         file: None,
+        modeline: None,
     }
 }
 
@@ -531,6 +548,35 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+}
+
+fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
+    let show_whitespaces = modeline.show_trailing_whitespace.and_then(|v| {
+        if v {
+            Some(ShowWhitespaceSetting::Trailing)
+        } else {
+            None
+        }
+    });
+
+    settings
+        .tab_size
+        .merge_from_option(modeline.tab_size.as_ref());
+    settings
+        .hard_tabs
+        .merge_from_option(modeline.hard_tabs.as_ref());
+    settings
+        .preferred_line_length
+        .merge_from_option(modeline.preferred_line_length.map(u32::from).as_ref());
+    settings
+        .auto_indent
+        .merge_from_option(modeline.auto_indent.as_ref());
+    settings
+        .show_whitespaces
+        .merge_from_option(show_whitespaces.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(modeline.ensure_final_newline.as_ref());
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
