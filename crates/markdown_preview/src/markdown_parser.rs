@@ -270,20 +270,21 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 Event::InlineHtml(html) => {
-                    let (_, html_range) = self.current().unwrap();
-                    let html_range = html_range.clone();
-
-                    if let Some(image) = self.extract_inline_html_image(&html, html_range) {
-                        if !text.is_empty() {
-                            let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                                source_range: source_range.clone(),
-                                contents: mem::take(&mut text).into(),
-                                highlights: mem::take(&mut highlights),
-                                regions: mem::take(&mut regions),
-                            });
-                            markdown_text_like.push(parsed_regions);
+                    if let Some((_, html_range)) = self.current() {
+                        let html_range = html_range.clone();
+                        if let Some(image) = self.extract_inline_html_image(&html, html_range) {
+                            if !text.is_empty() {
+                                let parsed_regions =
+                                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                                        source_range: source_range.clone(),
+                                        contents: mem::take(&mut text).into(),
+                                        highlights: mem::take(&mut highlights),
+                                        regions: mem::take(&mut regions),
+                                    });
+                                markdown_text_like.push(parsed_regions);
+                            }
+                            markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
-                        markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                     }
                 }
 
