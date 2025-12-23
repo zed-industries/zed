@@ -289,14 +289,6 @@ impl Markdown {
         }
     }
 
-    pub fn selected_text(&self) -> Option<String> {
-        if self.selection.end <= self.selection.start {
-            None
-        } else {
-            Some(self.source[self.selection.start..self.selection.end].to_string())
-        }
-    }
-
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;

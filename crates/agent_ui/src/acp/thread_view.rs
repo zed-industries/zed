@@ -2128,8 +2128,6 @@ impl AcpThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let mut markdown_selection = None;
-
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
@@ -2144,12 +2142,6 @@ impl AcpThreadView {
                                         return None;
                                     }
 
-                                    let markdown_content = md
-                                        .read(cx)
-                                        .selected_text()
-                                        .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    markdown_selection = Some(markdown_content);
-
                                     Some(
                                         self.render_markdown(md.clone(), style.clone())
                                             .into_any_element(),
@@ -2163,12 +2155,6 @@ impl AcpThreadView {
                                     if this_is_blank {
                                         return None;
                                     }
-                                    let markdown_content = md
-                                        .read(cx)
-                                        .selected_text()
-                                        .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    markdown_selection = Some(markdown_content);
-
                                     Some(
                                         self.render_thinking_block(
                                             entry_ix,
@@ -2198,22 +2184,10 @@ impl AcpThreadView {
                             right_click_menu(format!("agent_context_menu-{}", entry_ix))
                                 .trigger(move |_, _, _| message_body)
                                 .menu(move |window, cx| {
-                                    let selection = markdown_selection.clone();
                                     let focus = window.focused(cx);
-
                                     ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        let menu = menu.entry(
-                                            "Copy",
-                                            Some(Box::new(markdown::CopyAsMarkdown)),
-                                            move |_, cx| {
-                                                if let Some(text) = selection.as_ref() {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(text.to_string()),
-                                                    );
-                                                }
-                                            },
-                                        );
-                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                        menu.action("Copy", Box::new(markdown::CopyAsMarkdown))
+                                            .when_some(focus, |menu, focus| menu.context(focus))
                                     })
                                 })
                                 .into_any_element(),
