@@ -57,6 +57,7 @@ pub struct EditorSettings {
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
+    pub select_word_as_node: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -286,6 +287,7 @@ impl Settings for EditorSettings {
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
+            select_word_as_node: editor.select_word_as_node.unwrap(),
         }
     }
 }
