@@ -86,6 +86,7 @@ impl TeacherPrompt {
     const PROMPT: &str = include_str!("teacher.prompt.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
@@ -181,13 +182,15 @@ impl TeacherPrompt {
         result.push_str(Self::EDITABLE_REGION_START);
 
         // TODO: control number of lines around cursor
-        result.push_str(&example.spec.cursor_position);
-        if !example.spec.cursor_position.ends_with('\n') {
+        let (mut excerpt, offset) = example.spec.cursor_excerpt().unwrap();
+        excerpt.insert_str(offset, Self::USER_CURSOR_MARKER);
+        result.push_str(&excerpt);
+        if !result.ends_with('\n') {
             result.push('\n');
         }
 
-        result.push_str(&format!("{}\n", Self::EDITABLE_REGION_END));
-        result.push_str("`````");
+        result.push_str(Self::EDITABLE_REGION_END);
+        result.push_str("\n`````");
 
         result
     }
