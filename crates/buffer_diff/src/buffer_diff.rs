@@ -31,6 +31,7 @@ pub struct BufferDiff {
 #[derive(Clone, Debug)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
+    line_index: Arc<LineIndex>,
     secondary_diff: Option<Box<BufferDiffSnapshot>>,
     secondary_line_index: Option<Arc<LineIndex>>,
 }
@@ -187,22 +188,24 @@ impl LineIndex {
         index
     }
 
-    fn has_added_line(&self, buffer_row: u32, text: &Arc<str>) -> bool {
+    fn added_count(&self, buffer_row: u32, text: &Arc<str>) -> usize {
         self.added_lines
             .get(&LineKey {
                 buffer_row,
                 text: text.clone(),
             })
-            .is_some_and(|count| *count > 0)
+            .copied()
+            .unwrap_or(0)
     }
 
-    fn has_deleted_line(&self, buffer_row: u32, text: &Arc<str>) -> bool {
+    fn deleted_count(&self, buffer_row: u32, text: &Arc<str>) -> usize {
         self.deleted_lines
             .get(&LineKey {
                 buffer_row,
                 text: text.clone(),
             })
-            .is_some_and(|count| *count > 0)
+            .copied()
+            .unwrap_or(0)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,16 +302,18 @@ impl BufferDiffSnapshot {
     }
 
     fn empty(buffer: &text::BufferSnapshot, cx: &mut App) -> BufferDiffSnapshot {
+        let inner = BufferDiffInner {
+            base_text: language::Buffer::build_empty_snapshot(cx),
+            hunks: SumTree::new(buffer),
+            pending_hunks: SumTree::new(buffer),
+            lines: Vec::new(),
+            buffer_line_index: HashMap::default(),
+            base_line_index: HashMap::default(),
+            base_text_exists: false,
+        };
         BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text: language::Buffer::build_empty_snapshot(cx),
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                lines: Vec::new(),
-                buffer_line_index: HashMap::default(),
-                base_line_index: HashMap::default(),
-                base_text_exists: false,
-            },
+            inner,
+            line_index: Arc::new(LineIndex::default()),
             secondary_diff: None,
             secondary_line_index: None,
         }
@@ -319,16 +324,18 @@ impl BufferDiffSnapshot {
         base_text: language::BufferSnapshot,
     ) -> BufferDiffSnapshot {
         debug_assert_eq!(buffer.text(), base_text.text());
+        let inner = BufferDiffInner {
+            base_text,
+            hunks: SumTree::new(buffer),
+            pending_hunks: SumTree::new(buffer),
+            lines: Vec::new(),
+            buffer_line_index: HashMap::default(),
+            base_line_index: HashMap::default(),
+            base_text_exists: false,
+        };
         BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text,
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                lines: Vec::new(),
-                buffer_line_index: HashMap::default(),
-                base_line_index: HashMap::default(),
-                base_text_exists: false,
-            },
+            inner,
+            line_index: Arc::new(LineIndex::default()),
             secondary_diff: None,
             secondary_line_index: None,
         }
@@ -373,16 +380,18 @@ impl BufferDiffSnapshot {
 
         async move {
             let (base_text, computed) = futures::join!(base_text_snapshot, computed);
+            let inner = BufferDiffInner {
+                base_text,
+                hunks: computed.hunks,
+                lines: computed.lines,
+                buffer_line_index: computed.buffer_line_index,
+                base_line_index: computed.base_line_index,
+                base_text_exists,
+                pending_hunks: SumTree::new(&buffer),
+            };
             Self {
-                inner: BufferDiffInner {
-                    base_text,
-                    hunks: computed.hunks,
-                    lines: computed.lines,
-                    buffer_line_index: computed.buffer_line_index,
-                    base_line_index: computed.base_line_index,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer),
-                },
+                line_index: Arc::new(LineIndex::from_diff_inner(&inner)),
+                inner,
                 secondary_diff: None,
                 secondary_line_index: None,
             }
@@ -410,16 +419,18 @@ impl BufferDiffSnapshot {
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
                 let buffer_for_compute = buffer.clone();
                 let computed = compute_hunks(base_text_pair, buffer_for_compute, diff_options);
+                let inner = BufferDiffInner {
+                    base_text: base_text_snapshot,
+                    pending_hunks: SumTree::new(&buffer),
+                    hunks: computed.hunks,
+                    lines: computed.lines,
+                    buffer_line_index: computed.buffer_line_index,
+                    base_line_index: computed.base_line_index,
+                    base_text_exists,
+                };
                 Self {
-                    inner: BufferDiffInner {
-                        base_text: base_text_snapshot,
-                        pending_hunks: SumTree::new(&buffer),
-                        hunks: computed.hunks,
-                        lines: computed.lines,
-                        buffer_line_index: computed.buffer_line_index,
-                        base_line_index: computed.base_line_index,
-                        base_text_exists,
-                    },
+                    line_index: Arc::new(LineIndex::from_diff_inner(&inner)),
+                    inner,
                     secondary_diff: None,
                     secondary_line_index: None,
                 }
@@ -577,22 +588,44 @@ impl BufferDiffSnapshot {
             return pending;
         }
 
-        let Some(line_index) = self.secondary_line_index.as_deref() else {
+        let Some(secondary_line_index) = self.secondary_line_index.as_deref() else {
             return DiffHunkSecondaryStatus::NoSecondaryHunk;
         };
+        let primary_line_index = self.line_index.as_ref();
 
-        let deleted_unstaged = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
-            if let (Some(buffer_row), Some(text)) = (buffer_row, text) {
-                line_index.has_deleted_line(buffer_row, text)
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum LineMatch {
+            None,
+            Partial,
+            Full,
+        }
+
+        let match_state = |primary_count: usize, secondary_count: usize| {
+            if primary_count == 0 || secondary_count == 0 {
+                LineMatch::None
+            } else if secondary_count >= primary_count {
+                LineMatch::Full
             } else {
-                false
+                LineMatch::Partial
             }
         };
-        let added_unstaged = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
+
+        let deleted_match = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
             if let (Some(buffer_row), Some(text)) = (buffer_row, text) {
-                line_index.has_added_line(buffer_row, text)
+                let primary_count = primary_line_index.deleted_count(buffer_row, text);
+                let secondary_count = secondary_line_index.deleted_count(buffer_row, text);
+                match_state(primary_count, secondary_count)
             } else {
-                false
+                LineMatch::None
+            }
+        };
+        let added_match = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
+            if let (Some(buffer_row), Some(text)) = (buffer_row, text) {
+                let primary_count = primary_line_index.added_count(buffer_row, text);
+                let secondary_count = secondary_line_index.added_count(buffer_row, text);
+                match_state(primary_count, secondary_count)
+            } else {
+                LineMatch::None
             }
         };
 
@@ -600,31 +633,35 @@ impl BufferDiffSnapshot {
             .paired_line_id
             .and_then(|pair_id| self.inner.lines.get(pair_id));
 
-        let (deleted_is_unstaged, added_is_unstaged) = match line.kind {
-            DiffHunkStatusKind::Deleted => {
-                let deleted = deleted_unstaged(line.buffer_row, line.base_text.as_ref());
-                let added = pair.is_some_and(|pair| {
-                    added_unstaged(pair.buffer_row, pair.buffer_text.as_ref())
-                });
-                (deleted, added)
-            }
-            DiffHunkStatusKind::Added => {
-                let added = added_unstaged(line.buffer_row, line.buffer_text.as_ref());
-                let deleted = pair
-                    .is_some_and(|pair| deleted_unstaged(pair.buffer_row, pair.base_text.as_ref()));
-                (deleted, added)
-            }
-            DiffHunkStatusKind::Modified => (false, false),
+        let is_paired = pair.is_some();
+        let (primary_match, pair_match) = match line.kind {
+            DiffHunkStatusKind::Deleted => (
+                deleted_match(line.buffer_row, line.base_text.as_ref()),
+                pair.map(|pair| added_match(pair.buffer_row, pair.buffer_text.as_ref()))
+                    .unwrap_or(LineMatch::None),
+            ),
+            DiffHunkStatusKind::Added => (
+                added_match(line.buffer_row, line.buffer_text.as_ref()),
+                pair.map(|pair| deleted_match(pair.buffer_row, pair.base_text.as_ref()))
+                    .unwrap_or(LineMatch::None),
+            ),
+            DiffHunkStatusKind::Modified => (LineMatch::None, LineMatch::None),
         };
 
-        let is_paired = pair.is_some();
-        match (is_paired, deleted_is_unstaged, added_is_unstaged) {
-            (true, true, true) => DiffHunkSecondaryStatus::HasSecondaryHunk,
-            (true, false, false) => DiffHunkSecondaryStatus::NoSecondaryHunk,
-            (true, _, _) => DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
-            (false, true, _) => DiffHunkSecondaryStatus::HasSecondaryHunk,
-            (false, _, true) => DiffHunkSecondaryStatus::HasSecondaryHunk,
-            (false, _, _) => DiffHunkSecondaryStatus::NoSecondaryHunk,
+        if is_paired {
+            match (primary_match, pair_match) {
+                (LineMatch::Full, LineMatch::Full) => {
+                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                }
+                (LineMatch::None, LineMatch::None) => DiffHunkSecondaryStatus::NoSecondaryHunk,
+                _ => DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+            }
+        } else {
+            match primary_match {
+                LineMatch::Full => DiffHunkSecondaryStatus::HasSecondaryHunk,
+                LineMatch::None => DiffHunkSecondaryStatus::NoSecondaryHunk,
+                LineMatch::Partial => DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+            }
         }
     }
 
@@ -2386,6 +2423,7 @@ impl BufferDiff {
             .map(|diff| Arc::new(LineIndex::from_diff_inner(&diff.inner)));
         BufferDiffSnapshot {
             inner: self.inner.clone(),
+            line_index: Arc::new(LineIndex::from_diff_inner(&self.inner)),
             secondary_diff,
             secondary_line_index,
         }
@@ -2775,6 +2813,42 @@ mod tests {
             &buffer,
             &head_text,
             &expected_hunks,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_line_secondary_status_with_duplicate_deletions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let head_text = "A\nX\nX\nB\n".to_string();
+        let index_text = "A\nX\nB\n".to_string();
+        let buffer_text = "A\nB\n".to_string();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
+        let mut uncommitted_diff = BufferDiffSnapshot::new_sync(buffer.clone(), head_text, cx);
+        uncommitted_diff.secondary_diff = Some(Box::new(unstaged_diff));
+        uncommitted_diff.secondary_line_index = uncommitted_diff
+            .secondary_diff
+            .as_ref()
+            .map(|diff| Arc::new(LineIndex::from_diff_inner(&diff.inner)));
+
+        let first = uncommitted_diff
+            .line_for_base_row(1, &buffer)
+            .expect("first deleted line");
+        let second = uncommitted_diff
+            .line_for_base_row(2, &buffer)
+            .expect("second deleted line");
+
+        assert_eq!(first.kind, DiffHunkStatusKind::Deleted);
+        assert_eq!(second.kind, DiffHunkStatusKind::Deleted);
+        assert_eq!(
+            first.secondary_status,
+            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+        );
+        assert_eq!(
+            second.secondary_status,
+            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
         );
     }
 
