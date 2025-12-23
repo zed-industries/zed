@@ -1670,6 +1670,7 @@ impl EditorElement {
         em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
+        redacted_ranges: &[Range<DisplayPoint>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
@@ -1705,7 +1706,14 @@ impl EditorElement {
                     if block_width == Pixels::ZERO {
                         block_width = em_advance;
                     }
-                    let block_text = if let CursorShape::Block = selection.cursor_shape {
+                    // Don't show block cursor text if cursor is in a redacted range
+                    let is_in_redacted_range = redacted_ranges
+                        .iter()
+                        .any(|range| range.start <= cursor_position && cursor_position < range.end);
+
+                    let block_text = if let CursorShape::Block = selection.cursor_shape
+                        && !is_in_redacted_range
+                    {
                         snapshot
                             .grapheme_at(cursor_position)
                             .or_else(|| {
@@ -9976,6 +9984,7 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         autoscroll_containing_element,
+                        &redacted_ranges,
                         window,
                         cx,
                     );
