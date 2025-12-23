@@ -25,29 +25,25 @@ This document outlines the current state of the POC feature. It might not be the
   - The table’s total width grows or shrinks as columns are resized.
   - This allows the table to expand beyond its parent and enables intuitive horizontal scrolling.
 
-- **Why we need this:**
-  - Users expect spreadsheet-like behavior when previewing tabular data.
-  - It allows columns to be expanded as needed to view all content, without artificial constraints.
-  - Improves usability and aligns with common data table UX patterns.
-
 ## Progress
 
 ### Table: UI/Behavior
 
 **Features:**
-- [ ] feat: Add multiline cells (variable list) / single line cells (unified list) modes
+- [x] feat: Smart debouncing (now + cooldown instead of dumb waiting)
 - [x] feat: Add tooltip to show full value on hover
-- [ ] feat: Optional headers (c1 c2 c3) toggle
 - [x] feat: Add performance metrics (timings for ordering, parsing, copying, selection, etc)
-- [ ] feat: Horizontal scroll vs fit all columns
+- [ ] feat: Add multiline cells (variable list) / single line cells (unified list) modes
+- [ ] feat: Optional headers (c1 c2 c3) toggle
+- [ ] feat: Horizontal scroll vs fit all columns (**need infra**)
 - [ ] feat: Update column resizing behavior (double-click column boundary to fit to content, again to fit to column name, again to reset)
 - [ ] feat: Add persisting of the state of opened previews on editor restart
 - [ ] feat: Add `CsvPreviewView` settings persistence (probably need to add them to settings.json)
 - [ ] feat: Generalize the preview to support .tsv files (maybe even all files, and prompt user to select format if it's not .csv/.tsv)
-- [ ] feat: Smart debouncing (now + cooldown instead of dumb waiting)
 
 **Fixes:**
 - [x] fix: Vertical scrolling doesn't work in variable list rendering mode
+  - [ ] fix: Variable and Uniform lists have the separate scrolls. TODO: sync them
 
 ### Table: Minor UI Tweaks
 
@@ -113,7 +109,7 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [x] feat: Add tooltip on order button
-- [ ] feat: Add manual ordering of columns (drag to reorder)
+- [ ] feat: Add manual ordering of columns by dragging (**needs infra**)
 
 **Fixes:**
 
@@ -129,7 +125,8 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [x] feat: Inline edits (click cell to enter editor mode. Edit text, hit enter, and changes applied to original file)
-  - [ ] fix: Allow overflow for the editor. Style editor to have background, border and paddings
+  - [x] fix: Allow overflow for the editor. Style editor to have background, border and paddings
+    - [ ] fix: Add z-index, to be on top of adjacent cells
 - [ ] feat: Apply ordering settings (permanently write to buffer current rows and columns order)
 - [ ] feat: Paste from clipboard over several cells (parse based on defined separator). Allow only in `AllCells` / `SingleChunk` selection modes
 
