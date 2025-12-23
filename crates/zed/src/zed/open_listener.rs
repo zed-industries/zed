@@ -492,7 +492,7 @@ async fn handle_terminal_command(
 ) {
     let cli_enabled = cx
         .update(|cx| TerminalSettings::get_global(cx).cli_enabled)
-        .unwrap_or(true);
+        .unwrap_or(false);
 
     if !cli_enabled {
         responses
