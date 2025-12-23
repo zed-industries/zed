@@ -2039,42 +2039,7 @@ impl AcpThreadView {
                                         }
                                     })
                                     .text_xs()
-                                    .child({
-                                        let editor_weak = editor.downgrade();
-                                        right_click_menu(format!("message_context_menu-{}", entry_ix))
-                                            .trigger({
-                                                let editor_weak = editor_weak.clone();
-                                                move |_, _, _| editor_weak.upgrade().map_or(Empty.into_any_element(), |ed| ed.into_any_element())
-                                            })
-                                            .menu(move |window, cx| {
-                                                let ed = editor_weak.upgrade();
-                                                match ed {
-                                                    Some(ed) => {
-                                                        ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                                            let ed2 = ed.clone();
-                                                            menu.entry("Copy", None, move |win, cx| {
-                                                                ed.update(cx, |editor, _cx|{
-                                                                    editor.copy_to_clipboard(_cx, win);
-                                                                });
-                                                            })
-                                                            .entry(
-                                                                "Paste",
-                                                                None,
-                                                                move |window, cx| {
-                                                                    let ed2 = ed2.clone();
-                                                                        ed2.update(cx, |editor, cx| {
-                                                                            editor
-                                                                                .paste_from_clipboard(cx, window);
-                                                                        });
-                                                                },
-                                                            )
-                                                        })
-                                                    },
-                                                    None => ContextMenu::build(window, cx, move |menu,_,_| menu )
-                                                }
-                                            })
-                                            .into_any_element()
-                                    })
+                                    .child(editor.clone().into_any_element())
                             )
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
@@ -2163,7 +2128,8 @@ impl AcpThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let mut md_selection = None;
+                let mut markdown_selection = None;
+
                 let style = default_markdown_style(false, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
@@ -2178,11 +2144,11 @@ impl AcpThreadView {
                                         return None;
                                     }
 
-                                    let md_c = md
+                                    let markdown_content = md
                                         .read(cx)
                                         .selected_text()
                                         .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    md_selection = Some(md_c);
+                                    markdown_selection = Some(markdown_content);
 
                                     Some(
                                         self.render_markdown(md.clone(), style.clone())
@@ -2197,11 +2163,11 @@ impl AcpThreadView {
                                     if this_is_blank {
                                         return None;
                                     }
-                                    let md_c = md
+                                    let markdown_content = md
                                         .read(cx)
                                         .selected_text()
                                         .unwrap_or_else(|| md.read(cx).source().to_string());
-                                    md_selection = Some(md_c);
+                                    markdown_selection = Some(markdown_content);
 
                                     Some(
                                         self.render_thinking_block(
@@ -2222,33 +2188,36 @@ impl AcpThreadView {
                 if is_blank {
                     Empty.into_any()
                 } else {
-                    let message_body_with_menu =
-                        right_click_menu(format!("assistant_context_menu-{}", entry_ix))
-                            .trigger(move |_, _, _| message_body)
-                            .menu(move |window, cx| {
-                                let selection = md_selection.clone();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                    let selection2 = selection.clone();
-                                    menu.entry("Copy", None, move |_, cx| {
-                                        match selection2.as_ref() {
-                                            Some(text) => {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    format!("{}", text),
-                                                ));
-                                            }
-                                            None => {}
-                                        }
-                                    })
-                                })
-                            })
-                            .into_any();
                     v_flex()
                         .px_5()
                         .py_1p5()
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(message_body_with_menu)
+                        .child(
+                            right_click_menu(format!("agent_context_menu-{}", entry_ix))
+                                .trigger(move |_, _, _| message_body)
+                                .menu(move |window, cx| {
+                                    let selection = markdown_selection.clone();
+                                    let focus = window.focused(cx);
+
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        let menu = menu.entry(
+                                            "Copy",
+                                            Some(Box::new(markdown::CopyAsMarkdown)),
+                                            move |_, cx| {
+                                                if let Some(text) = selection.as_ref() {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(text.to_string()),
+                                                    );
+                                                }
+                                            },
+                                        );
+                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                    })
+                                })
+                                .into_any_element(),
+                        )
                         .into_any()
                 }
             }
@@ -4370,48 +4339,7 @@ impl AcpThreadView {
                     .size_full()
                     .pt_1()
                     .pr_2p5()
-                    .child({
-                        let editor_weak = self.message_editor.downgrade();
-                        right_click_menu("message_editor_context_menu")
-                            .trigger({
-                                let editor_weak = editor_weak.clone();
-                                move |_, _, _| {
-                                    editor_weak
-                                        .upgrade()
-                                        .map_or(Empty.into_any_element(), |e| e.into_any_element())
-                                }
-                            })
-                            .menu({
-                                let editor_weak = editor_weak.clone();
-
-                                move |window, cx| {
-                                    let ed = editor_weak.upgrade();
-                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        if let Some(ed) = ed {
-                                            let ed2 = ed.clone();
-                                            menu.entry("Copy", None, move |win, cx| {
-                                                ed.update(cx, |editor, _cx| {
-                                                    editor.copy_to_clipboard(_cx, win);
-                                                });
-                                            })
-                                            .entry(
-                                                "Paste",
-                                                None,
-                                                move |window, cx| {
-                                                    let ed2 = ed2.clone();
-                                                    ed2.update(cx, |editor, cx| {
-                                                        editor.paste_from_clipboard(cx, window);
-                                                    });
-                                                },
-                                            )
-                                        } else {
-                                            menu
-                                        }
-                                    })
-                                }
-                            })
-                            .into_any_element()
-                    })
+                    .child(self.message_editor.clone())
                     .child(
                         h_flex()
                             .absolute()

@@ -31,7 +31,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
@@ -132,6 +132,21 @@ impl MessageEditor {
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor.register_addon(MessageEditorAddon::new());
+
+            editor.set_custom_context_menu(|editor, _point, window, cx| {
+                let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("Cut", Box::new(editor::actions::Cut))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                        .action("Paste", Box::new(editor::actions::Paste))
+                }))
+            });
+
             editor
         });
         let mention_set =
@@ -954,22 +969,6 @@ impl MessageEditor {
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
-        });
-    }
-
-    pub fn copy_to_clipboard(&self, cx: &mut Context<Self>, window: &mut Window) {
-        let _ = self.editor.update(cx, move |editor, cx| {
-            editor.copy(&editor::actions::Copy, window, cx);
-        });
-    }
-
-    pub fn paste_from_clipboard(&self, cx: &mut Context<Self>, window: &mut Window) {
-        let editor = self.editor.downgrade();
-        window.defer(cx, move |window, cx| {
-            let editor = editor.upgrade().unwrap();
-            let _ = editor.update(cx, move |editor, cx| {
-                editor.paste(&editor::actions::Paste, window, cx);
-            });
         });
     }
 }
