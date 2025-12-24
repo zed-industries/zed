@@ -8,8 +8,8 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    AnyElement, AsyncWindowContext, ClipboardItem, Context, Entity, Focusable as _, FontWeight,
+    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
     Window, div, px,
 };
@@ -24,7 +24,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{Scrollbars, Tooltip, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -1021,6 +1021,23 @@ impl DiagnosticPopover {
                                         }
                                     },
                                 ),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_end()
+                                    .pt_1()
+                                    .child({
+                                        let message = self.local_diagnostic.diagnostic.message.clone();
+                                        IconButton::new("copy-diagnostic", IconName::Copy)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, _, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    message.clone(),
+                                                ));
+                                            })
+                                            .tooltip(Tooltip::text("Copy Diagnostic"))
+                                    }),
                             ),
                     )
                     .custom_scrollbars(
