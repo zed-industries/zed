@@ -2260,10 +2260,39 @@ impl EditorElement {
         let mut last_buffer_id = None;
         let mut last_buffer_snapshot = None;
         let mut last_diff = None;
+        let display_range_end = display_rows.start + DisplayRow(row_infos.len() as u32);
+        let mut hunk_statuses = vec![None; row_infos.len()];
+        for (row_index, row_info) in row_infos.iter().enumerate() {
+            if let Some(status) = row_info.diff_hunk_status {
+                hunk_statuses[row_index] = Some(status);
+            }
+        }
+        for (hunk, _) in display_hunks {
+            let DisplayDiffHunk::Unfolded {
+                status,
+                display_row_range,
+                ..
+            } = hunk
+            else {
+                continue;
+            };
+            let start_row = display_row_range.start.max(display_rows.start);
+            let end_row = display_row_range.end.min(display_range_end);
+            let start_index =
+                start_row.0.saturating_sub(display_rows.start.0) as usize;
+            let end_index = end_row.0.saturating_sub(display_rows.start.0) as usize;
+            for row_index in start_index..end_index {
+                if let Some(existing_status) = hunk_statuses.get_mut(row_index) {
+                    if existing_status.is_none() {
+                        *existing_status = Some(*status);
+                    }
+                }
+            }
+        }
         let mut gutter_statuses = Vec::with_capacity(row_infos.len());
 
-        for row_info in row_infos {
-            let mut hunk_status = row_info.diff_hunk_status;
+        for (row_index, row_info) in row_infos.iter().enumerate() {
+            let hunk_status = hunk_statuses.get(row_index).copied().flatten();
             let mut line_status = row_info.diff_status;
             let row_side = row_info.diff_row_side.unwrap_or(DiffRowSide::Buffer);
 
@@ -2292,26 +2321,6 @@ impl EditorElement {
                             kind: line.kind,
                             secondary: line.secondary_status,
                         })
-                    });
-            }
-            if hunk_status.is_none() {
-                hunk_status = buffer
-                    .zip(diff)
-                    .and_then(|(buffer, diff)| {
-                        let buffer_row = buffer_row?;
-                        let line_end = buffer.line_len(buffer_row);
-                        let start = buffer.anchor_before(Point::new(buffer_row, 0));
-                        let end = buffer.anchor_after(Point::new(buffer_row, line_end));
-                        diff.hunks_intersecting_range(start..end, buffer)
-                            .find(|hunk| {
-                                let start_row = hunk.range.start.row;
-                                let mut end_row = hunk.range.end.row;
-                                if hunk.range.end.column > 0 {
-                                    end_row += 1;
-                                }
-                                buffer_row >= start_row && buffer_row < end_row
-                            })
-                            .map(|hunk| hunk.status())
                     });
             }
 
@@ -2357,7 +2366,7 @@ impl EditorElement {
             }
         }
 
-        let end_row = display_rows.start + DisplayRow(row_infos.len() as u32);
+        let end_row = display_range_end;
         if let Some((current_status, _, start_row)) = current_segment {
             push_segment(&mut segments, start_row, end_row, current_status);
         }
