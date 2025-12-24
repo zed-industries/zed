@@ -17823,6 +17823,7 @@ dependencies = [
  "strum 0.27.2",
  "theme",
  "ui_macros",
+ "unicode-segmentation",
  "util",
  "windows 0.61.3",
 ]
