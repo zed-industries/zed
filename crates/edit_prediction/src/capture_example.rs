@@ -74,7 +74,7 @@ pub fn capture_example(
             cursor_path: cursor_path.as_std_path().into(),
             cursor_position: String::new(),
             edit_history,
-            expected_patch: String::new(),
+            expected_patches: Vec::new(),
         };
         spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
         Ok(spec)
@@ -350,7 +350,7 @@ mod tests {
                          seven();
                 "}
                 .to_string(),
-                expected_patch: "".to_string(),
+                expected_patches: Vec::new()
             }
         );
     }

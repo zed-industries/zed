@@ -1,4 +1,4 @@
-use crate::{PredictionProvider, PromptFormat, metrics::ClassificationMetrics};
+use crate::{PredictionProvider, PromptFormat};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -87,7 +87,6 @@ pub struct ExamplePrediction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
-    pub line_match: ClassificationMetrics,
 }
 
 impl Example {

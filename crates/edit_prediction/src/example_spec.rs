@@ -15,7 +15,7 @@ pub struct ExampleSpec {
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
-    pub expected_patch: String,
+    pub expected_patches: Vec<String>,
 }
 
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
@@ -95,13 +95,15 @@ impl ExampleSpec {
 
         _ = writeln!(markdown, "## {}", EXPECTED_PATCH_HEADING);
         markdown.push('\n');
-        _ = writeln!(markdown, "```diff");
-        markdown.push_str(&self.expected_patch);
-        if !markdown.ends_with('\n') {
+        for patch in &self.expected_patches {
+            _ = writeln!(markdown, "```diff");
+            markdown.push_str(patch);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            _ = writeln!(markdown, "```");
             markdown.push('\n');
         }
-        _ = writeln!(markdown, "```");
-        markdown.push('\n');
 
         markdown
     }
@@ -118,7 +120,7 @@ impl ExampleSpec {
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
-            expected_patch: String::new(),
+            expected_patches: Vec::new(),
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -212,7 +214,7 @@ impl ExampleSpec {
                             mem::take(&mut text);
                         }
                         Section::ExpectedPatch => {
-                            spec.expected_patch = mem::take(&mut text);
+                            spec.expected_patches.push(mem::take(&mut text));
                         }
                         Section::Start | Section::Other => {}
                     }
@@ -353,7 +355,7 @@ mod tests {
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
-            expected_patch: String::new(),
+            expected_patches: Vec::new(),
         };
 
         // Cursor before `42`

@@ -30,7 +30,13 @@ pub async fn run_format_prompt(
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: example.spec.expected_patch.clone(), // TODO
+                // TODO
+                expected_output: example
+                    .spec
+                    .expected_patches
+                    .first()
+                    .context("no expected patches")?
+                    .clone(),
                 format: prompt_format,
             });
         }
@@ -68,8 +74,15 @@ pub async fn run_format_prompt(
                 ))
             })??;
             let prompt = format_zeta_prompt(&input);
-            let expected_output =
-                zeta2_output_for_patch(&input, &example.spec.expected_patch.clone())?;
+            let expected_output = zeta2_output_for_patch(
+                &input,
+                &example
+                    .spec
+                    .expected_patches
+                    .first()
+                    .context("expected patches is empty")?
+                    .clone(),
+            )?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
