@@ -75,7 +75,8 @@ impl CsvPreviewView {
                         if let Some(row) = (&full_content.rows).get(data_row.get()) {
                             let cell_content = row
                                 .get(col)
-                                .map(|s| s.display_value().as_ref().to_string())
+                                .and_then(|s| s.display_value())
+                                .map(|ss| ss.to_string())
                                 .unwrap_or_default();
 
                             rows_data
@@ -106,7 +107,8 @@ impl CsvPreviewView {
                     if let Some(row) = (&full_content.rows).get(data_row_idx) {
                         let cell_content = row
                             .get(col)
-                            .map(|s| s.display_value().as_ref().to_string())
+                            .and_then(|s| s.display_value())
+                            .map(|s| s.to_string())
                             .unwrap_or_default();
 
                         rows_data
@@ -223,12 +225,8 @@ fn format_as_markdown_table(
         .map(|col_idx| {
             all_table_headers
                 .get(col_idx.get())
-                .map(|h| {
-                    h.display_value()
-                        .as_ref()
-                        .replace('\n', "<br>")
-                        .replace('|', "\\|")
-                })
+                .and_then(|h| h.display_value())
+                .map(|ss| ss.as_str().replace('\n', "<br>").replace('|', "\\|"))
                 .unwrap_or_else(|| format!("Col {}", col_idx.get() + 1))
         })
         .collect();

@@ -52,14 +52,7 @@ impl CsvPreviewView {
     }
 
     fn get_cell_content(&self, cid: DataCellId) -> Option<SharedString> {
-        Some(
-            self.contents
-                .rows
-                .get(*cid.row)?
-                .get(cid.col)?
-                .display_value()
-                .clone(),
-        )
+        self.contents.get_cell(&cid)?.display_value().cloned()
     }
 
     /// POC: Commit the cell editor content back to the source buffer
@@ -83,7 +76,7 @@ impl CsvPreviewView {
             return;
         };
 
-        let Some(position) = &cell.position else {
+        let Some(position) = cell.position() else {
             println!("Target cell has no position");
             return;
         };
@@ -185,7 +178,7 @@ impl CsvPreviewView {
         let edited_cell_info = if let Some(position) = self
             .contents
             .get_cell(&data_cid)
-            .and_then(|tc| tc.position.as_ref())
+            .and_then(|tc| tc.position())
         {
             let buffer_snapshot = active_editor_state
                 .editor
