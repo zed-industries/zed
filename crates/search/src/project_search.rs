@@ -916,7 +916,7 @@ impl ProjectSearchView {
         subscriptions.push(
             cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
                 if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
-                    this.update_match_index(cx);
+                    this.update_match_index(&this.get_matches(cx), cx);
                 }
                 // Reraise editor events for workspace item activation purposes
                 cx.emit(ViewEvent::EditorEvent(event.clone()));
@@ -1506,7 +1506,7 @@ impl ProjectSearchView {
             });
         } else {
             self.active_match_index = Some(0);
-            self.update_match_index(cx);
+            self.update_match_index(&match_ranges, cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
@@ -1529,9 +1529,8 @@ impl ProjectSearchView {
         cx.notify();
     }
 
-    fn update_match_index(&mut self, cx: &mut Context<Self>) {
+    fn update_match_index(&mut self, match_ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
-        let match_ranges = self.entity.read(cx).match_ranges.clone();
         let new_index = active_match_index(
             Direction::Next,
             &match_ranges,
