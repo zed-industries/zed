@@ -79,7 +79,7 @@ pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
     /// Horizontal table scroll handle. Stinks. Won't work normally unless table column resizing is rewritten
     pub(crate) scroll_handle: ScrollHandle,
-    pub(crate) active_editor: Option<EditorState>,
+    active_editor_state: Option<EditorState>,
     pub(crate) contents: TableLikeContent,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
@@ -132,6 +132,12 @@ impl CsvPreviewView {
 }
 
 impl CsvPreviewView {
+    pub(crate) fn editor_state(&self) -> &EditorState {
+        self.active_editor_state
+            .as_ref()
+            .expect("Expected main editor to be initialized")
+    }
+
     /// Update ordered indices when ordering or content changes
     pub(crate) fn re_sort_indices(&mut self) {
         let start_time = Instant::now();
@@ -172,7 +178,7 @@ impl CsvPreviewView {
         cx.new(|cx| {
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
-                active_editor: None,
+                active_editor_state: None,
                 contents: contents.clone(),
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
@@ -212,23 +218,19 @@ impl Item for CsvPreviewView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.active_editor
-            .as_ref()
-            .and_then(|state| {
-                state
-                    .editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .and_then(|b| {
-                        let file = b.read(cx).file()?;
-                        let local_file = file.as_local()?;
-                        local_file
-                            .abs_path(cx)
-                            .file_name()
-                            .map(|name| format!("Preview {}", name.to_string_lossy()).into())
-                    })
+        self.editor_state()
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| {
+                let file = b.read(cx).file()?;
+                let local_file = file.as_local()?;
+                local_file
+                    .abs_path(cx)
+                    .file_name()
+                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
             .unwrap_or_else(|| SharedString::from("CSV Preview"))
     }

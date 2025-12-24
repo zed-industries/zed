@@ -7,7 +7,7 @@ use text::{Buffer, BufferId, ReplicaId};
 use crate::{
     row_identifiers::LineNumber,
     table_cell::TableCell,
-    types::{DataCellId, TableRow},
+    types::{DataCellId, DataRow, TableRow},
 };
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
@@ -246,6 +246,10 @@ impl TableLikeContent {
         let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text);
         let snapshot = buffer.snapshot();
         Self::from_buffer(snapshot)
+    }
+
+    pub(crate) fn get_row(&self, data_row: DataRow) -> Option<&TableRow<TableCell>> {
+        self.rows.get(*data_row)
     }
 }
 

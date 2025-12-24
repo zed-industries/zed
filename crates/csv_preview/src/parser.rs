@@ -13,7 +13,7 @@ pub(crate) struct EditorState {
 
 impl CsvPreviewView {
     pub(crate) fn set_editor(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
-        if let Some(active) = &self.active_editor
+        if let Some(active) = &self.active_editor_state
             && active.editor == editor
         {
             return;
@@ -39,7 +39,7 @@ impl CsvPreviewView {
             };
         });
 
-        self.active_editor = Some(EditorState {
+        self.active_editor_state = Some(EditorState {
             editor,
             _subscription: subscription,
         });
@@ -52,10 +52,11 @@ impl CsvPreviewView {
         wait_for_debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(state) = &self.active_editor {
-            self.parsing_task =
-                Some(self.parse_csv_in_background(wait_for_debounce, state.editor.clone(), cx));
-        }
+        self.parsing_task = Some(self.parse_csv_in_background(
+            wait_for_debounce,
+            self.editor_state().editor.clone(),
+            cx,
+        ));
     }
 
     fn parse_csv_in_background(

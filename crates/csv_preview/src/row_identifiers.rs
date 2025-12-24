@@ -4,7 +4,11 @@ use ui::{
     SharedString, Styled as _, StyledTypography as _, Tooltip, div,
 };
 
-use crate::{CsvPreviewView, settings::FontType, settings::RowIdentifiers, types::DisplayRow};
+use crate::{
+    CsvPreviewView,
+    settings::{FontType, RowIdentifiers},
+    types::{DataRow, DisplayRow},
+};
 
 /// Line number information for CSV rows
 #[derive(Debug, Clone, Copy)]
@@ -154,28 +158,26 @@ impl CsvPreviewView {
 
     pub(crate) fn create_row_identifier_cell(
         &self,
-        display_index: usize,
+        display_row: DisplayRow,
+        data_row: DataRow,
         row_identifier_text_color: gpui::Hsla,
         cx: &Context<'_, CsvPreviewView>,
-        row_index: usize,
     ) -> Option<AnyElement> {
         let row_identifier: SharedString = match self.settings.numbering_type {
             RowIdentifiers::SrcLines => self
                 .contents
                 .line_numbers
-                .get(row_index)?
+                .get(*data_row)?
                 .display_string(if self.settings.multiline_cells_enabled {
                     RowIdentDisplayMode::Vertical
                 } else {
                     RowIdentDisplayMode::Horizontal
                 })
                 .into(),
-            RowIdentifiers::RowNum => (display_index + 1).to_string().into(),
+            RowIdentifiers::RowNum => (*display_row + 1).to_string().into(),
         };
         // Check if this row has focus to highlight the line number
-        let is_focused = self
-            .selection
-            .is_row_focused(DisplayRow::from(display_index));
+        let is_focused = self.selection.is_row_focused(display_row);
 
         // Use normal text color for focused row, muted color otherwise
         let text_color = if is_focused {

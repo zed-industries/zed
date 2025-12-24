@@ -10,6 +10,7 @@ use crate::{
     CELL_EDITOR_CONTEXT_NAME, CancelCellEditing, CsvPreviewView, FinishCellEditing,
     StartCellEditing,
     copy_selected::EscapedCellString,
+    table_cell::TableCell,
     types::{DataCellId, DisplayCellId},
 };
 
@@ -59,31 +60,29 @@ impl CsvPreviewView {
     /// TODO: Refactor. It stinks
     fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
         println!("Committing cell edit");
-        let Some(CellEditorCtx {
+        let CellEditorCtx {
             editor,
             cell_to_edit,
-        }) = &self.cell_editor
-        else {
-            println!("No cell editor found");
-            return;
-        };
+        } = self
+            .cell_editor
+            .as_ref()
+            .expect("Expected to have cell editor present, when commiting cell changes");
 
-        let Some(cell) = self
+        let data_cell_id = self
             .display_to_data_cell(cell_to_edit)
-            .and_then(|cid| self.contents.get_cell(&cid))
-        else {
-            println!("No target cell found");
-            return;
-        };
+            .expect("Cell editor bug: Expected to map valid display cell id to data cell id");
 
-        let Some(position) = cell.position() else {
-            println!("Target cell has no position");
-            return;
-        };
+        let cell = self
+            .contents
+            .get_cell(&data_cell_id)
+            .expect("Cell editor bug: Expected to get cell by data cell id");
 
-        let Some(active_editor_state) = &self.active_editor else {
-            println!("No active editor found to write changes to");
-            return;
+        let position = match cell {
+            TableCell::Real { position, .. } => position,
+            TableCell::Virtual => {
+                println!("Virtual cell editing is not yet supported");
+                return;
+            }
         };
 
         // Get the new text from the cell editor
@@ -92,14 +91,14 @@ impl CsvPreviewView {
         let new_text = EscapedCellString::new(new_text, DELIMITER);
 
         // Apply the edit to the source buffer
-        let buffer_snapshot = active_editor_state
+        let Some(buffer) = self
+            .editor_state()
             .editor
             .read(cx)
             .buffer()
             .read(cx)
-            .as_singleton();
-
-        let Some(buffer) = buffer_snapshot else {
+            .as_singleton()
+        else {
             return;
         };
 
@@ -117,12 +116,80 @@ impl CsvPreviewView {
 }
 
 impl CsvPreviewView {
-    /// POC: Render the single-line cell editor
-    pub fn render_cell_editor(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(active_editor_state) = &self.active_editor else {
-            return div().child("WARN: No active editor attached to preview pane");
+    pub(crate) fn start_cell_editing(
+        &mut self,
+        _: &StartCellEditing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(focused_cell_id) = self.selection.get_focused_cell() else {
+            println!("No focused cell. Skip editing start");
+            return;
         };
 
+        let data_cid = self
+            .display_to_data_cell(&focused_cell_id)
+            .expect("Expected focused cell to point to existing data cell id");
+
+        let cell = self
+            .contents
+            .get_cell(&data_cid)
+            .expect("Expected mapped data cell id to point to existing cell");
+
+        let initial_content = match cell {
+            TableCell::Real { cached_value, .. } => cached_value,
+            TableCell::Virtual => {
+                println!("Editing of virtual cell is not supported yet");
+                return;
+            }
+        };
+
+        // Create the cell editor
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(1, 100, window, cx);
+            editor.set_text(initial_content.as_ref(), window, cx);
+            editor
+        });
+
+        // Focus the editor immediately after creation
+        editor.read(cx).focus_handle(cx).focus(window);
+
+        self.cell_editor = Some(CellEditorCtx {
+            editor: cx.new(|cx| CellEditor {
+                cell_editor: editor,
+                focus_handle: cx.focus_handle(),
+            }),
+            cell_to_edit: focused_cell_id,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn finish_cell_editing(
+        &mut self,
+        _: &FinishCellEditing,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_cell_edit(cx);
+        self.clear_cell_editor();
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_cell_editing_handler(
+        &mut self,
+        _: &CancelCellEditing,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        println!("Cancel cell editing");
+        self.clear_cell_editor();
+        cx.notify();
+    }
+}
+
+impl CsvPreviewView {
+    /// POC: Render the single-line cell editor
+    pub fn render_cell_editor(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(CellEditorCtx {
             editor,
             cell_to_edit,
@@ -135,7 +202,7 @@ impl CsvPreviewView {
             return div().child("ERROR: Can't find data cell by display cell");
         };
 
-        let edited_cell_info = match self.calculate_cell_info(cx, active_editor_state, data_cid) {
+        let edited_cell_info = match self.calculate_cell_info(cx, self.editor_state(), data_cid) {
             Some(v) => v,
             None => return div().child("No buffer available"),
         };
@@ -210,68 +277,5 @@ impl CsvPreviewView {
 
     pub fn clear_cell_editor(&mut self) {
         self.cell_editor = None;
-    }
-}
-
-impl CsvPreviewView {
-    pub(crate) fn start_cell_editing(
-        &mut self,
-        _: &StartCellEditing,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(focused_cell_id) = self.selection.get_focused_cell() else {
-            println!("No focused cell id. Skip editing start");
-            return;
-        };
-
-        let Some(initial_content) = self
-            .display_to_data_cell(&focused_cell_id)
-            .and_then(|d| self.get_cell_content(d))
-        else {
-            println!("No focused cell. Skip editing start");
-            return;
-        };
-
-        // Create the cell editor
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(1, 100, window, cx);
-            editor.set_text(initial_content, window, cx);
-            editor
-        });
-
-        // Focus the editor immediately after creation
-        editor.read(cx).focus_handle(cx).focus(window);
-
-        self.cell_editor = Some(CellEditorCtx {
-            editor: cx.new(|cx| CellEditor {
-                cell_editor: editor,
-                focus_handle: cx.focus_handle(),
-            }),
-            cell_to_edit: focused_cell_id,
-        });
-        cx.notify();
-    }
-
-    pub(crate) fn finish_cell_editing(
-        &mut self,
-        _: &FinishCellEditing,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.commit_cell_edit(cx);
-        self.clear_cell_editor();
-        cx.notify();
-    }
-
-    pub(crate) fn cancel_cell_editing_handler(
-        &mut self,
-        _: &CancelCellEditing,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        println!("Cancel cell editing");
-        self.clear_cell_editor();
-        cx.notify();
     }
 }

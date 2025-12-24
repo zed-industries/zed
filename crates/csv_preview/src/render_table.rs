@@ -120,15 +120,13 @@ impl CsvPreviewView {
                 match self.settings.rendering_with {
                     RowRenderMechanism::VariableList => {
                         table.variable_row_height_list(row_count, self.list_state.clone(), {
-                            cx.processor(move |this, display_index: usize, _window, cx| {
+                            cx.processor(move |this, display_row: usize, _window, cx| {
                                 // Record this display index for performance metrics
-                                this.performance_metrics
-                                    .rendered_indices
-                                    .push(display_index);
+                                this.performance_metrics.rendered_indices.push(display_row);
 
                                 Self::render_table_row_for_variable_row_height_list::<COLS>(
                                     this,
-                                    display_index,
+                                    DisplayRow(display_row),
                                     row_identifier_text_color,
                                     selected_bg,
                                     cx,
@@ -162,31 +160,27 @@ impl CsvPreviewView {
     /// Render a single row for variable_row_height_list (supports variable heights)
     fn render_single_table_row<const COLS: usize>(
         this: &CsvPreviewView,
-        display_index: usize,
+        display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
-        let display_row = DisplayRow(display_index);
         let sorted_indices = this.get_sorted_indices();
 
         // Get the actual row index from our sorted indices
         let data_row = sorted_indices.get_data_row(display_row)?;
-        let row_index = data_row.get();
-        let row = this.contents.rows.get(row_index)?;
+        let row = this.contents.get_row(data_row)?;
 
         let mut elements = Vec::with_capacity(COLS);
-
         elements.push(this.create_row_identifier_cell(
-            display_index,
+            display_row,
+            data_row,
             row_identifier_text_color,
             cx,
-            row_index,
         )?);
 
         // Remaining columns: actual CSV data
-        for raw_col in 0..(COLS - 1) {
-            let col = AnyColumn::new(raw_col);
+        for col in (0..this.contents.number_of_cols).map(AnyColumn) {
             let table_cell = row.expect_get(col);
 
             // TODO: Introduce `<null>` cell type
@@ -257,14 +251,14 @@ impl CsvPreviewView {
 
     fn render_table_row_for_variable_row_height_list<const COLS: usize>(
         this: &CsvPreviewView,
-        display_index: usize,
+        display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> [AnyElement; COLS] {
         Self::render_single_table_row(
             this,
-            display_index,
+            display_row,
             row_identifier_text_color,
             selected_bg,
             cx,
@@ -284,7 +278,7 @@ impl CsvPreviewView {
             .filter_map(|display_index| {
                 Self::render_single_table_row(
                     this,
-                    display_index,
+                    DisplayRow(display_index),
                     row_identifier_text_color,
                     selected_bg,
                     cx,
