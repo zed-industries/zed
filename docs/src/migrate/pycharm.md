@@ -164,7 +164,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For Python, Z
 
 - **basedpyright** (default) — Fast type checking and completions
 - **Ruff** (default) — Linting and formatting
-- **Ty** — Up-and-coming language server from Astral, built for speed
+- **ty** — Up-and-coming language server from Astral, built for speed
 - **Pyright** — Microsoft's type checker
 - **PyLSP** — Plugin-based server with tool integrations
 
