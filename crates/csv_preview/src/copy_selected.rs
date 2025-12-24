@@ -102,11 +102,9 @@ impl CsvPreviewView {
 
                 for cell_id in &selected_data_cells {
                     let data_row_idx = cell_id.row.get();
-                    let col = cell_id.col;
-
-                    if let Some(row) = (&full_content.rows).get(data_row_idx) {
+                    if let Some(row) = full_content.get_row(cell_id.row) {
                         let cell_content = row
-                            .get(col)
+                            .get(cell_id.col)
                             .and_then(|s| s.display_value())
                             .map(|s| s.to_string())
                             .unwrap_or_default();
@@ -114,7 +112,7 @@ impl CsvPreviewView {
                         rows_data
                             .entry(data_row_idx)
                             .or_default()
-                            .insert(col, cell_content);
+                            .insert(cell_id.col, cell_content);
                     }
                 }
 
