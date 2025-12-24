@@ -7616,7 +7616,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn formatting_section() -> [SettingsPageItem; 7] {
+    fn formatting_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Formatting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7658,6 +7658,25 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.remove_trailing_whitespace_on_save = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Remove Whitespace On Empty Lines",
+                description: "Whether or not to remove whitespace from lines that contain only whitespace when saving. When set to false, indentation on empty lines is preserved. This setting only takes effect when 'Remove Trailing Whitespace On Save' is enabled.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).remove_whitespace_on_empty_lines"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.remove_whitespace_on_empty_lines.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.remove_whitespace_on_empty_lines = value;
                         })
                     },
                 }),
