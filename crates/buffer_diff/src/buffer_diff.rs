@@ -279,23 +279,21 @@ impl LineIndex {
         for line in &inner.lines {
             let line_key = match line.kind {
                 DiffHunkStatusKind::Added => line.buffer_row.map(|row| LineKey { row }),
-                DiffHunkStatusKind::Deleted => line.base_row.and_then(|base_row| {
-                    let canonical_row = if let Some(base_row_map) = base_row_map {
-                        base_row_map.index_to_head_row(base_row)?
-                    } else {
-                        base_row
-                    };
-                    Some(LineKey { row: canonical_row })
+                DiffHunkStatusKind::Deleted => line.base_row.map(|base_row| {
+                    let canonical_row = base_row_map
+                        .and_then(|m| m.index_to_head_row(base_row))
+                        .unwrap_or(base_row);
+                    LineKey { row: canonical_row }
                 }),
                 DiffHunkStatusKind::Modified => None,
             };
-            if let Some(ref line_key) = line_key {
+            if let Some(ref key) = line_key {
                 match line.kind {
                     DiffHunkStatusKind::Added => {
-                        *index.added_lines.entry(line_key.clone()).or_insert(0) += 1;
+                        *index.added_lines.entry(key.clone()).or_insert(0) += 1;
                     }
                     DiffHunkStatusKind::Deleted => {
-                        *index.deleted_lines.entry(line_key.clone()).or_insert(0) += 1;
+                        *index.deleted_lines.entry(key.clone()).or_insert(0) += 1;
                     }
                     DiffHunkStatusKind::Modified => {}
                 }
@@ -591,33 +589,16 @@ impl BufferDiffSnapshot {
         self.inner.hunks_intersecting_range_rev(range, buffer)
     }
 
-    pub fn line_for_buffer_row(
-        &self,
-        row: u32,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<DiffLine> {
-        let index = *self.inner.buffer_line_index.get(&row)?;
-        Some(self.build_diff_line(index, buffer))
-    }
-
     pub fn line_for_row(
         &self,
         side: DiffRowSide,
         row: u32,
         buffer: &text::BufferSnapshot,
     ) -> Option<DiffLine> {
-        match side {
-            DiffRowSide::Buffer => self.line_for_buffer_row(row, buffer),
-            DiffRowSide::Base => self.line_for_base_row(row, buffer),
-        }
-    }
-
-    pub fn line_for_base_row(
-        &self,
-        row: u32,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<DiffLine> {
-        let index = *self.inner.base_line_index.get(&row)?;
+        let index = *match side {
+            DiffRowSide::Buffer => self.inner.buffer_line_index.get(&row)?,
+            DiffRowSide::Base => self.inner.base_line_index.get(&row)?,
+        };
         Some(self.build_diff_line(index, buffer))
     }
 
@@ -632,22 +613,6 @@ impl BufferDiffSnapshot {
                 kind: line.kind,
                 secondary: line.secondary_status,
             })
-    }
-
-    pub fn line_status_for_buffer_row(
-        &self,
-        row: u32,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<DiffHunkStatus> {
-        self.line_status_for_row(DiffRowSide::Buffer, row, buffer)
-    }
-
-    pub fn line_status_for_base_row(
-        &self,
-        row: u32,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<DiffHunkStatus> {
-        self.line_status_for_row(DiffRowSide::Base, row, buffer)
     }
 
     pub fn base_text_row_for_row(
@@ -728,24 +693,20 @@ impl BufferDiffSnapshot {
             }
         };
 
-        let deleted_match = |key: Option<&LineKey>| {
-            if let Some(key) = key {
-                let primary_count = primary_line_index.deleted_count_for_key(key);
-                let secondary_count = secondary_line_index.deleted_count_for_key(key);
+        let match_line_counts = |key: Option<&LineKey>, get_count: fn(&LineIndex, &LineKey) -> usize| {
+            key.map(|key| {
+                let primary_count = get_count(primary_line_index, key);
+                let secondary_count = get_count(secondary_line_index, key);
                 match_state(primary_count, secondary_count)
-            } else {
-                LineMatch::None
-            }
+            }).unwrap_or(LineMatch::None)
+        };
+
+        let deleted_match = |key: Option<&LineKey>| {
+            match_line_counts(key, LineIndex::deleted_count_for_key)
         };
 
         let added_match = |key: Option<&LineKey>| {
-            if let Some(key) = key {
-                let primary_count = primary_line_index.added_count_for_key(key);
-                let secondary_count = secondary_line_index.added_count_for_key(key);
-                match_state(primary_count, secondary_count)
-            } else {
-                LineMatch::None
-            }
+            match_line_counts(key, LineIndex::added_count_for_key)
         };
 
         let line_key = primary_line_index.line_key_for_id(line_id);
@@ -2074,7 +2035,7 @@ impl BufferDiff {
                         continue;
                     };
                     let Some(secondary_deleted) =
-                        secondary_snapshot.line_for_base_row(base_row, buffer)
+                        secondary_snapshot.line_for_row(DiffRowSide::Base, base_row, buffer)
                     else {
                         continue;
                     };
@@ -2121,11 +2082,11 @@ impl BufferDiff {
                     let secondary_line = match line.kind {
                         DiffHunkStatusKind::Added => {
                             let Some(row) = line.buffer_row else { continue; };
-                            secondary_snapshot.line_for_buffer_row(row, buffer)
+                            secondary_snapshot.line_for_row(DiffRowSide::Buffer, row, buffer)
                         }
                         DiffHunkStatusKind::Deleted => {
                             let Some(row) = line.base_row else { continue; };
-                            secondary_snapshot.line_for_base_row(row, buffer)
+                            secondary_snapshot.line_for_row(DiffRowSide::Base, row, buffer)
                         }
                         DiffHunkStatusKind::Modified => None,
                     };
@@ -2952,10 +2913,10 @@ mod tests {
         }
 
         let first = uncommitted_diff
-            .line_for_base_row(1, &buffer)
+            .line_for_row(DiffRowSide::Base, 1, &buffer)
             .expect("first deleted line");
         let second = uncommitted_diff
-            .line_for_base_row(2, &buffer)
+            .line_for_row(DiffRowSide::Base, 2, &buffer)
             .expect("second deleted line");
 
         assert_eq!(first.kind, DiffHunkStatusKind::Deleted);
@@ -2997,7 +2958,7 @@ mod tests {
         uncommitted_diff.update(cx, |diff, cx| {
             let snapshot = diff.snapshot(cx);
             let added_line = snapshot
-                .line_for_buffer_row(1, &buffer)
+                .line_for_row(DiffRowSide::Buffer, 1, &buffer)
                 .expect("added line");
             assert_eq!(added_line.kind, DiffHunkStatusKind::Added);
             let paired_id = added_line.paired_line_id.expect("paired deletion");
@@ -3008,7 +2969,7 @@ mod tests {
 
             let snapshot = diff.snapshot(cx);
             let paired_after = snapshot
-                .line_for_base_row(paired_base_row, &buffer)
+                .line_for_row(DiffRowSide::Base, paired_base_row, &buffer)
                 .expect("paired deletion after staging");
             assert_eq!(
                 paired_after.secondary_status,
@@ -3017,7 +2978,7 @@ mod tests {
 
             let other_base_row = if paired_base_row == 1 { 2 } else { 1 };
             let other_deleted = snapshot
-                .line_for_base_row(other_base_row, &buffer)
+                .line_for_row(DiffRowSide::Base, other_base_row, &buffer)
                 .expect("other deletion");
             assert_eq!(
                 other_deleted.secondary_status,
