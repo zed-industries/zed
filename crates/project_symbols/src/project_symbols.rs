@@ -215,6 +215,35 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         })
     }
 
+    fn match_stable_id(&self, ix: usize) -> Option<String> {
+        let mat = self.matches.get(ix)?;
+        let symbol = self.symbols.get(mat.candidate_id)?;
+        let path_str = match &symbol.path {
+            SymbolLocation::InProject(path) => format!("{:?}:{:?}", path.worktree_id, path.path),
+            SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
+        };
+        Some(format!(
+            "{}:{}:{:?}",
+            path_str, symbol.name, symbol.range.start
+        ))
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        self.matches.iter().position(|mat| {
+            if let Some(symbol) = self.symbols.get(mat.candidate_id) {
+                let path_str = match &symbol.path {
+                    SymbolLocation::InProject(path) => {
+                        format!("{:?}:{:?}", path.worktree_id, path.path)
+                    }
+                    SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
+                };
+                format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start) == stable_id
+            } else {
+                false
+            }
+        })
+    }
+
     fn render_match(
         &self,
         ix: usize,
