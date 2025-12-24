@@ -520,8 +520,7 @@ impl ToolbarItemView for BufferSearchBar {
                                 return;
                             };
 
-                            let current_query = this.query(cx);
-                            if current_query == text {
+                            if this.query(cx) == text {
                                 return;
                             }
 
@@ -531,7 +530,7 @@ impl ToolbarItemView for BufferSearchBar {
                                 .and_then(SearchOptions::from_bits)
                                 .unwrap_or(this.search_options);
 
-                            if current_query.is_empty() && this.dismissed {
+                            if this.dismissed {
                                 this.pending_external_query = Some((text, search_options));
                             } else {
                                 drop(this.search(&text, Some(search_options), true, window, cx));
