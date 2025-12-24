@@ -141,7 +141,7 @@ actions!(
         CaptureRecentAudio,
         /// Starts Tracy profiling by launching tracy-profiler if available.
         /// Tracy will connect to this Zed instance and begin capturing performance data.
-        /// Requires Zed to be built with tracy support (ZTRACING=1).
+        /// Requires Zed to be built with tracy support (`--features tracy`).
         StartTracing,
     ]
 );
@@ -2250,8 +2250,8 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                     "Launching tracy-profiler...".to_string(),
                 ),
                 TracingStatus::TracyLaunched => (
-                    "Tracy Profiler Ready",
-                    "Tracy profiler has been launched. It should automatically connect to this Zed instance and begin capturing performance data.".to_string(),
+                    "Tracy Profiler Connecting",
+                    "Tracy profiler has been launched and is connecting to this Zed instance. Performance data capture will begin automatically.".to_string(),
                 ),
                 TracingStatus::TracyNotFound => (
                     "Tracy Not Found",
