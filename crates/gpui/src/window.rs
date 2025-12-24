@@ -14,7 +14,7 @@ use crate::{
     Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
     ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
     Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
     transparent_black,
@@ -880,6 +880,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_input_modality: InputModality,
+    last_frame_time: Rc<Cell<Option<Instant>>>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1095,6 +1096,7 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
+        let last_frame_time = Rc::new(Cell::new(None));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1123,7 +1125,23 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
+            let last_frame_time = last_frame_time.clone();
             move |request_frame_options| {
+                let thermal_state = cx
+                    .update(|cx| cx.thermal_state())
+                    .unwrap_or(ThermalState::Nominal);
+
+                let now = Instant::now();
+                if let Some(last_frame) = last_frame_time.get()
+                    && thermal_state == ThermalState::Critical
+                {
+                    if now.duration_since(last_frame) < Duration::from_micros(16667) {
+                        return;
+                    }
+                }
+
+                last_frame_time.set(Some(now));
+
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
@@ -1347,6 +1365,7 @@ impl Window {
             needs_present,
             input_rate_tracker,
             last_input_modality: InputModality::Mouse,
+            last_frame_time,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,

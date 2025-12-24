@@ -41,8 +41,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Subscription, SvgRenderer, Task, TextSystem, ThermalState, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1070,6 +1070,11 @@ impl App {
             .iter()
             .find(|display| display.id() == id)
             .cloned()
+    }
+
+    /// Returns the current thermal state of the system.
+    pub fn thermal_state(&self) -> ThermalState {
+        self.platform.thermal_state()
     }
 
     /// Returns the appearance of the application's windows.
