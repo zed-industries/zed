@@ -66,7 +66,7 @@ impl From<usize> for DataRow {
     }
 }
 
-/// Column position in CSV table.
+/// Data column position in CSV table. 0-based
 ///
 /// Currently represents both display and data coordinate systems since
 /// column reordering is not yet implemented. When column reordering is added,
