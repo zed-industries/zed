@@ -2226,6 +2226,7 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
     }
 
     enum TracingStatus {
+        DebugBuildWarning,
         Starting,
         TracyLaunched,
         TracyNotFound,
@@ -2245,6 +2246,10 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
     impl Render for StartTracingNotification {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let (title, message) = match &self.status {
+                TracingStatus::DebugBuildWarning => (
+                    "Debug Build Warning",
+                    "This is a debug build of Zed, which will be much slower than a release build.".to_string(),
+                ),
                 TracingStatus::Starting => (
                     "Starting Tracy",
                     "Launching tracy-profiler...".to_string(),
@@ -2267,8 +2272,7 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                 ),
             };
 
-            let show_debug_warning =
-                cfg!(debug_assertions) && matches!(self.status, TracingStatus::TracyLaunched);
+            let show_launch_button = matches!(self.status, TracingStatus::DebugBuildWarning);
 
             NotificationFrame::new()
                 .with_title(Some(title))
@@ -2279,23 +2283,30 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                 .with_content(
                     v_flex()
                         .gap_2()
-                        .child(Label::new(message).size(ui::LabelSize::Small))
-                        .when(show_debug_warning, |this| {
-                            this.child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .when(show_launch_button, |this| {
+                                    this.child(
                                         ui::Icon::new(ui::IconName::Warning)
                                             .size(ui::IconSize::Small)
                                             .color(ui::Color::Warning),
                                     )
-                                    .child(
-                                        Label::new(
-                                            "This is a debug build of Zed, which will be much slower than a release build.",
-                                        )
+                                })
+                                .child(
+                                    Label::new(message)
                                         .size(ui::LabelSize::Small)
-                                        .color(ui::Color::Warning),
-                                    ),
+                                        .when(show_launch_button, |this| {
+                                            this.color(ui::Color::Warning)
+                                        }),
+                                ),
+                        )
+                        .when(show_launch_button, |this| {
+                            this.child(
+                                ui::Button::new("launch_tracy_anyway", "Launch Tracy Anyway")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.launch_tracy(cx);
+                                    })),
                             )
                         }),
                 )
@@ -2311,6 +2322,29 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                     _spawn_task: None,
                 };
             }
+
+            // In debug builds, show a warning first and require explicit confirmation
+            if cfg!(debug_assertions) {
+                return Self {
+                    focus_handle: cx.focus_handle(),
+                    status: TracingStatus::DebugBuildWarning,
+                    _spawn_task: None,
+                };
+            }
+
+            // In release builds, launch Tracy immediately
+            let mut this = Self {
+                focus_handle: cx.focus_handle(),
+                status: TracingStatus::Starting,
+                _spawn_task: None,
+            };
+            this.launch_tracy(cx);
+            this
+        }
+
+        fn launch_tracy(&mut self, cx: &mut Context<Self>) {
+            self.status = TracingStatus::Starting;
+            cx.notify();
 
             let spawn_task = cx.spawn(async move |this, cx| {
                 let tracy_path = cx
@@ -2339,11 +2373,7 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
                 .ok();
             });
 
-            Self {
-                focus_handle: cx.focus_handle(),
-                status: TracingStatus::Starting,
-                _spawn_task: Some(spawn_task),
-            }
+            self._spawn_task = Some(spawn_task);
         }
     }
 
