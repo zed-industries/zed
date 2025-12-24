@@ -1,4 +1,4 @@
-mod dev_container;
+pub mod dev_container;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;

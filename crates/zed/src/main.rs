@@ -33,7 +33,7 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{SshSettings, dev_container, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -616,6 +616,7 @@ fn main() {
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        dev_container::init(cx);
 
         load_embedded_fonts(cx);
 
