@@ -1,8 +1,6 @@
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
-use crate::table_cell::TableCell;
-use gpui::DispatchPhase;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::{DefiniteLength, div, h_flex, prelude::*};
@@ -236,7 +234,13 @@ impl CsvPreviewView {
                         parent.when_some(span, |parent, pos| {
                             parent.child(
                                 div()
-                                    .child(format!("Pos {}-{}", pos.start.offset, pos.end.offset))
+                                    .child({
+                                        let slv = pos.start.timestamp.value;
+                                        let so = pos.start.offset;
+                                        let elv = pos.end.timestamp.value;
+                                        let eo = pos.end.offset;
+                                        format!("Pos {so}(L{slv})-{eo}(L{elv})")
+                                    })
                                     .text_color(row_identifier_text_color),
                             )
                         })
