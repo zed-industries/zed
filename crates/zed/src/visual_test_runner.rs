@@ -3,15 +3,13 @@
 //! This binary runs visual regression tests for Zed's UI. It captures screenshots
 //! of real Zed windows and compares them against baseline images.
 //!
-//! ## Prerequisites
+//! ## How It Works
 //!
-//! **Screen Recording Permission Required**: This tool uses macOS ScreenCaptureKit
-//! to capture window screenshots. You must grant Screen Recording permission:
-//!
-//! 1. Run this tool once - macOS will prompt for permission
-//! 2. Or manually: System Settings > Privacy & Security > Screen Recording
-//! 3. Enable the terminal app you're running from (e.g., Terminal.app, iTerm2)
-//! 4. You may need to restart your terminal after granting permission
+//! This tool uses direct texture capture - it renders the scene to a Metal texture
+//! and reads the pixels back directly. This approach:
+//! - Does NOT require Screen Recording permission
+//! - Does NOT require the window to be visible on screen
+//! - Captures raw GPUI output without system window chrome
 //!
 //! ## Usage
 //!
@@ -87,6 +85,8 @@ fn main() {
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             editor::init(cx);
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            title_bar::init(cx);
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
@@ -95,12 +95,10 @@ fn main() {
 
             // Open a real Zed workspace window
             let window_size = size(px(1280.0), px(800.0));
-            // TODO: We'd like to hide this window during tests, but macOS prevents windows
-            // from being positioned fully offscreen. The proper fix is to implement direct
-            // texture capture (reading pixels from Metal texture instead of using ScreenCaptureKit).
-            // See docs/direct-texture-capture-implementation.md for details.
+            // Window can be hidden since we use direct texture capture (reading pixels from
+            // Metal texture) instead of ScreenCaptureKit which requires visible windows.
             let bounds = Bounds {
-                origin: point(px(100.0), px(100.0)),
+                origin: point(px(0.0), px(0.0)),
                 size: window_size,
             };
 
@@ -120,8 +118,8 @@ fn main() {
                 .open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        focus: true,
-                        show: true,
+                        focus: false,
+                        show: false,
                         ..Default::default()
                     },
                     |window, cx| {
@@ -147,18 +145,6 @@ fn main() {
                 if let Err(e) = add_worktree_task.await {
                     eprintln!("Failed to add worktree: {:?}", e);
                 }
-
-                // Activate the window and bring it to front to ensure it's visible
-                // This is needed because macOS won't render occluded windows
-                cx.update(|cx| {
-                    cx.activate(true); // Activate the app
-                    workspace_window
-                        .update(cx, |_, window, _| {
-                            window.activate_window(); // Bring window to front
-                        })
-                        .ok();
-                })
-                .ok();
 
                 // Wait for UI to settle
                 cx.background_executor()
@@ -260,22 +246,6 @@ fn main() {
                 // Wait for UI to fully stabilize
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(2))
-                    .await;
-
-                // Activate window again before screenshot to ensure it's rendered
-                cx.update(|cx| {
-                    workspace_window
-                        .update(cx, |_, window, _| {
-                            window.activate_window();
-                        })
-                        .ok();
-                })
-                .ok();
-
-                // One more refresh and wait
-                cx.refresh().ok();
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
                     .await;
 
                 // Track test results
@@ -393,8 +363,8 @@ async fn run_visual_test(
     cx: &mut gpui::AsyncApp,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    // Capture the screenshot
-    let screenshot = capture_screenshot(window, cx).await?;
+    // Capture the screenshot using direct texture capture (no ScreenCaptureKit needed)
+    let screenshot = cx.update(|cx| capture_screenshot(window, cx))??;
 
     // Get paths
     let baseline_path = get_baseline_path(test_name);
@@ -550,23 +520,12 @@ fn pixels_are_similar(a: &image::Rgba<u8>, b: &image::Rgba<u8>) -> bool {
         && (a[3] as i16 - b[3] as i16).abs() <= TOLERANCE
 }
 
-async fn capture_screenshot(
-    window: gpui::AnyWindowHandle,
-    cx: &mut gpui::AsyncApp,
-) -> Result<RgbaImage> {
-    // Get the native window ID
-    let window_id = cx
-        .update(|cx| {
-            cx.update_window(window, |_view, window: &mut Window, _cx| {
-                window.native_window_id()
-            })
-        })??
-        .ok_or_else(|| anyhow::anyhow!("Failed to get native window ID"))?;
-
-    // Capture the screenshot
-    let screenshot = gpui::capture_window_screenshot(window_id)
-        .await
-        .map_err(|_| anyhow::anyhow!("Screenshot capture was cancelled"))??;
+fn capture_screenshot(window: gpui::AnyWindowHandle, cx: &mut gpui::App) -> Result<RgbaImage> {
+    // Use direct texture capture - renders the scene to a texture and reads pixels back.
+    // This does not require the window to be visible on screen.
+    let screenshot = cx.update_window(window, |_view, window: &mut Window, _cx| {
+        window.render_to_image()
+    })??;
 
     println!(
         "Screenshot captured: {}x{} pixels",
