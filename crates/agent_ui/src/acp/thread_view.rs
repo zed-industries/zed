@@ -511,7 +511,19 @@ impl AcpThreadView {
                 }
             })
             .next();
-        let (status_tx, mut status_rx) = watch::channel("Loading…".into());
+
+        const LOADING_STATUS: &str = "Loading…";
+
+        // When opening a thread from history, use its known title immediately to avoid
+        // flickering "Loading…" in the toolbar. For new threads, fall back to the loading status.
+        let initial_title = resume_thread
+            .as_ref()
+            .map(|rt| rt.title.clone())
+            .unwrap_or_else(|| LOADING_STATUS.into());
+        // Track whether we have a known title so we can filter out generic "Loading…" status
+        // updates from the agent server, preserving the thread's actual title during loading.
+        let has_known_title = resume_thread.is_some();
+        let (status_tx, mut status_rx) = watch::channel(initial_title.clone());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
@@ -720,6 +732,11 @@ impl AcpThreadView {
             let update_title_task = cx.spawn(async move |this, cx| {
                 loop {
                     let status = status_rx.recv().await?;
+                    // Skip generic "Loading…" updates when we already have the thread's
+                    // actual title from history - this prevents UI flicker during loading.
+                    if has_known_title && status == LOADING_STATUS {
+                        continue;
+                    }
                     this.update(cx, |this: &mut LoadingView, cx| {
                         this.title = status;
                         cx.notify();
@@ -728,7 +745,7 @@ impl AcpThreadView {
             });
 
             LoadingView {
-                title: "Loading…".into(),
+                title: initial_title,
                 _load_task: load_task,
                 _update_title_task: update_title_task,
             }
@@ -861,7 +878,8 @@ impl AcpThreadView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
-            ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
+            ThreadState::Ready { thread, .. } => thread.read(cx).title(),
+            ThreadState::Unauthenticated { .. } => "New Thread".into(),
             ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
