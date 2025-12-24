@@ -831,6 +831,7 @@ impl Element for MarkdownElement {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -1324,6 +1325,7 @@ impl Element for MarkdownElement {
         (layout_id, rendered_markdown)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -1343,6 +1345,7 @@ impl Element for MarkdownElement {
         hitbox
     }
 
+    #[ztracing::instrument(skip_all)]
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,

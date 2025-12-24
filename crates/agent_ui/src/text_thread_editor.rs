@@ -2651,6 +2651,7 @@ impl EventEmitter<EditorEvent> for TextThreadEditor {}
 impl EventEmitter<SearchEvent> for TextThreadEditor {}
 
 impl Render for TextThreadEditor {
+    #[ztracing::instrument(skip_all)]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let language_model_selector = self.language_model_selector_menu_handle.clone();
 

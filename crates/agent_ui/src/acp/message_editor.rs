@@ -965,6 +965,7 @@ impl Focusable for MessageEditor {
 }
 
 impl Render for MessageEditor {
+    #[ztracing::instrument(skip_all)]
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")

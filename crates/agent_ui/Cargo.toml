@@ -103,6 +103,8 @@ zed_actions.workspace = true
 image.workspace = true
 async-fs.workspace = true
 reqwest_client = { workspace = true, optional = true }
+ztracing.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
@@ -124,3 +126,6 @@ semver.workspace = true
 reqwest_client.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

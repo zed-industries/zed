@@ -1925,6 +1925,7 @@ impl AcpThreadView {
             .detach_and_log_err(cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_entry(
         &self,
         entry_ix: usize,
@@ -2302,6 +2303,7 @@ impl AcpThreadView {
         rems_from_px(13.)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_thinking_block(
         &self,
         entry_ix: usize,
@@ -2403,6 +2405,7 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_tool_call(
         &self,
         entry_ix: usize,
@@ -2631,6 +2634,7 @@ impl AcpThreadView {
             .children(tool_output_display)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_tool_call_label(
         &self,
         entry_ix: usize,
@@ -2739,6 +2743,7 @@ impl AcpThreadView {
             .when(!is_edit, |this| this.child(gradient_overlay))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_tool_call_content(
         &self,
         entry_ix: usize,
@@ -2773,6 +2778,7 @@ impl AcpThreadView {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
@@ -3037,6 +3043,7 @@ impl AcpThreadView {
             .into_any()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_terminal_tool_call(
         &self,
         entry_ix: usize,
@@ -3724,6 +3731,7 @@ impl AcpThreadView {
         editor_bg_color.blend(active_color.opacity(0.3))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_activity_bar(
         &self,
         thread_entity: &Entity<AcpThread>,
@@ -3791,6 +3799,7 @@ impl AcpThreadView {
             .into()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_plan_summary(
         &self,
         plan: &Plan,
@@ -3886,6 +3895,7 @@ impl AcpThreadView {
             }))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_plan_entries(
         &self,
         plan: &Plan,
@@ -3946,6 +3956,7 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_edits_summary(
         &self,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
@@ -4074,6 +4085,7 @@ impl AcpThreadView {
             )
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_edited_files(
         &self,
         action_log: &Entity<ActionLog>,
@@ -4711,6 +4723,7 @@ impl AcpThreadView {
             }))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
         MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
@@ -5992,6 +6005,7 @@ impl Focusable for AcpThreadView {
 }
 
 impl Render for AcpThreadView {
+    #[ztracing::instrument(skip_all)]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;

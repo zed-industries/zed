@@ -1757,6 +1757,7 @@ impl AgentPanel {
         });
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_panel_options_menu(
         &self,
         window: &mut Window,
@@ -2563,6 +2564,7 @@ impl AgentPanel {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn render_text_thread(
         &self,
         text_thread_editor: &Entity<TextThreadEditor>,
@@ -2737,6 +2739,7 @@ impl AgentPanel {
 }
 
 impl Render for AgentPanel {
+    #[ztracing::instrument(skip_all)]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // WARNING: Changes to this element hierarchy can have
         // non-obvious implications to the layout of children.

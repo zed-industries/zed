@@ -29,8 +29,10 @@ log.workspace = true
 pulldown-cmark.workspace = true
 sum_tree.workspace = true
 theme.workspace = true
+tracing.workspace = true
 ui.workspace = true
 util.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
@@ -41,3 +43,6 @@ languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
