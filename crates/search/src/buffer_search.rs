@@ -858,16 +858,16 @@ impl BufferSearchBar {
     }
 
     pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let search = self
-            .query_suggestion(window, cx)
-            .map(|suggestion| {
-                self.search(&suggestion, Some(self.default_options), true, window, cx)
-            })
-            .or_else(|| {
-                self.pending_external_query
-                    .take()
-                    .map(|(query, options)| self.search(&query, Some(options), true, window, cx))
-            });
+        let search = self.query_suggestion(window, cx).map(|suggestion| {
+            self.search(&suggestion, Some(self.default_options), true, window, cx)
+        });
+
+        #[cfg(target_os = "macos")]
+        let search = search.or_else(|| {
+            self.pending_external_query
+                .take()
+                .map(|(query, options)| self.search(&query, Some(options), true, window, cx))
+        });
 
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
@@ -1306,6 +1306,7 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
+        #[cfg(target_os = "macos")]
         self.pending_external_query.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
