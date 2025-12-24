@@ -1,28 +1,28 @@
 pub use tracing::{Level, field};
 
-#[cfg(ztracing)]
+#[cfg(feature = "tracy")]
 pub use tracing::{
     Span, debug_span, error_span, event, info_span, instrument, span, trace_span, warn_span,
 };
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use ztracing_macro::instrument;
 
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as trace_span;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as info_span;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as debug_span;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as warn_span;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as error_span;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as event;
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub use __consume_all_tokens as span;
 
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 #[macro_export]
 macro_rules! __consume_all_tokens {
     ($($t:tt)*) => {
@@ -30,10 +30,10 @@ macro_rules! __consume_all_tokens {
     };
 }
 
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub struct Span;
 
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 impl Span {
     pub fn current() -> Self {
         Self
@@ -44,7 +44,7 @@ impl Span {
     pub fn record<T, S>(&self, _t: T, _s: S) {}
 }
 
-#[cfg(ztracing)]
+#[cfg(feature = "tracy")]
 pub fn init() {
     zlog::info!("Starting tracy subscriber, you can now connect the profiler");
     use tracing_subscriber::prelude::*;
@@ -54,5 +54,23 @@ pub fn init() {
     .expect("setup tracy layer");
 }
 
-#[cfg(not(ztracing))]
+#[cfg(not(feature = "tracy"))]
 pub fn init() {}
+
+/// Returns true if this build was compiled with Tracy profiling support.
+///
+/// When true, `init()` will set up the Tracy subscriber and the application
+/// can be profiled by connecting Tracy profiler to it.
+#[cfg(feature = "tracy")]
+pub const fn is_enabled() -> bool {
+    true
+}
+
+/// Returns true if this build was compiled with Tracy profiling support.
+///
+/// When true, `init()` will set up the Tracy subscriber and the application
+/// can be profiled by connecting Tracy profiler to it.
+#[cfg(not(feature = "tracy"))]
+pub const fn is_enabled() -> bool {
+    false
+}

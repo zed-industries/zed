@@ -139,6 +139,10 @@ actions!(
         /// audio system (including yourself) on the current call in a tar file
         /// in the current working directory.
         CaptureRecentAudio,
+        /// Starts Tracy profiling by launching tracy-profiler if available.
+        /// Tracy will connect to this Zed instance and begin capturing performance data.
+        /// Requires Zed to be built with tracy support (ZTRACING=1).
+        StartTracing,
     ]
 );
 
@@ -1148,6 +1152,9 @@ fn register_actions(
         })
         .register_action(|workspace, _: &CaptureRecentAudio, window, cx| {
             capture_recent_audio(workspace, window, cx);
+        })
+        .register_action(|workspace, _: &StartTracing, window, cx| {
+            start_tracing(workspace, window, cx);
         });
 
     #[cfg(not(target_os = "windows"))]
@@ -2208,6 +2215,117 @@ fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Cont
         NotificationId::unique::<CaptureRecentAudioNotification>(),
         cx,
         |cx| cx.new(CaptureRecentAudioNotification::new),
+    );
+}
+
+fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
+    struct StartTracingNotification {
+        focus_handle: gpui::FocusHandle,
+        status: TracingStatus,
+        _spawn_task: Option<Task<()>>,
+    }
+
+    enum TracingStatus {
+        Starting,
+        TracyLaunched,
+        TracyNotFound,
+        TracyLaunchFailed(String),
+        ZtracingNotEnabled,
+    }
+
+    impl gpui::EventEmitter<DismissEvent> for StartTracingNotification {}
+    impl gpui::EventEmitter<SuppressEvent> for StartTracingNotification {}
+    impl gpui::Focusable for StartTracingNotification {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl workspace::notifications::Notification for StartTracingNotification {}
+
+    impl Render for StartTracingNotification {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let (title, message) = match &self.status {
+                TracingStatus::Starting => (
+                    "Starting Tracy",
+                    "Launching tracy-profiler...".to_string(),
+                ),
+                TracingStatus::TracyLaunched => (
+                    "Tracy Profiler Ready",
+                    "Tracy profiler has been launched. It should automatically connect to this Zed instance and begin capturing performance data.".to_string(),
+                ),
+                TracingStatus::TracyNotFound => (
+                    "Tracy Not Found",
+                    "Could not find `tracy-profiler` on your PATH. Please install Tracy profiler and ensure it's available in your PATH.\n\nOn macOS: brew install tracy\nOn Linux: Install from your package manager or build from source".to_string(),
+                ),
+                TracingStatus::TracyLaunchFailed(error) => (
+                    "Tracy Launch Failed",
+                    format!("Failed to launch tracy-profiler: {}", error),
+                ),
+                TracingStatus::ZtracingNotEnabled => (
+                    "Tracy Support Not Enabled",
+                    "This build of Zed was not compiled with Tracy support. To enable tracing, rebuild Zed with `cargo build --features tracy`.".to_string(),
+                ),
+            };
+
+            let show_debug_warning =
+                cfg!(debug_assertions) && matches!(self.status, TracingStatus::TracyLaunched);
+
+            NotificationFrame::new()
+                .with_title(Some(title))
+                .show_suppress_button(false)
+                .on_close(cx.listener(|_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }))
+                .with_content(message)
+        }
+    }
+
+    impl StartTracingNotification {
+        fn new(cx: &mut Context<Self>) -> Self {
+            if !ztracing::is_enabled() {
+                return Self {
+                    focus_handle: cx.focus_handle(),
+                    status: TracingStatus::ZtracingNotEnabled,
+                    _spawn_task: None,
+                };
+            }
+
+            let spawn_task = cx.spawn(async move |this, cx| {
+                let tracy_path = cx
+                    .background_spawn(async { which::which("tracy-profiler").ok() })
+                    .await;
+
+                let status = match tracy_path {
+                    Some(path) => {
+                        let spawn_result = smol::process::Command::new(&path).spawn();
+
+                        match spawn_result {
+                            Ok(_child) => TracingStatus::TracyLaunched,
+                            Err(error) => TracingStatus::TracyLaunchFailed(error.to_string()),
+                        }
+                    }
+                    None => TracingStatus::TracyNotFound,
+                };
+
+                this.update(cx, |this, cx| {
+                    this.status = status;
+                    cx.notify();
+                })
+                .ok();
+            });
+
+            Self {
+                focus_handle: cx.focus_handle(),
+                status: TracingStatus::Starting,
+                _spawn_task: Some(spawn_task),
+            }
+        }
+    }
+
+    workspace.show_notification(
+        NotificationId::unique::<StartTracingNotification>(),
+        cx,
+        |cx| cx.new(StartTracingNotification::new),
     );
 }
 
