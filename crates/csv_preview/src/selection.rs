@@ -284,7 +284,7 @@ pub struct TableSelection {
     /// Whether user is currently dragging to select
     is_selecting: bool,
     /// Currently focused cell in display coordinates
-    focused_cell: Option<DisplayCellId>,
+    pub focused_cell: Option<DisplayCellId>,
     /// Anchor cell for range selection (both keyboard and mouse) in display coordinates
     pub selection_anchor: Option<DisplayCellId>,
 }

@@ -32,7 +32,7 @@ This document outlines the current state of the POC feature. It might not be the
 **Features:**
 - [x] feat: Smart debouncing (now + cooldown instead of dumb waiting)
 - [x] feat: Add tooltip to show full value on hover
-- [x] feat: Add performance metrics (timings for ordering, parsing, copying, selection, etc)
+- [x] feat: Add performance metrics (timings for sorting, parsing, copying, selection, etc)
 - [ ] feat: Add multiline cells (variable list) / single line cells (unified list) modes
 - [ ] feat: Optional headers (c1 c2 c3) toggle
 - [ ] feat: Horizontal scroll vs fit all columns (**need infra**)
@@ -106,13 +106,14 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Fixes:**
 
-### Ordering
+### Sorting by column
 
 **Features:**
-- [x] feat: Add tooltip on order button
+- [x] feat: Add tooltip on sort button
 - [ ] feat: Add manual ordering of columns by dragging (**needs infra**)
 
 **Fixes:**
+- [ ] fix: Focus/anchor cells are don't follow the ordered celection
 
 ### Filtering
 

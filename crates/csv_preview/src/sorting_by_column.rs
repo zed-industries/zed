@@ -156,7 +156,7 @@ impl CsvPreviewView {
             };
 
             this.sorting_cfg = new_ordering;
-            this.update_ordered_indices();
+            this.re_sort_indices();
             cx.notify();
         }));
         sort_btn
