@@ -880,7 +880,6 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_input_modality: InputModality,
-    last_frame_time: Rc<Cell<Option<Instant>>>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1125,7 +1124,6 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
-            let last_frame_time = last_frame_time.clone();
             move |request_frame_options| {
                 let thermal_state = cx
                     .update(|cx| cx.thermal_state())
@@ -1365,7 +1363,6 @@ impl Window {
             needs_present,
             input_rate_tracker,
             last_input_modality: InputModality::Mouse,
-            last_frame_time,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,

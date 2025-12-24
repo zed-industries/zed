@@ -166,7 +166,7 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    on_thermal_state_change: Option<Box<dyn FnMut(ThermalState)>>,
+    on_thermal_state_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -889,7 +889,7 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn on_thermal_state_change(&self, callback: Box<dyn FnMut(ThermalState)>) {
+    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_thermal_state_change = Some(callback);
     }
 
@@ -1264,30 +1264,15 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
 
 extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
-    let thermal_state = get_thermal_state();
     let mut lock = platform.0.lock();
     if let Some(mut callback) = lock.on_thermal_state_change.take() {
         drop(lock);
-        callback(thermal_state);
+        callback();
         platform
             .0
             .lock()
             .on_thermal_state_change
             .get_or_insert(callback);
-    }
-}
-
-fn get_thermal_state() -> ThermalState {
-    unsafe {
-        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-        let state: NSInteger = msg_send![process_info, thermalState];
-        match state {
-            0 => ThermalState::Nominal,
-            1 => ThermalState::Fair,
-            2 => ThermalState::Serious,
-            3 => ThermalState::Critical,
-            _ => ThermalState::Nominal,
-        }
     }
 }
 
