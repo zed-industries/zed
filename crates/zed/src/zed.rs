@@ -2319,7 +2319,10 @@ fn start_tracing(workspace: &mut Workspace, _window: &mut Window, cx: &mut Conte
 
                 let status = match tracy_path {
                     Some(path) => {
-                        let spawn_result = smol::process::Command::new(&path).spawn();
+                        let spawn_result = smol::process::Command::new(&path)
+                            .arg("-a")
+                            .arg("127.0.0.1")
+                            .spawn();
 
                         match spawn_result {
                             Ok(_child) => TracingStatus::TracyLaunched,
