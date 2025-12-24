@@ -710,6 +710,7 @@ pub fn render_table_row<const COLS: usize>(
                     div()
                         .when_some(width, |this, width| this.w(width))
                         .when(width.is_none(), |this| this.flex_1())
+                        .overflow_hidden()
                         .child(cell)
                 } else {
                     base_cell_style_text(width, table_context.use_ui_font, cx)
