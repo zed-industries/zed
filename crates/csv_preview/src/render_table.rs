@@ -221,13 +221,8 @@ impl CsvPreviewView {
                     .relative()
                     .child(div().absolute().child(ctx.editor.clone()))
             } else {
-                div()
-                    .size_full()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_ui(cx)
-                    .overflow_hidden()
-                    .child(CsvPreviewView::create_selectable_cell(
+                div().size_full().whitespace_nowrap().text_ellipsis().child(
+                    CsvPreviewView::create_selectable_cell(
                         display_cell_id,
                         cell_content,
                         cx.entity(),
@@ -238,7 +233,8 @@ impl CsvPreviewView {
                         this.settings.vertical_alignment,
                         this.settings.font_type,
                         cx,
-                    ))
+                    ),
+                )
             };
 
             elements.push(
@@ -253,6 +249,7 @@ impl CsvPreviewView {
                             )
                         })
                     })
+                    .text_ui(cx)
                     .child(cell)
                     .into_any_element(),
             );
