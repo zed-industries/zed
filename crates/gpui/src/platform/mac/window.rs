@@ -1608,6 +1608,12 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         this.renderer.render_to_image(scene)
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, scene: &crate::Scene) -> Result<RgbaImage> {
+        let mut this = self.0.lock();
+        this.renderer.render_to_image(scene)
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
