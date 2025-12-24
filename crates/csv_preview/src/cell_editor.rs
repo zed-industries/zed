@@ -56,7 +56,7 @@ impl CsvPreviewView {
             self.contents
                 .rows
                 .get(*cid.row)?
-                .get(*cid.col)?
+                .get(cid.col)?
                 .display_value()
                 .clone(),
         )
@@ -75,15 +75,14 @@ impl CsvPreviewView {
             return;
         };
 
-        let (data_row, col) = cell_to_edit.to_raw();
-
-        // Check if we have the target cell
-        if data_row >= self.contents.rows.len() || col >= self.contents.rows[data_row].len() {
+        let Some(cell) = self
+            .display_to_data_cell(cell_to_edit)
+            .and_then(|cid| self.contents.get_cell(&cid))
+        else {
             println!("No target cell found");
             return;
-        }
+        };
 
-        let cell = &self.contents.rows[data_row][col];
         let Some(position) = &cell.position else {
             println!("Target cell has no position");
             return;

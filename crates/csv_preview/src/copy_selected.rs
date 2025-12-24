@@ -5,6 +5,7 @@ use workspace::{Toast, Workspace, notifications::NotificationId};
 use std::time::Instant;
 use std::{collections::BTreeMap, sync::Arc};
 
+use crate::table_cell::TableCell;
 use crate::{
     CopySelected, CsvPreviewView,
     settings::{CopyFormat, CopyMode},
@@ -45,7 +46,7 @@ impl CsvPreviewView {
     ) {
         let start_time = Instant::now();
         let max_rows = self.contents.rows.len();
-        let max_cols = self.contents.headers.len();
+        let max_cols = self.contents.number_of_cols;
         let copy_format = self.settings.copy_format;
         let copy_mode = self.settings.copy_mode;
         let full_content = &self.contents;
@@ -67,20 +68,20 @@ impl CsvPreviewView {
 
                 for cell_id in &selected_display_cells {
                     let display_row_idx = cell_id.row.get();
-                    let col_idx = cell_id.col.get();
+                    let col = cell_id.col;
 
                     // Convert display row to data row to get the correct cell content
                     if let Some(data_row) = self.sorted_indices.get_data_row(cell_id.row) {
                         if let Some(row) = (&full_content.rows).get(data_row.get()) {
                             let cell_content = row
-                                .get(col_idx)
+                                .get(col)
                                 .map(|s| s.display_value().as_ref().to_string())
                                 .unwrap_or_default();
 
                             rows_data
                                 .entry(display_row_idx)
                                 .or_default()
-                                .insert(AnyColumn::new(col_idx), cell_content);
+                                .insert(col, cell_content);
                         }
                     }
                 }
@@ -100,18 +101,18 @@ impl CsvPreviewView {
 
                 for cell_id in &selected_data_cells {
                     let data_row_idx = cell_id.row.get();
-                    let col_idx = cell_id.col.get();
+                    let col = cell_id.col;
 
                     if let Some(row) = (&full_content.rows).get(data_row_idx) {
                         let cell_content = row
-                            .get(col_idx)
+                            .get(col)
                             .map(|s| s.display_value().as_ref().to_string())
                             .unwrap_or_default();
 
                         rows_data
                             .entry(data_row_idx)
                             .or_default()
-                            .insert(AnyColumn::new(col_idx), cell_content);
+                            .insert(col, cell_content);
                     }
                 }
 
@@ -123,7 +124,7 @@ impl CsvPreviewView {
             calculate_toast_info_generic(selected_cells_count, copy_format, &rows_data);
 
         let content = if copy_format == CopyFormat::Markdown {
-            format_as_markdown_table(&full_content.headers, &rows_data)
+            format_as_markdown_table(full_content.headers.as_slice(), &rows_data)
         } else {
             // Build CSV/TSV format: determine global column range for entire selection
             let mut lines = Vec::new();
@@ -200,7 +201,7 @@ impl CsvPreviewView {
 }
 
 fn format_as_markdown_table(
-    all_table_headers: &[crate::table_cell::TableCell],
+    all_table_headers: &[TableCell],
     rows_data: &BTreeMap<usize, BTreeMap<AnyColumn, String>>,
 ) -> String {
     if rows_data.is_empty() {

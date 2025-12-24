@@ -5,6 +5,8 @@
 //! By using `TableRow`, we gain stronger guarantees and safer APIs compared to a bare `Vec<T>`, without requiring const generics.
 
 use std::any::type_name;
+
+use crate::types::AnyColumn;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableRow<T>(Vec<T>);
 
@@ -39,6 +41,22 @@ impl<T> TableRow<T> {
         }
     }
 
+    /// Returns reference to element by column id.
+    ///
+    /// # Panics if `col` is greater than `TableRow` len
+    pub fn expect_get(&self, col: AnyColumn) -> &T {
+        self.0.get(*col).unwrap_or_else(|| {
+            panic!(
+                "Expected table row of `{}` to have {col:?}",
+                type_name::<T>()
+            )
+        })
+    }
+
+    pub fn get(&self, col: AnyColumn) -> Option<&T> {
+        self.0.get(*col)
+    }
+
     pub fn as_slice(&self) -> &[T] {
         &self.0
     }
@@ -53,6 +71,10 @@ impl<T> TableRow<T> {
         F: FnMut(T) -> U,
     {
         TableRow(self.0.into_iter().map(f).collect())
+    }
+
+    pub(crate) fn empty() -> TableRow<T> {
+        TableRow(Vec::new())
     }
 }
 

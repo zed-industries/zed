@@ -822,7 +822,7 @@ impl CsvPreviewView {
     ) {
         let start_time = Instant::now();
         let max_rows = self.contents.rows.len();
-        let max_cols = self.contents.headers.len();
+        let max_cols = self.contents.number_of_cols;
 
         self.selection.navigate(
             direction,
