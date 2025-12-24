@@ -253,6 +253,9 @@ pub(crate) trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
+    fn on_thermal_state_change(&self, callback: Box<dyn FnMut(ThermalState)>);
+    fn thermal_state(&self) -> ThermalState;
+
     fn compositor_name(&self) -> &'static str {
         ""
     }
@@ -313,6 +316,19 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+}
+
+/// Thermal state of the system
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThermalState {
+    /// System has no thermal constraints
+    Nominal,
+    /// System is slightly constrained, reduce discretionary work
+    Fair,
+    /// System is moderately constrained, reduce CPU/GPU intensive work
+    Serious,
+    /// System is critically constrained, minimize all resource usage
+    Critical,
 }
 
 /// Metadata for a given [ScreenCaptureSource]
