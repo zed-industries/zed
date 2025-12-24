@@ -1,4 +1,4 @@
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -126,16 +126,38 @@ impl TaskTemplates {
     }
 }
 
+/// An error that can occur when resolving a task template.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskResolutionError {
+    /// The task template is invalid (e.g. empty label or command).
+    InvalidTemplate,
+    /// A required ZED_ variable was not found and had no default value.
+    UnknownVariable(String),
+}
+
+impl std::fmt::Display for TaskResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidTemplate => write!(f, "task label and command cannot be empty"),
+            Self::UnknownVariable(variable_name) => {
+                write!(f, "{variable_name} could not be resolved")
+            }
+        }
+    }
+}
+
 impl TaskTemplate {
     /// Replaces all `VariableName` task variables in the task template string fields.
-    /// If any replacement fails or the new string substitutions still have [`ZED_VARIABLE_NAME_PREFIX`],
-    /// `None` is returned.
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
-    pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
+    pub fn resolve_task(
+        &self,
+        id_base: &str,
+        cx: &TaskContext,
+    ) -> Result<ResolvedTask, TaskResolutionError> {
         if self.label.trim().is_empty() || self.command.trim().is_empty() {
-            return None;
+            return Err(TaskResolutionError::InvalidTemplate);
         }
 
         let mut variable_names = HashMap::default();
@@ -216,10 +238,12 @@ impl TaskTemplate {
 
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
-            .log_err()?;
+            .log_err()
+            .ok_or(TaskResolutionError::InvalidTemplate)?;
         let variables_hash = to_hex_hash(&task_variables)
             .context("hashing task variables")
-            .log_err()?;
+            .log_err()
+            .ok_or(TaskResolutionError::InvalidTemplate)?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
 
         let env = {
@@ -242,7 +266,7 @@ impl TaskTemplate {
             env
         };
 
-        Some(ResolvedTask {
+        Ok(ResolvedTask {
             id: id.clone(),
             substituted_variables,
             original_task: self.clone(),
@@ -298,7 +322,10 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) -> Option<String> {
+pub fn substitute_variables_in_str(
+    template_str: &str,
+    context: &TaskContext,
+) -> Result<String, TaskResolutionError> {
     let mut variable_names = HashMap::default();
     let mut substituted_variables = HashSet::default();
     let task_variables = context
@@ -325,7 +352,7 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
     substituted_variables: &mut HashSet<VariableName>,
-) -> Option<String> {
+) -> Result<String, TaskResolutionError> {
     let substituted_string = shellexpand::env_with_context(template_str, |var| {
         // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
         let colon_position = var.find(':').unwrap_or(var.len());
@@ -342,7 +369,7 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
                 // Strip the colon and return the default value
                 return Ok(Some(default[1..].to_owned()));
             } else {
-                bail!("Unknown variable name: {variable_name}");
+                return Err(variable_name.to_owned());
             }
         }
         // This is an unknown variable.
@@ -353,9 +380,15 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
         }
         // Else we can just return None and that variable will be left as is.
         Ok(None)
-    })
-    .ok()?;
-    Some(substituted_string.into_owned())
+    });
+
+    let substituted_string = match substituted_string {
+        Ok(string) => string,
+        Err(e) => {
+            return Err(TaskResolutionError::UnknownVariable(e.cause));
+        }
+    };
+    Ok(substituted_string.into_owned())
 }
 
 fn substitute_all_template_variables_in_vec(
@@ -363,7 +396,7 @@ fn substitute_all_template_variables_in_vec(
     task_variables: &HashMap<String, &str>,
     variable_names: &HashMap<String, VariableName>,
     substituted_variables: &mut HashSet<VariableName>,
-) -> Option<Vec<String>> {
+) -> Result<Vec<String>, TaskResolutionError> {
     let mut expanded = Vec::with_capacity(template_strs.len());
     for variable in template_strs {
         let new_value = substitute_all_template_variables_in_str(
@@ -374,13 +407,13 @@ fn substitute_all_template_variables_in_vec(
         )?;
         expanded.push(new_value);
     }
-    Some(expanded)
+    Ok(expanded)
 }
 
 pub fn substitute_variables_in_map(
     keys_and_values: &HashMap<String, String>,
     context: &TaskContext,
-) -> Option<HashMap<String, String>> {
+) -> std::result::Result<HashMap<String, String>, TaskResolutionError> {
     let mut variable_names = HashMap::default();
     let mut substituted_variables = HashSet::default();
     let task_variables = context
@@ -407,7 +440,7 @@ fn substitute_all_template_variables_in_map(
     task_variables: &HashMap<String, &str>,
     variable_names: &HashMap<String, VariableName>,
     substituted_variables: &mut HashSet<VariableName>,
-) -> Option<HashMap<String, String>> {
+) -> Result<HashMap<String, String>, TaskResolutionError> {
     let mut new_map: HashMap<String, String> = Default::default();
     for (key, value) in keys_and_values {
         let new_value = substitute_all_template_variables_in_str(
@@ -424,7 +457,7 @@ fn substitute_all_template_variables_in_map(
         )?;
         new_map.insert(new_key, new_value);
     }
-    Some(new_map)
+    Ok(new_map)
 }
 
 #[cfg(test)]
@@ -464,7 +497,7 @@ mod tests {
         ] {
             assert_eq!(
                 task_with_blank_property.resolve_task(TEST_ID_BASE, &TaskContext::default()),
-                None,
+                Err(TaskResolutionError::InvalidTemplate),
                 "should not resolve task with blank label and/or command: {task_with_blank_property:?}"
             );
         }
@@ -482,7 +515,7 @@ mod tests {
         let resolved_task = |task_template: &TaskTemplate, task_cx| {
             let resolved_task = task_template
                 .resolve_task(TEST_ID_BASE, task_cx)
-                .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
+                .unwrap_or_else(|e| panic!("failed to resolve task {task_without_cwd:?}: {e:?}"));
             assert_substituted_variables(&resolved_task, Vec::new());
             resolved_task.resolved
         };
@@ -607,7 +640,7 @@ mod tests {
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
                     project_env: HashMap::default(),
                 },
-            ).unwrap_or_else(|| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}"));
+            ).unwrap_or_else(|e| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}: {e:?}"));
 
             match &first_resolved_id {
                 None => first_resolved_id = Some(resolved_task.id.clone()),
@@ -696,8 +729,11 @@ mod tests {
                     project_env: HashMap::default(),
                 },
             );
-            assert_eq!(
-                resolved_task_attempt, None,
+            assert!(
+                matches!(
+                    resolved_task_attempt,
+                    Err(TaskResolutionError::UnknownVariable(_))
+                ),
                 "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
             );
         }
@@ -731,7 +767,7 @@ mod tests {
         };
         assert!(
             task.resolve_task(TEST_ID_BASE, &TaskContext::default())
-                .is_none()
+                .is_err()
         );
     }
 
@@ -782,7 +818,9 @@ mod tests {
         {
             let resolved = symbol_dependent_task
                 .resolve_task(TEST_ID_BASE, &cx)
-                .unwrap_or_else(|| panic!("Failed to resolve task {symbol_dependent_task:?}"));
+                .unwrap_or_else(|e| {
+                    panic!("Failed to resolve task {symbol_dependent_task:?}: {e:?}")
+                });
             assert_eq!(
                 resolved.substituted_variables,
                 HashSet::from_iter(Some(VariableName::Symbol)),
@@ -823,7 +861,7 @@ mod tests {
         context
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
-        assert!(faulty_go_test.resolve_task("base", &context).is_some());
+        assert!(faulty_go_test.resolve_task("base", &context).is_ok());
     }
 
     #[test]
@@ -967,7 +1005,7 @@ mod tests {
         assert!(
             task_no_default
                 .resolve_task(TEST_ID_BASE, &TaskContext::default())
-                .is_none(),
+                .is_err(),
             "Should fail when ZED variable has no default and doesn't exist"
         );
     }
