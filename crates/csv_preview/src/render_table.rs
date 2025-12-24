@@ -2,6 +2,7 @@ use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
 use crate::table_cell::TableCell;
+use gpui::DispatchPhase;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::{DefiniteLength, div, h_flex, prelude::*};
@@ -167,10 +168,11 @@ impl CsvPreviewView {
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
+        let display_row = DisplayRow(display_index);
         let sorted_indices = this.get_sorted_indices();
 
         // Get the actual row index from our sorted indices
-        let data_row = sorted_indices.get_data_row(DisplayRow::from(display_index))?;
+        let data_row = sorted_indices.get_data_row(display_row)?;
         let row_index = data_row.get();
         let row = this.contents.rows.get(row_index)?;
 
@@ -183,36 +185,26 @@ impl CsvPreviewView {
             row_index,
         )?);
 
-        let empty_cell = TableCell {
-            position: None,
-            cached_value: "".into(),
-        };
-
         // Remaining columns: actual CSV data
-        for col in 0..(COLS - 1) {
-            let table_cell = row.get(AnyColumn(col)).unwrap_or_else(|| &empty_cell);
+        for raw_col in 0..(COLS - 1) {
+            let col = AnyColumn::new(raw_col);
+            let table_cell = row.expect_get(col);
 
             let cell_content = table_cell.display_value().clone();
             let span = table_cell.position.as_ref();
 
-            let display_cell_id = DisplayCellId::new(display_index, col);
+            let display_cell_id = DisplayCellId::new(display_row, col);
 
             // Check if this cell is selected using display coordinates
-            let is_selected = this.selection.is_cell_selected(
-                DisplayRow::from(display_index),
-                AnyColumn::from(col),
-                &sorted_indices,
-            );
+            let is_selected = this
+                .selection
+                .is_cell_selected(display_row, col, &sorted_indices);
 
             // Check if this cell is focused using display coordinates
-            let is_focused = this
-                .selection
-                .is_cell_focused(DisplayRow::from(display_index), AnyColumn::from(col));
+            let is_focused = this.selection.is_cell_focused(display_row, col);
 
             // Check if this cell is the selection anchor using display coordinates
-            let is_anchor = this
-                .selection
-                .is_cell_anchor(DisplayRow::from(display_index), AnyColumn::from(col));
+            let is_anchor = this.selection.is_cell_anchor(display_row, col);
 
             let cell = if let Some(ctx) = this.cell_editor.as_ref()
                 && ctx.cell_to_edit == display_cell_id
