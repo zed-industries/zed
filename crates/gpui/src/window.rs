@@ -1131,7 +1131,7 @@ impl Window {
 
                 let now = Instant::now();
                 if let Some(last_frame) = last_frame_time.get()
-                    && thermal_state == ThermalState::Critical
+                    && thermal_state == ThermalState::Serious
                 {
                     if now.duration_since(last_frame) < Duration::from_micros(16667) {
                         return;
