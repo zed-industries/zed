@@ -5,7 +5,10 @@ use gpui::{
 };
 use std::{sync::Arc, time::Instant};
 
-use crate::{cell_editor::CellEditorCtx, data_table::TableInteractionState};
+use crate::{
+    cell_editor::CellEditorCtx, data_table::TableInteractionState,
+    sorting_by_column::generate_sorted_indices,
+};
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
@@ -130,12 +133,9 @@ impl CsvPreviewView {
 
 impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
-    pub(crate) fn update_ordered_indices(&mut self) {
+    pub(crate) fn re_sort_indices(&mut self) {
         let start_time = Instant::now();
-        self.sorted_indices = Arc::new(crate::sorting_by_column::generate_sorted_indices(
-            self.sorting_cfg,
-            &self.contents,
-        ));
+        self.sorted_indices = Arc::new(generate_sorted_indices(self.sorting_cfg, &self.contents));
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
     }
@@ -178,9 +178,7 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
                 sorting_cfg: None,
-                sorted_indices: Arc::new(crate::sorting_by_column::generate_sorted_indices(
-                    None, &contents,
-                )),
+                sorted_indices: Arc::new(generate_sorted_indices(None, &contents)),
                 selection: TableSelection::default(),
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),

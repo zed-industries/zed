@@ -113,7 +113,7 @@ impl CsvPreviewView {
                 view.contents = parsed_csv;
                 view.performance_metrics.last_parse_took = Some(parse_duration);
                 view.last_parse_end_time = Some(parse_end_time);
-                view.update_ordered_indices();
+                view.re_sort_indices();
                 cx.notify();
             })
         })
