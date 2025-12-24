@@ -1,17 +1,17 @@
 use editor::Editor;
 use gpui::{AppContext as _, Entity, FocusHandle, Focusable};
-use text::ToOffset;
+use text::{Anchor, ToOffset};
 use ui::{
     ActiveTheme as _, App, Context, InteractiveElement, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, StyledTypography as _, Window, div, h_flex,
+    Styled as _, StyledTypography as _, Window, div, h_flex,
 };
 
 use crate::{
     CELL_EDITOR_CONTEXT_NAME, CancelCellEditing, CsvPreviewView, FinishCellEditing,
     StartCellEditing,
     copy_selected::EscapedCellString,
-    table_cell::TableCell,
-    types::{DataCellId, DisplayCellId},
+    table_cell::{CellContentSpan, TableCell},
+    types::{AnyColumn, DataCellId, DisplayCellId, TableRow},
 };
 
 pub(crate) struct CellEditor {
@@ -41,9 +41,23 @@ impl Render for CellEditor {
     }
 }
 
+/// Context of cell being edited
+pub(crate) enum EditedCellContext {
+    Virtual {
+        /// How many steps needed to get to neares real cell. Used to calculate how many empty cells to insert
+        distance_to_real_cell: usize,
+        /// End Anchor of real cell. Used as start point of the virtual cell insertion
+        end_anchor_of_nearest_cell: Anchor,
+    },
+    Real {
+        position: CellContentSpan,
+    },
+}
+
 pub(crate) struct CellEditorCtx {
     pub editor: Entity<CellEditor>,
     pub cell_to_edit: DisplayCellId,
+    pub cell_context: EditedCellContext,
 }
 
 impl CsvPreviewView {
@@ -52,44 +66,43 @@ impl CsvPreviewView {
         Some(DataCellId::new(data_row, focused_cell.col))
     }
 
-    fn get_cell_content(&self, cid: DataCellId) -> Option<SharedString> {
-        self.contents.get_cell(&cid)?.display_value().cloned()
-    }
-
-    /// POC: Commit the cell editor content back to the source buffer
-    /// TODO: Refactor. It stinks
+    /// Commit the cell editor content back to the source buffer
     fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
         println!("Committing cell edit");
         let CellEditorCtx {
             editor,
-            cell_to_edit,
+            cell_context,
+            ..
         } = self
             .cell_editor
             .as_ref()
             .expect("Expected to have cell editor present, when commiting cell changes");
 
-        let data_cell_id = self
-            .display_to_data_cell(cell_to_edit)
-            .expect("Cell editor bug: Expected to map valid display cell id to data cell id");
-
-        let cell = self
-            .contents
-            .get_cell(&data_cell_id)
-            .expect("Cell editor bug: Expected to get cell by data cell id");
-
-        let position = match cell {
-            TableCell::Real { position, .. } => position,
-            TableCell::Virtual => {
-                println!("Virtual cell editing is not yet supported");
-                return;
-            }
-        };
-
         // Get the new text from the cell editor
         let new_text = editor.read(cx).cell_editor.read(cx).text(cx);
         const DELIMITER: char = ',';
+        const DELIMITER_STR: &str = ","; // TODO: derive from char
         let new_text = EscapedCellString::new(new_text, DELIMITER);
 
+        let (position, new_text) = match cell_context {
+            EditedCellContext::Virtual {
+                distance_to_real_cell,
+                end_anchor_of_nearest_cell,
+            } => {
+                let bridge = DELIMITER_STR.repeat(*distance_to_real_cell);
+                let cell_with_bridge = format!("{bridge}{}", new_text.take());
+                (
+                    CellContentSpan {
+                        start: *end_anchor_of_nearest_cell,
+                        end: *end_anchor_of_nearest_cell,
+                    },
+                    cell_with_bridge,
+                )
+            }
+            EditedCellContext::Real { position } => (position.clone(), new_text.take()),
+        };
+
+        // let text_chunk
         // Apply the edit to the source buffer
         let Some(buffer) = self
             .editor_state()
@@ -131,23 +144,42 @@ impl CsvPreviewView {
             .display_to_data_cell(&focused_cell_id)
             .expect("Expected focused cell to point to existing data cell id");
 
-        let cell = self
+        let row = self
             .contents
-            .get_cell(&data_cid)
-            .expect("Expected mapped data cell id to point to existing cell");
+            .get_row(data_cid.row)
+            .expect("Expected mapped data cell id to point to existing data row");
 
-        let initial_content = match cell {
-            TableCell::Real { cached_value, .. } => cached_value,
+        let (initial_content, cell_context) = match row.expect_get(data_cid.col) {
+            TableCell::Real {
+                cached_value,
+                position,
+            } => (
+                cached_value.as_str(),
+                EditedCellContext::Real {
+                    position: position.clone(),
+                },
+            ),
             TableCell::Virtual => {
-                println!("Editing of virtual cell is not supported yet");
-                return;
+                let distance = distance_to_nearest_real_cell_left(row, data_cid.col);
+                let last_real_cell = row.expect_get(AnyColumn(*data_cid.col - distance));
+
+                (
+                    "",
+                    EditedCellContext::Virtual {
+                        distance_to_real_cell: distance,
+                        end_anchor_of_nearest_cell: last_real_cell
+                            .position()
+                            .expect("Expected last real cell to have position")
+                            .end,
+                    },
+                )
             }
         };
 
         // Create the cell editor
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 100, window, cx);
-            editor.set_text(initial_content.as_ref(), window, cx);
+            editor.set_text(initial_content, window, cx);
             editor
         });
 
@@ -160,6 +192,7 @@ impl CsvPreviewView {
                 focus_handle: cx.focus_handle(),
             }),
             cell_to_edit: focused_cell_id,
+            cell_context,
         });
         cx.notify();
     }
@@ -193,6 +226,7 @@ impl CsvPreviewView {
         let Some(CellEditorCtx {
             editor,
             cell_to_edit,
+            ..
         }) = &self.cell_editor
         else {
             return div().child("Not editing cell. Select cell and press enter to start editing");
@@ -277,5 +311,80 @@ impl CsvPreviewView {
 
     pub fn clear_cell_editor(&mut self) {
         self.cell_editor = None;
+    }
+}
+
+/// Calculates the distance from a given column to the nearest real cell to the left in the row.
+///
+/// Returns the number of columns between `from_col` (exclusive) and the nearest `TableCell::Real` (inclusive).
+/// If there is no real cell to the left (including the current column), returns `from_col` as the distance.
+///
+/// # Arguments
+/// * `row` - The table row to search within.
+/// * `from_col` - The column index (as `AnyColumn`) to start searching left from.
+///
+/// # Example
+/// ```
+/// use crate::table_cell::{TableCell, distance_to_nearest_real_cell_left};
+/// use crate::types::AnyColumn;
+/// let row = vec![TableCell::Real { position: ..., cached_value: ... }, TableCell::Virtual, TableCell::Virtual, TableCell::Virtual];
+/// let distance = distance_to_nearest_real_cell_left(&row, AnyColumn::new(3));
+/// assert_eq!(distance, 2);
+/// ```
+pub fn distance_to_nearest_real_cell_left(row: &TableRow<TableCell>, from_col: AnyColumn) -> usize {
+    let col = from_col.get();
+    row.as_slice()
+        .iter()
+        .enumerate()
+        .rev()
+        .skip(row.as_slice().len().saturating_sub(col))
+        .find(|(_, cell)| matches!(cell, TableCell::Real { .. }))
+        .map(|(idx, _)| col - idx)
+        .unwrap_or(col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::table_cell::{CellContentSpan, TableCell};
+    use crate::types::{AnyColumn, IntoTableRow};
+    use text::{Anchor, BufferId};
+    use ui::SharedString;
+
+    fn real() -> TableCell {
+        TableCell::Real {
+            position: CellContentSpan {
+                start: Anchor::min_for_buffer(BufferId::new(1).unwrap()),
+                end: Anchor::max_for_buffer(BufferId::new(1).unwrap()),
+            },
+            cached_value: SharedString::from("x"),
+        }
+    }
+
+    #[test]
+    fn test_distance_to_nearest_real_cell_left() {
+        let row = vec![
+            real(),             // ix 0
+            TableCell::Virtual, // ix 1
+            TableCell::Virtual, // ix 2
+            TableCell::Virtual, // ix 3
+        ]
+        .into_table_row(4);
+        assert_eq!(
+            distance_to_nearest_real_cell_left(&row, AnyColumn::new(3)),
+            3
+        );
+        assert_eq!(
+            distance_to_nearest_real_cell_left(&row, AnyColumn::new(2)),
+            2
+        );
+        assert_eq!(
+            distance_to_nearest_real_cell_left(&row, AnyColumn::new(1)),
+            1
+        );
+        assert_eq!(
+            distance_to_nearest_real_cell_left(&row, AnyColumn::new(0)),
+            0
+        );
     }
 }

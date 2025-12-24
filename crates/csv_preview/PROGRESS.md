@@ -127,6 +127,7 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [x] feat: Inline edits (click cell to enter editor mode. Edit text, hit enter, and changes applied to original file)
+  - [x] feat: Add virtual cell editing support (pad cells with delimiter, if row is less than number of columns for the table)
   - [x] fix: Allow overflow for the editor. Style editor to have background, border and paddings
     - [ ] fix: Add z-index, to be on top of adjacent cells
     - [ ] fix: Overflow doesn't work correctly if it's set in any child div instead of parent div
