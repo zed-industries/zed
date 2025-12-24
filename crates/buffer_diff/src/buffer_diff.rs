@@ -147,13 +147,11 @@ struct InternalDiffLine {
 struct LineIndex {
     added_lines: HashMap<LineKey, usize>,
     deleted_lines: HashMap<LineKey, usize>,
-    added_text_counts: HashMap<Arc<str>, usize>,
-    deleted_text_counts: HashMap<Arc<str>, usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct LineKey {
-    base_row: u32,
+    buffer_row: u32,
     text: Arc<str>,
 }
 
@@ -163,26 +161,25 @@ impl LineIndex {
         for line in &inner.lines {
             match line.kind {
                 DiffHunkStatusKind::Added => {
-                    if let (Some(base_row), Some(text)) =
-                        (line.base_row, line.buffer_text.as_ref())
+                    if let (Some(buffer_row), Some(text)) =
+                        (line.buffer_row, line.buffer_text.as_ref())
                     {
                         let key = LineKey {
-                            base_row,
+                            buffer_row,
                             text: text.clone(),
                         };
                         *index.added_lines.entry(key).or_insert(0) += 1;
-                        *index.added_text_counts.entry(text.clone()).or_insert(0) += 1;
                     }
                 }
                 DiffHunkStatusKind::Deleted => {
-                    if let (Some(base_row), Some(text)) = (line.base_row, line.base_text.as_ref())
+                    if let (Some(buffer_row), Some(text)) =
+                        (line.buffer_row, line.base_text.as_ref())
                     {
                         let key = LineKey {
-                            base_row,
+                            buffer_row,
                             text: text.clone(),
                         };
                         *index.deleted_lines.entry(key).or_insert(0) += 1;
-                        *index.deleted_text_counts.entry(text.clone()).or_insert(0) += 1;
                     }
                 }
                 DiffHunkStatusKind::Modified => {}
@@ -191,32 +188,24 @@ impl LineIndex {
         index
     }
 
-    fn added_count(&self, base_row: u32, text: &Arc<str>) -> usize {
+    fn added_count(&self, buffer_row: u32, text: &Arc<str>) -> usize {
         self.added_lines
             .get(&LineKey {
-                base_row,
+                buffer_row,
                 text: text.clone(),
             })
             .copied()
             .unwrap_or(0)
     }
 
-    fn added_text_count(&self, text: &Arc<str>) -> usize {
-        self.added_text_counts.get(text).copied().unwrap_or(0)
-    }
-
-    fn deleted_count(&self, base_row: u32, text: &Arc<str>) -> usize {
+    fn deleted_count(&self, buffer_row: u32, text: &Arc<str>) -> usize {
         self.deleted_lines
             .get(&LineKey {
-                base_row,
+                buffer_row,
                 text: text.clone(),
             })
             .copied()
             .unwrap_or(0)
-    }
-
-    fn deleted_text_count(&self, text: &Arc<str>) -> usize {
-        self.deleted_text_counts.get(text).copied().unwrap_or(0)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -622,69 +611,51 @@ impl BufferDiffSnapshot {
                 LineMatch::Partial
             }
         };
-        let should_use_text_counts = |primary_text_count: usize, secondary_text_count: usize| {
-            primary_text_count > 1 || secondary_text_count > 1
-        };
 
-        let deleted_match = |base_row: Option<u32>, text: Option<&Arc<str>>| {
-            if let (Some(base_row), Some(text)) = (base_row, text) {
-                let primary_row_count = primary_line_index.deleted_count(base_row, text);
-                let secondary_row_count = secondary_line_index.deleted_count(base_row, text);
-                let primary_text_count = primary_line_index.deleted_text_count(text);
-                let secondary_text_count = secondary_line_index.deleted_text_count(text);
-                let (primary_count, secondary_count) =
-                    if should_use_text_counts(primary_text_count, secondary_text_count) {
-                        (primary_text_count, secondary_text_count)
-                    } else {
-                        (primary_row_count, secondary_row_count)
-                    };
-                match_state(primary_count, secondary_count)
-            } else {
-                LineMatch::None
-            }
-        };
-        let added_match = |base_row: Option<u32>, text: Option<&Arc<str>>| {
-            if let (Some(base_row), Some(text)) = (base_row, text) {
-                let primary_row_count = primary_line_index.added_count(base_row, text);
-                let secondary_row_count = secondary_line_index.added_count(base_row, text);
-                let primary_text_count = primary_line_index.added_text_count(text);
-                let secondary_text_count = secondary_line_index.added_text_count(text);
-                let (primary_count, secondary_count) =
-                    if should_use_text_counts(primary_text_count, secondary_text_count) {
-                        (primary_text_count, secondary_text_count)
-                    } else {
-                        (primary_row_count, secondary_row_count)
-                    };
+        let deleted_match = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
+            if let (Some(buffer_row), Some(text)) = (buffer_row, text) {
+                let primary_count = primary_line_index.deleted_count(buffer_row, text);
+                let secondary_count = secondary_line_index.deleted_count(buffer_row, text);
                 match_state(primary_count, secondary_count)
             } else {
                 LineMatch::None
             }
         };
 
-        let pair = line
+        let added_match = |buffer_row: Option<u32>, text: Option<&Arc<str>>| {
+            if let (Some(buffer_row), Some(text)) = (buffer_row, text) {
+                let primary_count = primary_line_index.added_count(buffer_row, text);
+                let secondary_count = secondary_line_index.added_count(buffer_row, text);
+                match_state(primary_count, secondary_count)
+            } else {
+                LineMatch::None
+            }
+        };
+
+        let paired_line = line
             .paired_line_id
             .and_then(|pair_id| self.inner.lines.get(pair_id));
 
-        let is_paired = pair.is_some();
-        let (primary_match, pair_match) = match line.kind {
+        let is_paired = paired_line.is_some();
+        let (primary_match, paired_match) = match line.kind {
             DiffHunkStatusKind::Deleted => (
-                deleted_match(line.base_row, line.base_text.as_ref()),
-                pair.map(|pair| added_match(pair.base_row, pair.buffer_text.as_ref()))
+                deleted_match(line.buffer_row, line.base_text.as_ref()),
+                paired_line
+                    .map(|paired_line| added_match(paired_line.buffer_row, paired_line.buffer_text.as_ref()))
                     .unwrap_or(LineMatch::None),
             ),
             DiffHunkStatusKind::Added => (
-                added_match(line.base_row, line.buffer_text.as_ref()),
-                pair.map(|pair| deleted_match(pair.base_row, pair.base_text.as_ref()))
+                added_match(line.buffer_row, line.buffer_text.as_ref()),
+                paired_line
+                    .map(|paired_line| deleted_match(paired_line.buffer_row, paired_line.base_text.as_ref()))
                     .unwrap_or(LineMatch::None),
             ),
             DiffHunkStatusKind::Modified => (LineMatch::None, LineMatch::None),
         };
 
         if is_paired {
-            match (primary_match, pair_match) {
-                (LineMatch::Full, LineMatch::Full) => {
-                    DiffHunkSecondaryStatus::HasSecondaryHunk
-                }
+            match (primary_match, paired_match) {
+                (LineMatch::Full, LineMatch::Full) => DiffHunkSecondaryStatus::HasSecondaryHunk,
                 (LineMatch::None, LineMatch::None) => DiffHunkSecondaryStatus::NoSecondaryHunk,
                 _ => DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
             }
@@ -1558,21 +1529,21 @@ fn process_patch_hunk(
                 let insertion_anchor =
                     buffer.anchor_before(Point::new(deletion_buffer_row, 0));
                 let deletion_index = lines.len();
-            lines.push(InternalDiffLine {
-                kind: DiffHunkStatusKind::Deleted,
-                buffer_range: insertion_anchor..insertion_anchor,
-                diff_base_byte_range: diff_base_byte_range.clone(),
-                buffer_row: Some(deletion_buffer_row),
-                base_row: Some(base_row),
-                buffer_text: None,
-                base_text: Some(
-                    diff_base
-                        .chunks_in_range(diff_base_byte_range.clone())
-                        .collect::<String>()
-                        .into(),
-                ),
-                paired_line_id: None,
-            });
+                lines.push(InternalDiffLine {
+                    kind: DiffHunkStatusKind::Deleted,
+                    buffer_range: insertion_anchor..insertion_anchor,
+                    diff_base_byte_range: diff_base_byte_range.clone(),
+                    buffer_row: Some(deletion_buffer_row),
+                    base_row: Some(base_row),
+                    buffer_text: None,
+                    base_text: Some(
+                        diff_base
+                            .chunks_in_range(diff_base_byte_range.clone())
+                            .collect::<String>()
+                            .into(),
+                    ),
+                    paired_line_id: None,
+                });
                 base_line_index.insert(base_row, deletion_index);
 
                 let buffer_start = Point::new(addition_buffer_row, 0).to_offset(buffer);
@@ -1589,16 +1560,16 @@ fn process_patch_hunk(
                     ..buffer.anchor_before(buffer_end);
 
                 let addition_index = lines.len();
-            lines.push(InternalDiffLine {
-                kind: DiffHunkStatusKind::Added,
-                buffer_range,
-                diff_base_byte_range: diff_base_byte_range.clone(),
-                buffer_row: Some(addition_buffer_row),
-                base_row: Some(base_row),
-                buffer_text: Some(buffer_text),
-                base_text: None,
-                paired_line_id: None,
-            });
+                lines.push(InternalDiffLine {
+                    kind: DiffHunkStatusKind::Added,
+                    buffer_range,
+                    diff_base_byte_range: diff_base_byte_range.clone(),
+                    buffer_row: Some(addition_buffer_row),
+                    base_row: Some(base_row),
+                    buffer_text: Some(buffer_text),
+                    base_text: None,
+                    paired_line_id: None,
+                });
                 buffer_line_index.insert(addition_buffer_row, addition_index);
 
                 if let Some(line) = lines.get_mut(deletion_index) {
