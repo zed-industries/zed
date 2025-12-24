@@ -1,6 +1,7 @@
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
+use crate::table_cell::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::{DefiniteLength, div, h_flex, prelude::*};
@@ -16,7 +17,7 @@ impl CsvPreviewView {
     /// Create header for data, which is orderable with text on the left and sort button on the right
     fn create_header_element_with_sort_button(
         &self,
-        header_text: String,
+        header_text: SharedString,
         cx: &mut Context<'_, CsvPreviewView>,
         col_idx: AnyColumn,
     ) -> AnyElement {
@@ -82,8 +83,8 @@ impl CsvPreviewView {
                 .contents
                 .headers
                 .get(AnyColumn(i))
-                .map(|h| h.display_value().as_ref().to_string())
-                .unwrap_or_else(|| format!("Col {}", i + 1));
+                .and_then(|h| h.display_value().cloned())
+                .unwrap_or_else(|| format!("Col {}", i + 1).into());
 
             headers.push(self.create_header_element_with_sort_button(
                 header_text,
@@ -188,8 +189,8 @@ impl CsvPreviewView {
             let col = AnyColumn::new(raw_col);
             let table_cell = row.expect_get(col);
 
-            let cell_content = table_cell.display_value().clone();
-            let span = table_cell.position.as_ref();
+            // TODO: Introduce `<null>` cell type
+            let cell_content = table_cell.display_value().cloned().unwrap_or_default();
 
             let display_cell_id = DisplayCellId::new(display_row, col);
 
@@ -231,19 +232,18 @@ impl CsvPreviewView {
                 div()
                     .size_full()
                     .when(this.settings.show_debug_info, |parent| {
-                        parent.when_some(span, |parent, pos| {
-                            parent.child(
-                                div()
-                                    .child({
-                                        let slv = pos.start.timestamp.value;
-                                        let so = pos.start.offset;
-                                        let elv = pos.end.timestamp.value;
-                                        let eo = pos.end.offset;
-                                        format!("Pos {so}(L{slv})-{eo}(L{elv})")
-                                    })
-                                    .text_color(row_identifier_text_color),
-                            )
-                        })
+                        parent.child(div().text_color(row_identifier_text_color).child(
+                            match table_cell {
+                                TableCell::Real { position: pos, .. } => {
+                                    let slv = pos.start.timestamp.value;
+                                    let so = pos.start.offset;
+                                    let elv = pos.end.timestamp.value;
+                                    let eo = pos.end.offset;
+                                    format!("Pos {so}(L{slv})-{eo}(L{elv})")
+                                }
+                                TableCell::Virtual => "Virtual cell".into(),
+                            },
+                        ))
                     })
                     .text_ui(cx)
                     .child(cell)

@@ -45,6 +45,7 @@ impl TableLikeContent {
         }
 
         let (parsed_cells_with_positions, line_numbers) = Self::parse_csv_with_positions(&text);
+        println!("Parsed: {parsed_cells_with_positions:#?}");
         if parsed_cells_with_positions.is_empty() {
             return Self::default();
         }
@@ -260,35 +261,14 @@ fn create_table_row(
         })
         .collect::<Vec<_>>();
 
-    pad_raw_row_until_matches_desired_len(&buffer_snapshot, max_number_of_cols, &mut raw_row);
-
-    TableRow::from_vec(raw_row, max_number_of_cols)
-}
-
-// TODO: write docs on why and how we are appending missing values
-fn pad_raw_row_until_matches_desired_len(
-    buffer_snapshot: &BufferSnapshot,
-    max_number_of_cols: usize,
-    raw_row: &mut Vec<TableCell>,
-) {
     let append_elements = max_number_of_cols - raw_row.len();
     if append_elements > 0 {
-        let last_pos = raw_row
-            .last()
-            .expect("Expected at least one element in the row")
-            .position
-            .as_ref()
-            .expect("Expected last parsed element to have a position")
-            .end
-            .offset;
-
-        // Constructing empty elements with position of the last element in the row
-        let dfl = TableCell::from_buffer_position("".into(), last_pos, last_pos, &buffer_snapshot);
-
         for _ in 0..append_elements {
-            raw_row.push(dfl.clone());
+            raw_row.push(TableCell::Virtual);
         }
     }
+
+    TableRow::from_vec(raw_row, max_number_of_cols)
 }
 
 // TODO: Fix

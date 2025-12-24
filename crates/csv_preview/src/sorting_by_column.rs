@@ -81,11 +81,13 @@ fn sort_indices(
 
         let val_a = row_a
             .get(sorting.col_idx)
-            .map(|s| s.display_value().as_ref())
+            .and_then(|tc| tc.display_value())
+            .map(|tc| tc.as_str())
             .unwrap_or("");
         let val_b = row_b
             .get(sorting.col_idx)
-            .map(|s| s.display_value().as_ref())
+            .and_then(|tc| tc.display_value())
+            .map(|tc| tc.as_str())
             .unwrap_or("");
 
         // Try numeric comparison first, fall back to string comparison
