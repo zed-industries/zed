@@ -250,7 +250,7 @@ impl Platform for TestPlatform {
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
-    fn on_thermal_state_change(&self, _: Box<dyn FnMut(ThermalState)>) {}
+    fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
