@@ -44,7 +44,7 @@ impl Render for CsvPreviewView {
                 div.child(self.render_cell_editor(cx))
             })
             .child({
-                if self.contents.headers.is_empty() {
+                if self.contents.number_of_cols == 0 {
                     div()
                         .flex()
                         .items_center()

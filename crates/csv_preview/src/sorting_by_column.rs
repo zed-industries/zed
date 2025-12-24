@@ -80,11 +80,11 @@ fn sort_indices(
         let row_b = &contents.rows[b];
 
         let val_a = row_a
-            .get(sorting.col_idx.get())
+            .get(sorting.col_idx)
             .map(|s| s.display_value().as_ref())
             .unwrap_or("");
         let val_b = row_b
-            .get(sorting.col_idx.get())
+            .get(sorting.col_idx)
             .map(|s| s.display_value().as_ref())
             .unwrap_or("");
 

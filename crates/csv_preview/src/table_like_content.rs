@@ -4,69 +4,66 @@ use ui::SharedString;
 #[cfg(test)]
 use text::{Buffer, BufferId, ReplicaId};
 
-use crate::{row_identifiers::LineNumber, table_cell::TableCell, types::DataCellId};
+use crate::{
+    row_identifiers::LineNumber,
+    table_cell::TableCell,
+    types::{DataCellId, TableRow},
+};
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct TableLikeContent {
-    pub headers: Vec<TableCell>,
-    pub rows: Vec<Vec<TableCell>>,
+    /// Number of data columns.
+    /// Defines table width used to validate `TableRow` on creation
+    pub number_of_cols: usize,
+    pub headers: TableRow<TableCell>,
+    pub rows: Vec<TableRow<TableCell>>,
     /// Follows the same indices as `rows`
     pub line_numbers: Vec<LineNumber>,
 }
 
+impl Default for TableLikeContent {
+    fn default() -> Self {
+        Self {
+            number_of_cols: Default::default(),
+            headers: TableRow::<TableCell>::empty(),
+            rows: vec![],
+            line_numbers: vec![],
+        }
+    }
+}
+
 impl TableLikeContent {
     pub fn get_cell(&self, id: &DataCellId) -> Option<&TableCell> {
-        self.rows.get(*id.row)?.get(*id.col)
+        self.rows.get(*id.row)?.get(id.col)
     }
     pub fn from_buffer(buffer_snapshot: BufferSnapshot) -> Self {
         let text = buffer_snapshot.text();
 
         if text.trim().is_empty() {
-            return Self {
-                headers: vec![],
-                rows: vec![],
-                line_numbers: vec![],
-            };
+            return Self::default();
         }
 
         let (parsed_cells_with_positions, line_numbers) = Self::parse_csv_with_positions(&text);
         if parsed_cells_with_positions.is_empty() {
-            return Self {
-                headers: vec![],
-                rows: vec![],
-                line_numbers: vec![],
-            };
+            return Self::default();
         }
 
-        // Convert to TableCell objects with buffer positions
-        let headers = parsed_cells_with_positions[0]
+        // Calculating the longest row, as CSV might have less headers than max row width
+        let max_number_of_cols = parsed_cells_with_positions
             .iter()
-            .map(|(content, range)| {
-                TableCell::from_buffer_position(
-                    content.clone(),
-                    range.start,
-                    range.end,
-                    &buffer_snapshot,
-                )
-            })
-            .collect();
+            .map(|r| r.len())
+            .max()
+            .expect("Expected non-empty array to have max() value");
+
+        // Convert to TableCell objects with buffer positions
+        let raw_headers = parsed_cells_with_positions[0].clone();
+        let headers = create_table_row(&buffer_snapshot, max_number_of_cols, raw_headers);
 
         let rows = parsed_cells_with_positions
             .into_iter()
             .skip(1)
-            .map(|row| {
-                row.into_iter()
-                    .map(|(content, range)| {
-                        TableCell::from_buffer_position(
-                            content,
-                            range.start,
-                            range.end,
-                            &buffer_snapshot,
-                        )
-                    })
-                    .collect()
-            })
+            .map(|row| create_table_row(&buffer_snapshot, max_number_of_cols, row))
             .collect();
 
         let row_line_numbers = line_numbers.into_iter().skip(1).collect();
@@ -75,6 +72,7 @@ impl TableLikeContent {
             headers,
             rows,
             line_numbers: row_line_numbers,
+            number_of_cols: max_number_of_cols,
         }
     }
 
@@ -247,6 +245,49 @@ impl TableLikeContent {
         let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, text);
         let snapshot = buffer.snapshot();
         Self::from_buffer(snapshot)
+    }
+}
+
+fn create_table_row(
+    buffer_snapshot: &BufferSnapshot,
+    max_number_of_cols: usize,
+    row: Vec<(SharedString, std::ops::Range<usize>)>,
+) -> TableRow<TableCell> {
+    let mut raw_row = row
+        .into_iter()
+        .map(|(content, range)| {
+            TableCell::from_buffer_position(content, range.start, range.end, &buffer_snapshot)
+        })
+        .collect::<Vec<_>>();
+
+    pad_raw_row_until_matches_desired_len(&buffer_snapshot, max_number_of_cols, &mut raw_row);
+
+    TableRow::from_vec(raw_row, max_number_of_cols)
+}
+
+// TODO: write docs on why and how we are appending missing values
+fn pad_raw_row_until_matches_desired_len(
+    buffer_snapshot: &BufferSnapshot,
+    max_number_of_cols: usize,
+    raw_row: &mut Vec<TableCell>,
+) {
+    let append_elements = max_number_of_cols - raw_row.len();
+    if append_elements > 0 {
+        let last_pos = raw_row
+            .last()
+            .expect("Expected at least one element in the row")
+            .position
+            .as_ref()
+            .expect("Expected last parsed element to have a position")
+            .end
+            .offset;
+
+        // Constructing empty elements with position of the last element in the row
+        let dfl = TableCell::from_buffer_position("".into(), last_pos, last_pos, &buffer_snapshot);
+
+        for _ in 0..append_elements {
+            raw_row.push(dfl.clone());
+        }
     }
 }
 

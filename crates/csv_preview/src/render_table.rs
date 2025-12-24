@@ -82,7 +82,7 @@ impl CsvPreviewView {
             let header_text = self
                 .contents
                 .headers
-                .get(i)
+                .get(AnyColumn(i))
                 .map(|h| h.display_value().as_ref().to_string())
                 .unwrap_or_else(|| format!("Col {}", i + 1));
 
@@ -190,7 +190,7 @@ impl CsvPreviewView {
 
         // Remaining columns: actual CSV data
         for col in 0..(COLS - 1) {
-            let table_cell = row.get(col).unwrap_or_else(|| &empty_cell);
+            let table_cell = row.get(AnyColumn(col)).unwrap_or_else(|| &empty_cell);
 
             let cell_content = table_cell.display_value().clone();
             let span = table_cell.position.as_ref();

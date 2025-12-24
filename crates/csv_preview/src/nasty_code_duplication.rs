@@ -111,7 +111,7 @@ impl CsvPreviewView {
     pub(crate) fn render_table_with_cols(&self, cx: &mut Context<Self>) -> AnyElement {
         let w = &self.column_widths;
         // Add 1 for the line number column
-        let column_count = self.contents.headers.len() + 1;
+        let column_count = self.contents.number_of_cols + 1;
 
         match column_count {
             1 => self.create_table::<1>(&w.widths_1, cx),
