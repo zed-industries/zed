@@ -13051,7 +13051,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         ]
         .join("\n"),
     );
-    cx.run_until_parked();
 
     // Submit a format request.
     let format = cx
