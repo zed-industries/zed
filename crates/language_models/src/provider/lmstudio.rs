@@ -14,7 +14,8 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use lmstudio::{ModelType, get_models};
+use lmstudio::{lmstudio, ModelType, get_models};
+use ::lmstudio::responses;
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -261,6 +262,233 @@ pub struct LmStudioLanguageModel {
 }
 
 impl LmStudioLanguageModel {
+    /// Check if this model should use the /v1/responses endpoint
+    fn uses_responses_endpoint(&self) -> bool {
+        responses::is_gpt_oss_model(&self.model.name)
+    }
+
+    /// Convert LanguageModelRequest to /v1/responses Request format
+    fn to_responses_request(
+        &self,
+        request: LanguageModelRequest,
+    ) -> responses::Request {
+        use responses as resp;
+
+        let LanguageModelRequest {
+            thread_id: _,
+            prompt_id: _,
+            intent: _,
+            mode: _,
+            messages,
+            tools,
+            tool_choice,
+            stop,
+            temperature,
+            thinking_allowed: _,
+        } = request;
+
+        let mut input_items: Vec<resp::ResponseInputItem> = Vec::new();
+
+        for message in messages {
+            match message.role {
+                Role::User => {
+                    // Extract tool results first
+                    for content in &message.content {
+                        if let MessageContent::ToolResult(tool_result) = content {
+                            let output = if let Some(out) = &tool_result.output {
+                                match out {
+                                    serde_json::Value::String(s) => {
+                                        resp::ResponseFunctionOutput::Text(s.clone())
+                                    }
+                                    serde_json::Value::Null => {
+                                        resp::ResponseFunctionOutput::Text(String::new())
+                                    }
+                                    other => resp::ResponseFunctionOutput::Text(other.to_string()),
+                                }
+                            } else {
+                                match &tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        resp::ResponseFunctionOutput::Text(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        if self.model.supports_images {
+                                            resp::ResponseFunctionOutput::Content(vec![
+                                                resp::ResponseInputContent::InputImage {
+                                                    image_url: Some(image.to_base64_url()),
+                                                    detail: resp::ResponseImageDetail::Auto,
+                                                },
+                                            ])
+                                        } else {
+                                            resp::ResponseFunctionOutput::Text(
+                                                "[Tool responded with an image, but this model does not support vision]".into(),
+                                            )
+                                        }
+                                    }
+                                }
+                            };
+
+                            input_items.push(resp::ResponseInputItem::FunctionCallOutput {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                                status: None,
+                            });
+                        }
+                    }
+
+                    // Extract text and images
+                    let mut parts: Vec<resp::ResponseInputContent> = Vec::new();
+                    for content in &message.content {
+                        match content {
+                            MessageContent::Text(text) => {
+                                parts.push(resp::ResponseInputContent::InputText {
+                                    text: text.clone(),
+                                });
+                            }
+                            MessageContent::Image(image) => {
+                                if self.model.supports_images {
+                                    parts.push(resp::ResponseInputContent::InputImage {
+                                        image_url: Some(image.to_base64_url()),
+                                        detail: resp::ResponseImageDetail::Auto,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !parts.is_empty() {
+                        input_items.push(resp::ResponseInputItem::Message {
+                            role: "user".into(),
+                            content: Some(parts),
+                            status: None,
+                        });
+                    }
+                }
+                Role::Assistant => {
+                    // Extract tool uses
+                    for content in &message.content {
+                        if let MessageContent::ToolUse(tool_use) = content {
+                            input_items.push(resp::ResponseInputItem::FunctionCall {
+                                call_id: tool_use.id.to_string(),
+                                name: tool_use.name.to_string(),
+                                arguments: tool_use.raw_input.clone(),
+                                status: None,
+                                thought_signature: tool_use.thought_signature.clone(),
+                            });
+                        }
+                    }
+
+                    // Extract redacted thinking
+                    for content in &message.content {
+                        if let MessageContent::RedactedThinking(data) = content {
+                            input_items.push(resp::ResponseInputItem::Reasoning {
+                                id: None,
+                                summary: Vec::new(),
+                                encrypted_content: data.clone(),
+                            });
+                        }
+                    }
+
+                    // Extract text
+                    let mut parts: Vec<resp::ResponseInputContent> = Vec::new();
+                    for content in &message.content {
+                        match content {
+                            MessageContent::Text(text) => {
+                                parts.push(resp::ResponseInputContent::OutputText {
+                                    text: text.clone(),
+                                });
+                            }
+                            MessageContent::Image(_) => {
+                                parts.push(resp::ResponseInputContent::OutputText {
+                                    text: "[image omitted]".to_string(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !parts.is_empty() {
+                        input_items.push(resp::ResponseInputItem::Message {
+                            role: "assistant".into(),
+                            content: Some(parts),
+                            status: Some("completed".into()),
+                        });
+                    }
+                }
+                Role::System => {
+                    let mut parts: Vec<resp::ResponseInputContent> = Vec::new();
+                    for content in &message.content {
+                        if let MessageContent::Text(text) = content {
+                            parts.push(resp::ResponseInputContent::InputText {
+                                text: text.clone(),
+                            });
+                        }
+                    }
+
+                    if !parts.is_empty() {
+                        input_items.push(resp::ResponseInputItem::Message {
+                            role: "system".into(),
+                            content: Some(parts),
+                            status: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Convert tools
+        let converted_tools: Vec<resp::ToolDefinition> = tools
+            .into_iter()
+            .filter_map(|tool| {
+                // Skip tools with empty names - this should not happen but guard against it
+                if tool.name.trim().is_empty() {
+                    log::warn!("Skipping tool with empty name");
+                    return None;
+                }
+
+                // Parameters should be None if null, otherwise Some(value)
+                let parameters = if tool.input_schema.is_null() {
+                    None
+                } else {
+                    Some(tool.input_schema)
+                };
+
+                Some(resp::ToolDefinition::Function {
+                    name: tool.name,
+                    description: if tool.description.trim().is_empty() {
+                        None
+                    } else {
+                        Some(tool.description)
+                    },
+                    parameters,
+                })
+            })
+            .collect();
+
+        // Map tool_choice
+        let mapped_tool_choice = tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => resp::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => resp::ToolChoice::Required,
+            LanguageModelToolChoice::None => resp::ToolChoice::None,
+        });
+
+        resp::Request {
+            model: self.model.name.clone(),
+            input: input_items,
+            stream: true,
+            previous_response_id: None, // Defer K-V cache to future
+            reasoning: None,            // Defer reasoning effort UI to separate PR
+            tools: converted_tools,
+            tool_choice: mapped_tool_choice,
+            temperature,
+            stop: if stop.is_empty() {
+                None
+            } else {
+                Some(stop)
+            },
+        }
+    }
+
     fn to_lmstudio_request(
         &self,
         request: LanguageModelRequest,
@@ -462,13 +690,39 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_lmstudio_request(request);
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = LmStudioEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+        // Route to appropriate endpoint based on model
+        if self.uses_responses_endpoint() {
+            // Use /v1/responses endpoint for gpt-oss models
+            let response_request = self.to_responses_request(request);
+            let http_client = self.http_client.clone();
+            let request_limiter = self.request_limiter.clone();
+            let Ok(api_url) = cx.update(|cx| {
+                let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+                settings.api_url.clone()
+            }) else {
+                return futures::future::ready(Err(LanguageModelCompletionError::from(anyhow!("App state dropped")))).boxed();
+            };
+
+            async move {
+                let stream = request_limiter.stream(async move {
+                    responses::stream_response(http_client.as_ref(), &api_url, response_request)
+                        .await
+                        .map_err(|e| LanguageModelCompletionError::from(e))
+                }).await?;
+                let mapper = LmStudioResponseEventMapper::new();
+                Ok(mapper.map_stream(Box::pin(stream)).boxed())
+            }
+            .boxed()
+        } else {
+            // Use /chat/completions endpoint for other models (existing code, unchanged)
+            let request = self.to_lmstudio_request(request);
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = LmStudioEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
         }
-        .boxed()
     }
 }
 
@@ -587,6 +841,234 @@ impl LmStudioEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
+        }
+
+        events
+    }
+}
+
+/// Event mapper for /v1/responses endpoint (gpt-oss models)
+struct LmStudioResponseEventMapper {
+    response_id: Option<String>,
+    tool_calls_by_id: HashMap<String, RawToolCall>,
+    current_text: String,
+    current_item_id: Option<String>,
+    pending_stop_reason: Option<StopReason>,
+}
+
+impl LmStudioResponseEventMapper {
+    fn new() -> Self {
+        Self {
+            response_id: None,
+            tool_calls_by_id: HashMap::default(),
+            current_text: String::new(),
+            current_item_id: None,
+            pending_stop_reason: None,
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<responses::StreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
+            })
+        })
+    }
+
+    fn map_event(
+        &mut self,
+        event: responses::StreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+
+        match event {
+            responses::StreamEvent::Created { response } => {
+                // Store response ID for future K-V cache support
+                if let Some(id) = &response.id {
+                    self.response_id = Some(id.clone());
+                }
+                // Handle initial usage if present
+                if let Some(usage) = response.usage {
+                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                        input_tokens: usage.input_tokens.unwrap_or(0),
+                        output_tokens: usage.output_tokens.unwrap_or(0),
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    })));
+                }
+            }
+            responses::StreamEvent::OutputTextDelta {
+                item_id,
+                delta,
+                ..
+            } => {
+                // Track which item we're currently streaming
+                if self.current_item_id.as_ref() != Some(&item_id) {
+                    // New item started, flush previous text if any
+                    if !self.current_text.is_empty() {
+                        events.push(Ok(LanguageModelCompletionEvent::Text(
+                            std::mem::take(&mut self.current_text),
+                        )));
+                    }
+                    self.current_item_id = Some(item_id);
+                }
+                self.current_text.push_str(&delta);
+            }
+            responses::StreamEvent::OutputItemAdded { item, .. } => {
+                match item {
+                    responses::ResponseOutputItem::Message { id, .. } => {
+                        events.push(Ok(LanguageModelCompletionEvent::StartMessage {
+                            message_id: id,
+                        }));
+                    }
+                    responses::ResponseOutputItem::FunctionCall {
+                        call_id,
+                        name,
+                        arguments,
+                        thought_signature: _,
+                        ..
+                    } => {
+                        // Start tracking tool call
+                        self.tool_calls_by_id.insert(
+                            call_id.clone(),
+                            RawToolCall {
+                                id: call_id,
+                                name,
+                                arguments,
+                            },
+                        );
+                    }
+                    responses::ResponseOutputItem::Reasoning {
+                        summary,
+                        encrypted_content: _,
+                        ..
+                    } => {
+                        // Handle reasoning content
+                        if let Some(summary) = summary {
+                            for item in summary {
+                                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                    text: item.text,
+                                    signature: None,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            responses::StreamEvent::OutputItemDone { item, .. } => {
+                // Flush accumulated text if any
+                if !self.current_text.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(
+                        std::mem::take(&mut self.current_text),
+                    )));
+                    self.current_item_id = None;
+                }
+
+                match item {
+                    responses::ResponseOutputItem::Message { .. } => {
+                        // Message completed
+                    }
+                    responses::ResponseOutputItem::FunctionCall {
+                        call_id,
+                        name,
+                        arguments,
+                        thought_signature,
+                        ..
+                    } => {
+                        // Tool call completed
+                        match serde_json::from_str::<serde_json::Value>(&arguments) {
+                            Ok(input) => {
+                                events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                    LanguageModelToolUse {
+                                        id: call_id.into(),
+                                        name: name.into(),
+                                        is_input_complete: true,
+                                        input,
+                                        raw_input: arguments,
+                                        thought_signature,
+                                    },
+                                )));
+                            }
+                            Err(error) => {
+                                events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    id: call_id.into(),
+                                    tool_name: name.into(),
+                                    raw_input: arguments.into(),
+                                    json_parse_error: error.to_string(),
+                                }));
+                            }
+                        }
+                        self.pending_stop_reason = Some(StopReason::ToolUse);
+                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                    }
+                    responses::ResponseOutputItem::Reasoning { .. } => {
+                        // Reasoning completed
+                    }
+                }
+            }
+            responses::StreamEvent::Completed { response } => {
+                // Flush any remaining text
+                if !self.current_text.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(
+                        std::mem::take(&mut self.current_text),
+                    )));
+                }
+
+                // Handle final usage
+                if let Some(usage) = response.usage {
+                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                        input_tokens: usage.input_tokens.unwrap_or(0),
+                        output_tokens: usage.output_tokens.unwrap_or(0),
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    })));
+                }
+
+                // Emit stop event if not already emitted
+                if self.pending_stop_reason.is_none() {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+            }
+            responses::StreamEvent::Incomplete { response } => {
+                // Flush any remaining text
+                if !self.current_text.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(
+                        std::mem::take(&mut self.current_text),
+                    )));
+                }
+
+                log::warn!("LM Studio response incomplete: {:?}", response.incomplete_details);
+                if self.pending_stop_reason.is_none() {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+            }
+            responses::StreamEvent::Failed { response } => {
+                // Flush any remaining text
+                if !self.current_text.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(
+                        std::mem::take(&mut self.current_text),
+                    )));
+                }
+
+                let error_message = response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "Unknown error".to_string());
+                events.push(Err(LanguageModelCompletionError::from(anyhow!(error_message))));
+            }
+            responses::StreamEvent::Error { error } => {
+                events.push(Err(LanguageModelCompletionError::from(anyhow!(
+                    "LM Studio API error: {}",
+                    error.message
+                ))));
+            }
+            responses::StreamEvent::Unknown => {
+                // Ignore unknown events
+            }
         }
 
         events
