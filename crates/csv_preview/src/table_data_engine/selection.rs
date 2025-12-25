@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    table_data_engine::sorting_by_column::DisplayToDataMapping,
+    table_data_engine::DisplayToDataMapping,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 
