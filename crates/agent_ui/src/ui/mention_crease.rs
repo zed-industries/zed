@@ -57,7 +57,7 @@ impl RenderOnce for MentionCrease {
         let buffer_font = settings.buffer_font.clone();
 
         let button_height = DefiniteLength::Absolute(AbsoluteLength::Pixels(
-            px(window.line_height().into()) - px(2.),
+            px(window.line_height().into()) - px(1.),
         ));
 
         ButtonLike::new(self.id)
@@ -71,6 +71,7 @@ impl RenderOnce for MentionCrease {
             })
             .child(
                 h_flex()
+                    .pb_px()
                     .gap_1()
                     .font(buffer_font)
                     .text_size(font_size)
