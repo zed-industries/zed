@@ -52,9 +52,10 @@ impl AgentServer for NativeAgentServer {
         let fs = self.fs.clone();
         let history = self.history.clone();
         let prompt_store = PromptStore::global(cx);
+        let templates = Templates::with_overrides(_root_dir, fs.clone(), cx);
+
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
-            let templates = Templates::new();
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
