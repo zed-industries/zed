@@ -3,8 +3,8 @@ use ui::{Context, Window};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use crate::{
-    CopySelected, CsvPreviewView, performance_metrics_overlay::TimingRecorder,
-    settings::CopyFormat, table_data_engine::copy_selected::ToastInfo,
+    CopySelected, CsvPreviewView, TimingRecorder, settings::CopyFormat,
+    table_data_engine::copy_selected::ToastInfo,
 };
 
 impl CsvPreviewView {
