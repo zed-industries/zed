@@ -79,7 +79,6 @@ pub struct CsvPreviewView {
     /// Horizontal table scroll handle. Stinks. Won't work normally unless table column resizing is rewritten
     pub(crate) scroll_handle: ScrollHandle,
     active_editor_state: Option<EditorState>,
-    pub(crate) contents: TableLikeContent,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
@@ -138,7 +137,7 @@ impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn re_sort_indices(&mut self) {
         let start_time = Instant::now();
-        self.engine.re_run_sorting(&self.contents);
+        self.engine.re_run_sorting();
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
     }
@@ -171,7 +170,6 @@ impl CsvPreviewView {
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: None,
-                contents: contents.clone(),
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
@@ -186,6 +184,7 @@ impl CsvPreviewView {
                 engine: TableDataEngine {
                     applied_sorting: None,
                     d2d_mapping: Arc::new(generate_sorted_indices(None, &contents)),
+                    contents: contents.clone(),
                 },
             };
 

@@ -71,6 +71,7 @@ impl CsvPreviewView {
     fn calculate_line_number_width(&self) -> f32 {
         // Find the maximum line number that could be displayed
         let max_line_number = self
+            .engine
             .contents
             .line_numbers
             .iter()
@@ -101,7 +102,7 @@ impl CsvPreviewView {
 
     /// Calculate width needed for sequential row numbers
     fn calculate_row_number_width(&self) -> f32 {
-        let max_row_number = self.contents.rows.len();
+        let max_row_number = self.engine.contents.rows.len();
 
         let digit_count = if max_row_number == 0 {
             1
@@ -165,6 +166,7 @@ impl CsvPreviewView {
     ) -> Option<AnyElement> {
         let row_identifier: SharedString = match self.settings.numbering_type {
             RowIdentifiers::SrcLines => self
+                .engine
                 .contents
                 .line_numbers
                 .get(*data_row)?
