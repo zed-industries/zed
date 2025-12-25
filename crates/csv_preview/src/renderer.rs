@@ -1,3 +1,4 @@
+mod cell_editor;
 pub mod nasty_code_duplication;
 mod performance_metrics_overlay;
 mod preview_view;
