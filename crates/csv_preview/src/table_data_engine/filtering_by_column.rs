@@ -15,13 +15,16 @@ figure out how other IDEs:
 - if filtered in value stays in the filter if the data was changed
  */
 
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use ui::SharedString;
 
 use crate::types::{AnyColumn, DataRow, TableCell, TableRow};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FilterEntry {
     /// Pre-computed hash
     pub hash: u64,
@@ -32,39 +35,14 @@ pub struct FilterEntry {
 }
 
 pub type AllowedCellHash = u64;
-#[derive(Default)]
-pub struct AppliedFiltering(HashMap<AnyColumn, HashMap<AllowedCellHash, FilterEntry>>);
+#[derive(Debug, Default)]
+pub struct AppliedFiltering(pub HashMap<AnyColumn, HashSet<u64>>);
 
-pub type AvailableFilters = HashMap<AnyColumn, Vec<FilterEntry>>;
+pub type AvailableFilters = HashMap<AnyColumn, Arc<Vec<FilterEntry>>>;
 
 impl AppliedFiltering {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn add_filter(&mut self, column: AnyColumn, content: SharedString) -> u64 {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let entry = FilterEntry {
-            hash,
-            content: content.clone(),
-            occured_times: 1, // This would normally be calculated from the data
-        };
-
-        self.0
-            .entry(column)
-            .or_insert_with(HashMap::new)
-            .insert(hash, entry);
-
-        hash
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 
     /// Remove a specific filter entry from a column
@@ -77,34 +55,16 @@ impl AppliedFiltering {
         }
     }
 
-    /// Clear all filters for a specific column
-    pub fn clear_column_filters(&mut self, column: AnyColumn) {
-        self.0.remove(&column);
-    }
-
-    /// Clear all filters
-    pub fn clear_all_filters(&mut self) {
-        self.0.clear();
-    }
-
     /// Check if a specific filter is applied
     pub fn is_filter_applied(&self, column: AnyColumn, hash: AllowedCellHash) -> bool {
         self.0
             .get(&column)
-            .map_or(false, |filters| filters.contains_key(&hash))
+            .map_or(false, |filters| filters.contains(&hash))
     }
 
     /// Get all applied filters for a column
-    pub fn get_column_filters(
-        &self,
-        column: AnyColumn,
-    ) -> Option<&HashMap<AllowedCellHash, FilterEntry>> {
+    pub fn get_column_filters(&self, column: AnyColumn) -> Option<&HashSet<AllowedCellHash>> {
         self.0.get(&column)
-    }
-
-    /// Get all columns that have filters applied
-    pub fn get_filtered_columns(&self) -> Vec<AnyColumn> {
-        self.0.keys().copied().collect()
     }
 }
 
@@ -146,9 +106,13 @@ pub fn calculate_available_filters(
             .collect();
 
         // Sort by content for consistent ordering
-        filter_entries.sort_by(|a, b| a.content.cmp(&b.content));
+        filter_entries.sort_by(|a, b| {
+            b.occured_times
+                .cmp(&a.occured_times)
+                .then_with(|| a.content.cmp(&b.content))
+        });
 
-        available_filters.insert(column, filter_entries);
+        available_filters.insert(column, filter_entries.into());
     }
 
     available_filters
@@ -165,14 +129,24 @@ pub fn filter_data_rows(
         return data_row_ids;
     }
 
+    log::debug!("Filtering data rows with config: {:#?}", config);
+
     data_row_ids
         .into_iter()
         .filter(|dr| {
             let row = &content_rows[dr.get()];
+            log::trace!("Filtering row {dr:?}: {:#?}", row);
             // For each column that has filters applied, check if the cell value is allowed
             config.iter().all(|(col, allowed_values)| {
-                let cell_hash = row.expect_get(*col).hash();
-                allowed_values.contains_key(&cell_hash)
+                let cell = row.expect_get(*col);
+                let cell_hash = cell.hash();
+                log::trace!(
+                    "Column: {col:?}, Cell: {:?}, hash: {}",
+                    cell.display_value(),
+                    cell_hash
+                );
+                log::trace!("Allowed values: {:#?}", allowed_values);
+                allowed_values.contains(&cell_hash)
             })
         })
         .collect()

@@ -18,7 +18,6 @@ use crate::{
     },
     types::{AnyColumn, DataRow, DisplayRow, TableLikeContent},
 };
-use ui::SharedString;
 
 pub mod copy_selected;
 pub mod filtering_by_column;
@@ -107,50 +106,34 @@ impl TableDataEngine {
     /// Toggle a filter for a specific column and value
     /// If the filter is currently applied, it will be removed
     /// If the filter is not applied, it will be added
-    pub(crate) fn toggle_filter(&mut self, column: AnyColumn, content: SharedString) -> bool {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
-        let hash = hasher.finish();
-
+    pub(crate) fn toggle_filter(&mut self, column: AnyColumn, hash: u64) -> bool {
         let is_currently_applied = self.applied_filtering.is_filter_applied(column, hash);
+        log::debug!("Applied filters: {:?}", self.applied_filtering);
 
         if is_currently_applied {
+            log::debug!("Removing filter for column {column:?} with hash {hash}");
             self.applied_filtering.remove_filter(column, hash);
             false // Filter was removed
         } else {
-            self.applied_filtering.add_filter(column, content);
+            log::debug!("Applying filter for column {column:?} with hash {hash}");
+            self.applied_filtering
+                .0
+                .entry(column)
+                .or_default()
+                .insert(hash);
             true // Filter was added
         }
-    }
-
-    /// Clear all filters for a specific column
-    pub(crate) fn clear_column_filters(&mut self, column: AnyColumn) {
-        self.applied_filtering.clear_column_filters(column);
-    }
-
-    /// Clear all applied filters
-    pub(crate) fn clear_all_filters(&mut self) {
-        self.applied_filtering.clear_all_filters();
-    }
-
-    /// Check if any filters are applied
-    pub(crate) fn has_filters(&self) -> bool {
-        !self.applied_filtering.is_empty()
     }
 
     /// Get available filters for a specific column
     pub(crate) fn get_available_filters_for_column(
         &self,
         column: AnyColumn,
-    ) -> Option<&Vec<FilterEntry>> {
-        self.available_filters.get(&column)
-    }
-
-    /// Get all available filters
-    pub(crate) fn get_all_available_filters(&self) -> &AvailableFilters {
-        &self.available_filters
+    ) -> Arc<Vec<FilterEntry>> {
+        self.available_filters
+            .get(&column)
+            .cloned()
+            .unwrap_or_else(|| panic!("Expected filters to be present for column: {column:?}"))
     }
 }
 

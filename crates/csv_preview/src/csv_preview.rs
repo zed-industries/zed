@@ -264,9 +264,9 @@ impl PerformanceMetrics {
         metrics
             .iter()
             .map(|(name, (duration, time))| {
-                let took = duration.as_millis();
+                let took = duration.as_secs_f32() * 1000.;
                 let ago = time.elapsed().as_secs();
-                format!("{name}: {took}ms {ago}s ago")
+                format!("{name}: {took:.2}ms {ago}s ago")
             })
             .collect::<Vec<_>>()
             .join("\n")

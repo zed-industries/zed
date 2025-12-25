@@ -1,5 +1,5 @@
 use gpui::ElementId;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 
 use crate::{
@@ -135,28 +135,22 @@ impl CsvPreviewView {
                 let view_entity = cx.entity();
                 move |window, cx| {
                     let view = view_entity.read(cx);
-                    if let Some(available_filters) =
-                        view.engine.get_available_filters_for_column(col_idx)
-                    {
-                        let available_filters = available_filters.clone();
-                        let applied_filters = view
-                            .engine
-                            .applied_filtering
-                            .get_column_filters(col_idx)
-                            .cloned();
+                    let available_filters = view.engine.get_available_filters_for_column(col_idx);
+                    let applied_filters = view
+                        .engine
+                        .applied_filtering
+                        .get_column_filters(col_idx)
+                        .cloned();
 
-                        let filter_menu = Self::create_filter_menu(
-                            window,
-                            cx,
-                            view_entity.clone(),
-                            col_idx,
-                            &available_filters,
-                            &applied_filters,
-                        );
-                        Some(filter_menu)
-                    } else {
-                        None
-                    }
+                    let filter_menu = Self::create_filter_menu(
+                        window,
+                        cx,
+                        view_entity.clone(),
+                        col_idx,
+                        &available_filters,
+                        &applied_filters,
+                    );
+                    Some(filter_menu)
                 }
             })
     }
@@ -166,24 +160,16 @@ impl CsvPreviewView {
         cx: &mut ui::App,
         view_entity: gpui::Entity<CsvPreviewView>,
         col_idx: AnyColumn,
-        available_filters: &Vec<FilterEntry>,
-        applied_filters: &Option<HashMap<u64, FilterEntry>>,
+        sorted_filters: &[FilterEntry],
+        applied_filters: &Option<HashSet<u64>>,
     ) -> gpui::Entity<ContextMenu> {
-        // Sort filters by occurrence count (descending), then by content
-        let mut sorted_filters = available_filters.clone();
-        sorted_filters.sort_by(|a, b| {
-            b.occured_times
-                .cmp(&a.occured_times)
-                .then_with(|| a.content.cmp(&b.content))
-        });
-
         ContextMenu::build(window, cx, move |menu, _, _| {
             let mut menu = menu;
 
             for filter in sorted_filters.iter() {
                 let is_applied = applied_filters
                     .as_ref()
-                    .map_or(false, |filters| filters.contains_key(&filter.hash));
+                    .map_or(false, |filters| filters.contains(&filter.hash));
 
                 menu = menu.toggleable_entry(
                     &format!("{} ({})", filter.content, filter.occured_times),
@@ -192,10 +178,10 @@ impl CsvPreviewView {
                     None,
                     {
                         let view_entity = view_entity.clone();
-                        let content = filter.content.clone();
+                        let content_hash = filter.hash;
                         move |_window, cx| {
                             view_entity.update(cx, |view, cx| {
-                                view.engine.toggle_filter(col_idx, content.clone());
+                                view.engine.toggle_filter(col_idx, content_hash);
                                 view.engine.calculate_d2d_mapping();
                                 let filtered_row_count =
                                     view.engine.get_d2d_mapping().filtered_row_count();
