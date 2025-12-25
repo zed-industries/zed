@@ -3,8 +3,6 @@
 //! Provides a semi-transparent overlay in the bottom-right corner showing
 //! CSV parsing performance metrics for developer experience.
 
-use std::time::Duration;
-
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
 use crate::{CsvPreviewView, PerformanceMetrics};
@@ -43,43 +41,39 @@ impl CsvPreviewView {
                     .into_iter()
                     .map(|line| div().child(line)),
             );
+
         // Clear rendered indices to prepare for next frame
         self.performance_metrics.rendered_indices.clear();
         children
     }
 }
 
-fn format_performance_metrics(this: &PerformanceMetrics) -> Vec<String> {
-    let format_duration = |duration: Option<Duration>| -> String {
-        match duration {
-            Some(d) => format!("{:.2}ms", d.as_secs_f64() * 1000.0),
-            None => "--".to_string(),
-        }
-    };
+fn format_performance_metrics(metrics: &PerformanceMetrics) -> Vec<String> {
+    let mut lines = Vec::new();
 
-    let mut lines = vec![
-        format!("- Parse: {}", format_duration(this.last_parse_took)),
-        format!("- Order: {}", format_duration(this.last_ordering_took)),
-        format!("- Copy: {}", format_duration(this.last_copy_took)),
-        format!("- Selection: {}", format_duration(this.last_selection_took)),
-        format!(
-            "- Render Prep: {}",
-            format_duration(this.last_render_preparation_took)
-        ),
-    ];
+    // Add timing metrics using the display method
+    let timing_display = metrics.display();
+    if !timing_display.is_empty() {
+        lines.extend(timing_display.lines().map(|line| format!("- {}", line)));
+    } else {
+        lines.push("- No timing data yet".to_string());
+    }
 
     // Add rendered indices information
-    if this.rendered_indices.is_empty() {
+    if metrics.rendered_indices.is_empty() {
         lines.push("- Rendered: none".to_string());
     } else {
-        lines.push(format!("- Rendered: {} rows", this.rendered_indices.len()));
-        if this.rendered_indices.len() <= 20 {
+        lines.push(format!(
+            "- Rendered: {} rows",
+            metrics.rendered_indices.len()
+        ));
+        if metrics.rendered_indices.len() <= 20 {
             // Show indices if not too many
-            lines.push(format!("  {:?}", this.rendered_indices));
+            lines.push(format!("  {:?}", metrics.rendered_indices));
         } else {
             // Show first/last few if too many
-            let first_few = &this.rendered_indices[..5];
-            let last_few = &this.rendered_indices[this.rendered_indices.len() - 5..];
+            let first_few = &metrics.rendered_indices[..5];
+            let last_few = &metrics.rendered_indices[metrics.rendered_indices.len() - 5..];
             lines.push(format!("  {:?}\n..{:?}", first_few, last_few));
         }
     }
