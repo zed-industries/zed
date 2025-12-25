@@ -8,13 +8,7 @@
 
 use std::collections::HashSet;
 
-use gpui::ScrollStrategy;
-use ui::{Context, Window};
-
 use crate::{
-    CsvPreviewView,
-    performance_metrics_overlay::TimingRecorder,
-    settings::RowRenderMechanism,
     table_data_engine::sorting_by_column::DisplayToDataMapping,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
@@ -814,84 +808,4 @@ pub enum ScrollOffset {
     NoOffset,
     Negative,
     Positive,
-}
-
-///// Selection related CsvPreviewView methods /////
-impl CsvPreviewView {
-    /// Unified navigation handler - eliminates code duplication
-    pub(crate) fn handle_navigation(
-        &mut self,
-        direction: NavigationDirection,
-        operation: NavigationOperation,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.performance_metrics
-            .last_selection_took
-            .record_timing(|| self.engine.change_selection(direction, operation));
-
-        let scroll = match direction {
-            NavigationDirection::Up => Some(ScrollOffset::Negative),
-            NavigationDirection::Down => Some(ScrollOffset::Positive),
-            NavigationDirection::Left => None,
-            NavigationDirection::Right => None,
-        };
-
-        // Update cell editor to show focused cell content
-        self.on_selection_changed(window, cx, scroll);
-        cx.notify();
-    }
-
-    /// Performs actions triggered by selection change
-    pub(crate) fn on_selection_changed(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-        apply_scroll: Option<ScrollOffset>,
-    ) {
-        self.clear_cell_editor();
-        self.scroll_to_focused_cell(cx, apply_scroll);
-    }
-
-    fn scroll_to_focused_cell(
-        &mut self,
-        cx: &mut Context<'_, CsvPreviewView>,
-        apply_scroll: Option<ScrollOffset>,
-    ) {
-        if let Some(focused_cell) = self.engine.selection.get_focused_cell()
-            && let Some(scroll) = apply_scroll
-        {
-            let display_row_index = focused_cell.row;
-            let ix = display_row_index.0;
-
-            match self.settings.rendering_with {
-                RowRenderMechanism::VariableList => {
-                    // Variable height list uses ListState::scroll_to_reveal_item
-                    let ix_with_offset = match scroll {
-                        ScrollOffset::NoOffset => ix,
-                        ScrollOffset::Negative => ix.saturating_sub(2), // Avoid overflowing
-                        ScrollOffset::Positive => ix + 2,
-                    };
-                    self.list_state.scroll_to_reveal_item(ix_with_offset);
-                }
-                RowRenderMechanism::UniformList => {
-                    // Uniform list uses UniformListScrollHandle
-                    let table_interaction_state = &self.table_interaction_state;
-                    table_interaction_state.update(cx, |state, _| {
-                        let ix_with_offset = match scroll {
-                            ScrollOffset::NoOffset => ix,
-                            ScrollOffset::Negative => ix.saturating_sub(2),
-                            ScrollOffset::Positive => ix + 2,
-                        };
-                        // Use ScrollStrategy::Nearest for minimal scrolling (like scroll_to_reveal_item)
-                        state.scroll_handle.scroll_to_item_with_offset(
-                            ix_with_offset,
-                            ScrollStrategy::Nearest,
-                            0, // No additional offset since we already calculate it above
-                        );
-                    });
-                }
-            }
-        }
-    }
 }
