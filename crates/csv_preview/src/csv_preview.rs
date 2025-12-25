@@ -19,9 +19,9 @@ use crate::{
     table_data_engine::selection::TableSelection, table_like_content::TableLikeContent,
 };
 
+pub use types::data_table;
 mod action_handlers;
 mod cell_editor;
-mod data_table;
 mod nasty_code_duplication;
 mod parser;
 mod performance_metrics_overlay;
