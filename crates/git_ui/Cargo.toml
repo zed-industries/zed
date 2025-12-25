@@ -43,6 +43,7 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+prompt_store.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
 schemars.workspace = true

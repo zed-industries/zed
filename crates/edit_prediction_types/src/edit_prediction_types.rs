@@ -95,13 +95,6 @@ pub trait EditPredictionDelegate: 'static + Sized {
         debounce: bool,
         cx: &mut Context<Self>,
     );
-    fn cycle(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut Context<Self>,
-    );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
     fn did_show(&mut self, _cx: &mut Context<Self>) {}
@@ -134,13 +127,6 @@ pub trait EditPredictionDelegateHandle {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut App,
-    );
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
         cx: &mut App,
     );
     fn did_show(&self, cx: &mut App);
@@ -212,18 +198,6 @@ where
     ) {
         self.update(cx, |this, cx| {
             this.refresh(buffer, cursor_position, debounce, cx)
-        })
-    }
-
-    fn cycle(
-        &self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut App,
-    ) {
-        self.update(cx, |this, cx| {
-            this.cycle(buffer, cursor_position, direction, cx)
         })
     }
 

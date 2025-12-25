@@ -1,6 +1,6 @@
 name = "YAML"
 grammar = "yaml"
-path_suffixes = ["yml", "yaml", "pixi.lock", "clang-format", "clangd"]
+path_suffixes = ["yml", "yaml", "pixi.lock", "clang-format", "clangd", "bst"]
 line_comments = ["# "]
 autoclose_before = ",]}"
 brackets = [

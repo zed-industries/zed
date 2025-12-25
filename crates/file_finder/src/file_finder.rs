@@ -1713,7 +1713,7 @@ impl PickerDelegate for FileFinderDelegate {
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
                                                 move |window, cx| {
-                                                    window.focus(&focus_handle);
+                                                    window.focus(&focus_handle, cx);
                                                     window.dispatch_action(
                                                         ToggleIncludeIgnored.boxed_clone(),
                                                         cx,
@@ -1760,16 +1760,19 @@ impl PickerDelegate for FileFinderDelegate {
                                                 menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
-                                                        pane::SplitLeft.boxed_clone(),
+                                                        pane::SplitLeft::default().boxed_clone(),
                                                     )
                                                     .action(
                                                         "Split Right",
-                                                        pane::SplitRight.boxed_clone(),
+                                                        pane::SplitRight::default().boxed_clone(),
                                                     )
-                                                    .action("Split Up", pane::SplitUp.boxed_clone())
+                                                    .action(
+                                                        "Split Up",
+                                                        pane::SplitUp::default().boxed_clone(),
+                                                    )
                                                     .action(
                                                         "Split Down",
-                                                        pane::SplitDown.boxed_clone(),
+                                                        pane::SplitDown::default().boxed_clone(),
                                                     )
                                             }
                                         }))

@@ -13,6 +13,7 @@ use language::{
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde_json::{Value, json};
 use smol::{
     fs::{self},
@@ -142,14 +143,14 @@ impl JsonLspAdapter {
 }
 
 impl LspInstaller for JsonLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
@@ -175,7 +176,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &String,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -204,11 +205,12 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: String,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(

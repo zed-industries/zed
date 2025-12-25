@@ -4,12 +4,14 @@ use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     fmt,
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
 use ui::{App, IconName, SharedString};
 use url::Url;
+use urlencoding::decode;
 use util::paths::PathStyle;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -74,11 +76,13 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
-                let path = if path_style.is_windows() {
+                let normalized = if path_style.is_windows() {
                     path.trim_start_matches("/")
                 } else {
                     path
                 };
+                let decoded = decode(normalized).unwrap_or(Cow::Borrowed(normalized));
+                let path = decoded.as_ref();
 
                 if let Some(fragment) = url.fragment() {
                     let line_range = parse_line_range(fragment)?;
@@ -404,6 +408,19 @@ mod tests {
             _ => panic!("Expected Selection variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), selection_uri);
+    }
+
+    #[test]
+    fn test_parse_file_uri_with_non_ascii() {
+        let file_uri = uri!("file:///path/to/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt");
+        let parsed = MentionUri::parse(file_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/日本語.txt")));
+            }
+            _ => panic!("Expected File variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
     }
 
     #[test]

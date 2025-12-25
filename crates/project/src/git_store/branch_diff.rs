@@ -332,8 +332,6 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let languages = project.update(cx, |project, _cx| project.languages().clone())?;
-
             let changes = if let Some(entry) = branch_diff {
                 let oid = match entry {
                     git::status::TreeDiffStatus::Added { .. } => None,
@@ -343,7 +341,7 @@ impl BranchDiff {
                 project
                     .update(cx, |project, cx| {
                         project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
+                            git_store.open_diff_since(oid, buffer.clone(), repo, cx)
                         })
                     })?
                     .await?

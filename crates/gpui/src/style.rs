@@ -265,6 +265,10 @@ pub struct Style {
     /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
 
+    /// The grid columns with min-content minimum sizing.
+    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
+    pub grid_cols_min_content: Option<u16>,
+
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
     pub grid_rows: Option<u16>,
@@ -330,9 +334,13 @@ pub enum WhiteSpace {
 /// How to truncate text that overflows the width of the element
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
-    /// Truncate the text when it doesn't fit, and represent this truncation by displaying the
-    /// provided string.
+    /// Truncate the text at the end when it doesn't fit, and represent this truncation by
+    /// displaying the provided string (e.g., "very long te…").
     Truncate(SharedString),
+    /// Truncate the text at the start when it doesn't fit, and represent this truncation by
+    /// displaying the provided string at the beginning (e.g., "…ong text here").
+    /// Typically more adequate for file paths where the end is more important than the beginning.
+    TruncateStart(SharedString),
 }
 
 /// How to align text within the element
@@ -772,6 +780,7 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
+            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]

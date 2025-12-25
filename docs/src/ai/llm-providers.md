@@ -347,6 +347,33 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 3. In the Agent Panel, select one of the Ollama models using the model dropdown.
 
+#### Ollama Autodiscovery
+
+Zed will automatically discover models that Ollama has pulled. You can turn this off by setting
+the `auto_discover` field in the Ollama settings. If you do this, you should manually specify which
+models are available.
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "auto_discover": false,
+      "available_models": [
+        {
+          "name": "qwen2.5-coder",
+          "display_name": "qwen 2.5 coder",
+          "max_tokens": 32768,
+          "supports_tools": true,
+          "supports_thinking": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
+
 #### Ollama Context Length {#ollama-context}
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.

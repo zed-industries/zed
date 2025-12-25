@@ -45,7 +45,7 @@ use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
-use wasmtime_wasi::{self as wasi, WasiView};
+use wasmtime_wasi::p2::{self as wasi, IoView as _};
 use wit::Extension;
 
 pub struct WasmHost {
@@ -685,8 +685,8 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let file_perms = wasi::FilePerms::all();
-        let dir_perms = wasi::DirPerms::all();
+        let file_perms = wasmtime_wasi::FilePerms::all();
+        let dir_perms = wasmtime_wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir).to_string();
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
@@ -856,11 +856,13 @@ impl WasmState {
     }
 }
 
-impl wasi::WasiView for WasmState {
+impl wasi::IoView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
+}
 
+impl wasi::WasiView for WasmState {
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
     }

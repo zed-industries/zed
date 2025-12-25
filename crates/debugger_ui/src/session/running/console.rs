@@ -105,7 +105,7 @@ impl Console {
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
-                    console.query_bar.focus_handle(cx).focus(window);
+                    console.query_bar.focus_handle(cx).focus(window, cx);
                 }
             }),
         ];
