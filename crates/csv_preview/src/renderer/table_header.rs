@@ -95,7 +95,7 @@ impl CsvPreviewView {
             };
 
             this.engine.applied_sorting = new_sorting;
-            this.re_sort_indices();
+            this.apply_sort();
             cx.notify();
         }));
         sort_btn
