@@ -2552,8 +2552,7 @@ impl MultiBuffer {
             text::Anchor::min_max_range_for_buffer(buffer_id),
             cx,
         );
-        self.diffs
-            .insert(buffer_id, DiffState::new(diff.clone(), cx));
+        self.diffs.insert(buffer_id, DiffState::new(diff, cx));
     }
 
     pub fn add_inverted_diff(

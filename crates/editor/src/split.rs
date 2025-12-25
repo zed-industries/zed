@@ -415,11 +415,11 @@ impl SplittableEditor {
             let secondary_snapshot = secondary.multibuffer.read(cx).snapshot(cx);
             let primary_diff_hunks = primary_snapshot
                 .diff_hunks()
-                .map(|hunk| hunk.diff_base_byte_range.clone())
+                .map(|hunk| hunk.diff_base_byte_range)
                 .collect::<Vec<_>>();
             let secondary_diff_hunks = secondary_snapshot
                 .diff_hunks()
-                .map(|hunk| hunk.diff_base_byte_range.clone())
+                .map(|hunk| hunk.diff_base_byte_range)
                 .collect::<Vec<_>>();
             pretty_assertions::assert_eq!(primary_diff_hunks, secondary_diff_hunks);
 
@@ -734,7 +734,7 @@ mod tests {
                             let diff_snapshot = diff.read(cx).snapshot(cx);
                             let ranges = diff_snapshot
                                 .hunks(&buffer_snapshot)
-                                .map(|hunk| hunk.range.clone())
+                                .map(|hunk| hunk.range)
                                 .collect::<Vec<_>>();
                             let path = PathKey::for_buffer(&buffer, cx);
                             editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
