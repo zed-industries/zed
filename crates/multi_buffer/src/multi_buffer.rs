@@ -13,6 +13,10 @@ use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunk, DiffHunkSecondaryStatus,
     DiffHunkStatus, DiffHunkStatusKind,
 };
+use buffer_diff::{
+    BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind, SyntaxDiff,
+};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use gpui::{App, Context, Entity, EntityId, EventEmitter, WeakEntity};
@@ -142,6 +146,8 @@ pub struct MultiBufferDiffHunk {
     pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    /// Pre-computed syntax diff ranges for this hunk.
+    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 impl MultiBufferDiffHunk {
@@ -4010,6 +4016,7 @@ impl MultiBufferSnapshot {
                     kind: status_kind,
                     secondary: hunk.secondary_status,
                 },
+                syntax_diff: hunk.syntax_diff.clone(),
             })
         })
     }

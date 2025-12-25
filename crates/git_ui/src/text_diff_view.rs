@@ -93,7 +93,7 @@ impl TextDiffView {
         }
 
         let workspace = workspace.weak_handle();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
+        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot, cx));
         let clipboard_buffer = build_clipboard_buffer(
             clipboard_text,
             &source_buffer,
@@ -265,7 +265,7 @@ async fn update_diff_buffer(
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                source_buffer_snapshot.text.clone(),
+                source_buffer_snapshot.clone(),
                 Some(Arc::from(base_text.as_str())),
                 true,
                 language,
