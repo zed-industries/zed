@@ -111,7 +111,7 @@ impl CsvPreviewView {
             log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
                 view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
-                view.contents = parsed_csv;
+                view.engine.contents = parsed_csv;
                 view.performance_metrics.last_parse_took = Some(parse_duration);
                 view.last_parse_end_time = Some(parse_end_time);
                 view.re_sort_indices();

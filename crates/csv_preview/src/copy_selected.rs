@@ -45,11 +45,11 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
-        let max_rows = self.contents.rows.len();
-        let max_cols = self.contents.number_of_cols;
+        let max_rows = self.engine.contents.rows.len();
+        let max_cols = self.engine.contents.number_of_cols;
         let copy_format = self.settings.copy_format;
         let copy_mode = self.settings.copy_mode;
-        let full_content = &self.contents;
+        let full_content = &self.engine.contents;
 
         // Get selected cells in appropriate coordinate system
         let (rows_data, selected_cells_count) = match copy_mode {

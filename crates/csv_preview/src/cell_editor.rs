@@ -145,6 +145,7 @@ impl CsvPreviewView {
             .expect("Expected focused cell to point to existing data cell id");
 
         let row = self
+            .engine
             .contents
             .get_row(data_cid.row)
             .expect("Expected mapped data cell id to point to existing data row");
@@ -277,6 +278,7 @@ impl CsvPreviewView {
     ) -> Option<String> {
         let (row, col) = data_cid.to_raw();
         let edited_cell_info = if let Some(position) = self
+            .engine
             .contents
             .get_cell(&data_cid)
             .and_then(|tc| tc.position())

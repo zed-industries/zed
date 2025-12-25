@@ -17,6 +17,7 @@ pub mod sorting_by_column;
 pub(crate) struct TableDataEngine {
     pub applied_sorting: Option<AppliedSorting>,
     pub d2d_mapping: Arc<DisplayToDataMapping>,
+    pub contents: TableLikeContent,
 }
 
 impl TableDataEngine {
@@ -25,7 +26,10 @@ impl TableDataEngine {
     }
 
     // TODO: Rename to be generic processor and add docs
-    pub(crate) fn re_run_sorting(&mut self, contents: &TableLikeContent) {
-        self.d2d_mapping = Arc::new(generate_sorted_indices(self.applied_sorting, contents));
+    pub(crate) fn re_run_sorting(&mut self) {
+        self.d2d_mapping = Arc::new(generate_sorted_indices(
+            self.applied_sorting,
+            &self.contents,
+        ));
     }
 }

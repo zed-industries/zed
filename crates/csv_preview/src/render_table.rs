@@ -56,7 +56,7 @@ impl CsvPreviewView {
         resize_behaviors[0] = TableResizeBehavior::None;
 
         self.create_table_inner(
-            self.contents.rows.len(),
+            self.engine.contents.rows.len(),
             widths,
             resize_behaviors,
             current_widths,
@@ -80,6 +80,7 @@ impl CsvPreviewView {
         // Add the actual CSV headers with sort buttons
         for i in 0..(COLS - 1) {
             let header_text = self
+                .engine
                 .contents
                 .headers
                 .get(AnyColumn(i))
@@ -169,7 +170,7 @@ impl CsvPreviewView {
 
         // Get the actual row index from our sorted indices
         let data_row = sorted_indices.get_data_row(display_row)?;
-        let row = this.contents.get_row(data_row)?;
+        let row = this.engine.contents.get_row(data_row)?;
 
         let mut elements = Vec::with_capacity(COLS);
         elements.push(this.create_row_identifier_cell(
@@ -180,7 +181,7 @@ impl CsvPreviewView {
         )?);
 
         // Remaining columns: actual CSV data
-        for col in (0..this.contents.number_of_cols).map(AnyColumn) {
+        for col in (0..this.engine.contents.number_of_cols).map(AnyColumn) {
             let table_cell = row.expect_get(col);
 
             // TODO: Introduce `<null>` cell type
