@@ -190,15 +190,16 @@ impl CsvPreviewView {
             let display_cell_id = DisplayCellId::new(display_row, col);
 
             // Check if this cell is selected using display coordinates
-            let is_selected = this
-                .selection
-                .is_cell_selected(display_row, col, &sorted_indices);
+            let is_selected =
+                this.engine
+                    .selection
+                    .is_cell_selected(display_row, col, &sorted_indices);
 
             // Check if this cell is focused using display coordinates
-            let is_focused = this.selection.is_cell_focused(display_row, col);
+            let is_focused = this.engine.selection.is_cell_focused(display_row, col);
 
             // Check if this cell is the selection anchor using display coordinates
-            let is_anchor = this.selection.is_cell_anchor(display_row, col);
+            let is_anchor = this.engine.selection.is_cell_anchor(display_row, col);
 
             let cell = if let Some(ctx) = this.cell_editor.as_ref()
                 && ctx.cell_to_edit == display_cell_id

@@ -81,7 +81,6 @@ pub struct CsvPreviewView {
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
-    pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
@@ -172,7 +171,6 @@ impl CsvPreviewView {
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
-                selection: TableSelection::default(),
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
@@ -184,6 +182,7 @@ impl CsvPreviewView {
                     applied_sorting: None,
                     d2d_mapping: Arc::new(generate_sorted_indices(None, &contents)),
                     contents: contents.clone(),
+                    selection: TableSelection::default(),
                 },
             };
 

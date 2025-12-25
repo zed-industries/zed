@@ -179,7 +179,7 @@ impl CsvPreviewView {
             RowIdentifiers::RowNum => (*display_row + 1).to_string().into(),
         };
         // Check if this row has focus to highlight the line number
-        let is_focused = self.selection.is_row_focused(display_row);
+        let is_focused = self.engine.selection.is_row_focused(display_row);
 
         // Use normal text color for focused row, muted color otherwise
         let text_color = if is_focused {

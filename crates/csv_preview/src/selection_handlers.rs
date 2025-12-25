@@ -22,7 +22,7 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selection = TableSelection::new();
+        self.engine.selection = TableSelection::new();
         self.on_selection_changed(window, cx, None);
         cx.notify();
     }
@@ -36,7 +36,7 @@ impl CsvPreviewView {
         let start_time = Instant::now();
         let max_rows = self.engine.contents.rows.len();
         let max_cols = self.engine.contents.number_of_cols;
-        self.selection.select_all(max_rows, max_cols);
+        self.engine.selection.select_all(max_rows, max_cols);
 
         self.performance_metrics.last_selection_took = Some(start_time.elapsed());
         self.on_selection_changed(window, cx, Some(ScrollOffset::NoOffset));
