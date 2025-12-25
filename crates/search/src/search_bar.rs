@@ -5,6 +5,8 @@ use theme::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 
+pub const MAX_STRETCH_LINES: usize = 5;
+
 pub(super) enum ActionButtonState {
     Disabled,
     Toggled,
@@ -40,12 +42,13 @@ pub(super) fn render_action_button(
 }
 
 pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div) -> Div {
-    h_flex()
+    div()
         .map(map)
         .min_w_32()
-        .h_8()
+        .min_h_8()
         .pl_2()
         .pr_1()
+        .py_1()
         .border_1()
         .border_color(border_color)
         .rounded_md()
