@@ -11,7 +11,9 @@ use std::{
 use crate::{
     cell_editor::CellEditorCtx,
     data_table::TableInteractionState,
-    table_data_engine::{TableDataEngine, sorting_by_column::generate_sorted_indices},
+    table_data_engine::{
+        DisplayToDataMapping, TableDataEngine, filtering_by_column::AppliedFiltering,
+    },
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
@@ -131,7 +133,7 @@ impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn re_sort_indices(&mut self) {
         let start_time = Instant::now();
-        self.engine.re_run_sorting();
+        self.engine.calculate_d2d_mapping();
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
     }
@@ -176,9 +178,10 @@ impl CsvPreviewView {
                 scroll_handle: ScrollHandle::default(),
                 engine: TableDataEngine {
                     applied_sorting: None,
-                    d2d_mapping: Arc::new(generate_sorted_indices(None, &contents)),
+                    d2d_mapping: Arc::new(DisplayToDataMapping::default()),
                     contents: contents.clone(),
                     selection: TableSelection::default(),
+                    applied_filtering: AppliedFiltering::default(),
                 },
             };
 

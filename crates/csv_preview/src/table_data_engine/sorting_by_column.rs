@@ -1,8 +1,4 @@
-use crate::{
-    types::TableLikeContent,
-    types::{AnyColumn, DataRow, DisplayRow},
-};
-use std::collections::HashMap;
+use crate::{types::AnyColumn, types::TableLikeContent};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SortDirection {
@@ -19,57 +15,7 @@ pub struct AppliedSorting {
     pub direction: SortDirection,
 }
 
-/// Relation of Display (rendered) rows to Data (src) rows with applied transformations
-/// Transformations applied:
-/// - sorting by column
-/// - todo: filtering
-#[derive(Debug)]
-pub struct DisplayToDataMapping {
-    mapping: HashMap<DisplayRow, DataRow>,
-}
-
-impl DisplayToDataMapping {
-    /// Get the data row for a given display row
-    pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
-        self.mapping.get(&display_row).copied()
-    }
-
-    /// Get the display row for a given data row (reverse lookup)
-    pub fn get_display_row(&self, data_row: DataRow) -> Option<DisplayRow> {
-        self.mapping
-            .iter()
-            .find(|(_, mapped_data_row)| **mapped_data_row == data_row)
-            .map(|(display_row, _)| *display_row)
-    }
-}
-
-/// Generate sorted row indices based on current sorting settings.
-/// Returns a mapping from DisplayRow to DataRow.
-/// Note: sorting.col_idx refers to CSV data columns (0-based), not display columns
-/// (display columns include the line number column at index 0)
-pub fn generate_sorted_indices(
-    sorting: Option<AppliedSorting>,
-    contents: &TableLikeContent,
-) -> DisplayToDataMapping {
-    let indices: Vec<usize> = (0..contents.rows.len()).collect();
-
-    let sorted_indices = if let Some(sorting) = sorting {
-        sort_indices(contents, indices, sorting)
-    } else {
-        indices
-    };
-
-    // Create mapping from display position to data row
-    let mapping: HashMap<DisplayRow, DataRow> = sorted_indices
-        .iter()
-        .enumerate()
-        .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), DataRow::from(data_idx)))
-        .collect();
-
-    DisplayToDataMapping { mapping }
-}
-
-fn sort_indices(
+pub fn sort_indices(
     contents: &TableLikeContent,
     mut indices: Vec<usize>,
     sorting: AppliedSorting,
