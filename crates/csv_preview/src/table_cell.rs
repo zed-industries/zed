@@ -175,7 +175,7 @@ impl CsvPreviewView {
                         ScrollOffset::NoOffset
                     };
 
-                    let ordered_indices = this.get_sorted_indices().clone();
+                    let ordered_indices = this.engine.get_d2d_mapping();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.start_mouse_selection(
                         display_cell_id.row,
@@ -222,7 +222,7 @@ impl CsvPreviewView {
                         ScrollOffset::NoOffset
                     };
 
-                    let ordered_indices = this.get_sorted_indices().clone();
+                    let ordered_indices = this.engine.get_d2d_mapping();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.extend_mouse_selection(
                         display_cell_id.row,

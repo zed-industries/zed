@@ -165,7 +165,7 @@ impl CsvPreviewView {
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
-        let sorted_indices = this.get_sorted_indices();
+        let sorted_indices = this.engine.get_d2d_mapping();
 
         // Get the actual row index from our sorted indices
         let data_row = sorted_indices.get_data_row(display_row)?;

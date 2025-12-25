@@ -3,7 +3,29 @@
 //! - `DataCellId` - indices of src data cells
 //! - `DisplayCellId` - indices of data after applied transformations like sorting/filtering, which is used to render cell on the screen
 
+use std::sync::Arc;
+
+use crate::{
+    table_data_engine::sorting_by_column::{
+        AppliedSorting, DisplayToDataMapping, generate_sorted_indices,
+    },
+    table_like_content::TableLikeContent,
+};
+
 pub mod sorting_by_column;
+
 pub(crate) struct TableDataEngine {
-    // TODO: Move sorting here
+    pub applied_sorting: Option<AppliedSorting>,
+    pub d2d_mapping: Arc<DisplayToDataMapping>,
+}
+
+impl TableDataEngine {
+    pub(crate) fn get_d2d_mapping(&self) -> &DisplayToDataMapping {
+        self.d2d_mapping.as_ref()
+    }
+
+    // TODO: Rename to be generic processor and add docs
+    pub(crate) fn re_run_sorting(&mut self, contents: &TableLikeContent) {
+        self.d2d_mapping = Arc::new(generate_sorted_indices(self.applied_sorting, contents));
+    }
 }
