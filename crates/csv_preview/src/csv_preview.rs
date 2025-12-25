@@ -19,6 +19,7 @@ use crate::{
     table_data_engine::selection::TableSelection, table_like_content::TableLikeContent,
 };
 
+mod action_handlers;
 mod cell_editor;
 mod copy_selected;
 mod data_table;
@@ -28,7 +29,6 @@ mod performance_metrics_overlay;
 mod render_table;
 mod renderer;
 mod row_identifiers;
-mod selection_handlers;
 mod settings;
 mod table_cell;
 mod table_data_engine;
