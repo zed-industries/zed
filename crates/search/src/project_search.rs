@@ -916,7 +916,7 @@ impl ProjectSearchView {
         subscriptions.push(
             cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
                 if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
-                    this.update_match_index(&this.get_matches(cx), cx);
+                    this.update_match_index(cx);
                 }
                 // Reraise editor events for workspace item activation purposes
                 cx.emit(ViewEvent::EditorEvent(event.clone()));
@@ -1506,7 +1506,7 @@ impl ProjectSearchView {
             });
         } else {
             self.active_match_index = Some(0);
-            self.update_match_index(&match_ranges, cx);
+            self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
@@ -1529,15 +1529,22 @@ impl ProjectSearchView {
         cx.notify();
     }
 
-    fn update_match_index(&mut self, match_ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
+    fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
-        let new_index = active_match_index(
-            Direction::Next,
-            &match_ranges,
-            &results_editor.selections.newest_anchor().head(),
-            &results_editor.buffer().read(cx).snapshot(cx),
-        );
-        self.highlight_matches(&match_ranges, new_index, cx);
+        let newest_anchor = results_editor.selections.newest_anchor().head();
+        let buffer_snapshot = results_editor.buffer().read(cx).snapshot(cx);
+        let new_index = self.entity.update(cx, |this, cx| {
+            let new_index = active_match_index(
+                Direction::Next,
+                &this.match_ranges,
+                &newest_anchor,
+                &buffer_snapshot,
+            );
+
+            self.highlight_matches(&this.match_ranges, new_index, cx);
+            new_index
+        });
+
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
             cx.notify();
@@ -1549,7 +1556,7 @@ impl ProjectSearchView {
         &self,
         match_ranges: &[Range<Anchor>],
         active_index: Option<usize>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
         self.results_editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
