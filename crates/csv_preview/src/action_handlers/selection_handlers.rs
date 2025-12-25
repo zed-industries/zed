@@ -3,7 +3,6 @@
 //! Contains streamlined action handlers that delegate to the unified navigation system.
 
 use gpui::ScrollStrategy;
-use std::time::Instant;
 use ui::{Context, Window};
 
 use crate::{

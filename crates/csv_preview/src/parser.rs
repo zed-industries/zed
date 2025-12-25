@@ -92,7 +92,6 @@ impl CsvPreviewView {
                 }
             }
 
-            let instant = Instant::now();
             let buffer_snapshot = view.update(cx, |_, cx| {
                 editor
                     .read(cx)
@@ -106,21 +105,26 @@ impl CsvPreviewView {
                 return Ok(());
             };
 
-            let parsing_task = cx.background_spawn(async move { from_buffer(buffer_snapshot) });
-
-            let parsed_csv = parsing_task.await;
-
+            let instant = Instant::now();
+            let parsed_csv = cx
+                .background_spawn(async move { from_buffer(buffer_snapshot) })
+                .await;
             let parse_duration = instant.elapsed();
-            let parse_end_time = Instant::now();
+            let parse_end_time: Instant = Instant::now();
             log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
-                view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
-                view.engine.contents = parsed_csv;
                 view.performance_metrics
                     .timings
-                    .insert("parsing", (parse_duration, Instant::now()));
+                    .insert("Parsing", (parse_duration, Instant::now()));
+
+                view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
+                view.engine.contents = parsed_csv;
                 view.last_parse_end_time = Some(parse_end_time);
-                view.re_sort_indices();
+                view.performance_metrics.record("Filters recalc", || {
+                    view.engine.calculate_available_filters();
+                });
+
+                view.apply_filter_sort();
                 cx.notify();
             })
         })
@@ -136,7 +140,6 @@ pub fn from_buffer(buffer_snapshot: BufferSnapshot) -> TableLikeContent {
     }
 
     let (parsed_cells_with_positions, line_numbers) = parse_csv_with_positions(&text);
-    println!("Parsed: {parsed_cells_with_positions:#?}");
     if parsed_cells_with_positions.is_empty() {
         return TableLikeContent::default();
     }

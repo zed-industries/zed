@@ -39,13 +39,27 @@ impl TableDataEngine {
         self.d2d_mapping.as_ref()
     }
 
-    /// Takes applied filters/sorting, source content and produces display to data mapping
-    // TODO: Extract available filter recalculation only on parsing
-    pub(crate) fn calculate_d2d_mapping(&mut self) {
-        // Recalculate available filters from current content
-        self.available_filters =
-            calculate_available_filters(&self.contents.rows, self.contents.number_of_cols);
+    /// Cheaper than `calculate_d2d_mapping`, as it reorders in place existing data
+    pub(crate) fn re_apply_sort(&mut self) {
+        let mut existing = self
+            .d2d_mapping
+            .mapping
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
 
+        let sorted_rows = if let Some(sorting) = self.applied_sorting {
+            sort_data_rows(&self.contents.rows, existing, sorting)
+        } else {
+            // Cancel special sorting by resetting the order
+            existing.sort();
+            existing
+        };
+        self.produce_and_store_mapping(sorted_rows);
+    }
+
+    /// Takes applied filters/sorting, source content and produces display to data mapping
+    pub(crate) fn calculate_d2d_mapping(&mut self) {
         let data_rows: Vec<DataRow> = (0..self.contents.rows.len()).map(DataRow).collect();
 
         let filtered_rows =
@@ -58,6 +72,11 @@ impl TableDataEngine {
         };
 
         // Create mapping from display position to data row
+        self.produce_and_store_mapping(sorted_rows);
+    }
+
+    /// Takes sorted and filtered rows and produces display to data mapping
+    fn produce_and_store_mapping(&mut self, sorted_rows: Vec<DataRow>) {
         let mapping: HashMap<DisplayRow, DataRow> = sorted_rows
             .iter()
             .enumerate()
@@ -66,6 +85,11 @@ impl TableDataEngine {
 
         let data = { DisplayToDataMapping { mapping } };
         self.d2d_mapping = Arc::new(data);
+    }
+
+    pub fn calculate_available_filters(&mut self) {
+        self.available_filters =
+            calculate_available_filters(&self.contents.rows, self.contents.number_of_cols);
     }
 
     pub(crate) fn change_selection(
