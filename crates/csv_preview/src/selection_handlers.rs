@@ -10,7 +10,7 @@ use crate::{
     ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
     ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
     SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
-    selection::{
+    table_data_engine::selection::{
         NavigationDirection as ND, NavigationOperation as NO, ScrollOffset, TableSelection,
     },
 };
