@@ -574,7 +574,7 @@ impl Render for NewProcessModal {
                     NewProcessMode::Launch => NewProcessMode::Task,
                 };
 
-                this.mode_focus_handle(cx).focus(window);
+                this.mode_focus_handle(cx).focus(window, cx);
             }))
             .on_action(
                 cx.listener(|this, _: &pane::ActivatePreviousItem, window, cx| {
@@ -585,7 +585,7 @@ impl Render for NewProcessModal {
                         NewProcessMode::Launch => NewProcessMode::Attach,
                     };
 
-                    this.mode_focus_handle(cx).focus(window);
+                    this.mode_focus_handle(cx).focus(window, cx);
                 }),
             )
             .child(
@@ -602,7 +602,7 @@ impl Render for NewProcessModal {
                                     NewProcessMode::Task.to_string(),
                                     cx.listener(|this, _, window, cx| {
                                         this.mode = NewProcessMode::Task;
-                                        this.mode_focus_handle(cx).focus(window);
+                                        this.mode_focus_handle(cx).focus(window, cx);
                                         cx.notify();
                                     }),
                                 )
@@ -611,7 +611,7 @@ impl Render for NewProcessModal {
                                     NewProcessMode::Debug.to_string(),
                                     cx.listener(|this, _, window, cx| {
                                         this.mode = NewProcessMode::Debug;
-                                        this.mode_focus_handle(cx).focus(window);
+                                        this.mode_focus_handle(cx).focus(window, cx);
                                         cx.notify();
                                     }),
                                 )
@@ -629,7 +629,7 @@ impl Render for NewProcessModal {
                                                 cx,
                                             );
                                         }
-                                        this.mode_focus_handle(cx).focus(window);
+                                        this.mode_focus_handle(cx).focus(window, cx);
                                         cx.notify();
                                     }),
                                 )
@@ -638,7 +638,7 @@ impl Render for NewProcessModal {
                                     NewProcessMode::Launch.to_string(),
                                     cx.listener(|this, _, window, cx| {
                                         this.mode = NewProcessMode::Launch;
-                                        this.mode_focus_handle(cx).focus(window);
+                                        this.mode_focus_handle(cx).focus(window, cx);
                                         cx.notify();
                                     }),
                                 )
@@ -840,17 +840,17 @@ impl ConfigureMode {
         }
     }
 
-    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
     }
 
     fn on_tab_prev(
         &mut self,
         _: &menu::SelectPrevious,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.focus_prev();
+        window.focus_prev(cx);
     }
 
     fn render(
@@ -923,7 +923,7 @@ impl AttachMode {
                 window,
                 cx,
             );
-            window.focus(&modal.focus_handle(cx));
+            window.focus(&modal.focus_handle(cx), cx);
 
             modal
         });

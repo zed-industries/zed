@@ -1,6 +1,6 @@
 name = "JSONC"
 grammar = "jsonc"
-path_suffixes = ["jsonc", "bun.lock", "tsconfig.json", "pyrightconfig.json"]
+path_suffixes = ["jsonc", "bun.lock", "devcontainer.json", "pyrightconfig.json", "tsconfig.json"]
 line_comments = ["// "]
 autoclose_before = ",]}"
 brackets = [

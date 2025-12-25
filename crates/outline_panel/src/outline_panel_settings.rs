@@ -50,7 +50,13 @@ impl Settings for OutlinePanelSettings {
             dock: panel.dock.unwrap(),
             file_icons: panel.file_icons.unwrap(),
             folder_icons: panel.folder_icons.unwrap(),
-            git_status: panel.git_status.unwrap(),
+            git_status: panel.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             indent_size: panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: panel.indent_guides.unwrap().show.unwrap(),

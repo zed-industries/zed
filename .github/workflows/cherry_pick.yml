@@ -30,7 +30,7 @@ jobs:
       with:
         clean: false
     - id: get-app-token
-      name: cherry_pick::run_cherry_pick::authenticate_as_zippy
+      name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}

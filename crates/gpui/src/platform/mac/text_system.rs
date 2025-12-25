@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
 use collections::HashMap;
 use core_foundation::{
+    array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
@@ -21,8 +22,10 @@ use core_graphics::{
 };
 use core_text::{
     font::CTFont,
+    font_collection::CTFontCollectionRef,
     font_descriptor::{
-        kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
+        CTFontDescriptor, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
+        kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -97,7 +100,26 @@ impl PlatformTextSystem for MacTextSystem {
     fn all_font_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
-        let Some(descriptors) = collection.get_descriptors() else {
+        // NOTE: We intentionally avoid using `collection.get_descriptors()` here because
+        // it has a memory leak bug in core-text v21.0.0. The upstream code uses
+        // `wrap_under_get_rule` but `CTFontCollectionCreateMatchingFontDescriptors`
+        // follows the Create Rule (caller owns the result), so it should use
+        // `wrap_under_create_rule`. We call the function directly with correct memory management.
+        unsafe extern "C" {
+            fn CTFontCollectionCreateMatchingFontDescriptors(
+                collection: CTFontCollectionRef,
+            ) -> CFArrayRef;
+        }
+        let descriptors: Option<CFArray<CTFontDescriptor>> = unsafe {
+            let array_ref =
+                CTFontCollectionCreateMatchingFontDescriptors(collection.as_concrete_TypeRef());
+            if array_ref.is_null() {
+                None
+            } else {
+                Some(CFArray::wrap_under_create_rule(array_ref))
+            }
+        };
+        let Some(descriptors) = descriptors else {
             return names;
         };
         for descriptor in descriptors.into_iter() {

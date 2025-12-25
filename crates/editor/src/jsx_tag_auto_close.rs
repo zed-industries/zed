@@ -19,7 +19,7 @@ pub struct JsxTagCompletionState {
 /// that corresponds to the tag name
 /// Note that this is not configurable, i.e. we assume the first
 /// named child of a tag node is the tag name
-const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
+const TS_NODE_TAG_NAME_CHILD_INDEX: u32 = 0;
 
 /// Maximum number of parent elements to walk back when checking if an open tag
 /// is already closed.

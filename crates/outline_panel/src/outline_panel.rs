@@ -998,9 +998,9 @@ impl OutlinePanel {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else {
-            self.filter_editor.focus_handle(cx).focus(window);
+            self.filter_editor.focus_handle(cx).focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1153,9 +1153,9 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(window);
+                    active_editor.focus_handle(cx).focus(window, cx);
                 } else {
-                    self.focus_handle.focus(window);
+                    self.focus_handle.focus(window, cx);
                 }
             }
         }
@@ -1458,7 +1458,7 @@ impl OutlinePanel {
                     Box::new(zed_actions::workspace::CopyRelativePath),
                 )
         });
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
             outline_panel.context_menu.take();
             cx.notify();
@@ -4539,7 +4539,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if focus {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
         let ix = self
             .cached_entries

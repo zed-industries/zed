@@ -22,16 +22,13 @@ static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
+static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(load_all_actions);
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
 fn main() -> Result<()> {
     zlog::init();
     zlog::init_output_stderr();
-    // call a zed:: function so everything in `zed` crate is linked and
-    // all actions in the actual app are registered
-    zed::stdout_is_a_pty();
     let args = std::env::args().skip(1).collect::<Vec<_>>();
 
     match args.get(0).map(String::as_str) {
@@ -72,8 +69,8 @@ enum PreprocessorError {
 impl PreprocessorError {
     fn new_for_not_found_action(action_name: String) -> Self {
         for action in &*ALL_ACTIONS {
-            for alias in action.deprecated_aliases {
-                if alias == &action_name {
+            for alias in &action.deprecated_aliases {
+                if alias == action_name.as_str() {
                     return PreprocessorError::DeprecatedActionUsed {
                         used: action_name,
                         should_be: action.name.to_string(),
@@ -214,7 +211,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
-                if find_action_by_name(action).is_none() {
+                if is_missing_action(action) {
                     errors.insert(PreprocessorError::new_for_not_found_action(
                         action.to_string(),
                     ));
@@ -244,10 +241,12 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
-                    errors.insert(PreprocessorError::new_for_not_found_action(
-                        name.to_string(),
-                    ));
-                    return String::new();
+                    if actions_available() {
+                        errors.insert(PreprocessorError::new_for_not_found_action(
+                            name.to_string(),
+                        ));
+                    }
+                    return format!("<code class=\"hljs\">{}</code>", name);
                 };
                 format!("<code class=\"hljs\">{}</code>", &action.human_name)
             })
@@ -257,9 +256,17 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
     ALL_ACTIONS
-        .binary_search_by(|action| action.name.cmp(name))
+        .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
         .map(|index| &ALL_ACTIONS[index])
+}
+
+fn actions_available() -> bool {
+    !ALL_ACTIONS.is_empty()
+}
+
+fn is_missing_action(name: &str) -> bool {
+    actions_available() && find_action_by_name(name).is_none()
 }
 
 fn find_binding(os: &str, action: &str) -> Option<String> {
@@ -384,18 +391,13 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                 let keymap = settings::KeymapFile::parse(&snippet_json_fixed)
                     .context("Failed to parse keymap JSON")?;
                 for section in keymap.sections() {
-                    for (keystrokes, action) in section.bindings() {
-                        keystrokes
-                            .split_whitespace()
-                            .map(|source| gpui::Keystroke::parse(source))
-                            .collect::<std::result::Result<Vec<_>, _>>()
-                            .context("Failed to parse keystroke")?;
+                    for (_keystrokes, action) in section.bindings() {
                         if let Some((action_name, _)) = settings::KeymapFile::parse_action(action)
                             .map_err(|err| anyhow::format_err!(err))
                             .context("Failed to parse action")?
                         {
                             anyhow::ensure!(
-                                find_action_by_name(action_name).is_some(),
+                                !is_missing_action(action_name),
                                 "Action not found: {}",
                                 action_name
                             );
@@ -491,27 +493,35 @@ where
     });
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct ActionDef {
-    name: &'static str,
+    name: String,
     human_name: String,
-    deprecated_aliases: &'static [&'static str],
-    docs: Option<&'static str>,
+    deprecated_aliases: Vec<String>,
+    #[serde(rename = "documentation")]
+    docs: Option<String>,
 }
 
-fn dump_all_gpui_actions() -> Vec<ActionDef> {
-    let mut actions = gpui::generate_list_of_all_registered_actions()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.deprecated_aliases,
-            docs: action.documentation,
-        })
-        .collect::<Vec<ActionDef>>();
-
-    actions.sort_by_key(|a| a.name);
-
-    actions
+fn load_all_actions() -> Vec<ActionDef> {
+    let asset_path = concat!(env!("CARGO_MANIFEST_DIR"), "/actions.json");
+    match std::fs::read_to_string(asset_path) {
+        Ok(content) => {
+            let mut actions: Vec<ActionDef> =
+                serde_json::from_str(&content).expect("Failed to parse actions.json");
+            actions.sort_by(|a, b| a.name.cmp(&b.name));
+            actions
+        }
+        Err(err) => {
+            if std::env::var("CI").is_ok() {
+                panic!("actions.json not found at {}: {}", asset_path, err);
+            }
+            eprintln!(
+                "Warning: actions.json not found, action validation will be skipped: {}",
+                err
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn handle_postprocessing() -> Result<()> {
@@ -647,7 +657,7 @@ fn generate_big_table_of_actions() -> String {
     let mut output = String::new();
 
     let mut actions_sorted = actions.iter().collect::<Vec<_>>();
-    actions_sorted.sort_by_key(|a| a.name);
+    actions_sorted.sort_by_key(|a| a.name.as_str());
 
     // Start the definition list with custom styling for better spacing
     output.push_str("<dl style=\"line-height: 1.8;\">\n");
@@ -664,7 +674,7 @@ fn generate_big_table_of_actions() -> String {
         output.push_str("<dd style=\"margin-left: 2em; margin-bottom: 1em;\">\n");
 
         // Add the description, escaping HTML if needed
-        if let Some(description) = action.docs {
+        if let Some(description) = action.docs.as_ref() {
             output.push_str(
                 &description
                     .replace("&", "&amp;")
@@ -674,7 +684,7 @@ fn generate_big_table_of_actions() -> String {
             output.push_str("<br>\n");
         }
         output.push_str("Keymap Name: <code>");
-        output.push_str(action.name);
+        output.push_str(&action.name);
         output.push_str("</code><br>\n");
         if !action.deprecated_aliases.is_empty() {
             output.push_str("Deprecated Alias(es): ");

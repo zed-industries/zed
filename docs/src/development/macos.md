@@ -31,10 +31,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
-### Backend Dependencies (optional) {#backend-dependencies}
-
-If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
-
 ## Building Zed from Source
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).

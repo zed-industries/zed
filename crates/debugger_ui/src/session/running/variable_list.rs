@@ -529,7 +529,7 @@ impl VariableList {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.edited_path.take();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1067,7 +1067,7 @@ impl VariableList {
             editor.select_all(&editor::actions::SelectAll, window, cx);
             editor
         });
-        editor.focus_handle(cx).focus(window);
+        editor.focus_handle(cx).focus(window, cx);
         editor
     }
 

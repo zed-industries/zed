@@ -1052,6 +1052,71 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
         .ok()
 }
 
+/// Request body for the token counting API.
+/// Similar to `Request` but without `max_tokens` since it's not needed for counting.
+#[derive(Debug, Serialize)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+/// Response from the token counting API.
+#[derive(Debug, Deserialize)]
+pub struct CountTokensResponse {
+    pub input_tokens: u64,
+}
+
+/// Count the number of tokens in a message without creating it.
+pub async fn count_tokens(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+) -> Result<CountTokensResponse, AnthropicError> {
+    let uri = format!("{api_url}/v1/messages/count_tokens");
+
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Anthropic-Version", "2023-06-01")
+        .header("X-Api-Key", api_key.trim())
+        .header("Content-Type", "application/json");
+
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
+    let http_request = request_builder
+        .body(AsyncBody::from(serialized_request))
+        .map_err(AnthropicError::BuildRequestBody)?;
+
+    let mut response = client
+        .send(http_request)
+        .await
+        .map_err(AnthropicError::HttpSend)?;
+
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(AnthropicError::ReadResponse)?;
+
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
+    } else {
+        Err(handle_error_response(response, rate_limits).await)
+    }
+}
+
 #[test]
 fn test_match_window_exceeded() {
     let error = ApiError {

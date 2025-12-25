@@ -36,6 +36,7 @@
 DerivedData/
 Packages
 xcuserdata/
+crates/docs_preprocessor/actions.json
 
 # Don't commit any secrets to the repo.
 .env

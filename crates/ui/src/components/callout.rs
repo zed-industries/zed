@@ -121,7 +121,7 @@ impl RenderOnce for Callout {
             Severity::Info => (
                 IconName::Info,
                 Color::Muted,
-                cx.theme().colors().panel_background.opacity(0.),
+                cx.theme().status().info_background.opacity(0.1),
             ),
             Severity::Success => (
                 IconName::Check,

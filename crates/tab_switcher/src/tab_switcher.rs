@@ -529,7 +529,9 @@ impl TabSwitcherDelegate {
         }
 
         if self.select_last {
-            return self.matches.len() - 1;
+            let item_index = self.matches.len() - 1;
+            self.set_selected_index(item_index, window, cx);
+            return item_index;
         }
 
         // This only runs when initially opening the picker

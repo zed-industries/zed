@@ -188,6 +188,17 @@ impl Render for ModeSelector {
                             .gap_1()
                             .child(
                                 h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Mode Menu"))
+                                    .child(KeyBinding::for_action_in(
+                                        &ToggleProfileSelector,
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
                                     .pb_1()
                                     .gap_2()
                                     .justify_between()
@@ -196,17 +207,6 @@ impl Render for ModeSelector {
                                     .child(Label::new("Cycle Through Modes"))
                                     .child(KeyBinding::for_action_in(
                                         &CycleModeSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .justify_between()
-                                    .child(Label::new("Toggle Mode Menu"))
-                                    .child(KeyBinding::for_action_in(
-                                        &ToggleProfileSelector,
                                         &focus_handle,
                                         cx,
                                     )),

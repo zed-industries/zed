@@ -8,8 +8,8 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
     ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use persistence::TERMINAL_DB;
@@ -409,7 +409,7 @@ impl TerminalView {
                 )
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -687,10 +687,30 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        if clipboard.entries().iter().any(|entry| match entry {
+            ClipboardEntry::Image(image) => !image.bytes.is_empty(),
+            _ => false,
+        }) {
+            self.forward_ctrl_v(cx);
+            return;
         }
+
+        if let Some(text) = clipboard.text() {
+            self.terminal
+                .update(cx, |terminal, _cx| terminal.paste(&text));
+        }
+    }
+
+    /// Emits a raw Ctrl+V so TUI agents can read the OS clipboard directly
+    /// and attach images using their native workflows.
+    fn forward_ctrl_v(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |term, _| {
+            term.input(vec![0x16]);
+        });
     }
 
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {

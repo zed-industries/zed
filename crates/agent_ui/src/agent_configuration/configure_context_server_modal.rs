@@ -831,7 +831,7 @@ impl Render for ConfigureContextServerModal {
                 }),
             )
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .child(
                 Modal::new("configure-context-server", None)

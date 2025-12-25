@@ -492,7 +492,7 @@ impl ProjectDiff {
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
         {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
     }
 
@@ -597,10 +597,10 @@ impl ProjectDiff {
                 .focus_handle(cx)
                 .contains_focused(window, cx)
         {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.update(cx, |editor, cx| {
-                editor.focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window, cx);
             });
         }
         if self.pending_scroll.as_ref() == Some(&path_key) {
@@ -983,7 +983,7 @@ impl Render for ProjectDiff {
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {
-                                        window.focus(&keybinding_focus_handle);
+                                        window.focus(&keybinding_focus_handle, cx);
                                         window.dispatch_action(
                                             Box::new(CloseActiveItem::default()),
                                             cx,
@@ -1153,7 +1153,7 @@ impl ProjectDiffToolbar {
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(project_diff) = self.project_diff(cx) {
-            project_diff.focus_handle(cx).focus(window);
+            project_diff.focus_handle(cx).focus(window, cx);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {

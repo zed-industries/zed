@@ -8,6 +8,7 @@ use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
 };
+use image::GenericImageView as _;
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -19,7 +20,8 @@ use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
     pub source: SharedString,
-    pub size: Size<DevicePixels>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Size<DevicePixels>>,
 }
 
 impl LanguageModelImage {
@@ -61,7 +63,7 @@ impl LanguageModelImage {
         }
 
         Some(Self {
-            size: size(DevicePixels(width?), DevicePixels(height?)),
+            size: Some(size(DevicePixels(width?), DevicePixels(height?))),
             source: SharedString::from(source.to_string()),
         })
     }
@@ -79,11 +81,21 @@ impl std::fmt::Debug for LanguageModelImage {
 /// Anthropic wants uploaded images to be smaller than this in both dimensions.
 const ANTHROPIC_SIZE_LIMIT: f32 = 1568.;
 
+/// Default per-image hard limit (in bytes) for the encoded image payload we send upstream.
+///
+/// NOTE: `LanguageModelImage.source` is base64-encoded PNG bytes (without the `data:` prefix).
+/// This limit is enforced on the encoded PNG bytes *before* base64 encoding.
+const DEFAULT_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+/// Conservative cap on how many times we'll attempt to shrink/re-encode an image to fit
+/// `DEFAULT_IMAGE_MAX_BYTES`.
+const MAX_IMAGE_DOWNSCALE_PASSES: usize = 8;
+
 impl LanguageModelImage {
     pub fn empty() -> Self {
         Self {
             source: "".into(),
-            size: size(DevicePixels(0), DevicePixels(0)),
+            size: None,
         }
     }
 
@@ -111,43 +123,79 @@ impl LanguageModelImage {
             let height = dynamic_image.height();
             let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
 
-            let base64_image = {
-                if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
-                    || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
-                {
-                    let new_bounds = ObjectFit::ScaleDown.get_bounds(
-                        gpui::Bounds {
-                            origin: point(px(0.0), px(0.0)),
-                            size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
-                        },
-                        image_size,
-                    );
-                    let resized_image = dynamic_image.resize(
-                        new_bounds.size.width.into(),
-                        new_bounds.size.height.into(),
-                        image::imageops::FilterType::Triangle,
-                    );
+            // First apply any provider-specific dimension constraints we know about (Anthropic).
+            let mut processed_image = if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
+                || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
+            {
+                let new_bounds = ObjectFit::ScaleDown.get_bounds(
+                    gpui::Bounds {
+                        origin: point(px(0.0), px(0.0)),
+                        size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
+                    },
+                    image_size,
+                );
+                dynamic_image.resize(
+                    new_bounds.size.width.into(),
+                    new_bounds.size.height.into(),
+                    image::imageops::FilterType::Triangle,
+                )
+            } else {
+                dynamic_image
+            };
 
-                    encode_as_base64(data, resized_image)
-                } else {
-                    encode_as_base64(data, dynamic_image)
+            // Then enforce a default per-image size cap on the encoded PNG bytes.
+            //
+            // We always send PNG bytes (either original PNG bytes, or re-encoded PNG) base64'd.
+            // The upstream provider limit we want to respect is effectively on the binary image
+            // payload size, so we enforce against the encoded PNG bytes before base64 encoding.
+            let mut encoded_png = encode_png_bytes(&processed_image).log_err()?;
+            for _pass in 0..MAX_IMAGE_DOWNSCALE_PASSES {
+                if encoded_png.len() <= DEFAULT_IMAGE_MAX_BYTES {
+                    break;
                 }
+
+                // Scale down geometrically to converge quickly. We don't know the final PNG size
+                // as a function of pixels, so we iteratively shrink.
+                let (w, h) = processed_image.dimensions();
+                if w <= 1 || h <= 1 {
+                    break;
+                }
+
+                // Shrink by ~15% each pass (0.85). This is a compromise between speed and
+                // preserving image detail.
+                let new_w = ((w as f32) * 0.85).round().max(1.0) as u32;
+                let new_h = ((h as f32) * 0.85).round().max(1.0) as u32;
+
+                processed_image =
+                    processed_image.resize(new_w, new_h, image::imageops::FilterType::Triangle);
+                encoded_png = encode_png_bytes(&processed_image).log_err()?;
             }
-            .log_err()?;
+
+            if encoded_png.len() > DEFAULT_IMAGE_MAX_BYTES {
+                // Still too large after multiple passes; treat as non-convertible for now.
+                // (Provider-specific handling can be introduced later.)
+                return None;
+            }
+
+            // Now base64 encode the PNG bytes.
+            let base64_image = encode_bytes_as_base64(encoded_png.as_slice()).log_err()?;
 
             // SAFETY: The base64 encoder should not produce non-UTF8.
             let source = unsafe { String::from_utf8_unchecked(base64_image) };
 
             Some(LanguageModelImage {
-                size: image_size,
+                size: Some(image_size),
                 source: source.into(),
             })
         })
     }
 
     pub fn estimate_tokens(&self) -> usize {
-        let width = self.size.width.0.unsigned_abs() as usize;
-        let height = self.size.height.0.unsigned_abs() as usize;
+        let Some(size) = self.size.as_ref() else {
+            return 0;
+        };
+        let width = size.width.0.unsigned_abs() as usize;
+        let height = size.height.0.unsigned_abs() as usize;
 
         // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
         // Note that are a lot of conditions on Anthropic's API, and OpenAI doesn't use this,
@@ -160,21 +208,20 @@ impl LanguageModelImage {
     }
 }
 
-fn encode_as_base64(data: Arc<Image>, image: image::DynamicImage) -> Result<Vec<u8>> {
+fn encode_png_bytes(image: &image::DynamicImage) -> Result<Vec<u8>> {
+    let mut png = Vec::new();
+    image.write_with_encoder(PngEncoder::new(&mut png))?;
+    Ok(png)
+}
+
+fn encode_bytes_as_base64(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut base64_image = Vec::new();
     {
         let mut base64_encoder = EncoderWriter::new(
             Cursor::new(&mut base64_image),
             &base64::engine::general_purpose::STANDARD,
         );
-        if data.format() == ImageFormat::Png {
-            base64_encoder.write_all(data.bytes())?;
-        } else {
-            let mut png = Vec::new();
-            image.write_with_encoder(PngEncoder::new(&mut png))?;
-
-            base64_encoder.write_all(png.as_slice())?;
-        }
+        base64_encoder.write_all(bytes)?;
     }
     Ok(base64_image)
 }
@@ -413,6 +460,71 @@ pub struct LanguageModelResponseMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+    use gpui::TestAppContext;
+    use image::ImageDecoder as _;
+
+    fn base64_to_png_bytes(base64_png: &str) -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(base64_png.as_bytes())
+            .expect("base64 should decode")
+    }
+
+    fn png_dimensions(png_bytes: &[u8]) -> (u32, u32) {
+        let decoder =
+            image::codecs::png::PngDecoder::new(Cursor::new(png_bytes)).expect("png should decode");
+        decoder.dimensions()
+    }
+
+    fn make_noisy_png_bytes(width: u32, height: u32) -> Vec<u8> {
+        // Create an RGBA image with per-pixel variance to avoid PNG compressing too well.
+        let mut img = image::RgbaImage::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x ^ y) & 0xFF) as u8;
+                let g = ((x.wrapping_mul(31) ^ y.wrapping_mul(17)) & 0xFF) as u8;
+                let b = ((x.wrapping_mul(131) ^ y.wrapping_mul(7)) & 0xFF) as u8;
+                img.put_pixel(x, y, image::Rgba([r, g, b, 0xFF]));
+            }
+        }
+
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_with_encoder(PngEncoder::new(&mut out))
+            .expect("png encoding should succeed");
+        out
+    }
+
+    #[gpui::test]
+    async fn test_from_image_downscales_to_default_5mb_limit(cx: &mut TestAppContext) {
+        // Pick a size that reliably produces a PNG > 5MB when filled with noise.
+        // If this fails (image is too small), bump dimensions.
+        let original_png = make_noisy_png_bytes(4096, 4096);
+        assert!(
+            original_png.len() > DEFAULT_IMAGE_MAX_BYTES,
+            "precondition failed: noisy PNG must exceed DEFAULT_IMAGE_MAX_BYTES"
+        );
+
+        let image = gpui::Image::from_bytes(ImageFormat::Png, original_png);
+        let lm_image = cx
+            .update(|cx| LanguageModelImage::from_image(Arc::new(image), cx))
+            .await
+            .expect("image conversion should succeed");
+
+        let encoded_png = base64_to_png_bytes(lm_image.source.as_ref());
+        assert!(
+            encoded_png.len() <= DEFAULT_IMAGE_MAX_BYTES,
+            "expected encoded PNG <= DEFAULT_IMAGE_MAX_BYTES, got {} bytes",
+            encoded_png.len()
+        );
+
+        // Ensure we actually downscaled in pixels (not just re-encoded).
+        let (w, h) = png_dimensions(&encoded_png);
+        assert!(
+            w < 4096 || h < 4096,
+            "expected image to be downscaled in at least one dimension; got {w}x{h}"
+        );
+    }
 
     #[test]
     fn test_language_model_tool_result_content_deserialization() {
@@ -463,8 +575,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "base64encodedimagedata");
-                assert_eq!(image.size.width.0, 100);
-                assert_eq!(image.size.height.0, 200);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 100);
+                assert_eq!(size.height.0, 200);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -483,8 +596,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "wrappedimagedata");
-                assert_eq!(image.size.width.0, 50);
-                assert_eq!(image.size.height.0, 75);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 50);
+                assert_eq!(size.height.0, 75);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -503,8 +617,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "caseinsensitive");
-                assert_eq!(image.size.width.0, 30);
-                assert_eq!(image.size.height.0, 40);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 30);
+                assert_eq!(size.height.0, 40);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -541,8 +656,9 @@ mod tests {
         match result {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "directimage");
-                assert_eq!(image.size.width.0, 200);
-                assert_eq!(image.size.height.0, 300);
+                let size = image.size.expect("size");
+                assert_eq!(size.width.0, 200);
+                assert_eq!(size.height.0, 300);
             }
             _ => panic!("Expected Image variant"),
         }

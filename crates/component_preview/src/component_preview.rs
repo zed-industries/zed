@@ -1,7 +1,4 @@
-//! # Component Preview
-//!
-//! A view for exploring Zed components.
-
+mod component_preview_example;
 mod persistence;
 
 use client::UserStore;
@@ -11,17 +8,20 @@ use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
 };
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
-use languages::LanguageRegistry;
+use language::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use persistence::COMPONENT_PREVIEW_DB;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
 use ui_input::InputField;
+use workspace::AppState;
 use workspace::{
-    AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
-    item::ItemEvent,
+    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
 };
+
+#[allow(unused_imports)]
+pub use component_preview_example::*;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
@@ -161,7 +161,7 @@ impl ComponentPreview {
         component_preview.update_component_list(cx);
 
         let focus_handle = component_preview.filter_editor.read(cx).focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Ok(component_preview)
     }
@@ -770,7 +770,7 @@ impl Item for ComponentPreview {
         self.workspace_id = workspace.database_id();
 
         let focus_handle = self.filter_editor.read(cx).focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
     }
 }
 

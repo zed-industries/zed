@@ -55,7 +55,7 @@ fn main() {
                 cx.activate(false);
                 cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window);
+                    focus_handle.focus(window, cx);
                     ExampleWindow { focus_handle }
                 })
             },
@@ -72,7 +72,7 @@ fn main() {
             |window, cx| {
                 cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window);
+                    focus_handle.focus(window, cx);
                     ExampleWindow { focus_handle }
                 })
             },

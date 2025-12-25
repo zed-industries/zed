@@ -145,7 +145,6 @@ You can specify your preferred model to use by providing a `commit_message_model
 ```json [settings]
 {
   "agent": {
-    "version": "2",
     "commit_message_model": {
       "provider": "anthropic",
       "model": "claude-3-5-haiku"

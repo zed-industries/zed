@@ -127,6 +127,16 @@ impl LanguageServerState {
             return menu;
         };
 
+        let server_versions = self
+            .lsp_store
+            .update(cx, |lsp_store, _| {
+                lsp_store
+                    .language_server_statuses()
+                    .map(|(server_id, status)| (server_id, status.server_version.clone()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+
         let mut first_button_encountered = false;
         for item in &self.items {
             if let LspMenuItem::ToggleServersButton { restart } = item {
@@ -254,6 +264,22 @@ impl LanguageServerState {
             };
 
             let server_name = server_info.name.clone();
+            let server_version = server_versions
+                .get(&server_info.id)
+                .and_then(|version| version.clone());
+
+            let tooltip_text = match (&server_version, &message) {
+                (None, None) => None,
+                (Some(version), None) => {
+                    Some(SharedString::from(format!("Version: {}", version.as_ref())))
+                }
+                (None, Some(message)) => Some(message.clone()),
+                (Some(version), Some(message)) => Some(SharedString::from(format!(
+                    "Version: {}\n\n{}",
+                    version.as_ref(),
+                    message.as_ref()
+                ))),
+            };
             menu = menu.item(ContextMenuItem::custom_entry(
                 move |_, _| {
                     h_flex()
@@ -355,11 +381,11 @@ impl LanguageServerState {
                         }
                     }
                 },
-                message.map(|server_message| {
+                tooltip_text.map(|tooltip_text| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
-                        DocumentationEdge::Bottom,
-                        Rc::new(move |_| Label::new(server_message.clone()).into_any_element()),
+                        DocumentationEdge::Top,
+                        Rc::new(move |_| Label::new(tooltip_text.clone()).into_any_element()),
                     )
                 }),
             ));

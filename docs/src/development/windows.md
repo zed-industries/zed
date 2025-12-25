@@ -66,10 +66,6 @@ The list can be obtained as follows:
 - Click on `More` in the `Installed` tab
 - Click on `Export configuration`
 
-### Backend Dependencies (optional) {#backend-dependencies}
-
-If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
-
 ### Notes
 
 You should modify the `pg_hba.conf` file in the `data` directory to use `trust` instead of `scram-sha-256` for the `host` method. Otherwise, the connection will fail with the error `password authentication failed`. The `pg_hba.conf` file typically locates at `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`. After the modification, the file should look like this:

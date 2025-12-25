@@ -45,7 +45,7 @@ pub fn new_linker(
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
 ) -> Linker<WasmState> {
     let mut linker = Linker::new(&wasm_engine(executor));
-    wasmtime_wasi::add_to_linker_async(&mut linker).unwrap();
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker).unwrap();
     f(&mut linker, wasi_view).unwrap();
     linker
 }

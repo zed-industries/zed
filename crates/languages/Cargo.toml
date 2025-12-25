@@ -68,6 +68,7 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+semver.workspace = true
 smol.workspace = true
 snippet.workspace = true
 task.workspace = true

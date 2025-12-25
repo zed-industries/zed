@@ -5,7 +5,7 @@ For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](
 
 ## Billing Information {#settings}
 
-You can access billing information and settings at [zed.dev/account](https://zed.dev/account).
+You can access billing information and settings at [dashboard.zed.dev/account](https://dashboard.zed.dev/account).
 Most of the page embeds information from our invoicing/metering partner, Orb (we're planning on a more native experience soon!).
 
 ## Billing Cycles {#billing-cycles}
@@ -28,7 +28,7 @@ If payment of an invoice fails, Zed will block usage of our hosted models until 
 
 ## Invoice History {#invoice-history}
 
-You can access your invoice history by navigating to [zed.dev/account](https://zed.dev/account) and clicking `Invoice history` within the embedded Orb portal.
+You can access your invoice history by navigating to [dashboard.zed.dev/account](https://dashboard.zed.dev/account) and clicking `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev)
 

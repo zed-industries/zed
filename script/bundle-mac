@@ -106,6 +106,17 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
+# DocumentTypes.plist references CFBundleTypeIconFile "Document", so the bundle must contain Document.icns.
+# We use the app icon as a placeholder document icon for now.
+document_icon_source="crates/zed/resources/Document.icns"
+document_icon_target="${app_path}/Contents/Resources/Document.icns"
+if [[ -f "${document_icon_source}" ]]; then
+    mkdir -p "$(dirname "${document_icon_target}")"
+    cp "${document_icon_source}" "${document_icon_target}"
+else
+    echo "cargo::warning=Missing ${document_icon_source}; macOS document icons may not appear in Finder."
+fi
+
 if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
     can_code_sign=true
 

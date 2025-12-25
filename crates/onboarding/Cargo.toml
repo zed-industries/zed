@@ -22,7 +22,6 @@ db.workspace = true
 documented.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
-git.workspace = true
 gpui.workspace = true
 menu.workspace = true
 notifications.workspace = true

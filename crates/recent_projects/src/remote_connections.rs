@@ -16,6 +16,7 @@ use gpui::{
 
 use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use project::trusted_worktrees;
 use release_channel::ReleaseChannel;
 use remote::{
     ConnectionIdentifier, DockerConnectionOptions, RemoteClient, RemoteConnection,
@@ -51,7 +52,7 @@ impl SshSettings {
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
         for conn in self.ssh_connections() {
-            if conn.host == options.host
+            if conn.host == options.host.to_string()
                 && conn.username == options.username
                 && conn.port == options.port
             {
@@ -71,7 +72,7 @@ impl SshSettings {
         username: Option<String>,
     ) -> SshConnectionOptions {
         let mut options = SshConnectionOptions {
-            host,
+            host: host.into(),
             port,
             username,
             ..Default::default()
@@ -208,7 +209,7 @@ impl RemoteConnectionPrompt {
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
-        window.focus(&self.editor.focus_handle(cx));
+        window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -532,8 +533,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::download_remote_server_release(
                 release_channel,
                 version.clone(),
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
@@ -563,8 +564,8 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
             AutoUpdater::get_remote_server_release_url(
                 release_channel,
                 version,
-                platform.os,
-                platform.arch,
+                platform.os.as_str(),
+                platform.arch.as_str(),
                 cx,
             )
             .await
@@ -646,6 +647,7 @@ pub async fn open_remote_project(
                 app_state.languages.clone(),
                 app_state.fs.clone(),
                 None,
+                false,
                 cx,
             );
             cx.new(|cx| {
@@ -788,11 +790,20 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                if created_new_window {
-                    window
-                        .update(cx, |_, window, _| window.remove_window())
-                        .ok();
-                }
+                window
+                    .update(cx, |workspace, window, cx| {
+                        if created_new_window {
+                            window.remove_window();
+                        }
+                        trusted_worktrees::track_worktree_trust(
+                            workspace.project().read(cx).worktree_store(),
+                            None,
+                            None,
+                            None,
+                            cx,
+                        );
+                    })
+                    .ok();
             }
 
             Ok(items) => {

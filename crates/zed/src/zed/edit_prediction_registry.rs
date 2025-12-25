@@ -145,23 +145,6 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
             },
         ))
         .detach();
-    editor
-        .register_action(cx.listener(
-            |editor, _: &copilot::NextSuggestion, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.next_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
-    editor
-        .register_action(cx.listener(
-            |editor,
-             _: &copilot::PreviousSuggestion,
-             window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.previous_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
 }
 
 fn assign_edit_prediction_provider(

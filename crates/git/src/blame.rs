@@ -1,10 +1,9 @@
+use crate::Oid;
 use crate::commit::get_messages;
 use crate::repository::RepoPath;
-use crate::{GitRemote, Oid};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
-use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
@@ -19,14 +18,6 @@ pub use git2 as libgit;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ParsedCommitMessage {
-    pub message: SharedString,
-    pub permalink: Option<url::Url>,
-    pub pull_request: Option<crate::hosting_provider::PullRequest>,
-    pub remote: Option<GitRemote>,
 }
 
 impl Blame {

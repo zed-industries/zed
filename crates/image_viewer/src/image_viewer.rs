@@ -11,7 +11,7 @@ use gpui::{
     InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
     Window, canvas, div, fill, img, opaque_grey, point, size,
 };
-use language::{DiskState, File as _};
+use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
@@ -195,7 +195,7 @@ impl Item for ImageView {
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
-        self.image_item.read(cx).file.disk_state() == DiskState::Deleted
+        self.image_item.read(cx).file.disk_state().is_deleted()
     }
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton

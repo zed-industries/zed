@@ -4,6 +4,8 @@ mod codex;
 mod custom;
 mod gemini;
 
+use collections::HashSet;
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
 
@@ -56,9 +58,19 @@ impl AgentServerDelegate {
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
     fn name(&self) -> SharedString;
+    fn connect(
+        &self,
+        root_dir: Option<&Path>,
+        delegate: AgentServerDelegate,
+        cx: &mut App,
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+
     fn default_mode(&self, _cx: &mut App) -> Option<agent_client_protocol::SessionModeId> {
         None
     }
+
     fn set_default_mode(
         &self,
         _mode_id: Option<agent_client_protocol::SessionModeId>,
@@ -79,14 +91,18 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn connect(
-        &self,
-        root_dir: Option<&Path>,
-        delegate: AgentServerDelegate,
-        cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
+    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<agent_client_protocol::ModelId> {
+        HashSet::default()
+    }
 
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+    fn toggle_favorite_model(
+        &self,
+        _model_id: agent_client_protocol::ModelId,
+        _should_be_favorite: bool,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
+    ) {
+    }
 }
 
 impl dyn AgentServer {

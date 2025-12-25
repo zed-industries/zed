@@ -15,9 +15,6 @@ pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 impl MetalAtlas {
     pub(crate) fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
-            // Shared memory can be used only if CPU and GPU share the same memory space.
-            // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
-            unified_memory: device.has_unified_memory(),
             device: AssertSend(device),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
@@ -32,7 +29,6 @@ impl MetalAtlas {
 
 struct MetalAtlasState {
     device: AssertSend<Device>,
-    unified_memory: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
@@ -150,11 +146,6 @@ impl MetalAtlasState {
         }
         texture_descriptor.set_pixel_format(pixel_format);
         texture_descriptor.set_usage(usage);
-        texture_descriptor.set_storage_mode(if self.unified_memory {
-            metal::MTLStorageMode::Shared
-        } else {
-            metal::MTLStorageMode::Managed
-        });
         let metal_texture = self.device.new_texture(&texture_descriptor);
 
         let texture_list = match kind {

@@ -22,6 +22,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use task::{Shell, SpawnInTerminal};
@@ -459,7 +460,7 @@ impl AgentServerStore {
                     .gemini
                     .as_ref()
                     .and_then(|settings| settings.ignore_system_version)
-                    .unwrap_or(false),
+                    .unwrap_or(true),
             }),
         );
         self.external_agents.insert(
@@ -974,11 +975,10 @@ fn get_or_npm_install_builtin_agent(
         }
 
         versions.sort();
-        let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+        let newest_version = if let Some((version, _)) = versions.last().cloned()
             && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
         {
-            versions.pop();
-            Some(file_name)
+            versions.pop()
         } else {
             None
         };
@@ -1004,9 +1004,8 @@ fn get_or_npm_install_builtin_agent(
         })
         .detach();
 
-        let version = if let Some(file_name) = newest_version {
+        let version = if let Some((version, file_name)) = newest_version {
             cx.background_spawn({
-                let file_name = file_name.clone();
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
@@ -1015,7 +1014,7 @@ fn get_or_npm_install_builtin_agent(
                         .await
                         .ok();
                     if let Some(latest_version) = latest_version
-                        && &latest_version != &file_name.to_string_lossy()
+                        && latest_version != version
                     {
                         let download_result = download_latest_version(
                             fs,
@@ -1028,7 +1027,9 @@ fn get_or_npm_install_builtin_agent(
                         if let Some(mut new_version_available) = new_version_available
                             && download_result.is_some()
                         {
-                            new_version_available.send(Some(latest_version)).ok();
+                            new_version_available
+                                .send(Some(latest_version.to_string()))
+                                .ok();
                         }
                     }
                 }
@@ -1047,6 +1048,7 @@ fn get_or_npm_install_builtin_agent(
                 package_name.clone(),
             ))
             .await?
+            .to_string()
             .into()
         };
 
@@ -1093,7 +1095,7 @@ async fn download_latest_version(
     dir: PathBuf,
     node_runtime: NodeRuntime,
     package_name: SharedString,
-) -> Result<String> {
+) -> Result<Version> {
     log::debug!("downloading latest version of {package_name}");
 
     let tmp_dir = tempfile::tempdir_in(&dir)?;
@@ -1109,7 +1111,7 @@ async fn download_latest_version(
 
     fs.rename(
         &tmp_dir.keep(),
-        &dir.join(&version),
+        &dir.join(version.to_string()),
         RenameOptions {
             ignore_if_exists: true,
             overwrite: true,
@@ -1866,6 +1868,7 @@ pub struct BuiltinAgentServerSettings {
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
+    pub favorite_models: Vec<String>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1889,6 +1892,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
             default_model: value.default_model,
+            favorite_models: value.favorite_models,
         }
     }
 }
@@ -1920,6 +1924,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -1934,6 +1942,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
     },
 }
 
@@ -1960,6 +1972,17 @@ impl CustomAgentServerSettings {
             }
         }
     }
+
+    pub fn favorite_models(&self) -> &[String] {
+        match self {
+            CustomAgentServerSettings::Custom {
+                favorite_models, ..
+            }
+            | CustomAgentServerSettings::Extension {
+                favorite_models, ..
+            } => favorite_models,
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1971,6 +1994,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env,
                 default_mode,
                 default_model,
+                favorite_models,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -1979,13 +2003,16 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 },
                 default_mode,
                 default_model,
+                favorite_models,
             },
             settings::CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                favorite_models,
             } => CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                favorite_models,
             },
         }
     }
@@ -2311,6 +2338,7 @@ mod extension_agent_tests {
             ignore_system_version: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2327,6 +2355,7 @@ mod extension_agent_tests {
             env: None,
             default_mode: None,
             default_model: None,
+            favorite_models: vec![],
         };
 
         let converted: CustomAgentServerSettings = settings.into();

@@ -4481,6 +4481,19 @@ async fn test_word_diff_simple_replacement(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_word_diff_white_space(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "hello world foo bar\n";
+    let modified_text = "    hello world foo bar\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, vec!["    "]);
+}
+
+#[gpui::test]
 async fn test_word_diff_consecutive_modified_lines(cx: &mut TestAppContext) {
     let settings_store = cx.update(|cx| SettingsStore::test(cx));
     cx.set_global(settings_store);

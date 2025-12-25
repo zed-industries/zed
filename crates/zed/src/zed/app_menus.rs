@@ -32,10 +32,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::submenu(Menu {
             name: "Editor Layout".into(),
             items: vec![
-                MenuItem::action("Split Up", workspace::SplitUp),
-                MenuItem::action("Split Down", workspace::SplitDown),
-                MenuItem::action("Split Left", workspace::SplitLeft),
-                MenuItem::action("Split Right", workspace::SplitRight),
+                MenuItem::action("Split Up", workspace::SplitUp::default()),
+                MenuItem::action("Split Down", workspace::SplitDown::default()),
+                MenuItem::action("Split Left", workspace::SplitLeft::default()),
+                MenuItem::action("Split Right", workspace::SplitRight::default()),
             ],
         }),
         MenuItem::separator(),

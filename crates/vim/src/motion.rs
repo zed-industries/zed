@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -2262,7 +2262,6 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
         return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
-    let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
         let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
             ..language::ToOffset::to_offset(&range.context.end, buffer);
@@ -2273,13 +2272,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         } else if offset <= excerpt_range.start {
             let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
-        } else {
-            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
-
-    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot());
-    last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(

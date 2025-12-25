@@ -659,7 +659,7 @@ impl SyntaxTreeToolbarItemView {
             buffer_state.active_layer = Some(layer.to_owned());
             view.selected_descendant_ix = None;
             cx.notify();
-            view.focus_handle.focus(window);
+            view.focus_handle.focus(window, cx);
             Some(())
         })
     }

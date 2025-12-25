@@ -305,7 +305,7 @@ impl RatePredictionsModal {
                 && prediction.id == prev_prediction.prediction.id
             {
                 if focus {
-                    window.focus(&prev_prediction.feedback_editor.focus_handle(cx));
+                    window.focus(&prev_prediction.feedback_editor.focus_handle(cx), cx);
                 }
                 return;
             }

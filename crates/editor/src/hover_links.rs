@@ -218,7 +218,7 @@ impl Editor {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
                 if !self.focus_handle.is_focused(window) {
-                    window.focus(&self.focus_handle);
+                    window.focus(&self.focus_handle, cx);
                 }
 
                 // exclude links pointing back to the current anchor

@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     fmt,
     iter::FusedIterator,
     sync::{Arc, atomic::AtomicUsize},
@@ -9,9 +10,9 @@ use rand::{Rng, SeedableRng, rngs::SmallRng};
 use crate::Priority;
 
 struct PriorityQueues<T> {
-    high_priority: Vec<T>,
-    medium_priority: Vec<T>,
-    low_priority: Vec<T>,
+    high_priority: VecDeque<T>,
+    medium_priority: VecDeque<T>,
+    low_priority: VecDeque<T>,
 }
 
 impl<T> PriorityQueues<T> {
@@ -42,9 +43,9 @@ impl<T> PriorityQueueState<T> {
         let mut queues = self.queues.lock();
         match priority {
             Priority::Realtime(_) => unreachable!(),
-            Priority::High => queues.high_priority.push(item),
-            Priority::Medium => queues.medium_priority.push(item),
-            Priority::Low => queues.low_priority.push(item),
+            Priority::High => queues.high_priority.push_back(item),
+            Priority::Medium => queues.medium_priority.push_back(item),
+            Priority::Low => queues.low_priority.push_back(item),
         };
         self.condvar.notify_one();
         Ok(())
@@ -141,9 +142,9 @@ impl<T> PriorityQueueReceiver<T> {
     pub(crate) fn new() -> (PriorityQueueSender<T>, Self) {
         let state = PriorityQueueState {
             queues: parking_lot::Mutex::new(PriorityQueues {
-                high_priority: Vec::new(),
-                medium_priority: Vec::new(),
-                low_priority: Vec::new(),
+                high_priority: VecDeque::new(),
+                medium_priority: VecDeque::new(),
+                low_priority: VecDeque::new(),
             }),
             condvar: parking_lot::Condvar::new(),
             receiver_count: AtomicUsize::new(1),
@@ -226,7 +227,7 @@ impl<T> PriorityQueueReceiver<T> {
         if !queues.high_priority.is_empty() {
             let flip = self.rand.random_ratio(P::High.probability(), mass);
             if flip {
-                return Ok(queues.high_priority.pop());
+                return Ok(queues.high_priority.pop_front());
             }
             mass -= P::High.probability();
         }
@@ -234,7 +235,7 @@ impl<T> PriorityQueueReceiver<T> {
         if !queues.medium_priority.is_empty() {
             let flip = self.rand.random_ratio(P::Medium.probability(), mass);
             if flip {
-                return Ok(queues.medium_priority.pop());
+                return Ok(queues.medium_priority.pop_front());
             }
             mass -= P::Medium.probability();
         }
@@ -242,7 +243,7 @@ impl<T> PriorityQueueReceiver<T> {
         if !queues.low_priority.is_empty() {
             let flip = self.rand.random_ratio(P::Low.probability(), mass);
             if flip {
-                return Ok(queues.low_priority.pop());
+                return Ok(queues.low_priority.pop_front());
             }
         }
 

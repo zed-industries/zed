@@ -87,7 +87,7 @@ pub async fn stream_completion(
                 Ok(None) => None,
                 Err(err) => Some((
                     Err(BedrockError::ClientError(anyhow!(
-                        "{:?}",
+                        "{}",
                         aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
                     ))),
                     stream,

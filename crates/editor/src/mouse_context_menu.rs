@@ -90,8 +90,8 @@ impl MouseContextMenu {
         // `true` when the `ContextMenu` is focused.
         let focus_handle = context_menu_focus.clone();
         cx.on_next_frame(window, move |_, window, cx| {
-            cx.on_next_frame(window, move |_, window, _cx| {
-                window.focus(&focus_handle);
+            cx.on_next_frame(window, move |_, window, cx| {
+                window.focus(&focus_handle, cx);
             });
         });
 
@@ -100,7 +100,7 @@ impl MouseContextMenu {
             move |editor, _, _event: &DismissEvent, window, cx| {
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                 }
             }
         });
@@ -127,7 +127,7 @@ impl MouseContextMenu {
                 }
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                 }
             },
         );
@@ -161,12 +161,7 @@ pub fn deploy_context_menu(
     cx: &mut Context<Editor>,
 ) {
     if !editor.is_focused(window) {
-        window.focus(&editor.focus_handle(cx));
-    }
-
-    // Don't show context menu for inline editors
-    if !editor.mode().is_full() {
-        return;
+        window.focus(&editor.focus_handle(cx), cx);
     }
 
     let display_map = editor.display_snapshot(cx);
@@ -179,6 +174,11 @@ pub fn deploy_context_menu(
         };
         menu
     } else {
+        // Don't show context menu for inline editors (only applies to default menu)
+        if !editor.mode().is_full() {
+            return;
+        }
+
         // Don't show the context menu if there isn't a project associated with this editor
         let Some(project) = editor.project.clone() else {
             return;

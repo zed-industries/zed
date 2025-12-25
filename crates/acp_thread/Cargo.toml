@@ -46,6 +46,7 @@ url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
+urlencoding.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

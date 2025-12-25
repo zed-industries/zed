@@ -403,7 +403,7 @@ impl MemoryView {
                 this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
-            self.query_editor.focus_handle(cx).focus(window);
+            self.query_editor.focus_handle(cx).focus(window, cx);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);

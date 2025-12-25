@@ -915,11 +915,8 @@ impl EditPredictionButton {
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
                     |this| {
-                        this.action(
-                            "Capture Edit Prediction Example",
-                            CaptureExample.boxed_clone(),
-                        )
-                        .action("Rate Predictions", RatePredictions.boxed_clone())
+                        this.action("Capture Prediction Example", CaptureExample.boxed_clone())
+                            .action("Rate Predictions", RatePredictions.boxed_clone())
                     },
                 );
         }

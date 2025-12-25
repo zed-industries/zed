@@ -215,6 +215,41 @@ impl Keymap {
             Some(contexts.len())
         }
     }
+
+    /// Find the bindings that can follow the current input sequence.
+    pub fn possible_next_bindings_for_input(
+        &self,
+        input: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> Vec<KeyBinding> {
+        let mut bindings = self
+            .bindings()
+            .enumerate()
+            .rev()
+            .filter_map(|(ix, binding)| {
+                let depth = self.binding_enabled(binding, context_stack)?;
+                let pending = binding.match_keystrokes(input);
+                match pending {
+                    None => None,
+                    Some(is_pending) => {
+                        if !is_pending || is_no_action(&*binding.action) {
+                            return None;
+                        }
+                        Some((depth, BindingIndex(ix), binding))
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        });
+
+        bindings
+            .into_iter()
+            .map(|(_, _, binding)| binding.clone())
+            .collect::<Vec<_>>()
+    }
 }
 
 #[cfg(test)]
