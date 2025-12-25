@@ -33,7 +33,7 @@ impl Templates {
         })
     }
 
-    /// Creates a new Templates instance that watches for filesystem overrides.
+    /// Creates a new Templates instance that watches for filesystem overrides
     pub fn with_overrides(repo_path: Option<&Path>, fs: Arc<dyn Fs>, cx: &mut App) -> Arc<Self> {
         let this = Self::new();
         let templates_dir = paths::prompt_overrides_dir(repo_path);
