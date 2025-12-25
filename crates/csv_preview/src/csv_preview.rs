@@ -134,10 +134,9 @@ impl CsvPreviewView {
 
     /// Update ordered indices when ordering or content changes
     pub(crate) fn re_sort_indices(&mut self) {
-        let start_time = Instant::now();
-        self.engine.calculate_d2d_mapping();
-        let ordering_duration = start_time.elapsed();
-        self.performance_metrics.last_ordering_took = Some(ordering_duration);
+        self.performance_metrics.record("ordering", || {
+            self.engine.calculate_d2d_mapping();
+        });
 
         // Update list state with filtered row count
         let filtered_row_count = self.engine.get_d2d_mapping().filtered_row_count();
@@ -235,58 +234,42 @@ impl Item for CsvPreviewView {
     }
 }
 
-/// Performance metrics for CSV operations.
 #[derive(Debug, Default)]
 pub struct PerformanceMetrics {
-    /// Duration of the last CSV parsing operation.
-    pub last_parse_took: Option<Duration>,
-    /// Duration of the last table ordering/sorting operation.
-    pub last_ordering_took: Option<Duration>,
-    /// Duration of the last copy operation.
-    pub last_copy_took: Option<Duration>,
-    /// Duration of the last selection operation (navigation or select_all).
-    pub last_selection_took: Option<Duration>,
-    /// Duration of the last render preparation (table_with_settings div creation).
-    pub last_render_preparation_took: Option<Duration>,
+    /// Map of timing metrics with their duration and measurement time.
+    pub timings: HashMap<&'static str, (Duration, Instant)>,
     /// List of display indices that were rendered in the current frame.
     pub rendered_indices: Vec<usize>,
 }
-/// Extension trait for timing the execution of a closure and storing the duration.
-///
-/// This trait is implemented for `Option<Duration>`, allowing you to easily
-/// time an operation and store its duration in place. For example:
-///
-/// ```rust
-/// self.performance_metrics
-///     .last_selection_took
-///     .record_timing(|| self.engine.change_selection(direction, operation));
-/// ```
-///
-/// The previous value is replaced with the new duration.
-pub(crate) trait TimingRecorder {
-    /// Runs the provided closure, records its execution time, and stores it in `self`.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - The closure to execute and time.
-    ///
-    /// # Returns
-    ///
-    /// Returns the result of the closure.
-    fn record_timing<F, R>(&mut self, f: F) -> R
-    where
-        F: FnMut() -> R;
-}
-
-impl TimingRecorder for Option<Duration> {
-    fn record_timing<F, R>(&mut self, mut f: F) -> R
+impl PerformanceMetrics {
+    pub fn record<F, R>(&mut self, name: &'static str, mut f: F) -> R
     where
         F: FnMut() -> R,
     {
         let start_time = Instant::now();
         let ret = f();
         let duration = start_time.elapsed();
-        self.replace(duration);
+        self.timings.insert(name, (duration, Instant::now()));
         ret
+    }
+
+    /// Displays all metrics sorted A-Z in format: `{name}: {took}ms {ago}s ago`
+    pub fn display(&self) -> String {
+        let mut metrics = self.timings.iter().collect::<Vec<_>>();
+        metrics.sort_by_key(|&(name, _)| *name);
+        metrics
+            .iter()
+            .map(|(name, (duration, time))| {
+                let took = duration.as_millis();
+                let ago = time.elapsed().as_secs();
+                format!("{name}: {took}ms {ago}s ago")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Get timing for a specific metric
+    pub fn get_timing(&self, name: &str) -> Option<Duration> {
+        self.timings.get(name).map(|(duration, _)| *duration)
     }
 }

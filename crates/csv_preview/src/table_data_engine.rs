@@ -40,6 +40,7 @@ impl TableDataEngine {
     }
 
     /// Takes applied filters/sorting, source content and produces display to data mapping
+    // TODO: Extract available filter recalculation only on parsing
     pub(crate) fn calculate_d2d_mapping(&mut self) {
         // Recalculate available filters from current content
         self.available_filters =

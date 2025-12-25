@@ -122,7 +122,10 @@ impl CsvPreviewView {
                         preserve_existing,
                     );
                     let selection_duration = start_time.elapsed();
-                    this.performance_metrics.last_selection_took = Some(selection_duration);
+                    this.performance_metrics.timings.insert(
+                        "Mouse selection",
+                        (selection_duration, std::time::Instant::now()),
+                    );
 
                     // Update cell editor to show focused cell content
                     this.on_selection_changed(window, cx, Some(scroll));
@@ -148,33 +151,33 @@ impl CsvPreviewView {
                         this.engine.selection.end_mouse_selection();
                         return;
                     }
-                    let start_time = Instant::now();
-                    // Calculate scroll direction by comparing current vs focused cell
-                    let scroll =
-                        if let Some(focused_cell) = this.engine.selection.get_focused_cell() {
-                            match focused_cell.row.0.cmp(&display_cell_id.row.0) {
-                                std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
-                                std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
-                                std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
-                            }
-                        } else {
-                            ScrollOffset::NoOffset
-                        };
 
-                    let ordered_indices = this.engine.d2d_mapping.clone();
-                    let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.engine.selection.extend_mouse_selection(
-                        display_cell_id.row,
-                        display_cell_id.col,
-                        &ordered_indices,
-                        preserve_existing,
-                    );
-                    let selection_duration = start_time.elapsed();
-                    this.performance_metrics.last_selection_took = Some(selection_duration);
+                    // Calculate scroll direction by comparing current vs focused cell
+                    let scroll = this.performance_metrics.record("Mouse selection", || {
+                        let scroll =
+                            if let Some(focused_cell) = this.engine.selection.get_focused_cell() {
+                                match focused_cell.row.0.cmp(&display_cell_id.row.0) {
+                                    std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
+                                    std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
+                                    std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
+                                }
+                            } else {
+                                ScrollOffset::NoOffset
+                            };
+
+                        let ordered_indices = this.engine.d2d_mapping.clone();
+                        let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
+                        this.engine.selection.extend_mouse_selection(
+                            display_cell_id.row,
+                            display_cell_id.col,
+                            &ordered_indices,
+                            preserve_existing,
+                        );
+                        scroll
+                    });
 
                     // Update cell editor to show focused cell content during drag
-                    let scroll = Some(scroll);
-                    this.on_selection_changed(window, cx, scroll);
+                    this.on_selection_changed(window, cx, Some(scroll));
                     cx.notify();
                 });
             }

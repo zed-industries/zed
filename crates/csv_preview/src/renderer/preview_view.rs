@@ -84,7 +84,10 @@ impl Render for CsvPreviewView {
             });
 
         let render_prep_duration = render_prep_start.elapsed();
-        self.performance_metrics.last_render_preparation_took = Some(render_prep_duration);
+        self.performance_metrics.timings.insert(
+            "render_prep",
+            (render_prep_duration, std::time::Instant::now()),
+        );
 
         div()
             // .id("csv-preview-pane")

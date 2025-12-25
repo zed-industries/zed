@@ -11,7 +11,6 @@ use crate::{
     ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
     ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
     SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
-    TimingRecorder,
     settings::RowRenderMechanism,
     table_data_engine::selection::{
         NavigationDirection as ND, NavigationOperation as NO, ScrollOffset, TableSelection,
@@ -28,9 +27,9 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.performance_metrics
-            .last_selection_took
-            .record_timing(|| self.engine.change_selection(direction, operation));
+        self.performance_metrics.record("selection", || {
+            self.engine.change_selection(direction, operation);
+        });
 
         let scroll = match direction {
             ND::Up => Some(ScrollOffset::Negative),
@@ -116,12 +115,12 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let start_time = Instant::now();
         let max_rows = self.engine.contents.rows.len();
         let max_cols = self.engine.contents.number_of_cols;
-        self.engine.selection.select_all(max_rows, max_cols);
 
-        self.performance_metrics.last_selection_took = Some(start_time.elapsed());
+        self.performance_metrics.record("select_all", || {
+            self.engine.selection.select_all(max_rows, max_cols);
+        });
         self.on_selection_changed(window, cx, Some(ScrollOffset::NoOffset));
         cx.notify();
     }

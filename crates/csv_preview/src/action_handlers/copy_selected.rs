@@ -3,8 +3,7 @@ use ui::{Context, Window};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use crate::{
-    CopySelected, CsvPreviewView, TimingRecorder, settings::CopyFormat,
-    table_data_engine::copy_selected::ToastInfo,
+    CopySelected, CsvPreviewView, settings::CopyFormat, table_data_engine::copy_selected::ToastInfo,
 };
 
 impl CsvPreviewView {
@@ -17,10 +16,9 @@ impl CsvPreviewView {
         let copy_format = self.settings.copy_format;
         let copy_mode = self.settings.copy_mode;
 
-        let maybe_copied = self
-            .performance_metrics
-            .last_copy_took
-            .record_timing(|| self.engine.try_copy_selected(copy_format, copy_mode));
+        let maybe_copied = self.performance_metrics.record("copy", || {
+            self.engine.try_copy_selected(copy_format, copy_mode)
+        });
 
         let (toast_info, content) = match maybe_copied {
             Some(value) => value,
