@@ -13,7 +13,7 @@ use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
-    sorting_by_column::SortedIndices,
+    table_data_engine::sorting_by_column::SortedIndices,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 

@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Instant};
 
 use crate::{
     cell_editor::CellEditorCtx, data_table::TableInteractionState,
-    sorting_by_column::generate_sorted_indices,
+    table_data_engine::sorting_by_column::generate_sorted_indices,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
@@ -18,7 +18,7 @@ use crate::{
     performance_metrics_overlay::PerformanceMetrics,
     selection::TableSelection,
     settings::CsvPreviewSettings,
-    sorting_by_column::{SortedIndices, SortingConfig},
+    table_data_engine::sorting_by_column::{SortedIndices, SortingConfig},
     table_like_content::TableLikeContent,
 };
 
@@ -34,7 +34,6 @@ mod row_identifiers;
 mod selection;
 mod selection_handlers;
 mod settings;
-mod sorting_by_column;
 mod table_cell;
 mod table_data_engine;
 mod table_like_content;
