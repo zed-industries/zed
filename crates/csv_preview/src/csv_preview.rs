@@ -36,6 +36,7 @@ mod selection_handlers;
 mod settings;
 mod sorting_by_column;
 mod table_cell;
+mod table_data_engine;
 mod table_like_content;
 mod types;
 
