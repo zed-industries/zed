@@ -13,23 +13,21 @@ use crate::{
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
+use crate::renderer::nasty_code_duplication::ColumnWidths;
 use crate::{
-    nasty_code_duplication::ColumnWidths, parser::EditorState,
-    performance_metrics_overlay::PerformanceMetrics, settings::CsvPreviewSettings,
-    table_data_engine::selection::TableSelection, table_like_content::TableLikeContent,
+    parser::EditorState, performance_metrics_overlay::PerformanceMetrics,
+    settings::CsvPreviewSettings, table_data_engine::selection::TableSelection,
+    table_like_content::TableLikeContent,
 };
 
 pub use types::data_table;
 mod action_handlers;
 mod cell_editor;
-mod nasty_code_duplication;
 mod parser;
 mod performance_metrics_overlay;
-mod render_table;
 mod renderer;
-mod row_identifiers;
 mod settings;
-mod table_cell;
+
 mod table_data_engine;
 mod table_like_content;
 mod types;

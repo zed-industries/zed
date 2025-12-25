@@ -4,10 +4,7 @@ use ui::SharedString;
 #[cfg(test)]
 use text::{Buffer, BufferId, ReplicaId};
 
-use crate::{
-    row_identifiers::LineNumber,
-    types::{DataCellId, DataRow, TableCell, TableRow},
-};
+use crate::types::{DataCellId, DataRow, LineNumber, TableCell, TableRow};
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
 #[derive(Clone)]

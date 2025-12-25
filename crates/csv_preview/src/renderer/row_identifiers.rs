@@ -7,17 +7,8 @@ use ui::{
 use crate::{
     CsvPreviewView,
     settings::{FontType, RowIdentifiers},
-    types::{DataRow, DisplayRow},
+    types::{DataRow, DisplayRow, LineNumber},
 };
-
-/// Line number information for CSV rows
-#[derive(Debug, Clone, Copy)]
-pub enum LineNumber {
-    /// Single line row
-    Line(usize),
-    /// Multi-line row spanning from start to end line. Incluisive
-    LineRange(usize, usize),
-}
 
 pub enum RowIdentDisplayMode {
     /// E.g
