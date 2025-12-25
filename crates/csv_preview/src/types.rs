@@ -5,6 +5,8 @@ mod table_row;
 pub use table_cell::*;
 pub mod data_table;
 mod table_cell;
+pub use table_like_content::*;
+mod table_like_content;
 
 /// Line number information for CSV rows
 #[derive(Debug, Clone, Copy)]

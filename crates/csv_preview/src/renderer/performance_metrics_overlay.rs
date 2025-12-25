@@ -3,7 +3,7 @@
 //! Provides a semi-transparent overlay in the bottom-right corner showing
 //! CSV parsing performance metrics for developer experience.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 

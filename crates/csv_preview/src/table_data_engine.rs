@@ -12,7 +12,7 @@ use crate::{
         selection::{NavigationDirection, NavigationOperation, TableSelection},
         sorting_by_column::{AppliedSorting, DisplayToDataMapping, generate_sorted_indices},
     },
-    table_like_content::TableLikeContent,
+    types::TableLikeContent,
 };
 
 pub mod copy_selected;

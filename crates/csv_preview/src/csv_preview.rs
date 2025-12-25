@@ -19,7 +19,7 @@ use workspace::{Item, Workspace};
 use crate::renderer::nasty_code_duplication::ColumnWidths;
 use crate::{
     parser::EditorState, settings::CsvPreviewSettings,
-    table_data_engine::selection::TableSelection, table_like_content::TableLikeContent,
+    table_data_engine::selection::TableSelection, types::TableLikeContent,
 };
 
 pub use types::data_table;
@@ -28,9 +28,7 @@ mod cell_editor;
 mod parser;
 mod renderer;
 mod settings;
-
 mod table_data_engine;
-mod table_like_content;
 mod types;
 
 actions!(
