@@ -6,14 +6,14 @@
 //!
 //! Selection follows data when sorting - intuitive behavior.
 
-use std::{collections::HashSet, time::Instant};
+use std::collections::HashSet;
 
 use gpui::ScrollStrategy;
 use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
-    performance_metrics_overlay::{MeasureExt, TimingRecorder},
+    performance_metrics_overlay::TimingRecorder,
     settings::RowRenderMechanism,
     table_data_engine::sorting_by_column::DisplayToDataMapping,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},

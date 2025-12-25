@@ -13,6 +13,7 @@ use crate::{
     table_like_content::TableLikeContent,
 };
 
+pub mod copy_selected;
 pub mod selection;
 pub mod sorting_by_column;
 
