@@ -11,7 +11,7 @@ use crate::{
     ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
     ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
     SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
-    performance_metrics_overlay::TimingRecorder,
+    TimingRecorder,
     settings::RowRenderMechanism,
     table_data_engine::selection::{
         NavigationDirection as ND, NavigationOperation as NO, ScrollOffset, TableSelection,
