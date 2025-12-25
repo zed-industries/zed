@@ -21,7 +21,6 @@ use crate::{
 
 mod action_handlers;
 mod cell_editor;
-mod copy_selected;
 mod data_table;
 mod nasty_code_duplication;
 mod parser;
