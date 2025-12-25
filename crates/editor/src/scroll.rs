@@ -178,19 +178,31 @@ impl ScrollAnimation {
 
     pub fn advance(&self) -> gpui::Point<ScrollOffset> {
         let progress = self.progress();
-        let easing_fn = Self::easing_fn();
-        let eased_progress = easing_fn(progress);
 
         let start = self.start_position;
         let target = self.target_position;
 
-        let current_x = start.x + (target.x - start.x) * eased_progress as f64;
-        let current_y = start.y + (target.y - start.y) * eased_progress as f64;
+        let current_x = self.interpolate(start.x, target.x, progress);
+        let current_y = self.interpolate(start.y, target.y, progress);
 
         point(current_x, current_y)
     }
 
-    pub fn easing_fn() -> impl Fn(f32) -> f32 {
+    pub fn restart(&mut self, target: gpui::Point<ScrollOffset>) {
+        self.start_position = self.advance();
+        self.start_time = Instant::now();
+        self.target_position = target;
+    }
+
+    fn interpolate(&self, from: ScrollOffset, to: ScrollOffset, progress: f32) -> ScrollOffset {
+        let delta = to - from;
+        let easing_fn = Self::easing_fn();
+        let eased_progress = easing_fn(progress) as ScrollOffset;
+
+        from + delta * eased_progress
+    }
+
+    fn easing_fn() -> impl Fn(f32) -> f32 {
         gpui::ease_out_cubic()
     }
 }
@@ -545,19 +557,23 @@ impl ScrollManager {
         current_position: gpui::Point<ScrollOffset>,
         target_position: gpui::Point<ScrollOffset>,
     ) {
-        // We advance the current animation and restart it with the last position
-        let start_position = if let Some(animation) = &self.scroll_animation {
-            animation.advance()
-        } else {
-            current_position
-        };
+        if self
+            .scroll_animation
+            .is_some_and(|a| a.target_position == target_position)
+        {
+            return;
+        }
 
-        self.scroll_animation = Some(ScrollAnimation {
-            start_position,
-            target_position,
-            start_time: Instant::now(),
-            duration: self.scroll_animation_duration,
-        });
+        if let Some(animation) = &mut self.scroll_animation {
+            animation.restart(target_position);
+        } else {
+            self.scroll_animation = Some(ScrollAnimation {
+                duration: self.scroll_animation_duration,
+                start_position: current_position,
+                target_position,
+                start_time: Instant::now(),
+            })
+        }
     }
 
     pub fn cancel_animation(&mut self) {
