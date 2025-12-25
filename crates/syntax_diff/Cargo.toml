@@ -12,3 +12,4 @@ path = "src/syntax_diff.rs"
 
 [dependencies]
 tree-sitter.workspace = true
+collections.workspace = true

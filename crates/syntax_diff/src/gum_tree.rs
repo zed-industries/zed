@@ -10,7 +10,11 @@
 // 1. Top-down: Match isomorphic subtrees that are sufficiently deep and unique
 // 2. Bottom-up: Match remaining nodes based on ancestor similarity
 
-use std::hash::{DefaultHasher, Hash, Hasher};
+use collections::FxHashMap;
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Range,
+};
 
 /// Unique identifier for a node within a DiffTree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -34,6 +38,8 @@ pub struct DiffTree<'a> {
 pub struct DiffNode {
     /// Index of this node in the DiffTree's nodes vector
     pub id: NodeId,
+    /// The tree-sitter node kind (e.g., "function_definition", "identifier")
+    pub kind: &'static str,
     /// The tree-sitter kind ID for fast comparison
     pub kind_id: u16,
     /// Height of this node (0 for leaves, max child height + 1 for internal nodes)
@@ -46,6 +52,81 @@ pub struct DiffNode {
     pub parent: Option<NodeId>,
     /// Number of descendants (including self)
     pub descendant_count: u32,
+}
+
+/// The result of matching two trees.
+///
+/// Contains bidirectional mappings between nodes in the old and new trees.
+#[derive(Default)]
+pub struct Matching {
+    /// Maps old tree node ID -> new tree node ID
+    old_to_new: FxHashMap<NodeId, NodeId>,
+    /// Maps new tree node ID -> old tree node ID
+    new_to_old: FxHashMap<NodeId, NodeId>,
+}
+
+impl Matching {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, old_id: NodeId, new_id: NodeId) {
+        self.old_to_new.insert(old_id, new_id);
+        self.new_to_old.insert(new_id, old_id);
+    }
+
+    pub fn is_old_matched(&self, id: NodeId) -> bool {
+        self.old_to_new.contains_key(&id)
+    }
+
+    pub fn is_new_matched(&self, id: NodeId) -> bool {
+        self.new_to_old.contains_key(&id)
+    }
+
+    pub fn get_new(&self, old_id: NodeId) -> Option<NodeId> {
+        self.old_to_new.get(&old_id).copied()
+    }
+
+    pub fn get_old(&self, new_id: NodeId) -> Option<NodeId> {
+        self.new_to_old.get(&new_id).copied()
+    }
+
+    pub fn matched_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
+        self.old_to_new.iter().map(|(&old, &new)| (old, new))
+    }
+}
+
+/// A single diff operation representing a change between trees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffOperation {
+    /// Node was deleted from the old tree
+    Delete {
+        range: Range<usize>,
+        node_kind: &'static str,
+    },
+    /// Node was inserted into the new tree
+    Insert {
+        range: Range<usize>,
+        node_kind: &'static str,
+    },
+    /// Node was moved to a different parent
+    Move {
+        old_range: Range<usize>,
+        new_range: Range<usize>,
+        node_kind: &'static str,
+    },
+    /// Node content was updated (same structure, different text)
+    Update {
+        old_range: Range<usize>,
+        new_range: Range<usize>,
+        node_kind: &'static str,
+    },
+}
+
+/// The result of diffing two syntax trees.
+#[derive(Debug, Default)]
+pub struct DiffResult {
+    pub operations: Vec<DiffOperation>,
 }
 
 impl<'a> DiffTree<'a> {
@@ -99,6 +180,7 @@ fn build_nodes(
 
     let node = DiffNode {
         id,
+        kind: node.kind(),
         kind_id: node.kind_id(),
         structural_hash,
         content_hash,
