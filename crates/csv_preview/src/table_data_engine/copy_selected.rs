@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::table_cell::TableCell;
 use crate::table_data_engine::TableDataEngine;
+use crate::types::TableCell;
 use crate::{
     settings::{CopyFormat, CopyMode},
     types::AnyColumn,

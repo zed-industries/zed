@@ -1,7 +1,7 @@
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
-use crate::table_cell::TableCell;
+use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::{DefiniteLength, div, h_flex, prelude::*};

@@ -6,10 +6,10 @@ use ui::{
     Styled as _, StyledTypography as _, Window, div, h_flex,
 };
 
+use crate::types::{CellContentSpan, TableCell};
 use crate::{
     CELL_EDITOR_CONTEXT_NAME, CancelCellEditing, CsvPreviewView, FinishCellEditing,
     StartCellEditing,
-    table_cell::{CellContentSpan, TableCell},
     table_data_engine::copy_selected::EscapedCellString,
     types::{AnyColumn, DataCellId, DisplayCellId, TableRow},
 };
