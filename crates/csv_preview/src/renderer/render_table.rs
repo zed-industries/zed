@@ -4,37 +4,15 @@ use crate::data_table::TableResizeBehavior;
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
-use ui::{DefiniteLength, div, h_flex, prelude::*};
+use ui::{DefiniteLength, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
-    settings::FontType,
     settings::RowRenderMechanism,
     types::{AnyColumn, DisplayCellId, DisplayRow},
 };
 
 impl CsvPreviewView {
-    /// Create header for data, which is orderable with text on the left and sort button on the right
-    fn create_header_element_with_sort_button(
-        &self,
-        header_text: SharedString,
-        cx: &mut Context<'_, CsvPreviewView>,
-        col_idx: AnyColumn,
-    ) -> AnyElement {
-        // CSV data columns: text + sort button
-        h_flex()
-            .justify_between()
-            .items_center()
-            .w_full()
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
-            .child(div().child(header_text))
-            .child(self.create_sort_button(cx, col_idx))
-            .into_any_element()
-    }
-
     pub(crate) fn create_table<const COLS: usize>(
         &self,
         current_widths: &Entity<TableColumnWidths<COLS>>,
