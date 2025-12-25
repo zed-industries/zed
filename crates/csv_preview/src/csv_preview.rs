@@ -15,8 +15,8 @@ use workspace::{Item, Workspace};
 
 use crate::{
     nasty_code_duplication::ColumnWidths, parser::EditorState,
-    performance_metrics_overlay::PerformanceMetrics, selection::TableSelection,
-    settings::CsvPreviewSettings, table_like_content::TableLikeContent,
+    performance_metrics_overlay::PerformanceMetrics, settings::CsvPreviewSettings,
+    table_data_engine::selection::TableSelection, table_like_content::TableLikeContent,
 };
 
 mod cell_editor;
@@ -28,7 +28,6 @@ mod performance_metrics_overlay;
 mod render_table;
 mod renderer;
 mod row_identifiers;
-mod selection;
 mod selection_handlers;
 mod settings;
 mod table_cell;

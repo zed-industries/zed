@@ -12,6 +12,7 @@ use crate::{
     table_like_content::TableLikeContent,
 };
 
+pub mod selection;
 pub mod sorting_by_column;
 
 pub(crate) struct TableDataEngine {
