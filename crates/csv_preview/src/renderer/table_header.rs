@@ -165,6 +165,19 @@ impl CsvPreviewView {
     ) -> gpui::Entity<ContextMenu> {
         ContextMenu::build(window, cx, move |menu, _, _| {
             let mut menu = menu;
+            if applied_filters.is_some() {
+                menu = menu
+                    .toggleable_entry("Clear all", false, ui::IconPosition::Start, None, {
+                        let view_entity = view_entity.clone();
+                        move |_window, cx| {
+                            view_entity.update(cx, |view, cx| {
+                                view.clear_filters(col_idx);
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .separator();
+            }
 
             for filter in sorted_filters.iter() {
                 let is_applied = applied_filters
