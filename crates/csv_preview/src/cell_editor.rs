@@ -9,8 +9,8 @@ use ui::{
 use crate::{
     CELL_EDITOR_CONTEXT_NAME, CancelCellEditing, CsvPreviewView, FinishCellEditing,
     StartCellEditing,
-    copy_selected::EscapedCellString,
     table_cell::{CellContentSpan, TableCell},
+    table_data_engine::copy_selected::EscapedCellString,
     types::{AnyColumn, DataCellId, DisplayCellId, TableRow},
 };
 
