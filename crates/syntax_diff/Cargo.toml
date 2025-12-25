@@ -1,0 +1,13 @@
+[package]
+name = "syntax_diff"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/syntax_diff.rs"
+
+[dependencies]

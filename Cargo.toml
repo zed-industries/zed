@@ -168,6 +168,7 @@ members = [
     "crates/supermaven_api",
     "crates/codestral",
     "crates/svg_preview",
+    "crates/syntax_diff",
     "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
