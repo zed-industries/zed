@@ -13,7 +13,7 @@ use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
-    table_data_engine::sorting_by_column::SortedIndices,
+    table_data_engine::sorting_by_column::DisplayToDataMapping,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
 
@@ -96,7 +96,11 @@ impl CellSelectionManager {
     /// # Arguments
     /// * `display_cell` - Cell coordinates in display space
     /// * `ordered_indices` - Mapping between display and data coordinates
-    pub fn add_cell(&mut self, display_cell: DisplayCellId, ordered_indices: &SortedIndices) {
+    pub fn add_cell(
+        &mut self,
+        display_cell: DisplayCellId,
+        ordered_indices: &DisplayToDataMapping,
+    ) {
         if let Some(data_row) =
             ordered_indices.get_data_row(DisplayRow::from(display_cell.row.get()))
         {
@@ -137,7 +141,7 @@ impl CellSelectionManager {
         &mut self,
         start: DisplayCellId,
         end: DisplayCellId,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
     ) {
         // Simple implementation - add individual cells (can optimize with ranges later)
         let min_row = start.row.get().min(end.row.get());
@@ -166,7 +170,7 @@ impl CellSelectionManager {
         &self,
         display_row: DisplayRow,
         col: AnyColumn,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
     ) -> bool {
         match &self.strategy {
             SelectionStrategy::Empty => false,
@@ -199,7 +203,7 @@ impl CellSelectionManager {
     /// * `max_cols` - Maximum number of columns (for AllCells strategy)
     pub fn get_selected_cells(
         &self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) -> HashSet<DataCellId> {
@@ -239,7 +243,7 @@ impl CellSelectionManager {
     /// * `max_cols` - Maximum number of columns (for AllCells strategy)
     pub fn get_selected_display_cells(
         &self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) -> HashSet<DisplayCellId> {
@@ -310,7 +314,7 @@ impl TableSelection {
         &mut self,
         display_row: DisplayRow,
         col: AnyColumn,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         preserve_existing: bool,
     ) {
         if !preserve_existing {
@@ -332,7 +336,7 @@ impl TableSelection {
         &mut self,
         display_row: DisplayRow,
         col: AnyColumn,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         preserve_existing: bool,
     ) {
         let Some(anchor_cell) = self.selection_anchor else {
@@ -372,7 +376,7 @@ impl TableSelection {
         &self,
         display_row: DisplayRow,
         col: AnyColumn,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
     ) -> bool {
         self.selection_manager
             .is_selected(display_row, col, ordered_indices)
@@ -386,7 +390,7 @@ impl TableSelection {
     /// Get the selected cells for copying
     pub fn get_selected_cells(
         &self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) -> HashSet<DataCellId> {
@@ -397,7 +401,7 @@ impl TableSelection {
     /// Get selected cells in display coordinates for display-order copying
     pub fn get_selected_display_cells(
         &self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) -> HashSet<DisplayCellId> {
@@ -438,7 +442,7 @@ impl TableSelection {
     }
 
     /// Initialize focus and selection to top-left cell if not already set
-    fn ensure_focus_initialized(&mut self, ordered_indices: &SortedIndices) {
+    fn ensure_focus_initialized(&mut self, ordered_indices: &DisplayToDataMapping) {
         let display_cell = DisplayCellId::new(0, 0);
         self.focused_cell = Some(display_cell);
         // Set anchor to the same cell for consistent visual feedback
@@ -454,7 +458,7 @@ impl TableSelection {
     fn move_focus_direction(
         &mut self,
         direction: NavigationDirection,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) {
@@ -511,7 +515,7 @@ impl TableSelection {
     }
 
     /// Update selection from anchor to focused cell (rectangular selection).
-    fn update_range_selection(&mut self, ordered_indices: &SortedIndices) {
+    fn update_range_selection(&mut self, ordered_indices: &DisplayToDataMapping) {
         if let (Some(anchor), Some(focused)) = (self.selection_anchor, self.focused_cell) {
             self.selection_manager.clear();
             self.selection_manager
@@ -524,7 +528,7 @@ impl TableSelection {
     fn extend_selection_direction(
         &mut self,
         direction: NavigationDirection,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) {
@@ -595,7 +599,7 @@ impl TableSelection {
     }
 
     /// Jump focus to the top row (first row in display order)
-    pub fn jump_to_top_edge(&mut self, ordered_indices: &SortedIndices) {
+    pub fn jump_to_top_edge(&mut self, ordered_indices: &DisplayToDataMapping) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -609,7 +613,7 @@ impl TableSelection {
     }
 
     /// Jump focus to the bottom row (last row in display order)
-    pub fn jump_to_bottom_edge(&mut self, ordered_indices: &SortedIndices, max_rows: usize) {
+    pub fn jump_to_bottom_edge(&mut self, ordered_indices: &DisplayToDataMapping, max_rows: usize) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -625,7 +629,7 @@ impl TableSelection {
     }
 
     /// Jump focus to the leftmost column (column 0)
-    pub fn jump_to_left_edge(&mut self, ordered_indices: &SortedIndices) {
+    pub fn jump_to_left_edge(&mut self, ordered_indices: &DisplayToDataMapping) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -639,7 +643,7 @@ impl TableSelection {
     }
 
     /// Jump focus to the rightmost column (last column)
-    pub fn jump_to_right_edge(&mut self, ordered_indices: &SortedIndices, max_cols: usize) {
+    pub fn jump_to_right_edge(&mut self, ordered_indices: &DisplayToDataMapping, max_cols: usize) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -655,7 +659,7 @@ impl TableSelection {
     }
 
     /// Extend selection to the top row while keeping anchor
-    pub fn extend_selection_to_top_edge(&mut self, ordered_indices: &SortedIndices) {
+    pub fn extend_selection_to_top_edge(&mut self, ordered_indices: &DisplayToDataMapping) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -675,7 +679,7 @@ impl TableSelection {
     /// Extend selection to the bottom row while keeping anchor
     pub fn extend_selection_to_bottom_edge(
         &mut self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
     ) {
         let Some(focused) = self.focused_cell else {
@@ -697,7 +701,7 @@ impl TableSelection {
     }
 
     /// Extend selection to the leftmost column while keeping anchor
-    pub fn extend_selection_to_left_edge(&mut self, ordered_indices: &SortedIndices) {
+    pub fn extend_selection_to_left_edge(&mut self, ordered_indices: &DisplayToDataMapping) {
         let Some(focused) = self.focused_cell else {
             self.ensure_focus_initialized(ordered_indices);
             return;
@@ -717,7 +721,7 @@ impl TableSelection {
     /// Extend selection to the rightmost column while keeping anchor
     pub fn extend_selection_to_right_edge(
         &mut self,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_cols: usize,
     ) {
         let Some(focused) = self.focused_cell else {
@@ -743,7 +747,7 @@ impl TableSelection {
         &mut self,
         direction: NavigationDirection,
         operation: NavigationOperation,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) {
@@ -767,7 +771,7 @@ impl TableSelection {
     fn jump_to_edge_direction(
         &mut self,
         direction: NavigationDirection,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) {
@@ -783,7 +787,7 @@ impl TableSelection {
     fn extend_to_edge_direction(
         &mut self,
         direction: NavigationDirection,
-        ordered_indices: &SortedIndices,
+        ordered_indices: &DisplayToDataMapping,
         max_rows: usize,
         max_cols: usize,
     ) {
@@ -827,7 +831,7 @@ impl CsvPreviewView {
         self.selection.navigate(
             direction,
             operation,
-            &self.sorted_indices,
+            &self.engine.d2d_mapping,
             max_rows,
             max_cols,
         );

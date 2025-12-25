@@ -15,21 +15,25 @@ pub enum SortDirection {
     Desc,
 }
 
+/// Config or currently active sorting
 #[derive(Clone, Copy)]
-pub struct SortingConfig {
+pub struct AppliedSorting {
     /// 0-based column index
     pub col_idx: AnyColumn,
     /// Direction of sorting (asc/desc)
     pub direction: SortDirection,
 }
 
-/// Sorted indices mapping display positions to data positions
-#[derive(Debug, Clone)]
-pub struct SortedIndices {
+/// Relation of Display (rendered) rows to Data (src) rows with applied transformations
+/// Transformations applied:
+/// - sorting by column
+/// - todo: filtering
+#[derive(Debug)]
+pub struct DisplayToDataMapping {
     mapping: HashMap<DisplayRow, DataRow>,
 }
 
-impl SortedIndices {
+impl DisplayToDataMapping {
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
@@ -49,9 +53,9 @@ impl SortedIndices {
 /// Note: sorting.col_idx refers to CSV data columns (0-based), not display columns
 /// (display columns include the line number column at index 0)
 pub fn generate_sorted_indices(
-    sorting: Option<SortingConfig>,
+    sorting: Option<AppliedSorting>,
     contents: &TableLikeContent,
-) -> SortedIndices {
+) -> DisplayToDataMapping {
     let indices: Vec<usize> = (0..contents.rows.len()).collect();
 
     let sorted_indices = if let Some(sorting) = sorting {
@@ -67,13 +71,13 @@ pub fn generate_sorted_indices(
         .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), DataRow::from(data_idx)))
         .collect();
 
-    SortedIndices { mapping }
+    DisplayToDataMapping { mapping }
 }
 
 fn sort_indices(
     contents: &TableLikeContent,
     mut indices: Vec<usize>,
-    sorting: SortingConfig,
+    sorting: AppliedSorting,
 ) -> Vec<usize> {
     indices.sort_by(|&a, &b| {
         let row_a = &contents.rows[a];
@@ -115,7 +119,7 @@ impl CsvPreviewView {
     ) -> Button {
         let sort_btn = Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
-            match self.sorting_cfg {
+            match self.engine.applied_sorting {
                 Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
                     SortDirection::Asc => "↓",
                     SortDirection::Desc => "↑",
@@ -124,12 +128,18 @@ impl CsvPreviewView {
             },
         )
         .size(ButtonSize::Compact)
-        .style(if self.sorting_cfg.is_some_and(|o| o.col_idx == col_idx) {
-            ButtonStyle::Filled
-        } else {
-            ButtonStyle::Subtle
-        })
-        .tooltip(Tooltip::text(match self.sorting_cfg {
+        .style(
+            if self
+                .engine
+                .applied_sorting
+                .is_some_and(|o| o.col_idx == col_idx)
+            {
+                ButtonStyle::Filled
+            } else {
+                ButtonStyle::Subtle
+            },
+        )
+        .tooltip(Tooltip::text(match self.engine.applied_sorting {
             Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
                 SortDirection::Asc => "Sorted A-Z. Click to sort Z-A",
                 SortDirection::Desc => "Sorted Z-A. Click to disable sorting",
@@ -137,11 +147,11 @@ impl CsvPreviewView {
             _ => "Not sorted. Click to sort A-Z",
         }))
         .on_click(cx.listener(move |this, _event, _window, cx| {
-            let new_ordering = match this.sorting_cfg {
+            let new_sorting = match this.engine.applied_sorting {
                 Some(ordering) if ordering.col_idx == col_idx => {
                     // Same column clicked - cycle through states
                     match ordering.direction {
-                        SortDirection::Asc => Some(SortingConfig {
+                        SortDirection::Asc => Some(AppliedSorting {
                             col_idx,
                             direction: SortDirection::Desc,
                         }),
@@ -150,14 +160,14 @@ impl CsvPreviewView {
                 }
                 _ => {
                     // Different column or no sorting - start with ascending
-                    Some(SortingConfig {
+                    Some(AppliedSorting {
                         col_idx,
                         direction: SortDirection::Asc,
                     })
                 }
             };
 
-            this.sorting_cfg = new_ordering;
+            this.engine.applied_sorting = new_sorting;
             this.re_sort_indices();
             cx.notify();
         }));

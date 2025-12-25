@@ -62,7 +62,7 @@ pub(crate) struct CellEditorCtx {
 
 impl CsvPreviewView {
     pub(crate) fn display_to_data_cell(&self, focused_cell: &DisplayCellId) -> Option<DataCellId> {
-        let data_row = self.sorted_indices.get_data_row(focused_cell.row)?;
+        let data_row = self.engine.d2d_mapping.get_data_row(focused_cell.row)?;
         Some(DataCellId::new(data_row, focused_cell.col))
     }
 

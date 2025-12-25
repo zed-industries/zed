@@ -6,20 +6,17 @@ use gpui::{
 use std::{sync::Arc, time::Instant};
 
 use crate::{
-    cell_editor::CellEditorCtx, data_table::TableInteractionState,
-    table_data_engine::sorting_by_column::generate_sorted_indices,
+    cell_editor::CellEditorCtx,
+    data_table::TableInteractionState,
+    table_data_engine::{TableDataEngine, sorting_by_column::generate_sorted_indices},
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    nasty_code_duplication::ColumnWidths,
-    parser::EditorState,
-    performance_metrics_overlay::PerformanceMetrics,
-    selection::TableSelection,
-    settings::CsvPreviewSettings,
-    table_data_engine::sorting_by_column::{SortedIndices, SortingConfig},
-    table_like_content::TableLikeContent,
+    nasty_code_duplication::ColumnWidths, parser::EditorState,
+    performance_metrics_overlay::PerformanceMetrics, selection::TableSelection,
+    settings::CsvPreviewSettings, table_like_content::TableLikeContent,
 };
 
 mod cell_editor;
@@ -76,6 +73,8 @@ const TABLE_CONTEXT_NAME: &'static str = "CsvPreview";
 const CELL_EDITOR_CONTEXT_NAME: &'static str = "TableCellEditor";
 
 pub struct CsvPreviewView {
+    pub(crate) engine: TableDataEngine,
+
     pub(crate) focus_handle: FocusHandle,
     /// Horizontal table scroll handle. Stinks. Won't work normally unless table column resizing is rewritten
     pub(crate) scroll_handle: ScrollHandle,
@@ -84,8 +83,6 @@ pub struct CsvPreviewView {
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
-    pub(crate) sorting_cfg: Option<SortingConfig>,
-    pub(crate) sorted_indices: Arc<SortedIndices>,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
@@ -141,14 +138,9 @@ impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn re_sort_indices(&mut self) {
         let start_time = Instant::now();
-        self.sorted_indices = Arc::new(generate_sorted_indices(self.sorting_cfg, &self.contents));
+        self.engine.re_run_sorting(&self.contents);
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
-    }
-
-    /// Get reference to current sorted indices
-    pub(crate) fn get_sorted_indices(&self) -> &Arc<SortedIndices> {
-        &self.sorted_indices
     }
 
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
@@ -176,15 +168,13 @@ impl CsvPreviewView {
         });
 
         cx.new(|cx| {
-            let mut view = Self {
+            let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: None,
                 contents: contents.clone(),
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
-                sorting_cfg: None,
-                sorted_indices: Arc::new(generate_sorted_indices(None, &contents)),
                 selection: TableSelection::default(),
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
@@ -193,6 +183,10 @@ impl CsvPreviewView {
                 last_parse_end_time: None,
                 cell_edited_flag: false,
                 scroll_handle: ScrollHandle::default(),
+                engine: TableDataEngine {
+                    applied_sorting: None,
+                    d2d_mapping: Arc::new(generate_sorted_indices(None, &contents)),
+                },
             };
 
             view.set_editor(editor.clone(), cx);
