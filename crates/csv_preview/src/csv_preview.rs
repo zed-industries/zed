@@ -15,7 +15,6 @@ use crate::{
     table_data_engine::{
         DisplayToDataMapping, TableDataEngine, filtering_by_column::AppliedFiltering,
     },
-    types::AnyColumn,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
@@ -131,10 +130,15 @@ impl CsvPreviewView {
             .as_ref()
             .expect("Expected main editor to be initialized")
     }
+    pub(crate) fn apply_sort(&mut self) {
+        self.performance_metrics.record("Sort", || {
+            self.engine.re_apply_sort();
+        });
+    }
 
     /// Update ordered indices when ordering or content changes
-    pub(crate) fn re_sort_indices(&mut self) {
-        self.performance_metrics.record("ordering", || {
+    pub(crate) fn apply_filter_sort(&mut self) {
+        self.performance_metrics.record("Filter&sort", || {
             self.engine.calculate_d2d_mapping();
         });
 
