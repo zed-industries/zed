@@ -240,7 +240,7 @@ impl ScrollManager {
             scroll_animation: None,
             // TODO: We are not listening for settings change
             scroll_animation_duration: Duration::from_secs_f32(
-                editor_settings.smooth_scroll_duration,
+                editor_settings.smooth_scroll.duration,
             ),
         }
     }
@@ -670,7 +670,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if EditorSettings::get_global(cx).smooth_scroll {
+        if EditorSettings::get_global(cx).smooth_scroll.enabled {
             let current_position = self.scroll_position(cx);
             let new_position = point(current_position.x, row.0 as f64);
 
