@@ -6,8 +6,7 @@ use text::{Buffer, BufferId, ReplicaId};
 
 use crate::{
     row_identifiers::LineNumber,
-    table_cell::TableCell,
-    types::{DataCellId, DataRow, TableRow},
+    types::{DataCellId, DataRow, TableCell, TableRow},
 };
 
 /// Generic container struct of table-like data (CSV, TSV, etc)

@@ -6,7 +6,6 @@
 use std::time::Instant;
 
 use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
-use text::Anchor;
 use ui::{SharedString, Tooltip, div, prelude::*};
 
 use crate::{
@@ -19,66 +18,7 @@ use crate::{
     types::{AnyColumn, DisplayCellId},
 };
 
-/// Position of a cell within the source CSV buffer
-#[derive(Clone, Debug)]
-pub struct CellContentSpan {
-    /// Start anchor of the cell content in the source buffer
-    pub start: Anchor,
-    /// End anchor of the cell content in the source buffer
-    pub end: Anchor,
-}
-
-/// A table cell with its content and position in the source buffer
-#[derive(Clone, Debug)]
-pub enum TableCell {
-    /// Cell existing in the CSV
-    Real {
-        /// Position of this cell in the source buffer
-        position: CellContentSpan,
-        /// Cached display value (for performance)
-        cached_value: SharedString,
-    },
-    /// Virtual cell, created to pad malformed row
-    Virtual,
-}
-
-impl TableCell {
-    /// Create a TableCell with buffer position tracking
-    pub fn from_buffer_position(
-        content: SharedString,
-        start_offset: usize,
-        end_offset: usize,
-        buffer_snapshot: &text::BufferSnapshot,
-    ) -> Self {
-        let start_anchor = buffer_snapshot.anchor_before(start_offset);
-        let end_anchor = buffer_snapshot.anchor_after(end_offset);
-
-        Self::Real {
-            position: CellContentSpan {
-                start: start_anchor,
-                end: end_anchor,
-            },
-            cached_value: content,
-        }
-    }
-
-    /// Get the display value for this cell
-    pub fn display_value(&self) -> Option<&SharedString> {
-        match self {
-            TableCell::Real { cached_value, .. } => Some(cached_value),
-            TableCell::Virtual => None,
-        }
-    }
-
-    pub(crate) fn position(&self) -> Option<&CellContentSpan> {
-        match self {
-            TableCell::Real { position, .. } => Some(position),
-            TableCell::Virtual => None,
-        }
-    }
-}
-
-/// Colors for cell borders in different selection states.
+/// Colors for cell highlight in different selection states.
 ///
 /// This unit struct provides a centralized location for all cell border colors
 /// used in the CSV preview table. The colors are designed to be visually distinct
@@ -87,9 +27,9 @@ impl TableCell {
 /// - **Focus**: Green border for the currently focused cell (keyboard navigation)
 /// - **Anchor**: Blue border for the selection anchor (starting point of range selection)
 /// - **Focus+Anchor**: Automatically blended color when a cell is both focused and anchor (thicker border)
-pub struct CellBorderColors;
+pub struct CellHighlightColors;
 
-impl CellBorderColors {
+impl CellHighlightColors {
     /// Red for focused cell only
     pub const FOCUS: Hsla = Hsla {
         h: 0.0, // 0 degrees = pure red
@@ -360,13 +300,13 @@ fn create_table_cell(
         })
         .when(is_selected, |div| div.bg(selected_bg_color))
         .when(is_focused && is_anchor, |div| {
-            div.bg(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
+            div.bg(CellHighlightColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
         })
         .when(is_focused && !is_anchor, |div| {
-            div.bg(CellBorderColors::FOCUS) // Focus only
+            div.bg(CellHighlightColors::FOCUS) // Focus only
         })
         .when(is_anchor && !is_focused, |div| {
-            div.bg(CellBorderColors::ANCHOR) // Anchor only
+            div.bg(CellHighlightColors::ANCHOR) // Anchor only
         })
         .map(|div| match font_type {
             FontType::Ui => div.font_ui(cx),
