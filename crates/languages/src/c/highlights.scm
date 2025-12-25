@@ -29,6 +29,8 @@
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
