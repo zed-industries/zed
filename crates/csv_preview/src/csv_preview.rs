@@ -4,6 +4,7 @@ use gpui::{
     ScrollHandle, Task, actions,
 };
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -14,6 +15,7 @@ use crate::{
     table_data_engine::{
         DisplayToDataMapping, TableDataEngine, filtering_by_column::AppliedFiltering,
     },
+    types::AnyColumn,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
@@ -136,6 +138,10 @@ impl CsvPreviewView {
         self.engine.calculate_d2d_mapping();
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
+
+        // Update list state with filtered row count
+        let filtered_row_count = self.engine.get_d2d_mapping().filtered_row_count();
+        self.list_state = gpui::ListState::new(filtered_row_count, ListAlignment::Top, px(1.));
     }
 
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
@@ -178,12 +184,15 @@ impl CsvPreviewView {
                 scroll_handle: ScrollHandle::default(),
                 engine: TableDataEngine {
                     applied_sorting: None,
+                    available_filters: HashMap::new(),
                     d2d_mapping: Arc::new(DisplayToDataMapping::default()),
                     contents: contents.clone(),
                     selection: TableSelection::default(),
-                    applied_filtering: AppliedFiltering::default(),
+                    applied_filtering: AppliedFiltering::new(),
                 },
             };
+
+            // No need to trigger any filtering / sorting here, as it's retrigered on parsing
 
             view.set_editor(editor.clone(), cx);
             view

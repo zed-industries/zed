@@ -1,4 +1,4 @@
-use crate::{types::AnyColumn, types::TableLikeContent};
+use crate::types::{AnyColumn, DataRow, TableCell, TableRow};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SortDirection {
@@ -15,14 +15,14 @@ pub struct AppliedSorting {
     pub direction: SortDirection,
 }
 
-pub fn sort_indices(
-    contents: &TableLikeContent,
-    mut indices: Vec<usize>,
+pub fn sort_data_rows(
+    content_rows: &[TableRow<TableCell>],
+    mut data_row_ids: Vec<DataRow>,
     sorting: AppliedSorting,
-) -> Vec<usize> {
-    indices.sort_by(|&a, &b| {
-        let row_a = &contents.rows[a];
-        let row_b = &contents.rows[b];
+) -> Vec<DataRow> {
+    data_row_ids.sort_by(|&a, &b| {
+        let row_a = &content_rows[*a];
+        let row_b = &content_rows[*b];
 
         let val_a = row_a
             .get(sorting.col_idx)
@@ -49,5 +49,5 @@ pub fn sort_indices(
         }
     });
 
-    indices
+    data_row_ids
 }
