@@ -4001,15 +4001,15 @@ impl BackgroundScanner {
 
                 if let Some(new_path) = new_path {
                     log::info!(
-                        "root renamed from {} to {}",
-                        root_path.as_path().display(),
-                        new_path.as_path().display()
+                        "root renamed from {:?} to {:?}",
+                        root_path.as_path(),
+                        new_path.as_path(),
                     );
                     self.status_updates_tx
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::warn!("root path could not be canonicalized: {:#}", err);
+                    log::error!("root path could not be canonicalized: {err:#}");
                 }
                 return;
             }
@@ -4457,7 +4457,7 @@ impl BackgroundScanner {
                 Ok(Some(metadata)) => metadata,
                 Ok(None) => continue,
                 Err(err) => {
-                    log::error!("error processing {child_abs_path:?}: {err:?}");
+                    log::error!("error processing {child_abs_path:?}: {err:#}");
                     continue;
                 }
             };

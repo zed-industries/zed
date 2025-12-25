@@ -3482,6 +3482,9 @@ impl ProjectPanel {
             let new_state = cx
                 .background_spawn(async move {
                     for worktree_snapshot in visible_worktrees {
+                        if worktree_snapshot.abs_path().as_ref() == Path::new("") {
+                            continue;
+                        }
                         let worktree_id = worktree_snapshot.id();
 
                         let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
@@ -3599,6 +3602,7 @@ impl ProjectPanel {
                                 == worktree_snapshot.root_entry()
                             {
                                 let Some(path_name) = worktree_abs_path.file_name() else {
+                                    entry_iter.advance();
                                     continue;
                                 };
                                 let depth = 0;
