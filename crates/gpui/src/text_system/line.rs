@@ -44,6 +44,14 @@ impl ShapedLine {
         self.layout.len
     }
 
+    /// The width of the shaped line in pixels.
+    ///
+    /// This is the glyph advance width computed by the text shaping system and is useful for
+    /// incrementally advancing a "pen" when painting multiple fragments on the same row.
+    pub fn width(&self) -> Pixels {
+        self.layout.width
+    }
+
     /// Override the len, useful if you're rendering text a
     /// as text b (e.g. rendering invisibles).
     pub fn with_len(mut self, len: usize) -> Self {
