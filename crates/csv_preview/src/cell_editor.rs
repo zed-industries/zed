@@ -135,7 +135,7 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(focused_cell_id) = self.selection.get_focused_cell() else {
+        let Some(focused_cell_id) = self.engine.selection.get_focused_cell() else {
             println!("No focused cell. Skip editing start");
             return;
         };

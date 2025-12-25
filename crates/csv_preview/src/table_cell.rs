@@ -165,19 +165,20 @@ impl CsvPreviewView {
                     let start_time = Instant::now();
 
                     // Calculate scroll direction by comparing current vs focused cell
-                    let scroll = if let Some(focused_cell) = this.selection.get_focused_cell() {
-                        match focused_cell.row.0.cmp(&display_cell_id.row.0) {
-                            std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
-                            std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
-                            std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
-                        }
-                    } else {
-                        ScrollOffset::NoOffset
-                    };
+                    let scroll =
+                        if let Some(focused_cell) = this.engine.selection.get_focused_cell() {
+                            match focused_cell.row.0.cmp(&display_cell_id.row.0) {
+                                std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
+                                std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
+                                std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
+                            }
+                        } else {
+                            ScrollOffset::NoOffset
+                        };
 
-                    let ordered_indices = this.engine.get_d2d_mapping();
+                    let ordered_indices = this.engine.d2d_mapping.clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.selection.start_mouse_selection(
+                    this.engine.selection.start_mouse_selection(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
@@ -197,7 +198,7 @@ impl CsvPreviewView {
             let view = view_entity.clone();
             move |event, window, cx| {
                 view.update(cx, |this, cx| {
-                    if !this.selection.is_selecting() {
+                    if !this.engine.selection.is_selecting() {
                         return;
                     }
                     if !event.dragging() {
@@ -207,24 +208,25 @@ impl CsvPreviewView {
                         // 3. released lmb
                         // 4. returned back.
                         // Without this guard, it keeps extending selection despite not dragging anymore
-                        this.selection.end_mouse_selection();
+                        this.engine.selection.end_mouse_selection();
                         return;
                     }
                     let start_time = Instant::now();
                     // Calculate scroll direction by comparing current vs focused cell
-                    let scroll = if let Some(focused_cell) = this.selection.get_focused_cell() {
-                        match focused_cell.row.0.cmp(&display_cell_id.row.0) {
-                            std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
-                            std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
-                            std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
-                        }
-                    } else {
-                        ScrollOffset::NoOffset
-                    };
+                    let scroll =
+                        if let Some(focused_cell) = this.engine.selection.get_focused_cell() {
+                            match focused_cell.row.0.cmp(&display_cell_id.row.0) {
+                                std::cmp::Ordering::Less => ScrollOffset::Positive, // Moving down
+                                std::cmp::Ordering::Equal => ScrollOffset::NoOffset,
+                                std::cmp::Ordering::Greater => ScrollOffset::Negative, // Moving up
+                            }
+                        } else {
+                            ScrollOffset::NoOffset
+                        };
 
-                    let ordered_indices = this.engine.get_d2d_mapping();
+                    let ordered_indices = this.engine.d2d_mapping.clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.selection.extend_mouse_selection(
+                    this.engine.selection.extend_mouse_selection(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
@@ -245,7 +247,7 @@ impl CsvPreviewView {
             let view = view_entity;
             move |_event, _window, cx| {
                 view.update(cx, |this, cx| {
-                    this.selection.end_mouse_selection();
+                    this.engine.selection.end_mouse_selection();
                     cx.notify();
                 });
             }

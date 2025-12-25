@@ -13,6 +13,8 @@ use ui::{Context, Window};
 
 use crate::{
     CsvPreviewView,
+    performance_metrics_overlay::{MeasureExt, TimingRecorder},
+    settings::RowRenderMechanism,
     table_data_engine::sorting_by_column::DisplayToDataMapping,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
@@ -824,19 +826,10 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let start_time = Instant::now();
-        let max_rows = self.engine.contents.rows.len();
-        let max_cols = self.engine.contents.number_of_cols;
+        self.performance_metrics
+            .last_selection_took
+            .record_timing(|| self.engine.change_selection(direction, operation));
 
-        self.selection.navigate(
-            direction,
-            operation,
-            &self.engine.d2d_mapping,
-            max_rows,
-            max_cols,
-        );
-
-        self.performance_metrics.last_selection_took = Some(start_time.elapsed());
         let scroll = match direction {
             NavigationDirection::Up => Some(ScrollOffset::Negative),
             NavigationDirection::Down => Some(ScrollOffset::Positive),
@@ -857,16 +850,22 @@ impl CsvPreviewView {
         apply_scroll: Option<ScrollOffset>,
     ) {
         self.clear_cell_editor();
+        self.scroll_to_focused_cell(cx, apply_scroll);
+    }
 
-        // Follow focused cell in list viewport
-        if let Some(focused_cell) = self.selection.get_focused_cell()
+    fn scroll_to_focused_cell(
+        &mut self,
+        cx: &mut Context<'_, CsvPreviewView>,
+        apply_scroll: Option<ScrollOffset>,
+    ) {
+        if let Some(focused_cell) = self.engine.selection.get_focused_cell()
             && let Some(scroll) = apply_scroll
         {
             let display_row_index = focused_cell.row;
             let ix = display_row_index.0;
 
             match self.settings.rendering_with {
-                crate::settings::RowRenderMechanism::VariableList => {
+                RowRenderMechanism::VariableList => {
                     // Variable height list uses ListState::scroll_to_reveal_item
                     let ix_with_offset = match scroll {
                         ScrollOffset::NoOffset => ix,
@@ -875,7 +874,7 @@ impl CsvPreviewView {
                     };
                     self.list_state.scroll_to_reveal_item(ix_with_offset);
                 }
-                crate::settings::RowRenderMechanism::UniformList => {
+                RowRenderMechanism::UniformList => {
                     // Uniform list uses UniformListScrollHandle
                     let table_interaction_state = &self.table_interaction_state;
                     table_interaction_state.update(cx, |state, _| {

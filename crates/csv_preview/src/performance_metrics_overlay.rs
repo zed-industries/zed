@@ -3,7 +3,7 @@
 //! Provides a semi-transparent overlay in the bottom-right corner showing
 //! CSV parsing performance metrics for developer experience.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
@@ -25,7 +25,45 @@ pub struct PerformanceMetrics {
     /// List of display indices that were rendered in the current frame.
     pub rendered_indices: Vec<usize>,
 }
+/// Extension trait for timing the execution of a closure and storing the duration.
+///
+/// This trait is implemented for `Option<Duration>`, allowing you to easily
+/// time an operation and store its duration in place. For example:
+///
+/// ```rust
+/// self.performance_metrics
+///     .last_selection_took
+///     .record_timing(|| self.engine.change_selection(direction, operation));
+/// ```
+///
+/// The previous value is replaced with the new duration.
+pub(crate) trait TimingRecorder {
+    /// Runs the provided closure, records its execution time, and stores it in `self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The closure to execute and time.
+    ///
+    /// # Returns
+    ///
+    /// Returns the result of the closure.
+    fn record_timing<F, R>(&mut self, f: F) -> R
+    where
+        F: FnMut() -> R;
+}
 
+impl TimingRecorder for Option<Duration> {
+    fn record_timing<F, R>(&mut self, mut f: F) -> R
+    where
+        F: FnMut() -> R,
+    {
+        let start_time = Instant::now();
+        let ret = f();
+        let duration = start_time.elapsed();
+        self.replace(duration);
+        ret
+    }
+}
 impl PerformanceMetrics {
     fn format_lines(&self) -> Vec<String> {
         let format_duration = |duration: Option<Duration>| -> String {

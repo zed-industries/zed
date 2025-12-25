@@ -54,7 +54,7 @@ impl CsvPreviewView {
         // Get selected cells in appropriate coordinate system
         let (rows_data, selected_cells_count) = match copy_mode {
             CopyMode::Display => {
-                let selected_display_cells = self.selection.get_selected_display_cells(
+                let selected_display_cells = self.engine.selection.get_selected_display_cells(
                     &self.engine.d2d_mapping,
                     max_rows,
                     max_cols,
@@ -90,9 +90,11 @@ impl CsvPreviewView {
                 (rows_data, selected_display_cells.len())
             }
             CopyMode::Data => {
-                let selected_data_cells =
-                    self.selection
-                        .get_selected_cells(&self.engine.d2d_mapping, max_rows, max_cols);
+                let selected_data_cells = self.engine.selection.get_selected_cells(
+                    &self.engine.d2d_mapping,
+                    max_rows,
+                    max_cols,
+                );
 
                 if selected_data_cells.is_empty() {
                     return;

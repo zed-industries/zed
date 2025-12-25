@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use crate::{
-    table_data_engine::sorting_by_column::{
-        AppliedSorting, DisplayToDataMapping, generate_sorted_indices,
+    table_data_engine::{
+        selection::{NavigationDirection, NavigationOperation, TableSelection},
+        sorting_by_column::{AppliedSorting, DisplayToDataMapping, generate_sorted_indices},
     },
     table_like_content::TableLikeContent,
 };
@@ -19,6 +20,7 @@ pub(crate) struct TableDataEngine {
     pub applied_sorting: Option<AppliedSorting>,
     pub d2d_mapping: Arc<DisplayToDataMapping>,
     pub contents: TableLikeContent,
+    pub selection: TableSelection,
 }
 
 impl TableDataEngine {
@@ -32,5 +34,16 @@ impl TableDataEngine {
             self.applied_sorting,
             &self.contents,
         ));
+    }
+    pub(crate) fn change_selection(
+        &mut self,
+        direction: NavigationDirection,
+        operation: NavigationOperation,
+    ) {
+        let max_rows = self.contents.rows.len();
+        let max_cols = self.contents.number_of_cols;
+
+        self.selection
+            .navigate(direction, operation, &self.d2d_mapping, max_rows, max_cols);
     }
 }
