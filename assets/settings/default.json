@@ -623,10 +623,12 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  // Whether to animate scrolling with a smooth easing effect.
-  "smooth_scroll": false,
-  // Duration of the scrolling animation
-  "smooth_scroll_duration": 0.14,
+  "smooth_scroll": {
+    // Whether to animate scrolling with a smooth easing effect.
+    "enabled": false,
+    // Duration of the animation
+    "duration": 0.125,
+  },
   "sticky_scroll": {
     // Whether to stick scopes to the top of the editor.
     "enabled": false,

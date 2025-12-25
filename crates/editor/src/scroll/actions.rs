@@ -42,8 +42,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let smooth_scroll_enabled = EditorSettings::get_global(cx).smooth_scroll;
-        if !smooth_scroll_enabled {
+        let smooth_scroll = EditorSettings::get_global(cx).smooth_scroll;
+        if !smooth_scroll.enabled {
             return self.scroll(scroll_position, axis, window, cx);
         }
 
