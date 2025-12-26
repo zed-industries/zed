@@ -577,7 +577,8 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(None, None, cx)
+    let show_background = language_settings::language_settings(cx)
+        .get()
         .inlay_hints
         .show_background;
 
@@ -5420,14 +5421,9 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
-        let settings = language_settings::language_settings(
-            buffer
-                .read(cx)
-                .language_at(buffer_position)
-                .map(|l| l.name()),
-            buffer.read(cx).file(),
-            cx,
-        );
+        let settings = language_settings::language_settings(cx)
+            .buffer_at(buffer.read(cx), buffer_position)
+            .get();
         if !settings.use_on_type_format {
             return None;
         }
@@ -5543,8 +5539,10 @@ impl Editor {
         let language = buffer_snapshot
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
-
-        let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
+        let language_settings = language_settings(cx)
+            .language(language.clone())
+            .file(buffer_snapshot.file())
+            .get();
         let completion_settings = language_settings.completions.clone();
 
         let show_completions_on_input = self
@@ -6429,8 +6427,9 @@ impl Editor {
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
-            let file = buffer.file();
-            let debug_adapter = language_settings(language.name().into(), file, cx)
+            let debug_adapter = language_settings(cx)
+                .buffer(buffer)
+                .get()
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -7451,11 +7450,11 @@ impl Editor {
             return EditPredictionSettings::Disabled;
         }
 
-        let buffer = buffer.read(cx);
-
-        let file = buffer.file();
-
-        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
+        if !language_settings(cx)
+            .buffer(buffer.read(cx))
+            .get()
+            .show_edit_predictions
+        {
             return EditPredictionSettings::Disabled;
         };
 
@@ -7470,6 +7469,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
+        let file = buffer.read(cx).file();
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
@@ -22146,9 +22146,8 @@ impl Editor {
             |mut acc, buffer| {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
-                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
-                    let file = buffer.file();
-                    v.insert(language_settings(language, file, cx).into_owned());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language) {
+                    v.insert(language_settings(cx).buffer(buffer).get().into_owned());
                 }
                 acc
             },
@@ -23294,10 +23293,11 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode =
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                            .completions
-                            .lsp_insert_mode;
+                    let insert_mode = language_settings(cx)
+                        .buffer(buffer)
+                        .get()
+                        .completions
+                        .lsp_insert_mode;
                     match insert_mode {
                         LspInsertMode::Insert => false,
                         LspInsertMode::Replace => true,
