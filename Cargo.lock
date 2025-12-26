@@ -16163,7 +16163,9 @@ name = "syntax_diff"
 version = "0.1.0"
 dependencies = [
  "collections",
+ "criterion",
  "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]

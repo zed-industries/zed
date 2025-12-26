@@ -13,3 +13,11 @@ path = "src/syntax_diff.rs"
 [dependencies]
 tree-sitter.workspace = true
 collections.workspace = true
+
+[dev-dependencies]
+tree-sitter-rust.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "gum_tree_benchmark"
+harness = false
