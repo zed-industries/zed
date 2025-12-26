@@ -156,12 +156,43 @@ impl LspAdapter for YamlLspAdapter {
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| replace_absolute_path(delegate, s.settings.clone()))
         })?;
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);
         }
         Ok(options)
+    }
+}
+
+fn replace_absolute_path(
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    settings: Option<Value>,
+) -> Option<Value> {
+    match settings {
+        Some(Value::Object(mut map)) => match map.get_mut("yaml") {
+            Some(Value::Object(yaml_map)) => {
+                if let Some(Value::Object(schemas)) = yaml_map.remove("schemas") {
+                    let new_schemas = schemas
+                        .into_iter()
+                        .map(|(k, v)| {
+                            if !(k.starts_with(".") && k.starts_with("/")) {
+                                return (k, v);
+                            }
+                            let k = delegate
+                                .resolve_executable_path((&k).into())
+                                .to_string_lossy()
+                                .into_owned();
+                            (k, v)
+                        })
+                        .collect::<serde_json::Map<String, Value>>();
+                    yaml_map.insert("schemas".into(), Value::Object(new_schemas));
+                }
+                Some(Value::Object(map))
+            }
+            _ => Some(Value::Object(map)),
+        },
+        other => other,
     }
 }
 
