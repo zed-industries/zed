@@ -345,7 +345,6 @@ fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
         return read_image_for_type(format, ImageFormat::Bmp, Some(convert_dib_to_bmp));
     }
     let image_format = format_number_to_image_format(format)?;
-    read_image_for_type(format, *image_format)
     read_image_for_type::<fn(&[u8]) -> Option<Vec<u8>>>(format, *image_format, None)
 }
 
@@ -395,7 +394,6 @@ fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFor
     IMAGE_FORMATS_MAP.get(&format_number)
 }
 
-fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
 fn read_image_for_type<F>(
     format_number: u32,
     format: ImageFormat,
@@ -405,15 +403,12 @@ where
     F: FnOnce(&[u8]) -> Option<Vec<u8>>,
 {
     let (bytes, id) = with_clipboard_data(format_number, |data_ptr, size| {
-        let bytes = unsafe { std::slice::from_raw_parts(data_ptr as *mut u8 as _, size).to_vec() };
         let raw_bytes = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) };
         let bytes = match convert {
             Some(converter) => converter(raw_bytes)?,
             None => raw_bytes.to_vec(),
         };
         let id = hash(&bytes);
-        (bytes, id)
-    })?;
         Some((bytes, id))
     })??;
     Some(ClipboardEntry::Image(Image { format, bytes, id }))
