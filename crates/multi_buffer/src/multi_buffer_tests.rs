@@ -2670,7 +2670,8 @@ impl ReferenceMultibuffer {
                         };
                         if region_ix < regions.len() - 1
                             && !text[ix..].contains("\n")
-                            && region.status == Some(DiffHunkStatus::added_none())
+                            && (region.status == Some(DiffHunkStatus::added_none())
+                                || region.status.is_some_and(|s| s.is_deleted()))
                             && regions[region_ix + 1].excerpt_id == region.excerpt_id
                             && regions[region_ix + 1].range.start == text.len()
                         {
