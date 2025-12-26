@@ -1109,21 +1109,18 @@ impl Element for TerminalElement {
                     let visible_row_count =
                         (intersection.size.height / line_height_px).ceil() as usize + 1;
 
-                    // Group cells by line and filter to only the visible screen rows.
-                    // skip() and take() work on enumerated line groups (screen position),
-                    // making this work regardless of the actual cell.point.line values.
-                    let visible_cells: Vec<_> = cells
-                        .iter()
-                        .chunk_by(|c| c.point.line)
-                        .into_iter()
-                        .skip(rows_above_viewport)
-                        .take(visible_row_count)
-                        .flat_map(|(_, line_cells)| line_cells)
-                        .cloned()
-                        .collect();
-
                     TerminalElement::layout_grid(
-                        visible_cells.into_iter(),
+                        // Group cells by line and filter to only the visible screen rows.
+                        // skip() and take() work on enumerated line groups (screen position),
+                        // making this work regardless of the actual cell.point.line values.
+                        cells
+                            .iter()
+                            .chunk_by(|c| c.point.line)
+                            .into_iter()
+                            .skip(rows_above_viewport)
+                            .take(visible_row_count)
+                            .flat_map(|(_, line_cells)| line_cells)
+                            .cloned(),
                         rows_above_viewport as i32,
                         &text_style,
                         last_hovered_word
