@@ -335,12 +335,11 @@ impl FileHandle for std::fs::File {
         let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the path buffer.
         let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -372,12 +371,11 @@ impl FileHandle for std::fs::File {
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
-        if result == -1 {
-            anyhow::bail!("fcntl returned -1".to_string());
-        }
+        anyhow::ensure!(result != -1, "fcntl returned -1");
 
         // SAFETY: `fcntl` will initialize the kif.
         let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
+        anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -398,18 +396,21 @@ impl FileHandle for std::fs::File {
         // Query required buffer size (in wide chars)
         let required_len =
             unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
-        if required_len == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
-        }
+        anyhow::ensure!(
+            required_len != 0,
+            "GetFinalPathNameByHandleW returned 0 length"
+        );
 
         // Allocate buffer and retrieve the path
         let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
         let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
-        if written == 0 {
-            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
-        }
+        anyhow::ensure!(
+            written != 0,
+            "GetFinalPathNameByHandleW failed to write path"
+        );
 
         let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        anyhow::ensure!(!os_str.is_empty(), "Could find a path for the file handle");
         Ok(PathBuf::from(os_str))
     }
 }
