@@ -1,4 +1,4 @@
-// GumTree Algorithm Implementation
+// GumTree Algorithm Implementation (Optimized for Git Diffs)
 //
 // Original paper: "Fine-grained and Accurate Source Code Differencing" (2014)
 // https://hal.science/hal-01054552/document
@@ -8,216 +8,133 @@
 //
 // Hyperparameter tuning: "Hyperparameter Optimization for AST Differencing" (2023)
 // https://hal.science/hal-04423080/document
-//
-// The algorithm works in three phases:
-// 1. Top-down: Match isomorphic subtrees that are sufficiently deep and unique
-// 2. Bottom-up: Match remaining nodes based on Dice similarity of matched descendants
-// 3. Recovery: Match remaining unmatched children of matched parents (GumTree 4.0 improvement)
 
-use collections::{FxHashMap, FxHashSet};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    num::NonZeroUsize,
     ops::Range,
 };
 
 /// Minimum height for subtree matching in top-down phase.
-/// Subtrees shorter than this are not matched greedily.
-/// Default: 1 (optimized value from DAT research)
-const MIN_HEIGHT: u16 = 1;
+const MIN_HEIGHT: usize = 1;
 
-/// Minimum Dice similarity threshold for bottom-up matching.
-/// Two nodes match if their descendant overlap >= this value.
-/// Default: 0.2 (optimized value from DAT research, lower than original 0.5)
+/// Minimum Dice similarity threshold for matching.
 const SIM_THRESHOLD: f64 = 0.2;
 
-/// Maximum tree size for recovery phase.
-/// Recovery is skipped for subtrees larger than this.
-/// Default: 600 (optimized value from DAT research)
+/// Maximum subtree size for recovery phase.
 const MAX_RECOVERY_SIZE: usize = 600;
 
-/// Unique identifier for a node within a DiffTree.
+/// Node index in a DiffTree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NodeId(usize);
+pub struct NodeId(NonZeroUsize);
 
 impl NodeId {
+    #[inline]
+    fn new(idx: usize) -> Self {
+        Self(NonZeroUsize::new(idx + 1).expect("index overflow"))
+    }
+
+    #[inline]
     pub fn index(self) -> usize {
-        self.0
+        self.0.get() - 1
     }
 }
 
-/// A preprocessed syntax tree optimized for diffing.
+/// Compact node representation optimized for diffing.
 ///
-/// Stores nodes in a flat vector with precomputed hashes for fast isomorphism checks.
-/// Nodes are stored in post-order (children before parents), which ensures
-/// that when processing a node, all its descendants are already available.
-pub struct DiffTree<'a> {
-    nodes: Vec<DiffNode>,
-    text: &'a str,
-    root: NodeId,
-}
-
-/// A node within a DiffTree with precomputed metadata.
+/// Uses first-child/next-sibling representation instead of children Vec.
 #[derive(Debug)]
 pub struct DiffNode {
-    /// Index of this node in the DiffTree's nodes vector
+    /// Node's own index
     pub id: NodeId,
-    /// The tree-sitter node kind (e.g., "function_definition", "identifier")
-    pub kind: &'static str,
-    /// The tree-sitter kind ID for fast comparison
-    pub kind_id: u16,
-    /// Height of this node (0 for leaves, max child height + 1 for internal nodes)
-    pub height: u16,
-    /// Structural hash: hash of kind + children's structural hashes (for isomorphism)
+    /// Structural hash (kind + children structure)
     pub structural_hash: u64,
-    /// Content hash: hash of the actual text content
+    /// Content hash (actual text)
     pub content_hash: u64,
-    /// Parent node ID, if any
-    pub parent: Option<NodeId>,
-    /// Direct children of this node
-    pub children: Vec<NodeId>,
-    /// Number of descendants (including self)
-    pub descendant_count: usize,
-    /// Byte range in the source text
+    /// Byte range in source
     pub byte_range: Range<usize>,
+    /// Tree-sitter kind ID
+    pub kind_id: u16,
+    /// Node height (0 for leaves)
+    pub height: u16,
+    /// Total descendant count including self
+    pub descendant_count: usize,
+    /// Parent node (None for root)
+    parent: Option<NodeId>,
+    /// First child (None if leaf)
+    first_child: Option<NodeId>,
+    /// Next sibling (None if last child)
+    next_sibling: Option<NodeId>,
+    /// Node kind string
+    pub kind: &'static str,
 }
 
-/// The result of matching two trees.
-///
-/// Contains bidirectional mappings between nodes in the old and new trees.
-#[derive(Default, Debug)]
-pub struct Matching {
-    /// Maps old tree node ID -> new tree node ID
-    old_to_new: FxHashMap<NodeId, NodeId>,
-    /// Maps new tree node ID -> old tree node ID
-    new_to_old: FxHashMap<NodeId, NodeId>,
-    /// Nodes from the old tree that aren't matched to a node in the new tree
-    unmatched_old: FxHashSet<NodeId>,
-    /// Nodes from the new tree that aren't matched to a node in the old tree
-    unmatched_new: FxHashSet<NodeId>,
-}
-
-impl Matching {
-    pub fn new(old_count: usize, new_count: usize) -> Self {
-        Self {
-            unmatched_old: (0..old_count).map(NodeId).collect(),
-            unmatched_new: (0..new_count).map(NodeId).collect(),
-            ..Default::default()
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.old_to_new.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.old_to_new.is_empty()
-    }
-
-    pub fn add(&mut self, old_id: NodeId, new_id: NodeId) {
-        self.old_to_new.insert(old_id, new_id);
-        self.new_to_old.insert(new_id, old_id);
-        self.unmatched_old.remove(&old_id);
-        self.unmatched_new.remove(&new_id);
-    }
-
-    pub fn is_old_matched(&self, id: NodeId) -> bool {
-        self.old_to_new.contains_key(&id)
-    }
-
-    pub fn is_new_matched(&self, id: NodeId) -> bool {
-        self.new_to_old.contains_key(&id)
-    }
-
-    pub fn get_new(&self, old_id: NodeId) -> Option<NodeId> {
-        self.old_to_new.get(&old_id).copied()
-    }
-
-    pub fn get_old(&self, new_id: NodeId) -> Option<NodeId> {
-        self.new_to_old.get(&new_id).copied()
-    }
-
-    pub fn unmatched_old(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.unmatched_old.iter().copied()
-    }
-
-    pub fn unmatched_new(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.unmatched_new.iter().copied()
-    }
-
-    pub fn unmatched_old_count(&self) -> usize {
-        self.unmatched_old.len()
-    }
-
-    pub fn unmatched_new_count(&self) -> usize {
-        self.unmatched_new.len()
-    }
-
-    pub fn matched_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
-        self.old_to_new.iter().map(|(&old, &new)| (old, new))
-    }
-
-    pub fn old_matched_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.old_to_new.keys().copied()
-    }
-
-    pub fn new_matched_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.new_to_old.keys().copied()
+impl DiffNode {
+    #[inline]
+    pub fn parent(&self) -> Option<NodeId> {
+        self.parent
     }
 }
 
-/// A single diff operation representing a change between trees.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DiffOperation {
-    /// Node was deleted from the old tree
-    Delete {
-        range: Range<usize>,
-        node_kind: &'static str,
-    },
-    /// Node was inserted into the new tree
-    Insert {
-        range: Range<usize>,
-        node_kind: &'static str,
-    },
-    /// Node was moved to a different parent
-    Move {
-        old_range: Range<usize>,
-        new_range: Range<usize>,
-        node_kind: &'static str,
-    },
-    /// Node content was updated (same structure, different text)
-    Update {
-        old_range: Range<usize>,
-        new_range: Range<usize>,
-        node_kind: &'static str,
-    },
+/// A preprocessed syntax tree for efficient diffing.
+pub struct DiffTree<'a> {
+    /// Nodes stored in pre-order (parents before children, root at index 0)
+    nodes: Vec<DiffNode>,
+    /// Source text
+    text: &'a str,
+    /// Nodes grouped by height for efficient iteration
+    height_index: Vec<Vec<NodeId>>,
 }
 
-/// The result of diffing two syntax trees.
-#[derive(Debug, Default)]
-pub struct DiffResult {
-    pub operations: Vec<DiffOperation>,
+/// Iterator over a node's children.
+pub struct ChildIter<'a> {
+    tree: &'a DiffTree<'a>,
+    current: Option<NodeId>,
+}
+
+impl Iterator for ChildIter<'_> {
+    type Item = NodeId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.current?;
+        self.current = self.tree.nodes[id.index()].next_sibling;
+        Some(id)
+    }
 }
 
 impl<'a> DiffTree<'a> {
     pub fn new(tree: &tree_sitter::Tree, text: &'a str) -> Self {
-        let mut nodes = Vec::with_capacity(tree.root_node().descendant_count());
-        let root = build_nodes(&mut tree.walk(), text, &mut nodes, None);
+        let estimated_nodes = tree.root_node().descendant_count();
+        let mut nodes = Vec::with_capacity(estimated_nodes);
+        let estimated_height = (estimated_nodes as f64).log2().ceil() as usize + 1;
+        let mut height_index = vec![Vec::new(); estimated_height.max(16)];
 
-        Self { nodes, text, root }
+        build_tree(&mut tree.walk(), text, &mut nodes, &mut height_index, None);
+
+        Self {
+            nodes,
+            text,
+            height_index,
+        }
     }
 
+    /// Returns the root node
+    #[inline]
     pub fn root(&self) -> NodeId {
-        self.root
+        NodeId::new(0)
     }
 
+    #[inline]
     pub fn node(&self, id: NodeId) -> &DiffNode {
         &self.nodes[id.index()]
     }
 
+    #[inline]
     pub fn nodes(&self) -> &[DiffNode] {
         &self.nodes
     }
 
+    #[inline]
     pub fn text(&self) -> &str {
         self.text
     }
@@ -227,62 +144,97 @@ impl<'a> DiffTree<'a> {
         &self.text[node.byte_range.clone()]
     }
 
+    #[inline]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Returns the maximum height in the tree.
-    pub fn max_height(&self) -> u16 {
-        self.nodes[self.root.index()].height
+    pub fn max_height(&self) -> usize {
+        self.height_index
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, v)| !v.is_empty())
+            .map(|(h, _)| h)
+            .unwrap_or(0)
     }
 
-    /// Get nodes at a specific height, sorted by descending descendant count.
-    pub fn nodes_at_height(&self, height: u16) -> Vec<NodeId> {
-        let mut nodes: Vec<_> = self
-            .nodes
-            .iter()
-            .filter(|n| n.height == height)
-            .map(|n| n.id)
-            .collect();
-        nodes.sort_by(|a, b| {
-            self.nodes[b.index()]
-                .descendant_count
-                .cmp(&self.nodes[a.index()].descendant_count)
-        });
-        nodes
+    #[inline]
+    pub fn nodes_at_height(&self, height: usize) -> impl Iterator<Item = NodeId> + '_ {
+        self.height_index
+            .get(height)
+            .into_iter()
+            .flat_map(|v| v.iter().copied())
+    }
+
+    /// Iterate over a node's direct children.
+    #[inline]
+    pub fn children(&self, id: NodeId) -> ChildIter<'_> {
+        ChildIter {
+            tree: self,
+            current: self.node(id).first_child,
+        }
+    }
+
+    /// Check if a node is an ancestor of another.
+    /// Uses the pre-order property: ancestors have lower indices and contain descendants in their range.
+    #[inline]
+    pub fn is_ancestor(&self, ancestor: NodeId, descendant: NodeId) -> bool {
+        let ancestor_node = self.node(ancestor);
+        // In pre-order, a node's descendants are in [idx + 1, idx + descendant_count - 1]
+        let range = (ancestor.index() + 1)..ancestor.index() + ancestor_node.descendant_count;
+
+        range.contains(&descendant.index())
     }
 }
 
-fn build_nodes(
+fn build_tree(
     cursor: &mut tree_sitter::TreeCursor<'_>,
     text: &str,
     nodes: &mut Vec<DiffNode>,
+    height_index: &mut Vec<Vec<NodeId>>,
     parent: Option<NodeId>,
 ) -> NodeId {
     let node = cursor.node();
-    let byte_range = node.byte_range();
+    let this_id = NodeId::new(nodes.len());
 
-    let mut children = Vec::with_capacity(node.child_count());
-    let this_id = NodeId(nodes.len());
-
-    // Reserve space for this node (we'll fill it in after processing children)
+    // Reserve space - we'll update fields after processing children
     nodes.push(DiffNode {
         id: this_id,
-        kind: node.kind(),
-        kind_id: node.kind_id(),
-        height: 0,
         structural_hash: 0,
         content_hash: 0,
-        parent,
-        children: Vec::new(),
+        byte_range: node.byte_range(),
+        kind_id: node.kind_id(),
+        height: 0,
         descendant_count: node.descendant_count(),
-        byte_range: byte_range.clone(),
+        parent,
+        first_child: None,
+        next_sibling: None,
+        kind: node.kind(),
     });
 
     // Process children
+    let mut max_child_height: u16 = 0;
+    let mut first_child: Option<NodeId> = None;
+    let mut last_child: Option<NodeId> = None;
+    let mut hasher = DefaultHasher::new();
+
+    node.kind_id().hash(&mut hasher);
+
     if cursor.goto_first_child() {
         loop {
-            children.push(build_nodes(cursor, text, nodes, Some(this_id)));
+            let child_id = build_tree(cursor, text, nodes, height_index, Some(this_id));
+
+            if first_child.is_none() {
+                first_child = Some(child_id);
+            } else if let Some(prev) = last_child {
+                nodes[prev.index()].next_sibling = Some(child_id);
+            }
+            last_child = Some(child_id);
+
+            let child_node = &nodes[child_id.index()];
+            max_child_height = max_child_height.max(child_node.height);
+            child_node.structural_hash.hash(&mut hasher);
 
             if !cursor.goto_next_sibling() {
                 break;
@@ -292,106 +244,219 @@ fn build_nodes(
         cursor.goto_parent();
     }
 
-    // Compute height (max child height + 1, or 0 for leaves)
-    let height = if children.is_empty() {
+    // Compute metadata
+    let height = if first_child.is_none() {
         0
     } else {
-        children
-            .iter()
-            .map(|id| nodes[id.index()].height)
-            .max()
-            .unwrap_or(0)
-            + 1
+        max_child_height + 1
     };
 
-    let structural_hash = compute_structural_hash(node.kind_id(), &children, nodes);
+    let byte_range = node.byte_range();
     let content_hash = compute_content_hash(&text[byte_range]);
 
-    // Update the node with computed values
+    // Ensure height_index is large enough
+    if height as usize >= height_index.len() {
+        height_index.resize(height as usize + 1, vec![this_id]);
+    }
+
+    // Update node
     let node = &mut nodes[this_id.index()];
     node.height = height;
-    node.structural_hash = structural_hash;
+    node.structural_hash = hasher.finish();
     node.content_hash = content_hash;
-    node.children = children;
+    node.first_child = first_child;
 
     this_id
 }
 
-fn compute_structural_hash(kind_id: u16, children: &[NodeId], nodes: &[DiffNode]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    kind_id.hash(&mut hasher);
-
-    for child_id in children {
-        nodes[child_id.index()].structural_hash.hash(&mut hasher);
-    }
-
-    hasher.finish()
-}
-
+#[inline]
 fn compute_content_hash(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     hasher.finish()
 }
 
-/// Main entry point for GumTree matching algorithm.
-///
-/// Matches nodes between two syntax trees using a three-phase approach:
-/// 1. Top-down: Match isomorphic subtrees greedily by height
-/// 2. Bottom-up: Match container nodes by Dice similarity of descendants
-/// 3. Recovery: Match remaining children of matched parents
+/// Bidirectional matching between two trees.
+#[derive(Debug)]
+pub struct Matching {
+    /// old index -> matched new node
+    old_to_new: Vec<Option<NodeId>>,
+    /// new index -> matched old node
+    new_to_old: Vec<Option<NodeId>>,
+    /// Count of unmatched old nodes
+    unmatched_old_count: usize,
+    /// Count of unmatched new nodes
+    unmatched_new_count: usize,
+}
+
+impl Matching {
+    fn new(old_count: usize, new_count: usize) -> Self {
+        Self {
+            old_to_new: vec![None; old_count],
+            new_to_old: vec![None; new_count],
+            unmatched_old_count: old_count,
+            unmatched_new_count: new_count,
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.old_to_new.len() - self.unmatched_old_count
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    fn add(&mut self, old_id: NodeId, new_id: NodeId) {
+        let old_idx = old_id.index();
+        let new_idx = new_id.index();
+
+        if self.old_to_new[old_idx].is_none() {
+            self.unmatched_old_count -= 1;
+        }
+        if self.new_to_old[new_idx].is_none() {
+            self.unmatched_new_count -= 1;
+        }
+
+        self.old_to_new[old_idx] = Some(new_id);
+        self.new_to_old[new_idx] = Some(old_id);
+    }
+
+    #[inline]
+    pub fn is_old_matched(&self, id: NodeId) -> bool {
+        self.old_to_new[id.index()].is_some()
+    }
+
+    #[inline]
+    pub fn is_new_matched(&self, id: NodeId) -> bool {
+        self.new_to_old[id.index()].is_some()
+    }
+
+    #[inline]
+    pub fn get_new(&self, old_id: NodeId) -> Option<NodeId> {
+        self.old_to_new[old_id.index()]
+    }
+
+    #[inline]
+    pub fn get_old(&self, new_id: NodeId) -> Option<NodeId> {
+        self.new_to_old[new_id.index()]
+    }
+
+    pub fn unmatched_old(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.old_to_new
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_none())
+            .map(|(i, _)| NodeId::new(i))
+    }
+
+    pub fn unmatched_new(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.new_to_old
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_none())
+            .map(|(i, _)| NodeId::new(i))
+    }
+
+    #[inline]
+    pub fn unmatched_old_count(&self) -> usize {
+        self.unmatched_old_count
+    }
+
+    #[inline]
+    pub fn unmatched_new_count(&self) -> usize {
+        self.unmatched_new_count
+    }
+
+    pub fn matched_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
+        self.old_to_new
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|new_id| (NodeId::new(i), new_id)))
+    }
+
+    pub fn old_matched_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.old_to_new
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_some())
+            .map(|(i, _)| NodeId::new(i))
+    }
+
+    pub fn new_matched_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.new_to_old
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_some())
+            .map(|(i, _)| NodeId::new(i))
+    }
+}
+
+/// A diff operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffOperation {
+    Delete {
+        range: Range<usize>,
+        node_kind: &'static str,
+    },
+    Insert {
+        range: Range<usize>,
+        node_kind: &'static str,
+    },
+    Move {
+        old_range: Range<usize>,
+        new_range: Range<usize>,
+        node_kind: &'static str,
+    },
+    Update {
+        old_range: Range<usize>,
+        new_range: Range<usize>,
+        node_kind: &'static str,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct DiffResult {
+    pub operations: Vec<DiffOperation>,
+}
+
+/// Match two syntax trees using the GumTree algorithm.
 pub fn match_trees(old: &DiffTree, new: &DiffTree) -> Matching {
     let mut matching = Matching::new(old.node_count(), new.node_count());
 
-    // Phase 1: Top-down greedy subtree matching
+    // Phase 1: Top-down exact subtree matching
     top_down_matching(old, new, &mut matching);
 
-    // Phase 2: Bottom-up container matching
+    // Phase 2: Bottom-up similarity matching
     bottom_up_matching(old, new, &mut matching);
 
-    // Phase 3: Recovery phase (GumTree 4.0 improvement)
+    // Phase 3: Recovery matching for children of matched parents
     recovery_matching(old, new, &mut matching);
 
     matching
 }
 
-/// Phase 1: Top-down greedy subtree matching.
-///
-/// Matches isomorphic subtrees starting from the largest (highest) ones.
-/// Two subtrees are isomorphic if they have the same structure (same structural hash)
-/// and the same content (same content hash).
-///
-/// A subtree is only matched if:
-/// - Its height >= min_height threshold
-/// - Both the old and new subtrees are unique at their structural+content hash
 fn top_down_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
-    // Build hash -> nodes index for both trees
-    // We use (structural_hash, content_hash) as the key for exact isomorphism
-    let mut old_hash_to_nodes: FxHashMap<(u64, u64), Vec<NodeId>> = FxHashMap::default();
-    let mut new_hash_to_nodes: FxHashMap<(u64, u64), Vec<NodeId>> = FxHashMap::default();
+    use collections::FxHashMap;
 
-    for node in old.nodes() {
-        if node.height >= MIN_HEIGHT {
-            let key = (node.structural_hash, node.content_hash);
-            old_hash_to_nodes.entry(key).or_default().push(node.id);
+    // Index new tree nodes by (structural_hash, content_hash)
+    let mut new_by_hash: FxHashMap<(u64, u64), Vec<NodeId>> = FxHashMap::default();
+    for (idx, node) in new.nodes.iter().enumerate() {
+        if node.height >= MIN_HEIGHT as u16 {
+            new_by_hash
+                .entry((node.structural_hash, node.content_hash))
+                .or_default()
+                .push(NodeId::new(idx));
         }
     }
 
-    for node in new.nodes() {
-        if node.height >= MIN_HEIGHT {
-            let key = (node.structural_hash, node.content_hash);
-            new_hash_to_nodes.entry(key).or_default().push(node.id);
-        }
-    }
-
-    // Process heights from max to min_height
-    let max_height = old.max_height().max(new.max_height());
-
+    // Process old nodes from highest to lowest
+    let max_height = old.max_height();
     for height in (MIN_HEIGHT..=max_height).rev() {
-        // Get candidate nodes at this height, sorted by size (largest first)
-        let old_candidates = old.nodes_at_height(height);
-
-        for old_id in old_candidates {
+        for old_id in old.nodes_at_height(height) {
             if matching.is_old_matched(old_id) {
                 continue;
             }
@@ -399,72 +464,59 @@ fn top_down_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
             let old_node = old.node(old_id);
             let key = (old_node.structural_hash, old_node.content_hash);
 
-            // Find matching candidates in new tree
-            let Some(new_candidates) = new_hash_to_nodes.get(&key) else {
+            let Some(candidates) = new_by_hash.get(&key) else {
                 continue;
             };
 
             // Filter to unmatched candidates
-            let unmatched_new: Vec<_> = new_candidates
+            let unmatched: Vec<_> = candidates
                 .iter()
                 .copied()
                 .filter(|&id| !matching.is_new_matched(id))
                 .collect();
 
-            // Only match if there's exactly one candidate (unique match)
-            // or if we can find a unique match based on position/context
-            if unmatched_new.len() == 1 {
-                let new_id = unmatched_new[0];
+            let matched_new = match unmatched.len() {
+                0 => continue,
+                1 => Some(unmatched[0]),
+                _ => find_best_match_by_context(old, new, old_id, &unmatched, matching),
+            };
+
+            if let Some(new_id) = matched_new {
                 match_subtrees(old, new, old_id, new_id, matching);
-            } else if unmatched_new.len() > 1 {
-                // Multiple candidates - try to find the best match based on parent similarity
-                if let Some(best_match) =
-                    find_best_match_by_context(old, new, old_id, &unmatched_new, matching)
-                {
-                    match_subtrees(old, new, old_id, best_match, matching);
-                }
             }
         }
     }
 }
 
-/// Find the best matching node when there are multiple candidates.
-/// Uses parent matching context to disambiguate.
+/// Find best match among candidates using parent/sibling context.
 fn find_best_match_by_context(
     old: &DiffTree,
     new: &DiffTree,
     old_id: NodeId,
-    new_candidates: &[NodeId],
+    candidates: &[NodeId],
     matching: &Matching,
 ) -> Option<NodeId> {
     let old_node = old.node(old_id);
 
-    // If old node's parent is matched, prefer a new node whose parent matches
-    if let Some(old_parent) = old_node.parent {
+    // Prefer candidate whose parent matches old node's parent
+    if let Some(old_parent) = old_node.parent() {
         if let Some(new_parent) = matching.get_new(old_parent) {
-            for &new_id in new_candidates {
-                let new_node = new.node(new_id);
-                if new_node.parent == Some(new_parent) {
+            for &new_id in candidates {
+                if new.node(new_id).parent() == Some(new_parent) {
                     return Some(new_id);
                 }
             }
         }
     }
 
-    // If no parent context helps, check if any old sibling is matched to a sibling of a candidate
-    if let Some(old_parent) = old_node.parent {
-        let old_siblings: FxHashSet<_> = old.node(old_parent).children.iter().copied().collect();
-
-        for &new_id in new_candidates {
-            let new_node = new.node(new_id);
-            if let Some(new_parent) = new_node.parent {
-                let new_siblings: FxHashSet<_> =
-                    new.node(new_parent).children.iter().copied().collect();
-
-                // Check if any matched pair exists among siblings
-                for &old_sib in &old_siblings {
+    // Check sibling context
+    if let Some(old_parent) = old_node.parent() {
+        for &new_id in candidates {
+            if let Some(new_parent) = new.node(new_id).parent() {
+                // Check if any old sibling is matched to a sibling of this candidate
+                for old_sib in old.children(old_parent) {
                     if let Some(matched_new_sib) = matching.get_new(old_sib) {
-                        if new_siblings.contains(&matched_new_sib) {
+                        if new.node(matched_new_sib).parent() == Some(new_parent) {
                             return Some(new_id);
                         }
                     }
@@ -494,60 +546,56 @@ fn match_subtrees(
 
         matching.add(old_id, new_id);
 
-        let old_node = old.node(old_id);
-        let new_node = new.node(new_id);
+        // Push children in reverse order so they're processed in order
+        let old_children: Vec<_> = old.children(old_id).collect();
+        let new_children: Vec<_> = new.children(new_id).collect();
 
-        // Children should be in the same order for isomorphic subtrees
-        old_stack.extend(old_node.children.iter().rev().copied());
-        new_stack.extend(new_node.children.iter().rev().copied());
+        for &child in old_children.iter().rev() {
+            old_stack.push(child);
+        }
+        for &child in new_children.iter().rev() {
+            new_stack.push(child);
+        }
     }
 }
 
-/// Phase 2: Bottom-up container matching.
-///
-/// For each unmatched node, find candidates in the other tree with:
-/// - Same node kind
-/// - Dice similarity of matched descendants >= threshold
-///
-/// Dice(A, B) = 2 * |common matched descendants| / (|descendants of A| + |descendants of B|)
 fn bottom_up_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
+    use collections::FxHashMap;
+
     if matching.unmatched_old_count() == 0 {
         return;
     }
 
-    // Process nodes by decreasing height (parents after children are already matched)
+    let mut new_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
+    for new_id in matching.unmatched_new() {
+        new_by_kind
+            .entry(new.node(new_id).kind_id)
+            .or_default()
+            .push(new_id);
+    }
+
     let max_height = old.max_height();
-
     for height in (0..=max_height).rev() {
-        let old_candidates = old.nodes_at_height(height);
-
-        for old_id in old_candidates {
+        for old_id in old.nodes_at_height(height) {
             if matching.is_old_matched(old_id) {
                 continue;
             }
 
             let old_node = old.node(old_id);
+            let Some(candidates) = new_by_kind.get(&old_node.kind_id) else {
+                continue;
+            };
 
-            // Find the best matching node in the new tree
             let mut best_match: Option<(NodeId, f64)> = None;
 
-            for unmatched_new in matching.unmatched_new() {
-                let new_node = new.node(unmatched_new);
-
-                // Must have same node kind
-                if new_node.kind_id != old_node.kind_id {
+            for &new_id in candidates {
+                if matching.is_new_matched(new_id) {
                     continue;
                 }
 
-                // Compute Dice similarity
-                let dice = compute_dice_similarity(old, new, old_id, new_node.id, matching);
-
-                if dice >= SIM_THRESHOLD {
-                    if best_match.is_none()
-                        || dice > best_match.as_ref().map(|(_, d)| *d).unwrap_or(0.0)
-                    {
-                        best_match = Some((new_node.id, dice));
-                    }
+                let dice = compute_dice_similarity(old, new, old_id, new_id, matching);
+                if dice >= SIM_THRESHOLD && best_match.map_or(true, |(_, d)| dice > d) {
+                    best_match = Some((new_id, dice));
                 }
             }
 
@@ -558,11 +606,7 @@ fn bottom_up_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
     }
 }
 
-/// Compute Dice similarity between two nodes based on their matched descendants.
-///
-/// Dice(A, B) = 2 * |common| / (|A descendants| + |B descendants|)
-/// where |common| is the number of matched pairs where one is in A's descendants
-/// and the other is in B's descendants.
+/// Compute Dice similarity between two nodes.
 fn compute_dice_similarity(
     old: &DiffTree,
     new: &DiffTree,
@@ -570,34 +614,37 @@ fn compute_dice_similarity(
     new_id: NodeId,
     matching: &Matching,
 ) -> f64 {
-    let old_count = old.node(old_id).descendant_count;
-    let new_count = new.node(new_id).descendant_count;
+    let old_count = old.node(old_id).descendant_count as usize;
+    let new_count = new.node(new_id).descendant_count as usize;
 
     if old_count == 0 && new_count == 0 {
         return 1.0;
     }
 
     let old_start = old_id.index();
-    let old_range = old_start..old_start + old_count;
-
     let new_start = new_id.index();
-    let new_range = new_start..new_start + new_count;
 
-    // Iterate the smaller subtree's range, not all matched pairs
+    // Pre-order property: descendants are in [idx, idx + count - 1]
+    let old_end = old_start + old_count;
+    let new_end = new_start + new_count;
+
     let mut common = 0;
 
+    // Iterate smaller range
     if old_count <= new_count {
-        for idx in old_range {
-            if let Some(new_descendant) = matching.get_new(NodeId(idx)) {
-                if new_range.contains(&new_descendant.index()) {
+        for idx in old_start..old_end {
+            if let Some(matched_new) = matching.get_new(NodeId::new(idx)) {
+                let matched_idx = matched_new.index();
+                if matched_idx >= new_start && matched_idx < new_end {
                     common += 1;
                 }
             }
         }
     } else {
-        for idx in new_range {
-            if let Some(old_descendant) = matching.get_old(NodeId(idx)) {
-                if old_range.contains(&old_descendant.index()) {
+        for idx in new_start..new_end {
+            if let Some(matched_old) = matching.get_old(NodeId::new(idx)) {
+                let matched_idx = matched_old.index();
+                if matched_idx >= old_start && matched_idx < old_end {
                     common += 1;
                 }
             }
@@ -607,14 +654,12 @@ fn compute_dice_similarity(
     (2.0 * common as f64) / (old_count + new_count) as f64
 }
 
-/// Phase 3: Recovery matching (GumTree 4.0 simple recovery).
-///
-/// For each pair of matched nodes, try to match their unmatched children
-/// if they have the same type and there's only one candidate.
 fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
-    let matched_pairs: Vec<_> = matching.matched_pairs().collect();
+    use collections::FxHashMap;
 
-    for (old_id, new_id) in matched_pairs {
+    let matched: Vec<_> = matching.matched_pairs().collect();
+
+    for (old_id, new_id) in matched {
         let old_node = old.node(old_id);
         let new_node = new.node(new_id);
 
@@ -624,50 +669,38 @@ fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
             continue;
         }
 
-        // Get unmatched children
-        let old_unmatched: Vec<_> = old_node
-            .children
-            .iter()
-            .copied()
-            .filter(|&id| !matching.is_old_matched(id))
-            .collect();
-
-        let new_unmatched: Vec<_> = new_node
-            .children
-            .iter()
-            .copied()
-            .filter(|&id| !matching.is_new_matched(id))
-            .collect();
-
-        // Group by kind
+        // Collect unmatched children grouped by kind
         let mut old_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
         let mut new_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
 
-        for &id in &old_unmatched {
-            old_by_kind
-                .entry(old.node(id).kind_id)
-                .or_default()
-                .push(id);
+        for child in old.children(old_id) {
+            if !matching.is_old_matched(child) {
+                old_by_kind
+                    .entry(old.node(child).kind_id)
+                    .or_default()
+                    .push(child);
+            }
         }
 
-        for &id in &new_unmatched {
-            new_by_kind
-                .entry(new.node(id).kind_id)
-                .or_default()
-                .push(id);
+        for child in new.children(new_id) {
+            if !matching.is_new_matched(child) {
+                new_by_kind
+                    .entry(new.node(child).kind_id)
+                    .or_default()
+                    .push(child);
+            }
         }
 
-        // Match unique pairs by kind
-        for (kind_id, old_ids) in &old_by_kind {
-            if let Some(new_ids) = new_by_kind.get(kind_id) {
-                if old_ids.len() == 1 && new_ids.len() == 1 {
-                    let old_child = old_ids[0];
-                    let new_child = new_ids[0];
+        // Match unique pairs
+        for (kind_id, old_children) in &old_by_kind {
+            if let Some(new_children) = new_by_kind.get(kind_id) {
+                if old_children.len() == 1 && new_children.len() == 1 {
+                    let old_child = old_children[0];
+                    let new_child = new_children[0];
 
                     if !matching.is_old_matched(old_child) && !matching.is_new_matched(new_child) {
                         matching.add(old_child, new_child);
 
-                        // Recursively match subtrees if they're similar enough
                         let dice =
                             compute_dice_similarity(old, new, old_child, new_child, matching);
                         if dice >= SIM_THRESHOLD {
@@ -680,7 +713,6 @@ fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
     }
 }
 
-/// Recursively recover matches within a subtree.
 fn recover_subtree(
     old: &DiffTree,
     new: &DiffTree,
@@ -688,48 +720,34 @@ fn recover_subtree(
     new_id: NodeId,
     matching: &mut Matching,
 ) {
-    let old_node = old.node(old_id);
-    let new_node = new.node(new_id);
+    use collections::FxHashMap;
 
-    // Get unmatched children
-    let old_unmatched: Vec<_> = old_node
-        .children
-        .iter()
-        .copied()
-        .filter(|&id| !matching.is_old_matched(id))
-        .collect();
-
-    let new_unmatched: Vec<_> = new_node
-        .children
-        .iter()
-        .copied()
-        .filter(|&id| !matching.is_new_matched(id))
-        .collect();
-
-    // Group by kind
     let mut old_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
     let mut new_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
 
-    for &id in &old_unmatched {
-        old_by_kind
-            .entry(old.node(id).kind_id)
-            .or_default()
-            .push(id);
+    for child in old.children(old_id) {
+        if !matching.is_old_matched(child) {
+            old_by_kind
+                .entry(old.node(child).kind_id)
+                .or_default()
+                .push(child);
+        }
     }
 
-    for &id in &new_unmatched {
-        new_by_kind
-            .entry(new.node(id).kind_id)
-            .or_default()
-            .push(id);
+    for child in new.children(new_id) {
+        if !matching.is_new_matched(child) {
+            new_by_kind
+                .entry(new.node(child).kind_id)
+                .or_default()
+                .push(child);
+        }
     }
 
-    // Match unique pairs
-    for (kind_id, old_ids) in &old_by_kind {
-        if let Some(new_ids) = new_by_kind.get(kind_id) {
-            if old_ids.len() == 1 && new_ids.len() == 1 {
-                let old_child = old_ids[0];
-                let new_child = new_ids[0];
+    for (kind_id, old_children) in &old_by_kind {
+        if let Some(new_children) = new_by_kind.get(kind_id) {
+            if old_children.len() == 1 && new_children.len() == 1 {
+                let old_child = old_children[0];
+                let new_child = new_children[0];
 
                 if !matching.is_old_matched(old_child) && !matching.is_new_matched(new_child) {
                     matching.add(old_child, new_child);
@@ -740,76 +758,62 @@ fn recover_subtree(
     }
 }
 
-/// Generate diff operations from a matching result.
-///
-/// Classifies each node as:
-/// - Matched with same parent: no operation (unchanged)
-/// - Matched with different parent: Move
-/// - Matched with different content: Update
-/// - Unmatched in old tree: Delete
-/// - Unmatched in new tree: Insert
+/// Generate diff operations from matching result.
 pub fn generate_diff(old: &DiffTree, new: &DiffTree, matching: &Matching) -> DiffResult {
     let mut operations = Vec::new();
 
-    // Find deleted nodes (in old, not matched)
-    for unmatched_old in matching.unmatched_old() {
-        let old_node = old.node(unmatched_old);
-
-        // Only report if parent is matched (or is root) - avoids redundant reports
+    // Deletions: unmatched old nodes with matched parents
+    for old_id in matching.unmatched_old() {
+        let old_node = old.node(old_id);
         let parent_matched = old_node
-            .parent
+            .parent()
             .map(|p| matching.is_old_matched(p))
             .unwrap_or(true);
 
         if parent_matched {
             operations.push(DiffOperation::Delete {
-                range: old_node.byte_range.clone(),
+                range: old_node.byte_range.start as usize..old_node.byte_range.end as usize,
                 node_kind: old_node.kind,
             });
         }
     }
 
-    // Find inserted nodes (in new, not matched)
-    for unmatched_new in matching.unmatched_new() {
-        let new_node = new.node(unmatched_new);
-
-        // Only report if parent is matched (or is root)
+    // Insertions: unmatched new nodes with matched parents
+    for new_id in matching.unmatched_new() {
+        let new_node = new.node(new_id);
         let parent_matched = new_node
-            .parent
+            .parent()
             .map(|p| matching.is_new_matched(p))
             .unwrap_or(true);
 
         if parent_matched {
             operations.push(DiffOperation::Insert {
-                range: new_node.byte_range.clone(),
+                range: new_node.byte_range.start as usize..new_node.byte_range.end as usize,
                 node_kind: new_node.kind,
             });
         }
     }
 
-    // Find moves and updates
+    // Moves and Updates
     for (old_id, new_id) in matching.matched_pairs() {
         let old_node = old.node(old_id);
         let new_node = new.node(new_id);
 
-        // Check for content update (same structure, different text)
+        // Content update
         if old_node.content_hash != new_node.content_hash {
             operations.push(DiffOperation::Update {
-                old_range: old_node.byte_range.clone(),
-                new_range: new_node.byte_range.clone(),
+                old_range: old_node.byte_range.start as usize..old_node.byte_range.end as usize,
+                new_range: new_node.byte_range.start as usize..new_node.byte_range.end as usize,
                 node_kind: old_node.kind,
             });
         }
 
-        // Check for move (parent changed)
-        let old_parent_match = old_node.parent.and_then(|p| matching.get_new(p));
-        let new_parent = new_node.parent;
-
-        if old_parent_match != new_parent {
-            // The node was moved to a different parent
+        // Move detection
+        let old_parent_match = old_node.parent().and_then(|p| matching.get_new(p));
+        if old_parent_match != new_node.parent() {
             operations.push(DiffOperation::Move {
-                old_range: old_node.byte_range.clone(),
-                new_range: new_node.byte_range.clone(),
+                old_range: old_node.byte_range.start as usize..old_node.byte_range.end as usize,
+                new_range: new_node.byte_range.start as usize..new_node.byte_range.end as usize,
                 node_kind: old_node.kind,
             });
         }
@@ -844,11 +848,9 @@ fn main() {
 
         let matching = match_trees(&old, &new);
 
-        // All nodes should be matched
         assert_eq!(matching.len(), old.node_count());
 
         let diff = generate_diff(&old, &new, &matching);
-        // No operations for identical trees (no deletes, inserts, or moves)
         let non_update_ops: Vec<_> = diff
             .operations
             .iter()
@@ -879,7 +881,6 @@ fn main() {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Should have at least one insert operation
         let inserts: Vec<_> = diff
             .operations
             .iter()
@@ -910,7 +911,6 @@ fn main() {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Should have at least one delete operation
         let deletes: Vec<_> = diff
             .operations
             .iter()
@@ -940,7 +940,6 @@ fn main() {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Should have update operations for the changed value
         let updates: Vec<_> = diff
             .operations
             .iter()
@@ -968,9 +967,6 @@ fn bar() {
         let new = DiffTree::new(&new_tree, new_code);
 
         let matching = match_trees(&old, &new);
-
-        // The function body should still be matched (isomorphic subtrees)
-        // The function name identifier should be updated
         let diff = generate_diff(&old, &new, &matching);
 
         let updates: Vec<_> = diff
@@ -1012,9 +1008,6 @@ fn sub(a: i32, b: i32) -> i32 {
         let new = DiffTree::new(&new_tree, new_code);
 
         let matching = match_trees(&old, &new);
-
-        // Both add and sub should be matched
-        // mul should be inserted
         let diff = generate_diff(&old, &new, &matching);
 
         let inserts: Vec<_> = diff
@@ -1035,20 +1028,17 @@ fn main() {
         let tree = parse_rust(code);
         let diff_tree = DiffTree::new(&tree, code);
 
-        // Root should have height > 0
         let root = diff_tree.node(diff_tree.root());
         assert!(root.height > 0);
 
-        // Root should have children
-        assert!(!root.children.is_empty());
-
-        // All nodes should have correct parent references
-        for node in diff_tree.nodes() {
-            for &child_id in &node.children {
-                let child = diff_tree.node(child_id);
-                assert_eq!(child.parent, Some(node.id));
+        // All children should reference correct parent
+        fn check_parent(tree: &DiffTree, node_id: NodeId) {
+            for child_id in tree.children(node_id) {
+                assert_eq!(tree.node(child_id).parent(), Some(node_id));
+                check_parent(tree, child_id);
             }
         }
+        check_parent(&diff_tree, diff_tree.root());
     }
 
     #[test]
@@ -1069,21 +1059,18 @@ fn bar() {
         let diff1 = DiffTree::new(&tree1, code1);
         let diff2 = DiffTree::new(&tree2, code2);
 
-        // Both trees should have the same structure (function with let statement)
-        // So root structural hashes should be equal
         let root1 = diff1.node(diff1.root());
         let root2 = diff2.node(diff2.root());
 
         assert_eq!(root1.structural_hash, root2.structural_hash);
-        // But content hashes should differ
         assert_ne!(root1.content_hash, root2.content_hash);
     }
 
     #[test]
     fn test_matching_bidirectional() {
-        let mut matching = Matching::new(1, 1);
-        let old_id = NodeId(0);
-        let new_id = NodeId(1);
+        let mut matching = Matching::new(2, 2);
+        let old_id = NodeId::new(0);
+        let new_id = NodeId::new(1);
 
         matching.add(old_id, new_id);
 
@@ -1124,8 +1111,6 @@ fn process(items: Vec<i32>) -> Vec<i32> {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // The function signature should be matched
-        // There should be significant changes in the body
         assert!(!diff.operations.is_empty());
     }
 
@@ -1160,7 +1145,6 @@ struct Inner {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Should have inserts for new fields
         let inserts: Vec<_> = diff
             .operations
             .iter()
@@ -1183,7 +1167,6 @@ struct Inner {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Everything in new should be inserted
         let inserts: Vec<_> = diff
             .operations
             .iter()
@@ -1206,7 +1189,6 @@ struct Inner {
         let matching = match_trees(&old, &new);
         let diff = generate_diff(&old, &new, &matching);
 
-        // Everything in old should be deleted
         let deletes: Vec<_> = diff
             .operations
             .iter()
@@ -1234,17 +1216,14 @@ fn b() {}
         let new = DiffTree::new(&new_tree, new_code);
 
         let matching = match_trees(&old, &new);
-
-        // All three functions should be matched (identical content)
-        // Each should be recognized as moved
         let diff = generate_diff(&old, &new, &matching);
+
         let moves: Vec<_> = diff
             .operations
             .iter()
             .filter(|op| matches!(op, DiffOperation::Move { .. }))
             .collect();
 
-        // At least some functions should be detected as moved
         assert!(!moves.is_empty() || matching.len() > 0);
     }
 
@@ -1260,11 +1239,12 @@ fn b() {}
         let leaf = diff_tree
             .nodes()
             .iter()
-            .find(|n| n.children.is_empty())
+            .enumerate()
+            .find(|(_, n)| n.first_child.is_none())
+            .map(|(i, _)| NodeId::new(i))
             .expect("Should have leaf nodes");
 
-        let dice = compute_dice_similarity(&diff_tree, &diff_tree, leaf.id, leaf.id, &matching);
-        // Two single-node "trees" with no matches should have similarity based on the formula
+        let dice = compute_dice_similarity(&diff_tree, &diff_tree, leaf, leaf, &matching);
         assert!(dice >= 0.0 && dice <= 1.0);
     }
 
@@ -1282,13 +1262,12 @@ fn main() {
         let tree = parse_rust(code);
         let diff_tree = DiffTree::new(&tree, code);
 
-        // Root should have the maximum height
         let root = diff_tree.node(diff_tree.root());
-        assert_eq!(root.height, diff_tree.max_height());
+        assert_eq!(root.height as usize, diff_tree.max_height());
 
         // Leaves should have height 0
         for node in diff_tree.nodes() {
-            if node.children.is_empty() {
+            if node.first_child.is_none() {
                 assert_eq!(node.height, 0);
             }
         }
@@ -1303,12 +1282,65 @@ fn b() { let y = 2; }
         let tree = parse_rust(code);
         let diff_tree = DiffTree::new(&tree, code);
 
-        // Should be able to get nodes at each height level
         for h in 0..=diff_tree.max_height() {
-            let nodes = diff_tree.nodes_at_height(h);
-            for node_id in nodes {
-                assert_eq!(diff_tree.node(node_id).height, h);
+            for node_id in diff_tree.nodes_at_height(h) {
+                assert_eq!(diff_tree.node(node_id).height as usize, h);
             }
+        }
+    }
+
+    #[test]
+    fn test_children_iterator() {
+        let code = r#"
+fn main() {
+    let a = 1;
+    let b = 2;
+    let c = 3;
+}
+"#;
+        let tree = parse_rust(code);
+        let diff_tree = DiffTree::new(&tree, code);
+
+        // Find the block node (has multiple children)
+        let mut found_block = false;
+        for node in diff_tree.nodes() {
+            if node.kind == "block" {
+                let children: Vec<_> = diff_tree.children(node.id).collect();
+                // Block should have children (the let statements + braces)
+                assert!(!children.is_empty());
+                found_block = true;
+                break;
+            }
+        }
+        assert!(found_block, "Should find a block node");
+    }
+
+    #[test]
+    fn test_is_ancestor() {
+        let code = r#"
+fn main() {
+    let x = 1;
+}
+"#;
+        let tree = parse_rust(code);
+        let diff_tree = DiffTree::new(&tree, code);
+
+        let root = diff_tree.root();
+
+        // Root should be ancestor of all other nodes
+        for node in diff_tree.nodes() {
+            if node.id != root {
+                assert!(
+                    diff_tree.is_ancestor(root, node.id),
+                    "Root should be ancestor of {:?}",
+                    node.kind
+                );
+            }
+        }
+
+        // No node should be its own ancestor
+        for node in diff_tree.nodes() {
+            assert!(!diff_tree.is_ancestor(node.id, node.id));
         }
     }
 }
