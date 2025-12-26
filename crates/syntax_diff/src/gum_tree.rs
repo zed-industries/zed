@@ -210,11 +210,6 @@ impl<'a> DiffTree<'a> {
         self.nodes[self.root.index()].height
     }
 
-    /// Iterate over all descendants of a node (including the node itself).
-    pub fn descendants(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        DescendantIterator::new(self, id)
-    }
-
     /// Get nodes at a specific height, sorted by descending descendant count.
     pub fn nodes_at_height(&self, height: u16) -> Vec<NodeId> {
         let mut nodes: Vec<_> = self
@@ -229,32 +224,6 @@ impl<'a> DiffTree<'a> {
                 .cmp(&self.nodes[a.index()].descendant_count)
         });
         nodes
-    }
-}
-
-/// Iterator over all descendants of a node (including the node itself).
-struct DescendantIterator<'a, 'b> {
-    tree: &'a DiffTree<'b>,
-    stack: Vec<NodeId>,
-}
-
-impl<'a, 'b> DescendantIterator<'a, 'b> {
-    fn new(tree: &'a DiffTree<'b>, root: NodeId) -> Self {
-        Self {
-            tree,
-            stack: vec![root],
-        }
-    }
-}
-
-impl<'a, 'b> Iterator for DescendantIterator<'a, 'b> {
-    type Item = NodeId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let id = self.stack.pop()?;
-        let node = self.tree.node(id);
-        self.stack.extend(node.children.iter().rev().copied());
-        Some(id)
     }
 }
 
@@ -573,23 +542,41 @@ fn compute_dice_similarity(
     new_id: NodeId,
     matching: &Matching,
 ) -> f64 {
-    let old_descendants: FxHashSet<_> = old.descendants(old_id).collect();
-    let new_descendants: FxHashSet<_> = new.descendants(new_id).collect();
+    let old_count = old.node(old_id).descendant_count;
+    let new_count = new.node(new_id).descendant_count;
 
-    if old_descendants.is_empty() && new_descendants.is_empty() {
+    if old_count == 0 && new_count == 0 {
         return 1.0;
     }
 
+    let old_start = old_id.index();
+    let old_range = old_start..old_start + old_count;
+
+    let new_start = new_id.index();
+    let new_range = new_start..new_start + new_count;
+
+    // Iterate the smaller subtree's range, not all matched pairs
     let mut common = 0;
-    for &old_desc in &old_descendants {
-        if let Some(matched_new) = matching.get_new(old_desc) {
-            if new_descendants.contains(&matched_new) {
-                common += 1;
+
+    if old_count <= new_count {
+        for idx in old_range {
+            if let Some(new_descendant) = matching.get_new(NodeId(idx)) {
+                if new_range.contains(&new_descendant.index()) {
+                    common += 1;
+                }
+            }
+        }
+    } else {
+        for idx in new_range {
+            if let Some(old_descendant) = matching.get_old(NodeId(idx)) {
+                if old_range.contains(&old_descendant.index()) {
+                    common += 1;
+                }
             }
         }
     }
 
-    (2.0 * common as f64) / (old_descendants.len() + new_descendants.len()) as f64
+    (2.0 * common as f64) / (old_count + new_count) as f64
 }
 
 /// Phase 3: Recovery matching (GumTree 4.0 simple recovery).
@@ -1036,26 +1023,6 @@ fn main() {
                 assert_eq!(child.parent, Some(node.id));
             }
         }
-    }
-
-    #[test]
-    fn test_descendant_iterator() {
-        let code = r#"
-fn main() {
-    let x = 1;
-}
-"#;
-        let tree = parse_rust(code);
-        let diff_tree = DiffTree::new(&tree, code);
-
-        let root = diff_tree.root();
-        let descendants: Vec<_> = diff_tree.descendants(root).collect();
-
-        // Should include all nodes
-        assert_eq!(descendants.len(), diff_tree.node_count());
-
-        // First descendant should be the root itself
-        assert_eq!(descendants[0], root);
     }
 
     #[test]
