@@ -2673,6 +2673,7 @@ impl Pane {
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
+        let item_for_context_menu = item.boxed_clone();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
         let is_pinned = self.is_tab_pinned(ix);
@@ -2853,6 +2854,7 @@ impl Pane {
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
+                let item_for_context_menu = item_for_context_menu.boxed_clone();
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
@@ -2971,7 +2973,31 @@ impl Pane {
                                     pane.close_all_items(&close_all_items_action, window, cx)
                                         .detach_and_log_err(cx)
                                 }),
-                            );
+                            )
+                            .map(|menu| {
+                                let entries =
+                                    item_for_context_menu.tab_context_menu_entries(window, cx);
+                                if entries.is_empty() {
+                                    menu
+                                } else {
+                                    let items = entries.into_iter().map(|entry| {
+                                        let item = item_for_context_menu.boxed_clone();
+                                        let action = entry.action.boxed_clone();
+                                        ContextMenuItem::Entry(
+                                            ContextMenuEntry::new(entry.label)
+                                                .action(entry.action)
+                                                .handler(move |window, cx| {
+                                                    item.relay_action(
+                                                        action.boxed_clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }),
+                                        )
+                                    });
+                                    menu.separator().extend(items)
+                                }
+                            });
 
                         let pin_tab_entries = |menu: ContextMenu| {
                             menu.separator().map(|this| {
