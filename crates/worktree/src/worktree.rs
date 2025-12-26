@@ -3995,11 +3995,13 @@ impl BackgroundScanner {
                     .snapshot
                     .root_file_handle
                     .clone()
-                    .and_then(|handle| handle.current_path(&self.fs).log_err())
-                    // TODO this is a stub: on macOS, when trying to refresh handle's path when it does not exist (e.g. volume unmounted)
-                    // `current_path` will return an empty path and `libc::fcntl` inside won't error.
-                    // Ideally, we need to find a way to make `current_path` to return an error instead.
-                    .filter(|new_path| new_path != Path::new(""))
+                    .and_then(|handle| match handle.current_path(&self.fs) {
+                        Ok(new_path) => Some(new_path),
+                        Err(e) => {
+                            log::error!("Failed to refresh worktree root path: {e:#}");
+                            None
+                        }
+                    })
                     .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
