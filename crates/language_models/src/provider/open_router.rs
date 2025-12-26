@@ -556,7 +556,7 @@ fn add_message_content_part(
 
 pub struct OpenRouterEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
-    reasoning_details: Option<serde_json::Value>,
+    reasoning_details: Option<Vec<serde_json::Value>>,
 }
 
 impl OpenRouterEventMapper {
@@ -598,7 +598,7 @@ impl OpenRouterEventMapper {
 
         if let Some(details) = choice.delta.reasoning_details.clone() {
             // Emit reasoning_details immediately
-            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(
                 details.clone(),
             )));
             self.reasoning_details = Some(details);
@@ -899,14 +899,14 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
+                        reasoning_details: Some(vec![serde_json::json!(
                             {
                                 "type": "reasoning.text",
                                 "text": "Let me analyze this request...",
                                 "format": "google-gemini-v1",
                                 "index": 0
                             }
-                        ])),
+                        )]),
                     },
                     finish_reason: None,
                 }],
@@ -924,7 +924,7 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
+                        reasoning_details: Some(vec![serde_json::json!(
                             {
                                 "type": "reasoning.encrypted",
                                 "data": "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123",
@@ -932,7 +932,7 @@ mod tests {
                                 "index": 0,
                                 "id": "tool_call_abc123"
                             }
-                        ])),
+                        )]),
                     },
                     finish_reason: None,
                 }],
@@ -977,7 +977,7 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([])),
+                        reasoning_details: Some(vec![serde_json::json!({})]),
                     },
                     finish_reason: Some("tool_calls".into()),
                 }],
@@ -1005,7 +1005,7 @@ mod tests {
                     assert_eq!(tool_use.name.as_ref(), "list_directory");
                     thought_signature_value = tool_use.thought_signature.clone();
                 }
-                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
+                Ok(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(details)) => {
                     reasoning_details_events.push(details);
                 }
                 _ => {}
@@ -1016,28 +1016,24 @@ mod tests {
         assert!(has_tool_use, "Should have emitted ToolUse event");
         assert!(
             !reasoning_details_events.is_empty(),
-            "Should have emitted ReasoningDetails events"
+            "Should have emitted ReasoningDetailsAccumulable events"
         );
 
         // We should have received multiple reasoning_details events (text, encrypted, empty)
         // The agent layer is responsible for keeping only the first non-empty one
         assert!(
             reasoning_details_events.len() >= 2,
-            "Should have multiple reasoning_details events from streaming"
+            "Should have multiple ReasoningDetailsAccumulable events from streaming"
         );
 
         // Verify at least one contains the encrypted data
         let has_encrypted = reasoning_details_events.iter().any(|details| {
-            if let serde_json::Value::Array(arr) = details {
-                arr.iter().any(|item| {
-                    item["type"] == "reasoning.encrypted"
-                        && item["data"]
-                            .as_str()
-                            .map_or(false, |s| s.contains("EtgDCtUDAdHtim9OF5jm4aeZSBAtl"))
-                })
-            } else {
-                false
-            }
+            details.iter().any(|item| {
+                item["type"] == "reasoning.encrypted"
+                    && item["data"]
+                        .as_str()
+                        .map_or(false, |s| s.contains("EtgDCtUDAdHtim9OF5jm4aeZSBAtl"))
+            })
         });
         assert!(
             has_encrypted,
