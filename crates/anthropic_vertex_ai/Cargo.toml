@@ -1,0 +1,30 @@
+[package]
+name = "anthropic_vertex_ai"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[features]
+default = []
+schemars = ["dep:schemars"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/anthropic_vertex_ai.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+futures.workspace = true
+http_client.workspace = true
+schemars = { workspace = true, optional = true }
+anthropic.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+workspace-hack.workspace = true
