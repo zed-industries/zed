@@ -569,10 +569,11 @@ impl Object {
         let relative_to = selection.head();
         match self {
             Object::Word { ignore_punctuation } => {
+                let count = times.unwrap_or(1);
                 if around {
-                    around_word(map, relative_to, ignore_punctuation)
+                    around_word(map, relative_to, ignore_punctuation, count)
                 } else {
-                    in_word(map, relative_to, ignore_punctuation)
+                    in_word(map, relative_to, ignore_punctuation, count)
                 }
             }
             Object::Subword { ignore_punctuation } => {
@@ -789,10 +790,12 @@ impl Object {
 ///
 /// If `relative_to` is at the start of a word, return the word.
 /// If `relative_to` is between words, return the space between.
+/// If `times` > 1, extend to include additional words.
 fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
@@ -806,9 +809,24 @@ fn in_word(
         |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+    let mut end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         classifier.kind(left) != classifier.kind(right)
     });
+
+    for _ in 1..times {
+        let next_start =
+            movement::find_boundary(map, end, FindRange::SingleLine, |left, right| {
+                classifier.kind(left) != classifier.kind(right)
+            });
+        let next_end =
+            movement::find_boundary(map, next_start, FindRange::SingleLine, |left, right| {
+                classifier.kind(left) != classifier.kind(right)
+            });
+        if next_end == end {
+            break;
+        }
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -965,10 +983,12 @@ pub fn surrounding_html_tag(
 /// otherwise
 ///   delete whitespace around cursor
 ///   delete word following the cursor
+/// If `times` > 1, extend to include additional words.
 fn around_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
     let classifier = map
@@ -982,9 +1002,9 @@ fn around_word(
         .unwrap_or(false);
 
     if in_word {
-        around_containing_word(map, relative_to, ignore_punctuation)
+        around_containing_word(map, relative_to, ignore_punctuation, times)
     } else {
-        around_next_word(map, relative_to, ignore_punctuation)
+        around_next_word(map, relative_to, ignore_punctuation, times)
     }
 }
 
@@ -1026,8 +1046,9 @@ fn around_containing_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
-    in_word(map, relative_to, ignore_punctuation).map(|range| {
+    in_word(map, relative_to, ignore_punctuation, times).map(|range| {
         let line_start = DisplayPoint::new(range.start.row(), 0);
         let is_first_word = map
             .buffer_chars_at(line_start.to_offset(map, Bias::Left))
@@ -1052,12 +1073,12 @@ fn around_next_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let classifier = map
         .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
@@ -1066,7 +1087,7 @@ fn around_next_word(
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
+    let mut end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
         let left_kind = classifier.kind(left);
         let right_kind = classifier.kind(right);
 
@@ -1078,6 +1099,26 @@ fn around_next_word(
 
         found
     });
+
+    for _ in 1..times {
+        word_found = false;
+        let next_end = movement::find_boundary(map, end, FindRange::MultiLine, |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
+
+            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
+
+            if right_kind != CharKind::Whitespace {
+                word_found = true;
+            }
+
+            found
+        });
+        if next_end == end {
+            break;
+        }
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -1853,6 +1894,46 @@ mod test {
         cx.simulate_at_each_offset("v i shift-w", WORD_LOCATIONS)
             .await
             .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_word_object_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test 2daw - should delete two words
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test d2aw - should delete two words
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test with WORD (shift-w) - should delete two WORDs
+        cx.set_shared_state("ˇone-two three-four five").await;
+        cx.simulate_shared_keystrokes("2 d a shift-w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test 3daw - should delete three words
+        cx.set_shared_state("ˇone two three four five").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test multiplied counts: 2d2aw should delete 4 words (2*2)
+        cx.set_shared_state("ˇone two three four five six").await;
+        cx.simulate_shared_keystrokes("2 d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test change with count: 2caw
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 c a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test yank with count: 2yaw then paste
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 y a w p").await;
+        cx.shared_state().await.assert_matches();
     }
 
     const PARAGRAPH_EXAMPLES: &[&str] = &[
