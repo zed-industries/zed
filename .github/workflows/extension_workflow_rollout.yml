@@ -68,7 +68,7 @@ jobs:
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
       run: |
-        echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
       working-directory: zed
     - id: create-pr
