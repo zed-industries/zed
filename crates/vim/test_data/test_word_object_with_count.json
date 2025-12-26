@@ -42,3 +42,9 @@
 {"Key":"w"}
 {"Key":"p"}
 {"Get":{"state":"oone twoˇ ne two three four","mode":"Normal"}}
+{"Put":{"state":"  ˇfoo-bar baz"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"  ˇbar baz","mode":"Normal"}}

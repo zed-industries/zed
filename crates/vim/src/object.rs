@@ -814,14 +814,26 @@ fn in_word(
     });
 
     for _ in 1..times {
-        let next_start =
+        let kind_at_end = map
+            .buffer_chars_at(end.to_offset(map, Bias::Right))
+            .next()
+            .map(|(c, _)| classifier.kind(c));
+
+        // Whitespace is skipped when extending to the next word unit,
+        // but punctuation is itself a word unit and should not be skipped.
+        let next_end = if kind_at_end == Some(CharKind::Whitespace) {
+            let after_whitespace =
+                movement::find_boundary(map, end, FindRange::SingleLine, |left, right| {
+                    classifier.kind(left) != classifier.kind(right)
+                });
+            movement::find_boundary(map, after_whitespace, FindRange::SingleLine, |left, right| {
+                classifier.kind(left) != classifier.kind(right)
+            })
+        } else {
             movement::find_boundary(map, end, FindRange::SingleLine, |left, right| {
                 classifier.kind(left) != classifier.kind(right)
-            });
-        let next_end =
-            movement::find_boundary(map, next_start, FindRange::SingleLine, |left, right| {
-                classifier.kind(left) != classifier.kind(right)
-            });
+            })
+        };
         if next_end == end {
             break;
         }
@@ -1101,18 +1113,12 @@ fn around_next_word(
     });
 
     for _ in 1..times {
-        word_found = false;
         let next_end = movement::find_boundary(map, end, FindRange::MultiLine, |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
 
-            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
-
-            if right_kind != CharKind::Whitespace {
-                word_found = true;
-            }
-
-            found
+            let in_word_unit = left_kind != CharKind::Whitespace;
+            (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
         });
         if next_end == end {
             break;
@@ -1933,6 +1939,13 @@ mod test {
         // Test yank with count: 2yaw then paste
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes("2 y a w p").await;
+        cx.shared_state().await.assert_matches();
+
+        // Test 2daw with punctuation - cursor on whitespace before foo-bar
+        // In vim, foo-bar is 3 word units: foo, -, bar
+        // So 2aw should select foo and - (2 units)
+        cx.set_shared_state("  ˇfoo-bar baz").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
         cx.shared_state().await.assert_matches();
     }
 
