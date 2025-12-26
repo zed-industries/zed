@@ -1377,8 +1377,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone()));
+            let breakpoint_store = cx.new(|_| {
+                BreakpointStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote_proto.clone(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
@@ -1474,6 +1480,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
@@ -1495,6 +1502,7 @@ impl Project {
             TaskStore::init(Some(&remote_proto));
             ToolchainStore::init(&remote_proto);
             DapStore::init(&remote_proto, cx);
+            BreakpointStore::init(&remote_proto);
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
 
@@ -1582,8 +1590,14 @@ impl Project {
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
+        let breakpoint_store = cx.new(|_| {
+            BreakpointStore::remote(
+                remote_id,
+                client.clone().into(),
+                buffer_store.clone(),
+                worktree_store.clone(),
+            )
+        })?;
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -4575,11 +4589,9 @@ impl Project {
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
-        self.find_worktree(abs_path, cx)
-            .map(|(worktree, relative_path)| ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: relative_path,
-            })
+        self.worktree_store
+            .read(cx)
+            .project_path_for_absolute_path(abs_path, cx)
     }
 
     pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {

@@ -52,6 +52,7 @@ pub struct HeadlessProject {
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
     pub dap_store: Entity<DapStore>,
+    pub breakpoint_store: Entity<BreakpointStore>,
     pub agent_server_store: Entity<AgentServerStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
@@ -130,8 +131,13 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+        let breakpoint_store = cx.new(|_| {
+            let mut breakpoint_store =
+                BreakpointStore::local(worktree_store.clone(), buffer_store.clone());
+            breakpoint_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+
+            breakpoint_store
+        });
 
         let dap_store = cx.new(|cx| {
             let mut dap_store = DapStore::new_local(
@@ -257,6 +263,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &task_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &dap_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &breakpoint_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &agent_server_store);
@@ -300,7 +307,7 @@ impl HeadlessProject {
         ToolchainStore::init(&session);
         DapStore::init(&session, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
-        // BreakpointStore::init(&client);
+        BreakpointStore::init(&session);
         GitStore::init(&session);
         AgentServerStore::init_headless(&session);
 
@@ -314,6 +321,7 @@ impl HeadlessProject {
             lsp_store,
             task_store,
             dap_store,
+            breakpoint_store,
             agent_server_store,
             languages,
             extensions,
