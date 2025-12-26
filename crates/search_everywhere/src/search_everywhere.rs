@@ -29,6 +29,10 @@ actions!(
     [
         /// Toggle the Search Everywhere modal.
         Toggle,
+        /// Switch to the next tab in Search Everywhere.
+        NextTab,
+        /// Switch to the previous tab in Search Everywhere.
+        PreviousTab,
     ]
 );
 
@@ -50,6 +54,26 @@ pub enum SearchTab {
     Files,
     Symbols,
     Actions,
+}
+
+impl SearchTab {
+    fn next(self) -> Self {
+        match self {
+            SearchTab::All => SearchTab::Files,
+            SearchTab::Files => SearchTab::Symbols,
+            SearchTab::Symbols => SearchTab::Actions,
+            SearchTab::Actions => SearchTab::All,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            SearchTab::All => SearchTab::Actions,
+            SearchTab::Files => SearchTab::All,
+            SearchTab::Symbols => SearchTab::Files,
+            SearchTab::Actions => SearchTab::Symbols,
+        }
+    }
 }
 
 impl SearchEverywhere {
@@ -126,10 +150,18 @@ impl Focusable for SearchEverywhere {
 }
 
 impl Render for SearchEverywhere {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("SearchEverywhere")
             .w(rems(34.))
+            .on_action(cx.listener(|this, _: &NextTab, window, cx| {
+                let next_tab = this.active_tab.next();
+                this.set_active_tab(next_tab, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PreviousTab, window, cx| {
+                let previous_tab = this.active_tab.previous();
+                this.set_active_tab(previous_tab, window, cx);
+            }))
             .child(self.picker.clone())
     }
 }
@@ -183,7 +215,14 @@ impl SearchEverywhereDelegate {
 
     fn filter_matches_by_tab(&self, matches: Vec<SearchResultMatch>) -> Vec<SearchResultMatch> {
         match self.active_tab {
-            SearchTab::All => matches,
+            // "All" tab shows files and symbols only - actions are opt-in
+            SearchTab::All => matches
+                .into_iter()
+                .filter(|m| {
+                    m.result.category == SearchResultCategory::File
+                        || m.result.category == SearchResultCategory::Symbol
+                })
+                .collect(),
             SearchTab::Files => matches
                 .into_iter()
                 .filter(|m| m.result.category == SearchResultCategory::File)
@@ -324,8 +363,15 @@ impl PickerDelegate for SearchEverywhereDelegate {
         self.is_loading = true;
         cx.notify();
 
+        // Only search for actions when the Actions tab is selected
+        let search_actions = self.active_tab == SearchTab::Actions;
+
         let file_results = self.file_provider.search(&query, cx);
-        let action_results = self.action_provider.search(&query, window, cx);
+        let action_results = if search_actions {
+            self.action_provider.search(&query, window, cx)
+        } else {
+            Task::ready(Vec::new())
+        };
         let symbol_results = self.symbol_provider.search(&query, cx);
 
         cx.spawn_in(window, async move |picker, cx| {
