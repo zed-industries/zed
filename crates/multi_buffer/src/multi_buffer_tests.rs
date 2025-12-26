@@ -2443,37 +2443,36 @@ impl ReferenceMultibuffer {
             let buffer_range = excerpt.range.to_offset(buffer);
 
             if let Some((diff, main_buffer_snapshot)) = self.inverted_diffs.get(&buffer_id) {
-                // INVERTED DIFF: Show base text with deleted regions marked
                 let diff_snapshot = diff.read(cx).snapshot(cx);
 
                 let mut offset = buffer_range.start;
                 for hunk in diff_snapshot
                     .hunks_intersecting_base_text_range(buffer_range.clone(), main_buffer_snapshot)
                 {
-                    let hunk_base_range = hunk.diff_base_byte_range.clone();
+                    let mut hunk_base_range = hunk.diff_base_byte_range.clone();
 
-                    // Match actual multibuffer behavior: skip hunks that start before excerpt
-                    if hunk_base_range.start < buffer_range.start {
+                    hunk_base_range.end = hunk_base_range.end.min(buffer_range.end);
+                    if hunk_base_range.start > buffer_range.end
+                        || hunk_base_range.start < buffer_range.start
+                    {
                         continue;
                     }
 
-                    // Clamp to excerpt range
-                    let hunk_start = hunk_base_range.start.max(buffer_range.start);
-                    let hunk_end = hunk_base_range.end.min(buffer_range.end);
-
-                    if hunk_start > buffer_range.end {
+                    if !hunk.buffer_range.start.is_valid(main_buffer_snapshot) {
                         continue;
                     }
 
-                    // Add buffer text before the hunk (no status)
-                    if hunk_start > offset {
+                    // Add the text before the hunk
+                    if hunk_base_range.start >= offset {
                         let len = text.len();
-                        text.extend(buffer.text_for_range(offset..hunk_start));
+                        text.extend(buffer.text_for_range(offset..hunk_base_range.start));
                         if text.len() > len {
                             regions.push(ReferenceRegion {
                                 buffer_id: Some(buffer_id),
                                 range: len..text.len(),
-                                buffer_range: Some((offset..hunk_start).to_point(&buffer)),
+                                buffer_range: Some(
+                                    (offset..hunk_base_range.start).to_point(&buffer),
+                                ),
                                 status: None,
                                 excerpt_id: Some(excerpt.id),
                             });
@@ -2481,45 +2480,33 @@ impl ReferenceMultibuffer {
                     }
 
                     // Add the "deleted" region (base text that's not in main)
-                    if hunk_end > hunk_start {
+                    if !hunk_base_range.is_empty() {
                         let len = text.len();
-                        text.extend(buffer.text_for_range(hunk_start..hunk_end));
+                        text.extend(buffer.text_for_range(hunk_base_range.clone()));
                         regions.push(ReferenceRegion {
                             buffer_id: Some(buffer_id),
                             range: len..text.len(),
-                            buffer_range: Some((hunk_start..hunk_end).to_point(&buffer)),
+                            buffer_range: Some(hunk_base_range.to_point(&buffer)),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                             excerpt_id: Some(excerpt.id),
                         });
                     }
 
-                    offset = hunk_end.max(offset);
+                    offset = hunk_base_range.end;
                 }
 
                 // Add remaining buffer text
-                if offset < buffer_range.end {
-                    let len = text.len();
-                    text.extend(buffer.text_for_range(offset..buffer_range.end));
-                    text.push('\n');
-                    regions.push(ReferenceRegion {
-                        buffer_id: Some(buffer_id),
-                        range: len..text.len(),
-                        buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
-                        status: None,
-                        excerpt_id: Some(excerpt.id),
-                    });
-                } else {
-                    text.push('\n');
-                    regions.push(ReferenceRegion {
-                        buffer_id: Some(buffer_id),
-                        range: text.len() - 1..text.len(),
-                        buffer_range: Some((buffer_range.end..buffer_range.end).to_point(&buffer)),
-                        status: None,
-                        excerpt_id: Some(excerpt.id),
-                    });
-                }
+                let len = text.len();
+                text.extend(buffer.text_for_range(offset..buffer_range.end));
+                text.push('\n');
+                regions.push(ReferenceRegion {
+                    buffer_id: Some(buffer_id),
+                    range: len..text.len(),
+                    buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
+                    status: None,
+                    excerpt_id: Some(excerpt.id),
+                });
             } else {
-                // NON-INVERTED: Existing logic (show main buffer, insert deleted content)
                 let diff = self.diffs.get(&buffer_id).unwrap().read(cx).snapshot(cx);
                 let base_buffer = diff.base_text();
 
