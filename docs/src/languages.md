@@ -145,6 +145,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Roclang](https://github.com/h2000/zed-roc)
 - [Ron](https://github.com/onbjerg/zed-ron)
 - [Metals](https://github.com/scalameta/metals-zed)
+- [SCM (Tree-sitter query files)](https://github.com/vitallium/zed-tree-sitter-query)
 - [SCSS](https://github.com/bajrangCoder/zed-scss)
 - [Slim](https://github.com/calmyournerves/zed-slim)
 - [Slint](https://gitlab.com/flukejones/zed-slint)
