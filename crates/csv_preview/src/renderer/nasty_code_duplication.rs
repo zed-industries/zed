@@ -106,8 +106,7 @@ impl CsvPreviewView {
     /// Maps runtime column count to compile-time const generic.
     ///
     /// Takes number of headers (+1 for line numbers col) and dispatches to `create_table<COLS>()`
-    /// with the matching `TableColumnWidths<COLS>` entity. Falls back to ASCII
-    /// table for unsupported column counts.
+    /// with the matching `TableColumnWidths<COLS>` entity.
     pub(crate) fn render_table_with_cols(&self, cx: &mut Context<Self>) -> AnyElement {
         let w = &self.column_widths;
         // Add 1 for the line number column
