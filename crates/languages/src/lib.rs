@@ -14,7 +14,7 @@ pub use language::*;
 
 use crate::{
     json::JsonTaskProvider,
-    python::{BasedPyrightLspAdapter, RuffLspAdapter},
+    python::{BasedPyrightLspAdapter, PyreflyLspAdapter, RuffLspAdapter},
 };
 
 mod bash;
@@ -97,6 +97,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
+    let pyrefly_lsp_adapter = Arc::new(PyreflyLspAdapter::new());
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -274,6 +275,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
     languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
     languages.register_available_lsp_adapter(ty_lsp_adapter.name(), ty_lsp_adapter);
+    languages.register_available_lsp_adapter(pyrefly_lsp_adapter.name(), pyrefly_lsp_adapter);
     // Register Tailwind for the existing languages that should have it by default.
     //
     // This can be driven by the `language_servers` setting once we have a way for
