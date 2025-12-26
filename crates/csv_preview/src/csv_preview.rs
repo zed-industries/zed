@@ -15,6 +15,7 @@ use crate::{
     table_data_engine::{
         DisplayToDataMapping, TableDataEngine, filtering_by_column::AppliedFiltering,
     },
+    types::AnyColumn,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
