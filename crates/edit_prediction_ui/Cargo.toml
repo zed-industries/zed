@@ -15,8 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 buffer_diff.workspace = true
-git.workspace = true
-log.workspace = true
+collections.workspace = true
 time.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
@@ -50,11 +49,18 @@ zed_actions.workspace = true
 zeta_prompt.workspace = true
 
 [dev-dependencies]
+clock.workspace = true
 copilot = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 indoc.workspace = true
+language_model.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+semver.workspace = true
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

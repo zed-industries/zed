@@ -63,6 +63,12 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         named::bash("cargo fmt --all")
     }
 
+    fn run_cargo_fix() -> Step<Run> {
+        named::bash(
+            "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
+        )
+    }
+
     fn run_clippy_fix() -> Step<Run> {
         named::bash(
             "cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged",
@@ -101,6 +107,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::setup_pnpm())
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
+            .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())

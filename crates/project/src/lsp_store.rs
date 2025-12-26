@@ -257,7 +257,7 @@ struct DynamicRegistrations {
 
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
-    worktree_store: Entity<WorktreeStore>,
+    pub worktree_store: Entity<WorktreeStore>,
     toolchain_store: Entity<LocalToolchainStore>,
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
@@ -13953,7 +13953,7 @@ impl LocalLspAdapterDelegate {
         })
     }
 
-    fn from_local_lsp(
+    pub fn from_local_lsp(
         local: &LocalLspStore,
         worktree: &Entity<Worktree>,
         cx: &mut App,

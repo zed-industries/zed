@@ -22,9 +22,9 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task,
-    TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
+    ImageFormat, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
+    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -112,6 +112,7 @@ pub struct Markdown {
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    context_menu_selected_text: Option<String>,
 }
 
 struct Options {
@@ -181,6 +182,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -205,6 +207,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -289,6 +292,14 @@ impl Markdown {
         }
     }
 
+    pub fn selected_text(&self) -> Option<String> {
+        if self.selection.end <= self.selection.start {
+            None
+        } else {
+            Some(self.source[self.selection.start..self.selection.end].to_string())
+        }
+    }
+
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;
@@ -297,12 +308,20 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.context_menu_selected_text.take() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            return;
+        }
         if self.selection.end <= self.selection.start {
             return;
         }
         let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn capture_selection_for_context_menu(&mut self) {
+        self.context_menu_selected_text = self.selected_text();
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -666,6 +685,19 @@ impl MarkdownElement {
         let on_open_url = self.on_url_click.take();
 
         self.on_mouse_event(window, cx, {
+            let hitbox = hitbox.clone();
+            move |markdown, event: &MouseDownEvent, phase, window, _| {
+                if phase.capture()
+                    && event.button == MouseButton::Right
+                    && hitbox.is_hovered(window)
+                {
+                    // Capture selected text so it survives until menu item is clicked
+                    markdown.capture_selection_for_context_menu();
+                }
+            }
+        });
+
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
@@ -713,7 +745,7 @@ impl MarkdownElement {
                         window.prevent_default();
                         cx.notify();
                     }
-                } else if phase.capture() {
+                } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
                     cx.notify();

@@ -345,6 +345,7 @@ impl LspAdapter for VtslsLspAdapter {
                     let lsp_settings = content
                         .project
                         .lsp
+                        .0
                         .entry(VTSLS_SERVER_NAME.into())
                         .or_default();
 

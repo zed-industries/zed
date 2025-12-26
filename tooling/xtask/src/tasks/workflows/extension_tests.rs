@@ -48,7 +48,7 @@ fn run_clippy() -> Step<Run> {
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_DEFAULT)
+        .runs_on(runners::LINUX_MEDIUM)
         .timeout_minutes(3u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
@@ -66,7 +66,7 @@ pub(crate) fn check_extension() -> NamedJob {
     let (cache_download, cache_hit) = cache_zed_extension_cli();
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_SMALL)
+        .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(2u32)
         .add_step(steps::checkout_repo())
         .add_step(cache_download)

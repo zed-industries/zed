@@ -1204,6 +1204,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     utility_panes: UtilityPaneState,
+    next_modal_placement: Option<ModalPlacement>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1620,6 +1621,7 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             utility_panes: UtilityPaneState::default(),
+            next_modal_placement: None,
         }
     }
 
@@ -4260,16 +4262,19 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split {
-                direction,
-                clone_active_item,
-            } => {
-                if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx)
-                        .detach();
-                } else {
-                    self.split_and_move(pane.clone(), *direction, window, cx);
-                }
+            pane::Event::Split { direction, mode } => {
+                match mode {
+                    SplitMode::ClonePane => {
+                        self.split_and_clone(pane.clone(), *direction, window, cx)
+                            .detach();
+                    }
+                    SplitMode::EmptyPane => {
+                        self.split_pane(pane.clone(), *direction, window, cx);
+                    }
+                    SplitMode::MovePane => {
+                        self.split_and_move(pane.clone(), *direction, window, cx);
+                    }
+                };
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -6326,12 +6331,25 @@ impl Workspace {
         self.modal_layer.read(cx).active_modal()
     }
 
+    pub fn is_modal_open<V: 'static>(&self, cx: &App) -> bool {
+        self.modal_layer.read(cx).active_modal::<V>().is_some()
+    }
+
+    pub fn set_next_modal_placement(&mut self, placement: ModalPlacement) {
+        self.next_modal_placement = Some(placement);
+    }
+
+    fn take_next_modal_placement(&mut self) -> ModalPlacement {
+        self.next_modal_placement.take().unwrap_or_default()
+    }
+
     pub fn toggle_modal<V: ModalView, B>(&mut self, window: &mut Window, cx: &mut App, build: B)
     where
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
+        let placement = self.take_next_modal_placement();
         self.modal_layer.update(cx, |modal_layer, cx| {
-            modal_layer.toggle_modal(window, cx, build)
+            modal_layer.toggle_modal_with_placement(window, cx, placement, build)
         })
     }
 
@@ -9409,7 +9427,7 @@ mod tests {
         let right_pane = right_pane.await.unwrap();
         cx.focus(&right_pane);
 
-        let mut close = right_pane.update_in(cx, |pane, window, cx| {
+        let close = right_pane.update_in(cx, |pane, window, cx| {
             pane.close_all_items(&CloseAllItems::default(), window, cx)
                 .unwrap()
         });
@@ -9421,9 +9439,16 @@ mod tests {
         assert!(!msg.contains("3.txt"));
         assert!(!msg.contains("4.txt"));
 
+        // With best-effort close, cancelling item 1 keeps it open but items 4
+        // and (3,4) still close since their entries exist in left pane.
         cx.simulate_prompt_answer("Cancel");
         close.await;
 
+        right_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 1);
+        });
+
+        // Remove item 3 from left pane, making (2,3) the only item with entry 3.
         left_pane
             .update_in(cx, |left_pane, window, cx| {
                 left_pane.close_item_by_id(
@@ -9436,26 +9461,25 @@ mod tests {
             .await
             .unwrap();
 
-        close = right_pane.update_in(cx, |pane, window, cx| {
+        let close = left_pane.update_in(cx, |pane, window, cx| {
             pane.close_all_items(&CloseAllItems::default(), window, cx)
                 .unwrap()
         });
         cx.executor().run_until_parked();
 
         let details = cx.pending_prompt().unwrap().1;
-        assert!(details.contains("1.txt"));
-        assert!(!details.contains("2.txt"));
+        assert!(details.contains("0.txt"));
         assert!(details.contains("3.txt"));
-        // ideally this assertion could be made, but today we can only
-        // save whole items not project items, so the orphaned item 3 causes
-        // 4 to be saved too.
-        // assert!(!details.contains("4.txt"));
+        assert!(details.contains("4.txt"));
+        // Ideally 2.txt wouldn't appear since entry 2 still exists in item 2.
+        // But we can only save whole items, so saving (2,3) for entry 3 includes 2.
+        // assert!(!details.contains("2.txt"));
 
         cx.simulate_prompt_answer("Save all");
-
         cx.executor().run_until_parked();
         close.await;
-        right_pane.read_with(cx, |pane, _| {
+
+        left_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
     }

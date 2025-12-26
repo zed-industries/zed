@@ -241,10 +241,16 @@ impl RenderOnce for LabelLike {
             .when(self.strikethrough, |this| this.line_through())
             .when(self.single_line, |this| this.whitespace_nowrap())
             .when(self.truncate, |this| {
-                this.overflow_x_hidden().text_ellipsis()
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
             })
             .when(self.truncate_start, |this| {
-                this.overflow_x_hidden().text_ellipsis_start()
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_start()
             })
             .text_color(color)
             .font_weight(

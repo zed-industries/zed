@@ -17,7 +17,7 @@ use gpui::{
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
-use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
+use language::{Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
@@ -192,7 +192,7 @@ impl AgentDiffPane {
                     && buffer
                         .read(cx)
                         .file()
-                        .is_some_and(|file| file.disk_state() == DiskState::Deleted)
+                        .is_some_and(|file| file.disk_state().is_deleted())
                 {
                     editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }

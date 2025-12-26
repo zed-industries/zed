@@ -460,6 +460,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     ignore_system_version: None,
                     default_mode: None,
                     default_model: None,
+                    favorite_models: vec![],
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
@@ -469,6 +470,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     ignore_system_version: None,
                     default_mode: None,
                     default_model: None,
+                    favorite_models: vec![],
                 }),
                 custom: collections::HashMap::default(),
             },
