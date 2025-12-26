@@ -82,6 +82,7 @@ impl TableDataEngine {
             .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), data_idx))
             .collect();
 
+        log::trace!("Computed D2D mapping: {mapping:#?}");
         let data = { DisplayToDataMapping { mapping } };
         self.d2d_mapping = Arc::new(data);
     }
@@ -134,6 +135,10 @@ impl TableDataEngine {
             .get(&column)
             .cloned()
             .unwrap_or_else(|| panic!("Expected filters to be present for column: {column:?}"))
+    }
+
+    pub(crate) fn clear_filters(&mut self, col_idx: AnyColumn) {
+        self.applied_filtering.0.remove(&col_idx);
     }
 }
 

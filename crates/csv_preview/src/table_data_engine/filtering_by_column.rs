@@ -126,6 +126,10 @@ pub fn filter_data_rows(
     let config = &config.0;
 
     if config.is_empty() {
+        log::debug!(
+            "No filters applied. Returning all {} data rows.",
+            data_row_ids.len()
+        );
         return data_row_ids;
     }
 
