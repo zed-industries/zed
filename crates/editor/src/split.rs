@@ -211,7 +211,7 @@ impl SplittableEditor {
         self.primary_editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |primary_multibuffer, cx| {
                 primary_multibuffer.set_show_deleted_hunks(false, cx);
-                let paths = primary_multibuffer.paths().collect::<Vec<_>>();
+                let paths = primary_multibuffer.paths().cloned().collect::<Vec<_>>();
                 for path in paths {
                     let Some(excerpt_id) = primary_multibuffer.excerpts_for_path(&path).next()
                     else {
@@ -220,7 +220,7 @@ impl SplittableEditor {
                     let snapshot = primary_multibuffer.snapshot(cx);
                     let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
                     let diff = primary_multibuffer.diff_for(buffer.remote_id()).unwrap();
-                    secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
+                    secondary.sync_path_excerpts(path.clone(), primary_multibuffer, diff, cx);
                 }
             })
         });
@@ -228,7 +228,7 @@ impl SplittableEditor {
 
         let primary_pane = self.panes.first_pane();
         self.panes
-            .split(&primary_pane, &secondary_pane, SplitDirection::Left)
+            .split(&primary_pane, &secondary_pane, SplitDirection::Left, cx)
             .unwrap();
         cx.notify();
     }
@@ -237,7 +237,7 @@ impl SplittableEditor {
         let Some(secondary) = self.secondary.take() else {
             return;
         };
-        self.panes.remove(&secondary.pane).unwrap();
+        self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
@@ -308,7 +308,7 @@ impl SplittableEditor {
                 corresponding_paths = excerpt_ids
                     .clone()
                     .map(|excerpt_id| {
-                        let path = multibuffer.path_for_excerpt(excerpt_id).cloned().unwrap();
+                        let path = multibuffer.path_for_excerpt(excerpt_id).unwrap();
                         let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
                         let diff = multibuffer.diff_for(buffer.remote_id()).unwrap();
                         (path, diff)
@@ -465,6 +465,7 @@ impl SplittableEditor {
                 .primary_multibuffer
                 .read(cx)
                 .paths()
+                .cloned()
                 .collect::<Vec<_>>();
             let excerpt_ids = self.primary_multibuffer.read(cx).excerpt_ids();
 
@@ -519,7 +520,7 @@ impl SplittableEditor {
                     .cloned()
                     .collect::<Vec<_>>();
                 for path in paths_to_remove {
-                    self.remove_excerpts_for_path(path, cx);
+                    self.remove_excerpts_for_path(path.clone(), cx);
                 }
             }
         }

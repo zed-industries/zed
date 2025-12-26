@@ -153,14 +153,10 @@ impl AgentTool for ReadFileTool {
 
         let file_path = input.path.clone();
 
-        event_stream.update_fields(ToolCallUpdateFields {
-            locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path.clone(),
-                line: input.start_line.map(|line| line.saturating_sub(1)),
-                meta: None,
-            }]),
-            ..Default::default()
-        });
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                acp::ToolCallLocation::new(&abs_path)
+                    .line(input.start_line.map(|line| line.saturating_sub(1))),
+            ]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -289,12 +285,9 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields {
-                        content: Some(vec![acp::ToolCallContent::Content {
-                            content: markdown.into(),
-                        }]),
-                        ..Default::default()
-                    })
+                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+                    ]));
                 }
             })?;
 
@@ -308,7 +301,6 @@ mod test {
     use super::*;
     use crate::{ContextServerRegistry, Templates, Thread};
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use prompt_store::ProjectContext;
@@ -412,7 +404,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(rust_lang()));
+        language_registry.add(language::rust_lang());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
@@ -600,49 +592,6 @@ mod test {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(
-            r#"
-            (line_comment) @annotation
-
-            (struct_item
-                "struct" @context
-                name: (_) @name) @item
-            (enum_item
-                "enum" @context
-                name: (_) @name) @item
-            (enum_variant
-                name: (_) @name) @item
-            (field_declaration
-                name: (_) @name) @item
-            (impl_item
-                "impl" @context
-                trait: (_)? @name
-                "for"? @context
-                type: (_) @name
-                body: (_ "{" (_)* "}")) @item
-            (function_item
-                "fn" @context
-                name: (_) @name) @item
-            (mod_item
-                "mod" @context
-                name: (_) @name) @item
-            "#,
-        )
-        .unwrap()
     }
 
     #[gpui::test]

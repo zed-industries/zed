@@ -40,6 +40,11 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> LRESULT {
         let handled = match msg {
+            // eagerly activate the window, so calls to `active_window` will work correctly
+            WM_MOUSEACTIVATE => {
+                unsafe { SetActiveWindow(handle).ok() };
+                None
+            }
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
@@ -265,6 +270,14 @@ impl WindowsWindowInner {
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
         let callback = { self.state.callbacks.close.take() };
+        // Re-enable parent window if this was a modal dialog
+        if let Some(parent_hwnd) = self.parent_hwnd {
+            unsafe {
+                let _ = EnableWindow(parent_hwnd, true);
+                let _ = SetForegroundWindow(parent_hwnd);
+            }
+        }
+
         if let Some(callback) = callback {
             callback();
         }

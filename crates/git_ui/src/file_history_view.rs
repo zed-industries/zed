@@ -4,7 +4,8 @@ use git::repository::{FileHistory, FileHistoryEntry, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
     AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Task, UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
+    IntoElement, Render, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity, Window,
+    actions, uniform_list,
 };
 use project::{
     Project, ProjectPath,
@@ -191,6 +192,93 @@ impl FileHistoryView {
         task.detach();
     }
 
+    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = match self.selected_entry {
+            _ if entry_count == 0 => None,
+            None => Some(0),
+            Some(ix) => {
+                if ix == entry_count - 1 {
+                    Some(0)
+                } else {
+                    Some(ix + 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_count = self.history.entries.len();
+        let ix = match self.selected_entry {
+            _ if entry_count == 0 => None,
+            None => Some(entry_count - 1),
+            Some(ix) => {
+                if ix == 0 {
+                    Some(entry_count - 1)
+                } else {
+                    Some(ix - 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = if entry_count != 0 { Some(0) } else { None };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.history.entries.len();
+        let ix = if entry_count != 0 {
+            Some(entry_count - 1)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        self.selected_entry = ix;
+        if let Some(ix) = ix {
+            self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_commit_view(window, cx);
+    }
+
+    fn open_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self
+            .selected_entry
+            .and_then(|ix| self.history.entries.get(ix))
+        else {
+            return;
+        };
+
+        if let Some(repo) = self.repository.upgrade() {
+            let sha_str = entry.sha.to_string();
+            CommitView::open(
+                sha_str,
+                repo.downgrade(),
+                self.workspace.clone(),
+                None,
+                Some(self.history.path.clone()),
+                window,
+                cx,
+            );
+        }
+    }
+
     fn render_commit_avatar(
         &self,
         sha: &SharedString,
@@ -245,12 +333,8 @@ impl FileHistoryView {
             time_format::TimestampFormat::Relative,
         );
 
-        let sha = entry.sha.clone();
-        let repo = self.repository.clone();
-        let workspace = self.workspace.clone();
-        let file_path = self.history.path.clone();
-
         ListItem::new(("commit", ix))
+            .toggle_state(Some(ix) == self.selected_entry)
             .child(
                 h_flex()
                     .h_8()
@@ -267,15 +351,19 @@ impl FileHistoryView {
                     .child(self.render_commit_avatar(&entry.sha, window, cx))
                     .child(
                         h_flex()
+                            .min_w_0()
                             .w_full()
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
+                                    .w_full()
                                     .gap_1()
                                     .child(
                                         Label::new(entry.author_name.clone())
                                             .size(LabelSize::Small)
-                                            .color(Color::Default),
+                                            .color(Color::Default)
+                                            .truncate(),
                                     )
                                     .child(
                                         Label::new(&entry.subject)
@@ -285,9 +373,11 @@ impl FileHistoryView {
                                     ),
                             )
                             .child(
-                                Label::new(relative_timestamp)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                h_flex().flex_none().child(
+                                    Label::new(relative_timestamp)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
                             ),
                     ),
             )
@@ -295,18 +385,7 @@ impl FileHistoryView {
                 this.selected_entry = Some(ix);
                 cx.notify();
 
-                if let Some(repo) = repo.upgrade() {
-                    let sha_str = sha.to_string();
-                    CommitView::open(
-                        sha_str,
-                        repo.downgrade(),
-                        workspace.clone(),
-                        None,
-                        Some(file_path.clone()),
-                        window,
-                        cx,
-                    );
-                }
+                this.open_commit_view(window, cx);
             }))
             .into_any_element()
     }
@@ -374,6 +453,14 @@ impl Render for FileHistoryView {
         let entry_count = self.history.entries.len();
 
         v_flex()
+            .id("file_history_view")
+            .key_context("FileHistoryView")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(
@@ -546,9 +633,9 @@ impl Item for FileHistoryView {
         &mut self,
         _workspace: &mut Workspace,
         window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
     }
 
     fn show_toolbar(&self) -> bool {

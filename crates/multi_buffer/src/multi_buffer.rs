@@ -19,9 +19,9 @@ use gpui::{App, Context, Entity, EntityId, EventEmitter, WeakEntity};
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability,
-    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState,
-    File, IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File,
+    IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
     ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
@@ -41,7 +41,7 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{self, AddAssign, Range, RangeBounds, Sub, SubAssign},
+    ops::{self, AddAssign, ControlFlow, Range, RangeBounds, Sub, SubAssign},
     rc::Rc,
     str,
     sync::Arc,
@@ -55,6 +55,7 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
+use ztracing::instrument;
 
 pub use self::path_key::PathKey;
 
@@ -115,7 +116,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
-    LanguageChanged(BufferId),
+    LanguageChanged(BufferId, bool),
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
@@ -1202,6 +1203,7 @@ impl MultiBuffer {
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
+    #[ztracing::instrument(skip_all)]
     pub fn snapshot(&self, cx: &App) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
@@ -1672,6 +1674,7 @@ impl MultiBuffer {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
+    #[instrument(skip_all)]
     fn merge_excerpt_ranges<'a>(
         expanded_ranges: impl IntoIterator<Item = &'a ExcerptRange<Point>> + 'a,
     ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
@@ -1908,6 +1911,7 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn excerpts_for_buffer(
         &self,
         buffer_id: BufferId,
@@ -2262,6 +2266,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         use language::BufferEvent;
+        let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
             BufferEvent::Edited => Event::Edited {
                 edited_buffer: Some(buffer),
@@ -2270,8 +2275,10 @@ impl MultiBuffer {
             BufferEvent::Saved => Event::Saved,
             BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             BufferEvent::Reloaded => Event::Reloaded,
-            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer.read(cx).remote_id()),
-            BufferEvent::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
+            BufferEvent::LanguageChanged(has_language) => {
+                Event::LanguageChanged(buffer_id, *has_language)
+            }
+            BufferEvent::Reparsed => Event::Reparsed(buffer_id),
             BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
@@ -2643,9 +2650,8 @@ impl MultiBuffer {
         for range in ranges {
             let range = range.to_point(&snapshot);
             let start = snapshot.point_to_offset(Point::new(range.start.row, 0));
-            let end = snapshot.point_to_offset(Point::new(range.end.row + 1, 0));
-            let start = start.saturating_sub_usize(1);
-            let end = snapshot.len().min(end + 1usize);
+            let end = (snapshot.point_to_offset(Point::new(range.end.row + 1, 0)) + 1usize)
+                .min(snapshot.len());
             cursor.seek(&start, Bias::Right);
             while let Some(item) = cursor.item() {
                 if *cursor.start() >= end {
@@ -2902,6 +2908,7 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    #[ztracing::instrument(skip_all)]
     fn sync(&self, cx: &App) {
         let changed = self.buffer_changed_since_sync.replace(false);
         if !changed {
@@ -2987,7 +2994,7 @@ impl MultiBuffer {
             *is_dirty |= buffer.is_dirty();
             *has_deleted_file |= buffer
                 .file()
-                .is_some_and(|file| file.disk_state() == DiskState::Deleted);
+                .is_some_and(|file| file.disk_state().is_deleted());
             *has_conflict |= buffer.has_conflict();
         }
         if edited {
@@ -4498,6 +4505,7 @@ impl MultiBufferSnapshot {
         self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_point)
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> MultiBufferOffset {
         self.convert_dimension(point, text::BufferSnapshot::point_to_offset)
     }
@@ -4551,6 +4559,7 @@ impl MultiBufferSnapshot {
         }
     }
 
+    #[instrument(skip_all)]
     fn convert_dimension<MBR1, MBR2, BR1, BR2>(
         &self,
         key: MBR1,
@@ -4633,7 +4642,24 @@ impl MultiBufferSnapshot {
         cx: &App,
     ) -> BTreeMap<MultiBufferRow, IndentSize> {
         let mut result = BTreeMap::new();
+        self.suggested_indents_callback(
+            rows,
+            |row, indent| {
+                result.insert(row, indent);
+                ControlFlow::Continue(())
+            },
+            cx,
+        );
+        result
+    }
 
+    // move this to be a generator once those are a thing
+    pub fn suggested_indents_callback(
+        &self,
+        rows: impl IntoIterator<Item = u32>,
+        mut cb: impl FnMut(MultiBufferRow, IndentSize) -> ControlFlow<()>,
+        cx: &App,
+    ) {
         let mut rows_for_excerpt = Vec::new();
         let mut cursor = self.cursor::<Point, Point>();
         let mut rows = rows.into_iter().peekable();
@@ -4677,16 +4703,17 @@ impl MultiBufferSnapshot {
             let buffer_indents = region
                 .buffer
                 .suggested_indents(buffer_rows, single_indent_size);
-            let multibuffer_indents = buffer_indents.into_iter().map(|(row, indent)| {
-                (
+            for (row, indent) in buffer_indents {
+                if cb(
                     MultiBufferRow(start_multibuffer_row + row - start_buffer_row),
                     indent,
                 )
-            });
-            result.extend(multibuffer_indents);
+                .is_break()
+                {
+                    return;
+                }
+            }
         }
-
-        result
     }
 
     pub fn indent_size_for_line(&self, row: MultiBufferRow) -> IndentSize {
@@ -5616,6 +5643,7 @@ impl MultiBufferSnapshot {
     /// excerpt
     ///
     /// Can optionally pass a range_filter to filter the ranges of brackets to consider
+    #[ztracing::instrument(skip_all)]
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -6448,12 +6476,13 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt for the given id. The returned excerpt is guaranteed
-    /// to have the same excerpt id as the one passed in, with the exception of
-    /// `ExcerptId::max()`.
+    /// to have the latest excerpt id for the one passed in and will also remap
+    /// `ExcerptId::max()` to the corresponding excertp ID.
     ///
     /// Callers of this function should generally use the resulting excerpt's `id` field
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         cursor.seek(&Some(locator), Bias::Left);
@@ -6712,6 +6741,10 @@ impl MultiBufferSnapshot {
             prev_transform = Some(item);
         }
     }
+
+    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
+        self.diffs.get(&buffer_id).map(|diff| &diff.diff)
+    }
 }
 
 impl<'a, MBD, BD> MultiBufferCursor<'a, MBD, BD>
@@ -6719,6 +6752,7 @@ where
     MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
     BD: TextDimension + AddAssign<<MBD as Sub>::Output>,
 {
+    #[instrument(skip_all)]
     fn seek(&mut self, position: &MBD) {
         let position = OutputDimension(*position);
         self.cached_region.take();

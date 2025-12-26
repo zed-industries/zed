@@ -29,6 +29,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -880,7 +881,7 @@ impl ProjectPanel {
                                 });
                                 if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
-                                    window.focus(&focus_handle);
+                                    window.focus(&focus_handle, cx);
                                 }
                             }
                         }
@@ -1140,9 +1141,15 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
+                            .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                                menu.separator().action(
+                                    "Restore File",
+                                    Box::new(git::RestoreFile { skip_prompt: false }),
+                                )
+                            })
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .action("File History", Box::new(git::FileHistory))
+                                    .action("View File History", Box::new(git::FileHistory))
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -1169,7 +1176,7 @@ impl ProjectPanel {
                 })
             });
 
-            window.focus(&context_menu.focus_handle(cx));
+            window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
@@ -1178,6 +1185,19 @@ impl ProjectPanel {
         }
 
         cx.notify();
+    }
+
+    fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
+        for visible in &self.state.visible_entries {
+            if let Some(git_entry) = visible.entries.iter().find(|e| e.id == entry_id) {
+                let total_modified =
+                    git_entry.git_summary.index.modified + git_entry.git_summary.worktree.modified;
+                let total_deleted =
+                    git_entry.git_summary.index.deleted + git_entry.git_summary.worktree.deleted;
+                return total_modified > 0 || total_deleted > 0;
+            }
+        }
+        false
     }
 
     fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
@@ -1376,7 +1396,7 @@ impl ProjectPanel {
                 }
             });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.notify();
         }
     }
@@ -1399,7 +1419,7 @@ impl ProjectPanel {
                 }
             }
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             cx.notify();
         }
     }
@@ -1529,7 +1549,8 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+        let preview_tabs_enabled =
+            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
         self.open_internal(true, !preview_tabs_enabled, None, window, cx);
     }
 
@@ -1662,12 +1683,20 @@ impl ProjectPanel {
         let edit_state = self.state.edit_state.as_mut()?;
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
-        let filename = self.filename_editor.read(cx).text(cx);
+        let mut filename = self.filename_editor.read(cx).text(cx);
+        let path_style = self.project.read(cx).path_style(cx);
+        if path_style.is_windows() {
+            // on windows, trailing dots are ignored in paths
+            // this can cause project panel to create a new entry with a trailing dot
+            // while the actual one without the dot gets populated by the file watcher
+            while let Some(trimmed) = filename.strip_suffix('.') {
+                filename = trimmed.to_string();
+            }
+        }
         if filename.trim().is_empty() {
             return None;
         }
 
-        let path_style = self.project.read(cx).path_style(cx);
         let filename_indicates_dir = if path_style.is_windows() {
             filename.ends_with('/') || filename.ends_with('\\')
         } else {
@@ -1710,7 +1739,7 @@ impl ProjectPanel {
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
                 if existing.id == entry.id && refocus {
-                    window.focus(&self.focus_handle);
+                    window.focus(&self.focus_handle, cx);
                 }
                 return None;
             }
@@ -1721,7 +1750,7 @@ impl ProjectPanel {
         };
 
         if refocus {
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
         }
         edit_state.processing_filename = Some(filename);
         cx.notify();
@@ -1830,7 +1859,7 @@ impl ProjectPanel {
             self.autoscroll(cx);
         }
 
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
@@ -2030,6 +2059,100 @@ impl ProjectPanel {
 
     fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         self.remove(false, action.skip_prompt, window, cx);
+    }
+
+    fn restore_file(
+        &mut self,
+        action: &git::RestoreFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let selection = self.state.selection?;
+            let project = self.project.read(cx);
+
+            let (_worktree, entry) = self.selected_sub_entry(cx)?;
+            if entry.is_dir() {
+                return None;
+            }
+
+            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+
+            let git_store = project.git_store();
+            let (repository, repo_path) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)?;
+
+            let snapshot = repository.read(cx).snapshot();
+            let status = snapshot.status_for_path(&repo_path)?;
+            if !status.status.is_modified() && !status.status.is_deleted() {
+                return None;
+            }
+
+            let file_name = entry.path.file_name()?.to_string();
+
+            let answer = if !action.skip_prompt {
+                let prompt = format!("Discard changes to {}?", file_name);
+                Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
+            } else {
+                None
+            };
+
+            cx.spawn_in(window, async move |panel, cx| {
+                if let Some(answer) = answer
+                    && answer.await != Ok(0)
+                {
+                    return anyhow::Ok(());
+                }
+
+                let task = panel.update(cx, |_panel, cx| {
+                    repository.update(cx, |repo, cx| {
+                        repo.checkout_files("HEAD", vec![repo_path], cx)
+                    })
+                })?;
+
+                if let Err(e) = task.await {
+                    panel
+                        .update(cx, |panel, cx| {
+                            let message = format!("Failed to restore {}: {}", file_name, e);
+                            let toast = StatusToast::new(message, cx, |this, _| {
+                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            panel
+                                .workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.toggle_status_toast(toast, cx);
+                                })
+                                .ok();
+                        })
+                        .ok();
+                }
+
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.project.update(cx, |project, cx| {
+                            if let Some(buffer_id) = project
+                                .buffer_store()
+                                .read(cx)
+                                .buffer_id_for_project_path(&project_path)
+                            {
+                                if let Some(buffer) = project.buffer_for_id(*buffer_id, cx) {
+                                    buffer.update(cx, |buffer, cx| {
+                                        let _ = buffer.reload(cx);
+                                    });
+                                }
+                            }
+                        })
+                    })
+                    .ok();
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
     }
 
     fn remove(
@@ -3607,7 +3730,7 @@ impl ProjectPanel {
                 if this.update_visible_entries_task.focus_filename_editor {
                     this.update_visible_entries_task.focus_filename_editor = false;
                     this.filename_editor.update(cx, |editor, cx| {
-                        window.focus(&editor.focus_handle(cx));
+                        window.focus(&editor.focus_handle(cx), cx);
                     });
                 }
                 if this.update_visible_entries_task.autoscroll {
@@ -4819,7 +4942,7 @@ impl ProjectPanel {
                             project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
-                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
                         let click_count = event.click_count();
                         let focus_opened_item = click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
@@ -5622,6 +5745,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
+                        .on_action(cx.listener(Self::restore_file))
                         .when(!project.is_remote(), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })
@@ -5943,7 +6067,7 @@ impl Render for ProjectPanel {
                                     cx.stop_propagation();
                                     this.state.selection = None;
                                     this.marked_entries.clear();
-                                    this.focus_handle(cx).focus(window);
+                                    this.focus_handle(cx).focus(window, cx);
                                 }))
                                 .on_mouse_down(
                                     MouseButton::Right,

@@ -5,6 +5,7 @@ use std::{any::Any, path::Path};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
+use collections::HashSet;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CODEX_NAME};
@@ -23,10 +24,6 @@ pub(crate) mod tests {
 }
 
 impl AgentServer for Codex {
-    fn telemetry_id(&self) -> &'static str {
-        "codex"
-    }
-
     fn name(&self) -> SharedString {
         "Codex".into()
     }
@@ -42,7 +39,7 @@ impl AgentServer for Codex {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+            .and_then(|s| s.default_mode.clone().map(acp::SessionModeId::new))
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -63,7 +60,7 @@ impl AgentServer for Codex {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_model.clone().map(|m| acp::ModelId(m.into())))
+            .and_then(|s| s.default_model.clone().map(acp::ModelId::new))
     }
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -77,6 +74,48 @@ impl AgentServer for Codex {
         });
     }
 
+    fn favorite_model_ids(&self, cx: &mut App) -> HashSet<acp::ModelId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).codex.clone()
+        });
+
+        settings
+            .as_ref()
+            .map(|s| {
+                s.favorite_models
+                    .iter()
+                    .map(|id| acp::ModelId::new(id.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn toggle_favorite_model(
+        &self,
+        model_id: acp::ModelId,
+        should_be_favorite: bool,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        update_settings_file(fs, cx, move |settings, _| {
+            let favorite_models = &mut settings
+                .agent_servers
+                .get_or_insert_default()
+                .codex
+                .get_or_insert_default()
+                .favorite_models;
+
+            let model_id_str = model_id.to_string();
+            if should_be_favorite {
+                if !favorite_models.contains(&model_id_str) {
+                    favorite_models.push(model_id_str);
+                }
+            } else {
+                favorite_models.retain(|id| id != &model_id_str);
+            }
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -84,7 +123,6 @@ impl AgentServer for Codex {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let telemetry_id = self.telemetry_id();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
@@ -110,7 +148,6 @@ impl AgentServer for Codex {
 
             let connection = crate::acp::connect(
                 name,
-                telemetry_id,
                 command,
                 root_dir.as_ref(),
                 default_mode,

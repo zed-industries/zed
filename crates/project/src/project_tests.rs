@@ -28,7 +28,7 @@ use language::{
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_typescript,
 };
 use lsp::{
     DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
@@ -691,7 +691,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -720,7 +720,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -746,7 +746,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -762,7 +762,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -791,7 +791,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -2750,11 +2750,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -2763,7 +2765,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
-                    PathBuf::from("/dir/a.rs"),
+                    PathBuf::from(path!("/dir/a.rs")),
                     None,
                     None,
                     vec![
@@ -2820,17 +2822,17 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
         .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(0),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -2849,7 +2851,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(1),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -10480,20 +10482,6 @@ fn js_lang() -> Arc<Language> {
     ))
 }
 
-fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ))
-}
-
 fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
     struct PythonMootToolchainLister(Arc<FakeFs>);
     #[async_trait]
@@ -10947,4 +10935,149 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
             .map(|r| r.read(cx).work_directory_abs_path.clone())
     });
     assert!(active_repo_path.is_none());
+}
+
+#[gpui::test]
+async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        one
+        two
+        three
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // The hunk is initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Get the repository handle.
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    // Stage the file.
+    let stage_task = repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("file.txt")], cx)
+    });
+
+    // Run a few ticks to let the job start and mark hunks as pending,
+    // but don't run_until_parked which would complete the entire operation.
+    for _ in 0..10 {
+        cx.executor().tick();
+        let [hunk]: [_; 1] = uncommitted_diff
+            .read_with(cx, |diff, cx| {
+                diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+            })
+            .try_into()
+            .unwrap();
+        match hunk.secondary_status {
+            HasSecondaryHunk => {}
+            SecondaryHunkRemovalPending => break,
+            NoSecondaryHunk => panic!("hunk was not optimistically staged"),
+            _ => panic!("unexpected hunk state"),
+        }
+    }
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+            )],
+        );
+    });
+
+    // Let the staging complete.
+    stage_task.await.unwrap();
+    cx.run_until_parked();
+
+    // The hunk is now fully staged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+
+    // Simulate a commit by updating HEAD to match the current file contents.
+    // The FakeGitRepository's commit method is a no-op, so we need to manually
+    // update HEAD to simulate the commit completing.
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", file_contents.clone())],
+        "newhead",
+    );
+    cx.run_until_parked();
+
+    // After committing, there are no more hunks.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[] as &[(Range<u32>, &str, &str, DiffHunkStatus)],
+        );
+    });
 }

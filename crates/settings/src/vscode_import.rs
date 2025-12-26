@@ -215,6 +215,7 @@ impl VsCodeSettings {
             vim: None,
             vim_mode: None,
             workspace: self.workspace_settings_content(),
+            which_key: None,
         }
     }
 
@@ -429,6 +430,8 @@ impl VsCodeSettings {
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             extend_comment_on_newline: None,
+            extend_list_on_newline: None,
+            indent_list_on_tab: None,
             format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
                 if b {
                     FormatOnSave::On
@@ -619,9 +622,13 @@ impl VsCodeSettings {
     fn preview_tabs_settings_content(&self) -> Option<PreviewTabsSettingsContent> {
         skip_default(PreviewTabsSettingsContent {
             enabled: self.read_bool("workbench.editor.enablePreview"),
+            enable_preview_from_project_panel: None,
             enable_preview_from_file_finder: self
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
-            enable_preview_from_code_navigation: self
+            enable_preview_from_multibuffer: None,
+            enable_preview_multibuffer_from_code_navigation: None,
+            enable_preview_file_from_code_navigation: None,
+            enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
         })
     }

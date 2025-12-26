@@ -95,7 +95,7 @@ impl settings::Settings for TerminalSettings {
                 )
             }),
             font_features: user_content.font_features,
-            font_weight: user_content.font_weight.map(FontWeight),
+            font_weight: user_content.font_weight,
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),

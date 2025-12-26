@@ -1,23 +1,137 @@
 use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
 use imara_diff::{
-    Algorithm, UnifiedDiffBuilder, diff,
-    intern::{InternedInput, Token},
+    Algorithm, Sink, diff,
+    intern::{InternedInput, Interner, Token},
     sources::lines_with_terminator,
 };
-use std::{iter, ops::Range, sync::Arc};
+use std::{fmt::Write, iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
 const MAX_WORD_DIFF_LINE_COUNT: usize = 8;
 
 /// Computes a diff between two strings, returning a unified diff string.
 pub fn unified_diff(old_text: &str, new_text: &str) -> String {
+    unified_diff_with_offsets(old_text, new_text, 0, 0)
+}
+
+/// Computes a diff between two strings, returning a unified diff string with
+/// hunk headers adjusted to reflect the given starting line numbers (1-indexed).
+pub fn unified_diff_with_offsets(
+    old_text: &str,
+    new_text: &str,
+    old_start_line: u32,
+    new_start_line: u32,
+) -> String {
     let input = InternedInput::new(old_text, new_text);
     diff(
         Algorithm::Histogram,
         &input,
-        UnifiedDiffBuilder::new(&input),
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line),
     )
+}
+
+/// A unified diff builder that applies line number offsets to hunk headers.
+struct OffsetUnifiedDiffBuilder<'a> {
+    before: &'a [Token],
+    after: &'a [Token],
+    interner: &'a Interner<&'a str>,
+
+    pos: u32,
+    before_hunk_start: u32,
+    after_hunk_start: u32,
+    before_hunk_len: u32,
+    after_hunk_len: u32,
+
+    old_line_offset: u32,
+    new_line_offset: u32,
+
+    buffer: String,
+    dst: String,
+}
+
+impl<'a> OffsetUnifiedDiffBuilder<'a> {
+    fn new(input: &'a InternedInput<&'a str>, old_line_offset: u32, new_line_offset: u32) -> Self {
+        Self {
+            before_hunk_start: 0,
+            after_hunk_start: 0,
+            before_hunk_len: 0,
+            after_hunk_len: 0,
+            old_line_offset,
+            new_line_offset,
+            buffer: String::with_capacity(8),
+            dst: String::new(),
+            interner: &input.interner,
+            before: &input.before,
+            after: &input.after,
+            pos: 0,
+        }
+    }
+
+    fn print_tokens(&mut self, tokens: &[Token], prefix: char) {
+        for &token in tokens {
+            writeln!(&mut self.buffer, "{prefix}{}", self.interner[token]).unwrap();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
+            return;
+        }
+
+        let end = (self.pos + 3).min(self.before.len() as u32);
+        self.update_pos(end, end);
+
+        writeln!(
+            &mut self.dst,
+            "@@ -{},{} +{},{} @@",
+            self.before_hunk_start + 1 + self.old_line_offset,
+            self.before_hunk_len,
+            self.after_hunk_start + 1 + self.new_line_offset,
+            self.after_hunk_len,
+        )
+        .unwrap();
+        write!(&mut self.dst, "{}", &self.buffer).unwrap();
+        self.buffer.clear();
+        self.before_hunk_len = 0;
+        self.after_hunk_len = 0;
+    }
+
+    fn update_pos(&mut self, print_to: u32, move_to: u32) {
+        self.print_tokens(&self.before[self.pos as usize..print_to as usize], ' ');
+        let len = print_to - self.pos;
+        self.pos = move_to;
+        self.before_hunk_len += len;
+        self.after_hunk_len += len;
+    }
+}
+
+impl Sink for OffsetUnifiedDiffBuilder<'_> {
+    type Out = String;
+
+    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
+        if before.start - self.pos > 6 {
+            self.flush();
+        }
+        if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
+            self.pos = before.start.saturating_sub(3);
+            self.before_hunk_start = self.pos;
+            self.after_hunk_start = after.start.saturating_sub(3);
+        }
+        self.update_pos(before.start, before.end);
+        self.before_hunk_len += before.end - before.start;
+        self.after_hunk_len += after.end - after.start;
+        self.print_tokens(
+            &self.before[before.start as usize..before.end as usize],
+            '-',
+        );
+        self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
+    }
+
+    fn finish(mut self) -> Self::Out {
+        self.flush();
+        self.dst
+    }
 }
 
 /// Computes a diff between two strings, returning a vector of old and new row
@@ -48,7 +162,6 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
 ///
 /// Returns a tuple of (old_ranges, new_ranges) where each vector contains
 /// the byte ranges of changed words in the respective text.
-/// Whitespace-only changes are excluded from the results.
 pub fn word_diff_ranges(
     old_text: &str,
     new_text: &str,
@@ -62,72 +175,28 @@ pub fn word_diff_ranges(
     let mut new_ranges: Vec<Range<usize>> = Vec::new();
 
     diff_internal(&input, |old_byte_range, new_byte_range, _, _| {
-        for range in split_on_whitespace(old_text, &old_byte_range) {
+        if !old_byte_range.is_empty() {
             if let Some(last) = old_ranges.last_mut()
-                && last.end >= range.start
+                && last.end >= old_byte_range.start
             {
-                last.end = range.end;
+                last.end = old_byte_range.end;
             } else {
-                old_ranges.push(range);
+                old_ranges.push(old_byte_range);
             }
         }
 
-        for range in split_on_whitespace(new_text, &new_byte_range) {
+        if !new_byte_range.is_empty() {
             if let Some(last) = new_ranges.last_mut()
-                && last.end >= range.start
+                && last.end >= new_byte_range.start
             {
-                last.end = range.end;
+                last.end = new_byte_range.end;
             } else {
-                new_ranges.push(range);
+                new_ranges.push(new_byte_range);
             }
         }
     });
 
     (old_ranges, new_ranges)
-}
-
-fn split_on_whitespace(text: &str, range: &Range<usize>) -> Vec<Range<usize>> {
-    if range.is_empty() {
-        return Vec::new();
-    }
-
-    let slice = &text[range.clone()];
-    let mut ranges = Vec::new();
-    let mut offset = 0;
-
-    for line in slice.lines() {
-        let line_start = offset;
-        let line_end = line_start + line.len();
-        offset = line_end + 1;
-        let trimmed = line.trim();
-
-        if !trimmed.is_empty() {
-            let leading = line.len() - line.trim_start().len();
-            let trailing = line.len() - line.trim_end().len();
-            let trimmed_start = range.start + line_start + leading;
-            let trimmed_end = range.start + line_end - trailing;
-
-            let original_line_start = text[..range.start + line_start]
-                .rfind('\n')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let original_line_end = text[range.start + line_start..]
-                .find('\n')
-                .map(|i| range.start + line_start + i)
-                .unwrap_or(text.len());
-            let original_line = &text[original_line_start..original_line_end];
-            let original_trimmed_start =
-                original_line_start + (original_line.len() - original_line.trim_start().len());
-            let original_trimmed_end =
-                original_line_end - (original_line.len() - original_line.trim_end().len());
-
-            if trimmed_start > original_trimmed_start || trimmed_end < original_trimmed_end {
-                ranges.push(trimmed_start..trimmed_end);
-            }
-        }
-    }
-
-    ranges
 }
 
 pub struct DiffOptions {
@@ -371,5 +440,31 @@ mod tests {
         let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
         let patch = unified_diff(old_text, new_text);
         assert_eq!(apply_diff_patch(old_text, &patch).unwrap(), new_text);
+    }
+
+    #[test]
+    fn test_unified_diff_with_offsets() {
+        let old_text = "foo\nbar\nbaz\n";
+        let new_text = "foo\nBAR\nbaz\n";
+
+        let expected_diff_body = " foo\n-bar\n+BAR\n baz\n";
+
+        let diff_no_offset = unified_diff(old_text, new_text);
+        assert_eq!(
+            diff_no_offset,
+            format!("@@ -1,3 +1,3 @@\n{}", expected_diff_body)
+        );
+
+        let diff_with_offset = unified_diff_with_offsets(old_text, new_text, 9, 11);
+        assert_eq!(
+            diff_with_offset,
+            format!("@@ -10,3 +12,3 @@\n{}", expected_diff_body)
+        );
+
+        let diff_with_offset = unified_diff_with_offsets(old_text, new_text, 99, 104);
+        assert_eq!(
+            diff_with_offset,
+            format!("@@ -100,3 +105,3 @@\n{}", expected_diff_body)
+        );
     }
 }

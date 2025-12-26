@@ -2,7 +2,7 @@ use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
         RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
-        room_participants, rust_lang,
+        room_participants,
     },
 };
 use anyhow::{Result, anyhow};
@@ -26,7 +26,7 @@ use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{Formatter, FormatterList},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
@@ -6745,8 +6745,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Split pane to the right
-    pane.update(cx, |pane, cx| {
-        pane.split(workspace::SplitDirection::Right, cx);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.split(
+            workspace::SplitDirection::Right,
+            workspace::SplitMode::default(),
+            window,
+            cx,
+        );
     });
     cx.run_until_parked();
     let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());

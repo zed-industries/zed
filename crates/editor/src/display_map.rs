@@ -14,8 +14,57 @@
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
 //!   Each one of those builds on top of preceding map.
 //!
+//! ## Structure of the display map layers
+//!
+//! Each layer in the map (and the multibuffer itself to some extent) has a few
+//! structures that are used to implement the public API available to the layer
+//! above:
+//! - a `Transform` type - this represents a region of text that the layer in
+//!   question is "managing", that it transforms into a more "processed" text
+//!   for the layer above. For example, the inlay map has an `enum Transform`
+//!   that has two variants:
+//!     - `Isomorphic`, representing a region of text that has no inlay hints (i.e.
+//!       is passed through the map transparently)
+//!     - `Inlay`, representing a location where an inlay hint is to be inserted.
+//! - a `TransformSummary` type, which is usually a struct with two fields:
+//!   [`input: TextSummary`][`TextSummary`] and [`output: TextSummary`][`TextSummary`]. Here,
+//!   `input` corresponds to "text in the layer below", and `output` corresponds to the text
+//!   exposed to the layer above. So in the inlay map case, a `Transform::Isomorphic`'s summary is
+//!   just `input = output = summary`, where `summary` is the [`TextSummary`] stored in that
+//!   variant. Conversely, a `Transform::Inlay` always has an empty `input` summary, because it's
+//!   not "replacing" any text that exists on disk. The `output` is the summary of the inlay text
+//!   to be injected. - Various newtype wrappers for co-ordinate spaces (e.g. [`WrapRow`]
+//!   represents a row index, after soft-wrapping (and all lower layers)).
+//! - A `Snapshot` type (e.g. [`InlaySnapshot`]) that captures the state of a layer at a specific
+//!   point in time.
+//! - various APIs which drill through the layers below to work with the underlying text. Notably:
+//!   - `fn text_summary_for_offset()` returns a [`TextSummary`] for the range in the co-ordinate
+//!     space that the map in question is responsible for.
+//!   - `fn <A>_point_to_<B>_point()` converts a point in co-ordinate space `A` into co-ordinate
+//!     space `B`.
+//!   - A [`RowInfo`] iterator (e.g. [`InlayBufferRows`]) and a [`Chunk`] iterator
+//!     (e.g. [`InlayChunks`])
+//!   - A `sync` function (e.g. [`InlayMap::sync`]) that takes a snapshot and list of [`Edit<T>`]s,
+//!     and returns a new snapshot and a list of transformed [`Edit<S>`]s. Note that the generic
+//!     parameter on `Edit` changes, since these methods take in edits in the co-ordinate space of
+//!     the lower layer, and return edits in their own co-ordinate space. The term "edit" is
+//!     slightly misleading, since an [`Edit<T>`] doesn't tell you what changed - rather it can be
+//!     thought of as a "region to invalidate". In theory, it would be correct to always use a
+//!     single edit that covers the entire range. However, this would lead to lots of unnecessary
+//!     recalculation.
+//!
+//! See the docs for the [`inlay_map`] module for a more in-depth explanation of how a single layer
+//! works.
+//!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
+//! [`TextSummary`]: multi_buffer::MBTextSummary
+//! [`WrapRow`]: wrap_map::WrapRow
+//! [`InlayBufferRows`]: inlay_map::InlayBufferRows
+//! [`InlayChunks`]: inlay_map::InlayChunks
+//! [`Edit<T>`]: text::Edit
+//! [`Edit<S>`]: text::Edit
+//! [`Chunk`]: language::Chunk
 
 #[macro_use]
 mod dimensions;
@@ -56,6 +105,7 @@ use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
+use ztracing::instrument;
 
 use std::{
     any::TypeId,
@@ -168,6 +218,7 @@ impl DisplayMap {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
         let tab_size = Self::tab_size(&self.buffer, cx);
 
@@ -193,6 +244,7 @@ impl DisplayMap {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
         self.fold(
             other
@@ -209,6 +261,7 @@ impl DisplayMap {
     }
 
     /// Creates folds for the given creases.
+    #[instrument(skip_all)]
     pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -277,6 +330,7 @@ impl DisplayMap {
     }
 
     /// Removes any folds with the given ranges.
+    #[instrument(skip_all)]
     pub fn remove_folds_with_type<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -302,6 +356,7 @@ impl DisplayMap {
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
+    #[instrument(skip_all)]
     pub fn unfold_intersecting<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -333,6 +388,7 @@ impl DisplayMap {
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
     }
 
+    #[instrument(skip_all)]
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -347,6 +403,7 @@ impl DisplayMap {
         block_map.disable_header_for_buffer(buffer_id)
     }
 
+    #[instrument(skip_all)]
     pub fn fold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = language::BufferId>,
@@ -365,6 +422,7 @@ impl DisplayMap {
         block_map.fold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
+    #[instrument(skip_all)]
     pub fn unfold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = language::BufferId>,
@@ -383,14 +441,17 @@ impl DisplayMap {
         block_map.unfold_buffers(buffer_ids, self.buffer.read(cx), cx)
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
         self.block_map.folded_buffers.contains(&buffer_id)
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
         &self.block_map.folded_buffers
     }
 
+    #[instrument(skip_all)]
     pub fn insert_creases(
         &mut self,
         creases: impl IntoIterator<Item = Crease<Anchor>>,
@@ -400,6 +461,7 @@ impl DisplayMap {
         self.crease_map.insert(creases, &snapshot)
     }
 
+    #[instrument(skip_all)]
     pub fn remove_creases(
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
@@ -409,6 +471,7 @@ impl DisplayMap {
         self.crease_map.remove(crease_ids, &snapshot)
     }
 
+    #[instrument(skip_all)]
     pub fn insert_blocks(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -427,6 +490,7 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
+    #[instrument(skip_all)]
     pub fn resize_blocks(&mut self, heights: HashMap<CustomBlockId, u32>, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -441,10 +505,12 @@ impl DisplayMap {
         block_map.resize(heights);
     }
 
+    #[instrument(skip_all)]
     pub fn replace_blocks(&mut self, renderers: HashMap<CustomBlockId, RenderBlock>) {
         self.block_map.replace_blocks(renderers);
     }
 
+    #[instrument(skip_all)]
     pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -459,6 +525,7 @@ impl DisplayMap {
         block_map.remove(ids);
     }
 
+    #[instrument(skip_all)]
     pub fn row_for_block(
         &mut self,
         block_id: CustomBlockId,
@@ -478,6 +545,7 @@ impl DisplayMap {
         Some(DisplayRow(block_row.0))
     }
 
+    #[instrument(skip_all)]
     pub fn highlight_text(
         &mut self,
         key: HighlightKey,
@@ -505,6 +573,7 @@ impl DisplayMap {
         self.text_highlights.insert(key, to_insert);
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn highlight_inlays(
         &mut self,
         type_id: TypeId,
@@ -524,6 +593,7 @@ impl DisplayMap {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
         let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
         Some((highlights.0, &highlights.1))
@@ -536,6 +606,7 @@ impl DisplayMap {
         self.text_highlights.values()
     }
 
+    #[instrument(skip_all)]
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self
             .text_highlights
@@ -564,6 +635,7 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    #[instrument(skip_all)]
     pub fn update_fold_widths(
         &mut self,
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
@@ -595,6 +667,7 @@ impl DisplayMap {
         self.inlay_map.current_inlays()
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn splice_inlays(
         &mut self,
         to_remove: &[InlayId],
@@ -624,6 +697,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
+    #[instrument(skip_all)]
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
@@ -673,6 +747,7 @@ pub struct HighlightedChunk<'a> {
 }
 
 impl<'a> HighlightedChunk<'a> {
+    #[instrument(skip_all)]
     fn highlight_invisibles(
         self,
         editor_style: &'a EditorStyle,
@@ -830,6 +905,7 @@ impl DisplaySnapshot {
         self.buffer_snapshot().widest_line_number()
     }
 
+    #[instrument(skip_all)]
     pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot().to_inlay_point(point);
@@ -848,6 +924,7 @@ impl DisplaySnapshot {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn next_line_boundary(
         &self,
         mut point: MultiBufferPoint,
@@ -886,6 +963,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot().to_inlay_point(point);
         let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
@@ -915,6 +993,7 @@ impl DisplaySnapshot {
             .anchor_at(point.to_offset(self, bias), bias)
     }
 
+    #[instrument(skip_all)]
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
@@ -926,6 +1005,7 @@ impl DisplaySnapshot {
         fold_point.to_inlay_point(self.fold_snapshot())
     }
 
+    #[instrument(skip_all)]
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
@@ -935,6 +1015,7 @@ impl DisplaySnapshot {
             .0
     }
 
+    #[instrument(skip_all)]
     pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
         let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
@@ -947,6 +1028,7 @@ impl DisplaySnapshot {
     }
 
     /// Returns text chunks starting at the given display row until the end of the file
+    #[instrument(skip_all)]
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
             .chunks(
@@ -959,6 +1041,7 @@ impl DisplaySnapshot {
     }
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
+    #[instrument(skip_all)]
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
@@ -975,6 +1058,7 @@ impl DisplaySnapshot {
         })
     }
 
+    #[instrument(skip_all)]
     pub fn chunks(
         &self,
         display_rows: Range<DisplayRow>,
@@ -993,6 +1077,7 @@ impl DisplaySnapshot {
         )
     }
 
+    #[instrument(skip_all)]
     pub fn highlighted_chunks<'a>(
         &'a self,
         display_rows: Range<DisplayRow>,
@@ -1069,6 +1154,7 @@ impl DisplaySnapshot {
         })
     }
 
+    #[instrument(skip_all)]
     pub fn layout_row(
         &self,
         display_row: DisplayRow,
@@ -1130,6 +1216,7 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
+    #[instrument(skip_all)]
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
         let chars = self
@@ -1319,6 +1406,7 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
+    #[instrument(skip_all)]
     pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start =
             MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot().line_len(buffer_row));
@@ -1405,6 +1493,7 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[instrument(skip_all)]
     pub fn text_highlight_ranges<Tag: ?Sized + 'static>(
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
@@ -1415,6 +1504,7 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[instrument(skip_all)]
     pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(
         &self,
     ) -> Vec<(gpui::Hsla, Range<Point>)> {
@@ -1464,6 +1554,7 @@ impl DisplaySnapshot {
     ///
     /// This moves by buffer rows instead of display rows, a distinction that is
     /// important when soft wrapping is enabled.
+    #[instrument(skip_all)]
     pub fn start_of_relative_buffer_row(&self, point: DisplayPoint, times: isize) -> DisplayPoint {
         let start = self.display_point_to_fold_point(point, Bias::Left);
         let target = start.row() as isize + times;

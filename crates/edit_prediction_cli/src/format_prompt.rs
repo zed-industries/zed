@@ -1,0 +1,293 @@
+use crate::{
+    PromptFormat,
+    example::{Example, ExamplePrompt},
+    headless::EpAppState,
+    load_project::run_load_project,
+    progress::{Progress, Step},
+    retrieve_context::run_context_retrieval,
+};
+use anyhow::{Context as _, Result, ensure};
+use edit_prediction::{
+    EditPredictionStore,
+    zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
+};
+use gpui::AsyncApp;
+use std::sync::Arc;
+use zeta_prompt::format_zeta_prompt;
+
+pub async fn run_format_prompt(
+    example: &mut Example,
+    prompt_format: PromptFormat,
+    app_state: Arc<EpAppState>,
+    mut cx: AsyncApp,
+) -> Result<()> {
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+
+    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+
+    match prompt_format {
+        PromptFormat::Teacher => {
+            let prompt = TeacherPrompt::format_prompt(example);
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output: example.spec.expected_patch.clone(), // TODO
+                format: prompt_format,
+            });
+        }
+        PromptFormat::Zeta2 => {
+            run_load_project(example, app_state, cx.clone()).await?;
+
+            let ep_store = cx.update(|cx| {
+                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
+            })??;
+
+            let state = example.state.as_ref().context("state must be set")?;
+            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+            let project = state.project.clone();
+            let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
+                let events = ep_store
+                    .edit_history_for_project(&project, cx)
+                    .into_iter()
+                    .map(|e| e.event)
+                    .collect();
+                anyhow::Ok(zeta2_prompt_input(
+                    &snapshot,
+                    example
+                        .context
+                        .as_ref()
+                        .context("context must be set")?
+                        .files
+                        .clone(),
+                    events,
+                    example.spec.cursor_path.clone(),
+                    example
+                        .buffer
+                        .as_ref()
+                        .context("buffer must be set")?
+                        .cursor_offset,
+                ))
+            })??;
+            let prompt = format_zeta_prompt(&input);
+            let expected_output =
+                zeta2_output_for_patch(&input, &example.spec.expected_patch.clone())?;
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output,
+                format: prompt_format,
+            });
+        }
+    };
+    Ok(())
+}
+
+pub struct TeacherPrompt;
+
+impl TeacherPrompt {
+    const PROMPT: &str = include_str!("teacher.prompt.md");
+    pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
+    pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+
+    /// Truncate edit history to this number of last lines
+    const MAX_HISTORY_LINES: usize = 128;
+
+    pub fn format_prompt(example: &Example) -> String {
+        let edit_history = Self::format_edit_history(&example.spec.edit_history);
+        let context = Self::format_context(example);
+        let editable_region = Self::format_editable_region(example);
+
+        let prompt = Self::PROMPT
+            .replace("{{context}}", &context)
+            .replace("{{edit_history}}", &edit_history)
+            .replace("{{editable_region}}", &editable_region);
+
+        prompt
+    }
+
+    pub fn parse(example: &Example, response: &str) -> Result<String> {
+        // Ideally, we should always be able to find cursor position in the retrieved context.
+        // In reality, sometimes we don't find it for these reasons:
+        // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
+        //    (can be fixed by getting cursor coordinates at the load_example stage)
+        // 2. Context retriever just didn't include cursor line.
+        //
+        // In that case, fallback to using `cursor_position` as excerpt.
+        let cursor_file = &example
+            .buffer
+            .as_ref()
+            .context("`buffer` should be filled in in the context collection step")?
+            .content;
+
+        // Extract updated (new) editable region from the model response
+        let new_editable_region = extract_last_codeblock(response);
+
+        // Reconstruct old editable region we sent to the model
+        let old_editable_region = Self::format_editable_region(example);
+        let old_editable_region = Self::extract_editable_region(&old_editable_region);
+        ensure!(
+            cursor_file.contains(&old_editable_region),
+            "Something's wrong: editable_region is not found in the cursor file"
+        );
+
+        // Apply editable region to a larger context and compute diff.
+        // This is needed to get a better context lines around the editable region
+        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
+        let diff = language::unified_diff(&cursor_file, &edited_file);
+
+        let diff = indoc::formatdoc! {"
+            --- a/{path}
+            +++ b/{path}
+            {diff}",
+            path = example.spec.cursor_path.to_string_lossy(),
+            diff = diff,
+        };
+
+        Ok(diff)
+    }
+
+    fn format_edit_history(edit_history: &str) -> String {
+        // Strip comments ("garbage lines") from edit history
+        let lines = edit_history
+            .lines()
+            .filter(|&s| Self::is_udiff_content_line(s))
+            .collect::<Vec<_>>();
+
+        let history_lines = if lines.len() > Self::MAX_HISTORY_LINES {
+            &lines[lines.len() - Self::MAX_HISTORY_LINES..]
+        } else {
+            &lines
+        };
+
+        if history_lines.is_empty() {
+            return "(No edit history)".to_string();
+        }
+
+        history_lines.join("\n")
+    }
+
+    fn format_context(example: &Example) -> String {
+        assert!(example.context.is_some(), "Missing context retriever step");
+
+        let mut prompt = String::new();
+        zeta_prompt::write_related_files(&mut prompt, &example.context.as_ref().unwrap().files);
+
+        prompt
+    }
+
+    fn format_editable_region(example: &Example) -> String {
+        let mut result = String::new();
+
+        let path_str = example.spec.cursor_path.to_string_lossy();
+        result.push_str(&format!("`````path=\"{path_str}\"\n"));
+        result.push_str(Self::EDITABLE_REGION_START);
+
+        // TODO: control number of lines around cursor
+        result.push_str(&example.spec.cursor_position);
+        if !example.spec.cursor_position.ends_with('\n') {
+            result.push('\n');
+        }
+
+        result.push_str(&format!("{}\n", Self::EDITABLE_REGION_END));
+        result.push_str("`````");
+
+        result
+    }
+
+    fn extract_editable_region(text: &str) -> String {
+        let start = text
+            .find(Self::EDITABLE_REGION_START)
+            .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
+        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+
+        let region = &text[start..end];
+
+        region.replace("<|user_cursor|>", "")
+    }
+
+    fn is_udiff_content_line(s: &str) -> bool {
+        s.starts_with("-")
+            || s.starts_with("+")
+            || s.starts_with(" ")
+            || s.starts_with("---")
+            || s.starts_with("+++")
+            || s.starts_with("@@")
+    }
+}
+
+fn extract_last_codeblock(text: &str) -> String {
+    let mut last_block = None;
+    let mut search_start = 0;
+
+    while let Some(start) = text[search_start..].find("```") {
+        let start = start + search_start;
+        let bytes = text.as_bytes();
+        let mut backtick_end = start;
+
+        while backtick_end < bytes.len() && bytes[backtick_end] == b'`' {
+            backtick_end += 1;
+        }
+
+        let backtick_count = backtick_end - start;
+        let closing_backticks = "`".repeat(backtick_count);
+
+        while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
+            backtick_end += 1;
+        }
+
+        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
+            last_block = Some(code_block.to_string());
+            search_start = backtick_end + end_pos + backtick_count;
+        } else {
+            break;
+        }
+    }
+
+    last_block.unwrap_or_else(|| text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_last_code_block() {
+        let text = indoc::indoc! {"
+            Some thinking
+
+            ```
+            first block
+            ```
+
+            `````path='something' lines=1:2
+            last block
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(last_block, "last block\n");
+    }
+
+    #[test]
+    fn test_extract_editable_region() {
+        let text = indoc::indoc! {"
+            some lines
+            are
+            here
+            <|editable_region_start|>
+            one
+            two three
+
+            <|editable_region_end|>
+            more
+            lines here
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three
+
+            "}
+        );
+    }
+}

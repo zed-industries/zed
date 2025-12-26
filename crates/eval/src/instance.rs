@@ -202,6 +202,7 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
+            false,
             cx,
         );
 
@@ -303,13 +304,12 @@ impl ExampleInstance {
                 let context_server_registry = cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
                 let thread = if let Some(json) = &meta.existing_thread_json {
-                    let session_id = acp::SessionId(
+                    let session_id = acp::SessionId::new(
                         rand::rng()
                             .sample_iter(&distr::Alphanumeric)
                             .take(7)
                             .map(char::from)
-                            .collect::<String>()
-                            .into(),
+                            .collect::<String>(),
                     );
 
                     let db_thread = agent::DbThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
@@ -626,6 +626,15 @@ impl agent::TerminalHandle for EvalTerminalHandle {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
     }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
+    }
 }
 
 impl agent::ThreadEnvironment for EvalThreadEnvironment {
@@ -640,7 +649,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         cx.spawn(async move |cx| {
             let language_registry =
                 project.read_with(cx, |project, _cx| project.languages().clone())?;
-            let id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+            let id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
             let terminal =
                 acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
                     .await?;
@@ -893,7 +902,7 @@ pub fn wait_for_lang_server(
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store
-                    .language_servers_for_local_buffer(buffer, cx)
+                    .running_language_servers_for_local_buffer(buffer, cx)
                     .next()
                     .is_some()
             })

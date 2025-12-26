@@ -570,6 +570,9 @@ pub struct ThemeColorsContent {
     #[serde(rename = "search.match_background")]
     pub search_match_background: Option<String>,
 
+    #[serde(rename = "search.active_match_background")]
+    pub search_active_match_background: Option<String>,
+
     #[serde(rename = "panel.background")]
     pub panel_background: Option<String>,
 

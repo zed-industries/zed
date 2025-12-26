@@ -32,9 +32,9 @@ pub struct NodeBinaryOptions {
 
 pub enum VersionStrategy<'a> {
     /// Install if current version doesn't match pinned version
-    Pin(&'a str),
+    Pin(&'a Version),
     /// Install if current version is older than latest version
-    Latest(&'a str),
+    Latest(&'a Version),
 }
 
 #[derive(Clone)]
@@ -206,14 +206,14 @@ impl NodeRuntime {
 
     pub async fn run_npm_subcommand(
         &self,
-        directory: &Path,
+        directory: Option<&Path>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
+            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
             .await
     }
 
@@ -221,14 +221,14 @@ impl NodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         self.instance()
             .await
             .npm_package_installed_version(local_package_directory, name)
             .await
     }
 
-    pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
+    pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
         let http = self.0.lock().await.http.clone();
         let output = self
             .instance()
@@ -271,19 +271,22 @@ impl NodeRuntime {
             .map(|(name, version)| format!("{name}@{version}"))
             .collect();
 
-        let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
-        arguments.extend_from_slice(&[
-            "--save-exact",
-            "--fetch-retry-mintimeout",
-            "2000",
-            "--fetch-retry-maxtimeout",
-            "5000",
-            "--fetch-timeout",
-            "5000",
-        ]);
+        let arguments: Vec<_> = packages
+            .iter()
+            .map(|p| p.as_str())
+            .chain([
+                "--save-exact",
+                "--fetch-retry-mintimeout",
+                "2000",
+                "--fetch-retry-maxtimeout",
+                "5000",
+                "--fetch-timeout",
+                "5000",
+            ])
+            .collect();
 
         // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(directory, "install", &arguments)
+        self.run_npm_subcommand(Some(directory), "install", &arguments)
             .await?;
         Ok(())
     }
@@ -311,23 +314,9 @@ impl NodeRuntime {
             return true;
         };
 
-        let Some(installed_version) = Version::parse(&installed_version).log_err() else {
-            return true;
-        };
-
         match version_strategy {
-            VersionStrategy::Pin(pinned_version) => {
-                let Some(pinned_version) = Version::parse(pinned_version).log_err() else {
-                    return true;
-                };
-                installed_version != pinned_version
-            }
-            VersionStrategy::Latest(latest_version) => {
-                let Some(latest_version) = Version::parse(latest_version).log_err() else {
-                    return true;
-                };
-                installed_version < latest_version
-            }
+            VersionStrategy::Pin(pinned_version) => &installed_version != pinned_version,
+            VersionStrategy::Latest(latest_version) => &installed_version < latest_version,
         }
     }
 }
@@ -342,12 +331,12 @@ enum ArchiveType {
 pub struct NpmInfo {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
-    versions: Vec<String>,
+    versions: Vec<Version>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NpmInfoDistTags {
-    latest: Option<String>,
+    latest: Option<Version>,
 }
 
 #[async_trait::async_trait]
@@ -367,7 +356,7 @@ trait NodeRuntimeTrait: Send + Sync {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>>;
+    ) -> Result<Option<Version>>;
 }
 
 #[derive(Clone)]
@@ -559,7 +548,10 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), self.installation_path.join("cache")]);
+            command.arg(format!(
+                "--cache={}",
+                self.installation_path.join("cache").display()
+            ));
             command.args([
                 "--userconfig".into(),
                 self.installation_path.join("blank_user_npmrc"),
@@ -598,7 +590,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         read_package_installed_version(local_package_directory.join("node_modules"), name).await
     }
 }
@@ -703,7 +695,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
-            .args(["--cache".into(), self.scratch_dir.join("cache")])
+            .arg(format!(
+                "--cache={}",
+                self.scratch_dir.join("cache").display()
+            ))
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
@@ -720,7 +715,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         read_package_installed_version(local_package_directory.join("node_modules"), name).await
         // todo: allow returning a globally installed version (requires callers not to hard-code the path)
     }
@@ -729,7 +724,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
 pub async fn read_package_installed_version(
     node_module_directory: PathBuf,
     name: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<Version>> {
     let package_json_path = node_module_directory.join(name).join("package.json");
 
     let mut file = match fs::File::open(package_json_path).await {
@@ -745,7 +740,7 @@ pub async fn read_package_installed_version(
 
     #[derive(Deserialize)]
     struct PackageJson {
-        version: String,
+        version: Version,
     }
 
     let mut contents = String::new();
@@ -782,7 +777,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         &self,
         _local_package_directory: &Path,
         _: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         bail!("{}", self.error_message)
     }
 }

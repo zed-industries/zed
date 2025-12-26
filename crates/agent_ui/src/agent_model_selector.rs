@@ -1,14 +1,15 @@
 use crate::{
     ModelUsageContext,
     language_model_selector::{LanguageModelSelector, language_model_selector},
+    ui::ModelSelectorTooltip,
 };
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
+use language_model::IconOrSvg;
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
-use zed_actions::agent::ToggleModelSelector;
 
 pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
@@ -29,24 +30,37 @@ impl AgentModelSelector {
 
         Self {
             selector: cx.new(move |cx| {
-                let fs = fs.clone();
                 language_model_selector(
                     {
                         let model_context = model_usage_context.clone();
                         move |cx| model_context.configured_model(cx)
                     },
-                    move |model, cx| {
-                        let provider = model.provider_id().0.to_string();
-                        let model_id = model.id().0.to_string();
-                        match &model_usage_context {
-                            ModelUsageContext::InlineAssistant => {
-                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_inline_assistant_model(provider.clone(), model_id);
-                                });
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            let provider = model.provider_id().0.to_string();
+                            let model_id = model.id().0.to_string();
+                            match &model_usage_context {
+                                ModelUsageContext::InlineAssistant => {
+                                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                        settings
+                                            .agent
+                                            .get_or_insert_default()
+                                            .set_inline_assistant_model(provider.clone(), model_id);
+                                    });
+                                }
                             }
+                        }
+                    },
+                    {
+                        let fs = fs.clone();
+                        move |model, should_be_favorite, cx| {
+                            crate::favorite_models::toggle_in_settings(
+                                model,
+                                should_be_favorite,
+                                fs.clone(),
+                                cx,
+                            );
                         }
                     },
                     true, // Use popover styles for picker
@@ -62,6 +76,16 @@ impl AgentModelSelector {
 
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
+    }
+
+    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+        self.selector.read(cx).delegate.active_model(cx)
+    }
+
+    pub fn cycle_favorite_models(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.selector.update(cx, |selector, cx| {
+            selector.delegate.cycle_favorite_models(window, cx);
+        });
     }
 }
 
@@ -80,13 +104,30 @@ impl Render for AgentModelSelector {
             Color::Muted
         };
 
+        let show_cycle_row = self.selector.read(cx).delegate.favorites_count() > 1;
+
         let focus_handle = self.focus_handle.clone();
+
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
+            }
+        });
 
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                    this.child(
+                        match icon {
+                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                            IconOrSvg::Icon(name) => Icon::new(name),
+                        }
+                        .color(color)
+                        .size(IconSize::XSmall),
+                    )
                 })
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
@@ -100,9 +141,7 @@ impl Render for AgentModelSelector {
                         .color(color)
                         .size(IconSize::XSmall),
                 ),
-            move |_window, cx| {
-                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
-            },
+            tooltip,
             gpui::Corner::TopRight,
             cx,
         )

@@ -212,6 +212,12 @@ impl BufferDiffSnapshot {
         self.inner.hunks.is_empty()
     }
 
+    pub fn base_text_string(&self) -> Option<String> {
+        self.inner
+            .base_text_exists
+            .then(|| self.inner.base_text.text())
+    }
+
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
         self.secondary_diff.as_deref()
     }
@@ -1206,6 +1212,34 @@ impl BufferDiff {
         new_index_text
     }
 
+    pub fn stage_or_unstage_all_hunks(
+        &mut self,
+        stage: bool,
+        buffer: &text::BufferSnapshot,
+        file_exists: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let hunks = self
+            .snapshot(cx)
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer)
+            .collect::<Vec<_>>();
+        let Some(secondary) = self.secondary_diff.clone() else {
+            return;
+        };
+        let secondary = secondary.read(cx).inner.clone();
+        self.inner
+            .stage_or_unstage_hunks_impl(&secondary, stage, &hunks, buffer, file_exists, cx);
+        if let Some((first, last)) = hunks.first().zip(hunks.last()) {
+            let changed_range = first.buffer_range.start..last.buffer_range.end;
+            let base_text_changed_range =
+                first.diff_base_byte_range.start..last.diff_base_byte_range.end;
+            cx.emit(BufferDiffEvent::DiffChanged {
+                changed_range: Some(changed_range),
+                base_text_changed_range: Some(base_text_changed_range),
+            });
+        }
+    }
+
     pub fn update_diff(
         &self,
         buffer: text::BufferSnapshot,
@@ -2164,7 +2198,7 @@ mod tests {
             Point::new(0, 0)..Point::new(10, 0)
         );
 
-        // Edit does not affect the diff.
+        // Edit does affects the diff because it recalculates word diffs.
         buffer.edit_via_marked_text(
             &"
                 one
@@ -2179,9 +2213,15 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let (range, base_text_range) =
+            compare_hunks(&diff_1.inner.hunks, &empty_diff.inner.hunks, &buffer);
         assert_eq!(
-            (None, None),
-            compare_hunks(&diff_2.inner.hunks, &diff_1.inner.hunks, &buffer)
+            range.unwrap().to_point(&buffer),
+            Point::new(4, 0)..Point::new(5, 0),
+        );
+        assert_eq!(
+            base_text_range.unwrap().to_point(diff_2.base_text()),
+            Point::new(0, 0)..Point::new(0, 0),
         );
 
         // Edit turns a deletion hunk into a modification.

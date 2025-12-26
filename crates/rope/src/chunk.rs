@@ -47,22 +47,59 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        let mut this = Chunk::default();
-        this.push_str(text);
-        this
+        let text = ArrayString::from(text).unwrap();
+
+        const CHUNK_SIZE: usize = 8;
+
+        let mut chars_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut newlines_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut tabs_bytes = [0; MAX_BASE / CHUNK_SIZE];
+        let mut chars_utf16_bytes = [0; MAX_BASE / CHUNK_SIZE];
+
+        let mut chunk_ix = 0;
+
+        let mut bytes = text.as_bytes();
+        while !bytes.is_empty() {
+            let (chunk, rest) = bytes.split_at(bytes.len().min(CHUNK_SIZE));
+            bytes = rest;
+
+            let mut chars = 0;
+            let mut newlines = 0;
+            let mut tabs = 0;
+            let mut chars_utf16 = 0;
+
+            for (ix, &b) in chunk.iter().enumerate() {
+                chars |= (util::is_utf8_char_boundary(b) as u8) << ix;
+                newlines |= ((b == b'\n') as u8) << ix;
+                tabs |= ((b == b'\t') as u8) << ix;
+                // b >= 240 when we are at the first byte of the 4 byte encoded
+                // utf-8 code point (U+010000 or greater) it means that it would
+                // be encoded as two 16-bit code units in utf-16
+                chars_utf16 |= ((b >= 240) as u8) << ix;
+            }
+
+            chars_bytes[chunk_ix] = chars;
+            newlines_bytes[chunk_ix] = newlines;
+            tabs_bytes[chunk_ix] = tabs;
+            chars_utf16_bytes[chunk_ix] = chars_utf16;
+
+            chunk_ix += 1;
+        }
+
+        let chars = Bitmap::from_le_bytes(chars_bytes);
+
+        Chunk {
+            text,
+            chars,
+            chars_utf16: (Bitmap::from_le_bytes(chars_utf16_bytes) << 1) | chars,
+            newlines: Bitmap::from_le_bytes(newlines_bytes),
+            tabs: Bitmap::from_le_bytes(tabs_bytes),
+        }
     }
 
     #[inline(always)]
     pub fn push_str(&mut self, text: &str) {
-        for (char_ix, c) in text.char_indices() {
-            let ix = self.text.len() + char_ix;
-            self.chars |= 1 << ix;
-            self.chars_utf16 |= 1 << ix;
-            self.chars_utf16 |= (c.len_utf16() as Bitmap) << ix;
-            self.newlines |= ((c == '\n') as Bitmap) << ix;
-            self.tabs |= ((c == '\t') as Bitmap) << ix;
-        }
-        self.text.push_str(text);
+        self.append(Chunk::new(text).as_slice());
     }
 
     #[inline(always)]

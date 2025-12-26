@@ -111,7 +111,7 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
@@ -311,7 +311,7 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
         let shell = match &remote_client {
