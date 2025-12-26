@@ -508,12 +508,9 @@ struct BufferState {
 
 struct DiffState {
     diff: Entity<BufferDiff>,
-    /// Whether the [`MultiBuffer`] this is associated with is inverted (i.e.
-    /// showing additions as deletions). This is used in the side-by-side diff
-    /// view.
-    ///
-    /// The [`DiffState`]s in a [`MultiBuffer`] must either be all inverted, or
-    // all not inverted.
+    /// If set, this diff is "inverted" (i.e. showing additions as deletions).
+    /// This is used in the side-by-side diff view. The main_buffer is the
+    /// editable buffer, while the excerpt shows the base text.
     main_buffer: Option<WeakEntity<Buffer>>,
     _subscription: gpui::Subscription,
 }
@@ -613,6 +610,7 @@ pub struct MultiBufferSnapshot {
     is_dirty: bool,
     has_deleted_file: bool,
     has_conflict: bool,
+    has_inverted_diff: bool,
     /// immutable fields
     singleton: bool,
     excerpt_ids: SumTree<ExcerptIdMapping>,
@@ -1870,6 +1868,7 @@ impl MultiBuffer {
             is_dirty,
             has_deleted_file,
             has_conflict,
+            has_inverted_diff,
             singleton: _,
             excerpt_ids: _,
             replaced_excerpts,
@@ -1885,6 +1884,7 @@ impl MultiBuffer {
         *is_dirty = false;
         *has_deleted_file = false;
         *has_conflict = false;
+        *has_inverted_diff = false;
         replaced_excerpts.clear();
 
         let edits = Self::sync_diff_transforms(
@@ -2180,6 +2180,14 @@ impl MultiBuffer {
         for buffer_id in &removed_buffer_ids {
             self.diffs.remove(buffer_id);
             snapshot.diffs.remove(buffer_id);
+        }
+
+        // Recalculate has_inverted_diff after removing diffs
+        if !removed_buffer_ids.is_empty() {
+            snapshot.has_inverted_diff = snapshot
+                .diffs
+                .iter()
+                .any(|(_, diff)| diff.main_buffer.is_some());
         }
 
         if changed_trailing_excerpt {
@@ -2544,8 +2552,6 @@ impl MultiBuffer {
     }
 
     pub fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
-        debug_assert!(self.diffs.values().all(|diff| diff.main_buffer.is_none()));
-
         let buffer_id = diff.read(cx).buffer_id;
         self.buffer_diff_changed(
             diff.clone(),
@@ -2561,10 +2567,9 @@ impl MultiBuffer {
         main_buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(self.diffs.values().all(|diff| diff.main_buffer.is_some()));
-
         let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
         let diff_change_range = 0..diff.read(cx).base_text(cx).len();
+        self.snapshot.get_mut().has_inverted_diff = true;
         self.inverted_buffer_diff_changed(
             diff.clone(),
             diff_change_range,
@@ -2940,6 +2945,7 @@ impl MultiBuffer {
             is_dirty,
             has_deleted_file,
             has_conflict,
+            has_inverted_diff: _,
             singleton: _,
             excerpt_ids: _,
             replaced_excerpts: _,
@@ -3228,10 +3234,12 @@ impl MultiBuffer {
         }
 
         // Avoid querying diff hunks if there's no possibility of hunks being expanded.
+        // For inverted diffs, hunks are always shown, so we can't skip this.
         let all_diff_hunks_expanded = snapshot.all_diff_hunks_expanded;
         if old_expanded_hunks.is_empty()
             && change_kind == DiffChangeKind::BufferEdited
             && !all_diff_hunks_expanded
+            && !snapshot.has_inverted_diff
         {
             return false;
         }

@@ -2295,6 +2295,7 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
     diffs: HashMap<BufferId, Entity<BufferDiff>>,
+    inverted_diffs: HashMap<BufferId, (Entity<BufferDiff>, text::BufferSnapshot)>,
 }
 
 #[derive(Debug)]
@@ -2355,6 +2356,7 @@ impl ReferenceMultibuffer {
             .any(|excerpt| excerpt.buffer.read(cx).remote_id() == id)
         {
             self.diffs.remove(&id);
+            self.inverted_diffs.remove(&id);
         }
     }
 
@@ -2392,6 +2394,12 @@ impl ReferenceMultibuffer {
             .unwrap();
         let buffer = excerpt.buffer.read(cx).snapshot();
         let buffer_id = buffer.remote_id();
+
+        // Skip inverted excerpts - hunks are always expanded
+        if self.inverted_diffs.contains_key(&buffer_id) {
+            return;
+        }
+
         let Some(diff) = self.diffs.get(&buffer_id) else {
             return;
         };
@@ -2431,107 +2439,186 @@ impl ReferenceMultibuffer {
         for excerpt in &self.excerpts {
             excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
+            let buffer_id = buffer.remote_id();
             let buffer_range = excerpt.range.to_offset(buffer);
-            let diff = self
-                .diffs
-                .get(&buffer.remote_id())
-                .unwrap()
-                .read(cx)
-                .snapshot(cx);
-            let base_buffer = diff.base_text();
 
-            let mut offset = buffer_range.start;
-            let hunks = diff
-                .hunks_intersecting_range(excerpt.range.clone(), buffer)
-                .peekable();
+            if let Some((diff, main_buffer_snapshot)) = self.inverted_diffs.get(&buffer_id) {
+                // INVERTED DIFF: Show base text with deleted regions marked
+                let diff_snapshot = diff.read(cx).snapshot(cx);
 
-            for hunk in hunks {
-                // Ignore hunks that are outside the excerpt range.
-                let mut hunk_range = hunk.buffer_range.to_offset(buffer);
+                let mut offset = buffer_range.start;
+                for hunk in diff_snapshot
+                    .hunks_intersecting_base_text_range(buffer_range.clone(), main_buffer_snapshot)
+                {
+                    let hunk_base_range = hunk.diff_base_byte_range.clone();
 
-                hunk_range.end = hunk_range.end.min(buffer_range.end);
-                if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start {
-                    log::trace!("skipping hunk outside excerpt range");
-                    continue;
-                }
-
-                if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
-                    expanded_anchor.to_offset(buffer).max(buffer_range.start)
-                        == hunk_range.start.max(buffer_range.start)
-                }) {
-                    log::trace!("skipping a hunk that's not marked as expanded");
-                    continue;
-                }
-
-                if !hunk.buffer_range.start.is_valid(buffer) {
-                    log::trace!("skipping hunk with deleted start: {:?}", hunk.range);
-                    continue;
-                }
-
-                if hunk_range.start >= offset {
-                    // Add the buffer text before the hunk
-                    let len = text.len();
-                    text.extend(buffer.text_for_range(offset..hunk_range.start));
-                    if text.len() > len {
-                        regions.push(ReferenceRegion {
-                            buffer_id: Some(buffer.remote_id()),
-                            range: len..text.len(),
-                            buffer_range: Some((offset..hunk_range.start).to_point(&buffer)),
-                            status: None,
-                            excerpt_id: Some(excerpt.id),
-                        });
+                    // Match actual multibuffer behavior: skip hunks that start before excerpt
+                    if hunk_base_range.start < buffer_range.start {
+                        continue;
                     }
 
-                    // Add the deleted text for the hunk.
-                    if !hunk.diff_base_byte_range.is_empty() {
-                        let mut base_text = base_buffer
-                            .text_for_range(hunk.diff_base_byte_range.clone())
-                            .collect::<String>();
-                        if !base_text.ends_with('\n') {
-                            base_text.push('\n');
-                        }
+                    // Clamp to excerpt range
+                    let hunk_start = hunk_base_range.start.max(buffer_range.start);
+                    let hunk_end = hunk_base_range.end.min(buffer_range.end);
+
+                    if hunk_start > buffer_range.end {
+                        continue;
+                    }
+
+                    // Add buffer text before the hunk (no status)
+                    if hunk_start > offset {
                         let len = text.len();
-                        text.push_str(&base_text);
+                        text.extend(buffer.text_for_range(offset..hunk_start));
+                        if text.len() > len {
+                            regions.push(ReferenceRegion {
+                                buffer_id: Some(buffer_id),
+                                range: len..text.len(),
+                                buffer_range: Some((offset..hunk_start).to_point(&buffer)),
+                                status: None,
+                                excerpt_id: Some(excerpt.id),
+                            });
+                        }
+                    }
+
+                    // Add the "deleted" region (base text that's not in main)
+                    if hunk_end > hunk_start {
+                        let len = text.len();
+                        text.extend(buffer.text_for_range(hunk_start..hunk_end));
                         regions.push(ReferenceRegion {
-                            buffer_id: Some(base_buffer.remote_id()),
+                            buffer_id: Some(buffer_id),
                             range: len..text.len(),
-                            buffer_range: Some(hunk.diff_base_byte_range.to_point(&base_buffer)),
+                            buffer_range: Some((hunk_start..hunk_end).to_point(&buffer)),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                             excerpt_id: Some(excerpt.id),
                         });
                     }
 
-                    offset = hunk_range.start;
+                    offset = hunk_end.max(offset);
                 }
 
-                // Add the inserted text for the hunk.
-                if hunk_range.end > offset {
+                // Add remaining buffer text
+                if offset < buffer_range.end {
                     let len = text.len();
-                    text.extend(buffer.text_for_range(offset..hunk_range.end));
-                    let range = len..text.len();
-                    let region = ReferenceRegion {
-                        buffer_id: Some(buffer.remote_id()),
-                        range,
-                        buffer_range: Some((offset..hunk_range.end).to_point(&buffer)),
-                        status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                    text.extend(buffer.text_for_range(offset..buffer_range.end));
+                    text.push('\n');
+                    regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer_id),
+                        range: len..text.len(),
+                        buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
+                        status: None,
                         excerpt_id: Some(excerpt.id),
-                    };
-                    offset = hunk_range.end;
-                    regions.push(region);
+                    });
+                } else {
+                    text.push('\n');
+                    regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer_id),
+                        range: text.len() - 1..text.len(),
+                        buffer_range: Some((buffer_range.end..buffer_range.end).to_point(&buffer)),
+                        status: None,
+                        excerpt_id: Some(excerpt.id),
+                    });
                 }
-            }
+            } else {
+                // NON-INVERTED: Existing logic (show main buffer, insert deleted content)
+                let diff = self.diffs.get(&buffer_id).unwrap().read(cx).snapshot(cx);
+                let base_buffer = diff.base_text();
 
-            // Add the buffer text for the rest of the excerpt.
-            let len = text.len();
-            text.extend(buffer.text_for_range(offset..buffer_range.end));
-            text.push('\n');
-            regions.push(ReferenceRegion {
-                buffer_id: Some(buffer.remote_id()),
-                range: len..text.len(),
-                buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
-                status: None,
-                excerpt_id: Some(excerpt.id),
-            });
+                let mut offset = buffer_range.start;
+                let hunks = diff
+                    .hunks_intersecting_range(excerpt.range.clone(), buffer)
+                    .peekable();
+
+                for hunk in hunks {
+                    // Ignore hunks that are outside the excerpt range.
+                    let mut hunk_range = hunk.buffer_range.to_offset(buffer);
+
+                    hunk_range.end = hunk_range.end.min(buffer_range.end);
+                    if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start
+                    {
+                        log::trace!("skipping hunk outside excerpt range");
+                        continue;
+                    }
+
+                    if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
+                        expanded_anchor.to_offset(buffer).max(buffer_range.start)
+                            == hunk_range.start.max(buffer_range.start)
+                    }) {
+                        log::trace!("skipping a hunk that's not marked as expanded");
+                        continue;
+                    }
+
+                    if !hunk.buffer_range.start.is_valid(buffer) {
+                        log::trace!("skipping hunk with deleted start: {:?}", hunk.range);
+                        continue;
+                    }
+
+                    if hunk_range.start >= offset {
+                        // Add the buffer text before the hunk
+                        let len = text.len();
+                        text.extend(buffer.text_for_range(offset..hunk_range.start));
+                        if text.len() > len {
+                            regions.push(ReferenceRegion {
+                                buffer_id: Some(buffer_id),
+                                range: len..text.len(),
+                                buffer_range: Some((offset..hunk_range.start).to_point(&buffer)),
+                                status: None,
+                                excerpt_id: Some(excerpt.id),
+                            });
+                        }
+
+                        // Add the deleted text for the hunk.
+                        if !hunk.diff_base_byte_range.is_empty() {
+                            let mut base_text = base_buffer
+                                .text_for_range(hunk.diff_base_byte_range.clone())
+                                .collect::<String>();
+                            if !base_text.ends_with('\n') {
+                                base_text.push('\n');
+                            }
+                            let len = text.len();
+                            text.push_str(&base_text);
+                            regions.push(ReferenceRegion {
+                                buffer_id: Some(base_buffer.remote_id()),
+                                range: len..text.len(),
+                                buffer_range: Some(
+                                    hunk.diff_base_byte_range.to_point(&base_buffer),
+                                ),
+                                status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
+                                excerpt_id: Some(excerpt.id),
+                            });
+                        }
+
+                        offset = hunk_range.start;
+                    }
+
+                    // Add the inserted text for the hunk.
+                    if hunk_range.end > offset {
+                        let len = text.len();
+                        text.extend(buffer.text_for_range(offset..hunk_range.end));
+                        let range = len..text.len();
+                        let region = ReferenceRegion {
+                            buffer_id: Some(buffer_id),
+                            range,
+                            buffer_range: Some((offset..hunk_range.end).to_point(&buffer)),
+                            status: Some(DiffHunkStatus::added(hunk.secondary_status)),
+                            excerpt_id: Some(excerpt.id),
+                        };
+                        offset = hunk_range.end;
+                        regions.push(region);
+                    }
+                }
+
+                // Add the buffer text for the rest of the excerpt.
+                let len = text.len();
+                text.extend(buffer.text_for_range(offset..buffer_range.end));
+                text.push('\n');
+                regions.push(ReferenceRegion {
+                    buffer_id: Some(buffer_id),
+                    range: len..text.len(),
+                    buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
+                    status: None,
+                    excerpt_id: Some(excerpt.id),
+                });
+            }
         }
 
         // Remove final trailing newline.
@@ -2635,9 +2722,18 @@ impl ReferenceMultibuffer {
     fn diffs_updated(&mut self, cx: &App) {
         for excerpt in &mut self.excerpts {
             let buffer = excerpt.buffer.read(cx).snapshot();
-            let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
-            let diff = self.diffs.get(&buffer_id).unwrap().read(cx).snapshot(cx);
+
+            // Skip inverted diff excerpts - hunks are always expanded
+            if self.inverted_diffs.contains_key(&buffer_id) {
+                continue;
+            }
+
+            let excerpt_range = excerpt.range.to_offset(&buffer);
+            let Some(diff) = self.diffs.get(&buffer_id) else {
+                continue;
+            };
+            let diff = diff.read(cx).snapshot(cx);
             let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer) {
@@ -2664,6 +2760,29 @@ impl ReferenceMultibuffer {
     fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut App) {
         let buffer_id = diff.read(cx).buffer_id;
         self.diffs.insert(buffer_id, diff);
+    }
+
+    fn add_inverted_diff(
+        &mut self,
+        diff: Entity<BufferDiff>,
+        main_buffer_snapshot: text::BufferSnapshot,
+        cx: &App,
+    ) {
+        let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
+        self.inverted_diffs
+            .insert(base_text_buffer_id, (diff, main_buffer_snapshot));
+    }
+
+    fn update_inverted_diff_snapshot(
+        &mut self,
+        diff: &Entity<BufferDiff>,
+        main_buffer_snapshot: text::BufferSnapshot,
+        cx: &App,
+    ) {
+        let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
+        if let Some((_, stored_snapshot)) = self.inverted_diffs.get_mut(&base_text_buffer_id) {
+            *stored_snapshot = main_buffer_snapshot;
+        }
     }
 }
 
@@ -2754,6 +2873,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
     let mut needs_diff_calculation = false;
+    // Maps main_buffer_id -> diff for inverted diffs (needed for recalculation when main buffer is edited)
+    let mut inverted_diff_main_buffers: HashMap<BufferId, Entity<BufferDiff>> = HashMap::default();
     for _ in 0..operations {
         match rng.random_range(0..100) {
             0..=14 if !buffers.is_empty() => {
@@ -2852,121 +2973,236 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             }
             45..=55 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
-                            let snapshot = multibuffer.snapshot(cx);
-                            let excerpt_ix = rng.random_range(0..reference.excerpts.len());
-                            let excerpt = &reference.excerpts[excerpt_ix];
-                            let start = excerpt.range.start;
-                            let end = excerpt.range.end;
-                            let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
-                                ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
+                    let snapshot = multibuffer.snapshot(cx);
+                    let excerpt_ix = rng.random_range(0..reference.excerpts.len());
+                    let excerpt = &reference.excerpts[excerpt_ix];
 
-                            log::info!(
-                                "expanding diff hunks in range {:?} (excerpt id {:?}, index {excerpt_ix:?}, buffer id {:?})",
-                                range.to_offset(&snapshot),
-                                excerpt.id,
-                                excerpt.buffer.read(cx).remote_id(),
-                            );
-                            reference.expand_diff_hunks(excerpt.id, start..end, cx);
-                            multibuffer.expand_diff_hunks(vec![range], cx);
-                        });
+                    // Skip inverted excerpts - hunks can't be collapsed
+                    let buffer_id = excerpt.buffer.read(cx).remote_id();
+                    if reference.inverted_diffs.contains_key(&buffer_id) {
+                        return;
+                    }
+
+                    let start = excerpt.range.start;
+                    let end = excerpt.range.end;
+                    let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
+                        ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
+
+                    log::info!(
+                        "expanding diff hunks in range {:?} (excerpt id {:?}, index {excerpt_ix:?}, buffer id {:?})",
+                        range.to_offset(&snapshot),
+                        excerpt.id,
+                        buffer_id,
+                    );
+                    reference.expand_diff_hunks(excerpt.id, start..end, cx);
+                    multibuffer.expand_diff_hunks(vec![range], cx);
+                });
             }
             56..=85 if needs_diff_calculation => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
                         let snapshot = buffer.read(cx).snapshot();
-                        multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
-                            cx,
-                            |diff, cx| {
+                        let buffer_id = snapshot.remote_id();
+
+                        // Recalculate non-inverted diff if exists
+                        if let Some(diff) = multibuffer.diff_for(buffer_id) {
+                            diff.update(cx, |diff, cx| {
+                                log::info!("recalculating diff for buffer {:?}", buffer_id,);
+                                diff.recalculate_diff_sync(&snapshot.text, cx);
+                            });
+                        }
+
+                        // Recalculate inverted diff if this is a main buffer for one
+                        if let Some(inverted_diff) = inverted_diff_main_buffers.get(&buffer_id) {
+                            inverted_diff.update(cx, |diff, cx| {
                                 log::info!(
-                                    "recalculating diff for buffer {:?}",
-                                    snapshot.remote_id(),
+                                    "recalculating inverted diff for main buffer {:?}",
+                                    buffer_id,
                                 );
                                 diff.recalculate_diff_sync(&snapshot.text, cx);
-                            },
-                        );
+                            });
+                            // Update the stored snapshot in the reference model
+                            reference.update_inverted_diff_snapshot(
+                                inverted_diff,
+                                snapshot.text.clone(),
+                                cx,
+                            );
+                        }
                     }
                     reference.diffs_updated(cx);
                     needs_diff_calculation = false;
                 });
             }
             _ => {
-                let buffer_handle = if buffers.is_empty() || rng.random_bool(0.4) {
-                    let mut base_text = util::RandomCharIter::new(&mut rng)
+                // Decide if we're creating a new buffer or reusing an existing one
+                let create_new_buffer = buffers.is_empty() || rng.random_bool(0.4);
+                // Decide if this should be an inverted diff excerpt (only for new buffers, 30% chance)
+                let create_inverted = create_new_buffer && rng.random_bool(0.3);
+
+                if create_inverted {
+                    // Create a new main buffer
+                    let mut main_buffer_text = util::RandomCharIter::new(&mut rng)
                         .take(256)
                         .collect::<String>();
+                    let main_buffer = cx.new(|cx| Buffer::local(main_buffer_text.clone(), cx));
+                    text::LineEnding::normalize(&mut main_buffer_text);
+                    let main_buffer_id = main_buffer.read_with(cx, |buffer, _| buffer.remote_id());
+                    base_texts.insert(main_buffer_id, main_buffer_text);
+                    buffers.push(main_buffer.clone());
 
-                    let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    text::LineEnding::normalize(&mut base_text);
-                    base_texts.insert(
-                        buffer.read_with(cx, |buffer, _| buffer.remote_id()),
-                        base_text,
-                    );
-                    buffers.push(buffer);
-                    buffers.last().unwrap()
-                } else {
-                    buffers.choose(&mut rng).unwrap()
-                };
+                    // Generate different base text for the inverted diff
+                    let inverted_base_text: String =
+                        util::RandomCharIter::new(&mut rng).take(256).collect();
 
-                let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
-                let prev_excerpt_id = reference
-                    .excerpts
-                    .get(prev_excerpt_ix)
-                    .map_or(ExcerptId::max(), |e| e.id);
-                let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
-
-                let (range, anchor_range) = buffer_handle.read_with(cx, |buffer, _| {
-                    let end_row = rng.random_range(0..=buffer.max_point().row);
-                    let start_row = rng.random_range(0..=end_row);
-                    let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
-                    let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
-                    let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
-
-                    log::info!(
-                        "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
-                        excerpt_ix,
-                        reference.excerpts.len(),
-                        buffer.remote_id(),
-                        buffer.text(),
-                        start_ix..end_ix,
-                        &buffer.text()[start_ix..end_ix]
-                    );
-
-                    (start_ix..end_ix, anchor_range)
-                });
-
-                let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
-                    multibuffer
-                        .insert_excerpts_after(
-                            prev_excerpt_id,
-                            buffer_handle.clone(),
-                            [ExcerptRange::new(range.clone())],
+                    let diff = cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            &inverted_base_text,
+                            &main_buffer.read(cx).text_snapshot(),
                             cx,
                         )
-                        .pop()
-                        .unwrap()
-                });
+                    });
 
-                reference.insert_excerpt_after(
-                    prev_excerpt_id,
-                    excerpt_id,
-                    (buffer_handle.clone(), anchor_range),
-                );
+                    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
 
-                multibuffer.update(cx, |multibuffer, cx| {
-                    let id = buffer_handle.read(cx).remote_id();
-                    if multibuffer.diff_for(id).is_none() {
-                        let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx.new(|cx| {
-                            BufferDiff::new_with_base_text(
-                                base_text,
-                                &buffer_handle.read(cx).text_snapshot(),
+                    // Track for recalculation when main buffer is edited
+                    inverted_diff_main_buffers.insert(main_buffer_id, diff.clone());
+
+                    let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
+                    let prev_excerpt_id = reference
+                        .excerpts
+                        .get(prev_excerpt_ix)
+                        .map_or(ExcerptId::max(), |e| e.id);
+                    let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
+
+                    // Create excerpt from base_text_buffer
+                    let (range, anchor_range) = base_text_buffer.read_with(cx, |buffer, _| {
+                        let end_row = rng.random_range(0..=buffer.max_point().row);
+                        let start_row = rng.random_range(0..=end_row);
+                        let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+                        let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+                        let anchor_range =
+                            buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+
+                        log::info!(
+                            "Inserting inverted excerpt at {} of {} for base_text_buffer {}: {:?}[{:?}] = {:?}",
+                            excerpt_ix,
+                            reference.excerpts.len(),
+                            buffer.remote_id(),
+                            buffer.text(),
+                            start_ix..end_ix,
+                            &buffer.text()[start_ix..end_ix]
+                        );
+
+                        (start_ix..end_ix, anchor_range)
+                    });
+
+                    let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer
+                            .insert_excerpts_after(
+                                prev_excerpt_id,
+                                base_text_buffer.clone(),
+                                [ExcerptRange::new(range.clone())],
                                 cx,
                             )
-                        });
-                        reference.add_diff(diff.clone(), cx);
-                        multibuffer.add_diff(diff, cx)
-                    }
-                });
+                            .pop()
+                            .unwrap()
+                    });
+
+                    reference.insert_excerpt_after(
+                        prev_excerpt_id,
+                        excerpt_id,
+                        (base_text_buffer.clone(), anchor_range),
+                    );
+
+                    let main_buffer_snapshot =
+                        main_buffer.read_with(cx, |buf, _| buf.text_snapshot());
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
+                    });
+                    cx.update(|cx| {
+                        reference.add_inverted_diff(diff, main_buffer_snapshot, cx);
+                    });
+                } else {
+                    // Non-inverted: existing logic
+                    let buffer_handle = if create_new_buffer {
+                        let mut base_text = util::RandomCharIter::new(&mut rng)
+                            .take(256)
+                            .collect::<String>();
+
+                        let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+                        text::LineEnding::normalize(&mut base_text);
+                        base_texts.insert(
+                            buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                            base_text,
+                        );
+                        buffers.push(buffer);
+                        buffers.last().unwrap()
+                    } else {
+                        buffers.choose(&mut rng).unwrap()
+                    };
+
+                    let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
+                    let prev_excerpt_id = reference
+                        .excerpts
+                        .get(prev_excerpt_ix)
+                        .map_or(ExcerptId::max(), |e| e.id);
+                    let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
+
+                    let (range, anchor_range) = buffer_handle.read_with(cx, |buffer, _| {
+                        let end_row = rng.random_range(0..=buffer.max_point().row);
+                        let start_row = rng.random_range(0..=end_row);
+                        let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+                        let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+                        let anchor_range =
+                            buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+
+                        log::info!(
+                            "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
+                            excerpt_ix,
+                            reference.excerpts.len(),
+                            buffer.remote_id(),
+                            buffer.text(),
+                            start_ix..end_ix,
+                            &buffer.text()[start_ix..end_ix]
+                        );
+
+                        (start_ix..end_ix, anchor_range)
+                    });
+
+                    let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer
+                            .insert_excerpts_after(
+                                prev_excerpt_id,
+                                buffer_handle.clone(),
+                                [ExcerptRange::new(range.clone())],
+                                cx,
+                            )
+                            .pop()
+                            .unwrap()
+                    });
+
+                    reference.insert_excerpt_after(
+                        prev_excerpt_id,
+                        excerpt_id,
+                        (buffer_handle.clone(), anchor_range),
+                    );
+
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        let id = buffer_handle.read(cx).remote_id();
+                        if multibuffer.diff_for(id).is_none() {
+                            let base_text = base_texts.get(&id).unwrap();
+                            let diff = cx.new(|cx| {
+                                BufferDiff::new_with_base_text(
+                                    base_text,
+                                    &buffer_handle.read(cx).text_snapshot(),
+                                    cx,
+                                )
+                            });
+                            reference.add_diff(diff.clone(), cx);
+                            multibuffer.add_diff(diff, cx)
+                        }
+                    });
+                }
             }
         }
 
@@ -3052,7 +3288,12 @@ fn check_multibuffer(
         expected_row_infos
             .into_iter()
             .filter_map(|info| {
-                if info.diff_status.is_some_and(|status| status.is_deleted()) {
+                // For inverted diffs, deleted rows are visible and should be counted.
+                // Only filter out deleted rows that are NOT from inverted diffs.
+                let is_inverted_diff = info
+                    .buffer_id
+                    .is_some_and(|id| reference.inverted_diffs.contains_key(&id));
+                if info.diff_status.is_some_and(|status| status.is_deleted()) && !is_inverted_diff {
                     None
                 } else {
                     info.buffer_row
