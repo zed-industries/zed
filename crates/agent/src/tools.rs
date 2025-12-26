@@ -15,6 +15,9 @@ mod read_file_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
 
+mod find_references_by_context_tool;
+mod goto_definition_by_context_tool;
+
 mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
@@ -38,6 +41,9 @@ pub use open_tool::*;
 pub use read_file_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
+
+pub use find_references_by_context_tool::*;
+pub use goto_definition_by_context_tool::*;
 
 pub use terminal_tool::*;
 pub use thinking_tool::*;
@@ -88,6 +94,8 @@ tools! {
     EditFileTool,
     FetchTool,
     FindPathTool,
+    FindReferencesByContextTool,
+    GotoDefinitionByContextTool,
     GrepTool,
     ListDirectoryTool,
     MovePathTool,

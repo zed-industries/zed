@@ -1,9 +1,10 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool,
+    FindReferencesByContextTool, GotoDefinitionByContextTool, GrepTool, ListDirectoryTool,
+    MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RestoreFileFromDiskTool,
+    SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
+    WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1000,6 +1001,9 @@ impl Thread {
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
+        // Agent LSP helpers: enable context-based goto-definition & find-references tools
+        self.add_tool(GotoDefinitionByContextTool::new(self.project.clone()));
+        self.add_tool(FindReferencesByContextTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
