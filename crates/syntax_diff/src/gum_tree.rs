@@ -90,11 +90,19 @@ pub struct Matching {
     old_to_new: FxHashMap<NodeId, NodeId>,
     /// Maps new tree node ID -> old tree node ID
     new_to_old: FxHashMap<NodeId, NodeId>,
+    /// Nodes from the old tree that aren't matched to a node in the new tree
+    unmatched_old: FxHashSet<NodeId>,
+    /// Nodes from the new tree that aren't matched to a node in the old tree
+    unmatched_new: FxHashSet<NodeId>,
 }
 
 impl Matching {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(old_count: usize, new_count: usize) -> Self {
+        Self {
+            unmatched_old: (0..old_count).map(NodeId).collect(),
+            unmatched_new: (0..new_count).map(NodeId).collect(),
+            ..Default::default()
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -108,6 +116,8 @@ impl Matching {
     pub fn add(&mut self, old_id: NodeId, new_id: NodeId) {
         self.old_to_new.insert(old_id, new_id);
         self.new_to_old.insert(new_id, old_id);
+        self.unmatched_old.remove(&old_id);
+        self.unmatched_new.remove(&new_id);
     }
 
     pub fn is_old_matched(&self, id: NodeId) -> bool {
@@ -124,6 +134,22 @@ impl Matching {
 
     pub fn get_old(&self, new_id: NodeId) -> Option<NodeId> {
         self.new_to_old.get(&new_id).copied()
+    }
+
+    pub fn unmatched_old(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.unmatched_old.iter().copied()
+    }
+
+    pub fn unmatched_new(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.unmatched_new.iter().copied()
+    }
+
+    pub fn unmatched_old_count(&self) -> usize {
+        self.unmatched_old.len()
+    }
+
+    pub fn unmatched_new_count(&self) -> usize {
+        self.unmatched_new.len()
     }
 
     pub fn matched_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
@@ -315,7 +341,7 @@ fn compute_content_hash(content: &str) -> u64 {
 /// 2. Bottom-up: Match container nodes by Dice similarity of descendants
 /// 3. Recovery: Match remaining children of matched parents
 pub fn match_trees(old: &DiffTree, new: &DiffTree) -> Matching {
-    let mut matching = Matching::new();
+    let mut matching = Matching::new(old.node_count(), new.node_count());
 
     // Phase 1: Top-down greedy subtree matching
     top_down_matching(old, new, &mut matching);
@@ -485,6 +511,10 @@ fn match_subtrees(
 ///
 /// Dice(A, B) = 2 * |common matched descendants| / (|descendants of A| + |descendants of B|)
 fn bottom_up_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
+    if matching.unmatched_old_count() == 0 {
+        return;
+    }
+
     // Process nodes by decreasing height (parents after children are already matched)
     let max_height = old.max_height();
 
@@ -501,10 +531,8 @@ fn bottom_up_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
             // Find the best matching node in the new tree
             let mut best_match: Option<(NodeId, f64)> = None;
 
-            for new_node in new.nodes() {
-                if matching.is_new_matched(new_node.id) {
-                    continue;
-                }
+            for unmatched_new in matching.unmatched_new() {
+                let new_node = new.node(unmatched_new);
 
                 // Must have same node kind
                 if new_node.kind_id != old_node.kind_id {
@@ -584,14 +612,12 @@ fn compute_dice_similarity(
 /// For each pair of matched nodes, try to match their unmatched children
 /// if they have the same type and there's only one candidate.
 fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
-    // Collect matched pairs to avoid borrowing issues
     let matched_pairs: Vec<_> = matching.matched_pairs().collect();
 
     for (old_id, new_id) in matched_pairs {
         let old_node = old.node(old_id);
         let new_node = new.node(new_id);
 
-        // Skip if subtree is too large
         if old_node.descendant_count > MAX_RECOVERY_SIZE
             || new_node.descendant_count > MAX_RECOVERY_SIZE
         {
@@ -726,38 +752,38 @@ pub fn generate_diff(old: &DiffTree, new: &DiffTree, matching: &Matching) -> Dif
     let mut operations = Vec::new();
 
     // Find deleted nodes (in old, not matched)
-    for old_node in old.nodes() {
-        if !matching.is_old_matched(old_node.id) {
-            // Only report if parent is matched (or is root) - avoids redundant reports
-            let parent_matched = old_node
-                .parent
-                .map(|p| matching.is_old_matched(p))
-                .unwrap_or(true);
+    for unmatched_old in matching.unmatched_old() {
+        let old_node = old.node(unmatched_old);
 
-            if parent_matched {
-                operations.push(DiffOperation::Delete {
-                    range: old_node.byte_range.clone(),
-                    node_kind: old_node.kind,
-                });
-            }
+        // Only report if parent is matched (or is root) - avoids redundant reports
+        let parent_matched = old_node
+            .parent
+            .map(|p| matching.is_old_matched(p))
+            .unwrap_or(true);
+
+        if parent_matched {
+            operations.push(DiffOperation::Delete {
+                range: old_node.byte_range.clone(),
+                node_kind: old_node.kind,
+            });
         }
     }
 
     // Find inserted nodes (in new, not matched)
-    for new_node in new.nodes() {
-        if !matching.is_new_matched(new_node.id) {
-            // Only report if parent is matched (or is root)
-            let parent_matched = new_node
-                .parent
-                .map(|p| matching.is_new_matched(p))
-                .unwrap_or(true);
+    for unmatched_new in matching.unmatched_new() {
+        let new_node = new.node(unmatched_new);
 
-            if parent_matched {
-                operations.push(DiffOperation::Insert {
-                    range: new_node.byte_range.clone(),
-                    node_kind: new_node.kind,
-                });
-            }
+        // Only report if parent is matched (or is root)
+        let parent_matched = new_node
+            .parent
+            .map(|p| matching.is_new_matched(p))
+            .unwrap_or(true);
+
+        if parent_matched {
+            operations.push(DiffOperation::Insert {
+                range: new_node.byte_range.clone(),
+                node_kind: new_node.kind,
+            });
         }
     }
 
@@ -1055,7 +1081,7 @@ fn bar() {
 
     #[test]
     fn test_matching_bidirectional() {
-        let mut matching = Matching::new();
+        let mut matching = Matching::new(1, 1);
         let old_id = NodeId(0);
         let new_id = NodeId(1);
 
@@ -1228,7 +1254,7 @@ fn b() {}
         let tree = parse_rust(code);
         let diff_tree = DiffTree::new(&tree, code);
 
-        let matching = Matching::new();
+        let matching = Matching::new(diff_tree.node_count(), diff_tree.node_count());
 
         // Find a leaf node
         let leaf = diff_tree
