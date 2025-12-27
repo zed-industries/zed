@@ -36,10 +36,10 @@ pub(crate) struct BeamJumpLabels {
 
 #[derive(Clone, Debug)]
 pub(crate) struct BeamJumpState {
-    pub(crate) direction: BeamJumpDirection,
     pub(crate) smartcase: bool,
-    pub(crate) search_start: MultiBufferOffset,
-    pub(crate) search_end: MultiBufferOffset,
+    pub(crate) cursor_offset: MultiBufferOffset,
+    pub(crate) view_start: MultiBufferOffset,
+    pub(crate) view_end: MultiBufferOffset,
     pub(crate) previous_last_find: Option<Motion>,
 
     pub(crate) pattern: String,
@@ -55,7 +55,7 @@ pub(crate) struct BeamJumpJump {
     pub(crate) pattern: String,
     pub(crate) smartcase: bool,
     pub(crate) count: usize,
-    pub(crate) search_range: Range<MultiBufferOffset>,
+    pub(crate) search_range: Option<Range<MultiBufferOffset>>,
 }
 
 #[derive(Clone, Debug)]
@@ -68,17 +68,17 @@ pub(crate) enum BeamJumpAction {
 
 impl BeamJumpState {
     pub(crate) fn new(
-        direction: BeamJumpDirection,
         smartcase: bool,
-        search_start: MultiBufferOffset,
-        search_end: MultiBufferOffset,
+        cursor_offset: MultiBufferOffset,
+        view_start: MultiBufferOffset,
+        view_end: MultiBufferOffset,
         previous_last_find: Option<Motion>,
     ) -> Self {
         Self {
-            direction,
             smartcase,
-            search_start,
-            search_end,
+            cursor_offset,
+            view_start,
+            view_end,
             previous_last_find,
             pattern: String::new(),
             pattern_len: 0,
@@ -99,14 +99,15 @@ impl BeamJumpState {
                     if labels.label_buffer.len() >= labels.label_len {
                         let label = std::mem::take(&mut labels.label_buffer);
                         if let Some(&start) = labels.start_by_label.get(&label)
-                            && let Some(count) = self.count_for_start(start)
+                            && let Some((direction, count)) =
+                                self.direction_and_count_for_start(start)
                         {
                             return BeamJumpAction::Jump(BeamJumpJump {
-                                direction: self.direction,
+                                direction,
                                 pattern: self.pattern.clone(),
                                 smartcase: self.smartcase,
                                 count,
-                                search_range: self.search_start..self.search_end,
+                                search_range: Some(self.view_start..self.view_end),
                             });
                         }
 
@@ -130,13 +131,20 @@ impl BeamJumpState {
         }
 
         match self.matches.len() {
-            0 | 1 => BeamJumpAction::Jump(BeamJumpJump {
-                direction: self.direction,
-                pattern: self.pattern.clone(),
-                smartcase: self.smartcase,
-                count: 1,
-                search_range: self.search_start..self.search_end,
-            }),
+            0 => BeamJumpAction::Continue,
+            1 => {
+                let m = self.matches[0].clone();
+                let Some((direction, _)) = self.direction_and_count_for_start(m.start) else {
+                    return BeamJumpAction::Cancel;
+                };
+                BeamJumpAction::Jump(BeamJumpJump {
+                    direction,
+                    pattern: self.pattern.clone(),
+                    smartcase: self.smartcase,
+                    count: 1,
+                    search_range: Some(self.view_start..self.view_end),
+                })
+            }
             _ => {
                 if self.labels.is_none() {
                     self.labels = Some(self.assign_labels(buffer));
@@ -165,7 +173,7 @@ impl BeamJumpState {
 
     fn can_extend_pattern_with(&self, ch: char, buffer: &MultiBufferSnapshot) -> bool {
         self.matches.iter().any(|m| {
-            if m.end >= self.search_end {
+            if m.end >= self.view_end {
                 return false;
             }
 
@@ -179,8 +187,8 @@ impl BeamJumpState {
 
     fn scan_first_char(&self, target: char, buffer: &MultiBufferSnapshot) -> Vec<BeamJumpMatch> {
         let mut matches = Vec::new();
-        let mut offset = self.search_start;
-        while offset < self.search_end {
+        let mut offset = self.view_start;
+        while offset < self.view_end {
             let Some(ch) = buffer.chars_at(offset).next() else {
                 break;
             };
@@ -188,11 +196,11 @@ impl BeamJumpState {
             let mut next = offset;
             next += ch.len_utf8();
 
-            if next > self.search_end {
+            if next > self.view_end {
                 break;
             }
 
-            if is_character_match(target, ch, self.smartcase) {
+            if offset != self.cursor_offset && is_character_match(target, ch, self.smartcase) {
                 matches.push(BeamJumpMatch {
                     start: offset,
                     end: next,
@@ -207,7 +215,7 @@ impl BeamJumpState {
 
     fn extend_matches(&mut self, target: char, buffer: &MultiBufferSnapshot) {
         self.matches.retain_mut(|m| {
-            if m.end >= self.search_end {
+            if m.end >= self.view_end {
                 return false;
             }
 
@@ -222,7 +230,7 @@ impl BeamJumpState {
             let mut new_end = m.end;
             new_end += next_ch.len_utf8();
 
-            if new_end > self.search_end {
+            if new_end > self.view_end {
                 return false;
             }
 
@@ -233,7 +241,6 @@ impl BeamJumpState {
 
     fn retain_labels_for_matches(&mut self) {
         let matches = &self.matches;
-        let direction = self.direction;
 
         let Some(labels) = &mut self.labels else {
             return;
@@ -247,7 +254,7 @@ impl BeamJumpState {
             .start_by_label
             .retain(|_, start| starts.contains(start));
 
-        Self::backfill_labels_for_matches(matches, direction, labels);
+        Self::backfill_labels_for_matches(matches, self.cursor_offset, labels);
 
         labels.label_key_set = labels
             .label_by_start
@@ -258,7 +265,7 @@ impl BeamJumpState {
 
     fn backfill_labels_for_matches(
         matches: &[BeamJumpMatch],
-        direction: BeamJumpDirection,
+        cursor_offset: MultiBufferOffset,
         labels: &mut BeamJumpLabels,
     ) {
         let unit_count = labels.units.len();
@@ -277,13 +284,8 @@ impl BeamJumpState {
             .take()
             .unwrap_or_else(|| generate_labels(&labels.units, labels.label_len, capacity));
 
-        let matches_in_order: Box<dyn Iterator<Item = &BeamJumpMatch>> = match direction {
-            BeamJumpDirection::Forward => Box::new(matches.iter()),
-            BeamJumpDirection::Backward => Box::new(matches.iter().rev()),
-        };
-
         let mut label_index = 0;
-        for m in matches_in_order {
+        for m in ProximityMatchIter::new(matches, cursor_offset) {
             if labels.label_by_start.contains_key(&m.start) {
                 continue;
             }
@@ -320,7 +322,7 @@ impl BeamJumpState {
         let mut extension_chars = HashSet::default();
 
         for m in &self.matches {
-            if m.end >= self.search_end {
+            if m.end >= self.view_end {
                 continue;
             }
 
@@ -329,7 +331,7 @@ impl BeamJumpState {
             for ch in buffer.chars_at(offset) {
                 let mut next = offset;
                 next += ch.len_utf8();
-                if next > self.search_end {
+                if next > self.view_end {
                     break;
                 }
 
@@ -380,12 +382,10 @@ impl BeamJumpState {
         let mut start_by_label = HashMap::default();
         let mut label_key_set = HashSet::default();
 
-        let matches_in_order: Box<dyn Iterator<Item = &BeamJumpMatch>> = match self.direction {
-            BeamJumpDirection::Forward => Box::new(self.matches.iter()),
-            BeamJumpDirection::Backward => Box::new(self.matches.iter().rev()),
-        };
-
-        for (m, label) in matches_in_order.take(label_count).zip(labels) {
+        for (m, label) in ProximityMatchIter::new(&self.matches, self.cursor_offset)
+            .take(label_count)
+            .zip(labels)
+        {
             label_key_set.extend(label.chars());
 
             start_by_label.insert(label.clone(), m.start);
@@ -403,11 +403,89 @@ impl BeamJumpState {
         }
     }
 
-    fn count_for_start(&self, start: MultiBufferOffset) -> Option<usize> {
-        let pos = self.matches.iter().position(|m| m.start == start)?;
-        match self.direction {
-            BeamJumpDirection::Forward => Some(pos + 1),
-            BeamJumpDirection::Backward => Some(self.matches.len().saturating_sub(pos)),
+    fn direction_and_count_for_start(
+        &self,
+        start: MultiBufferOffset,
+    ) -> Option<(BeamJumpDirection, usize)> {
+        let pos = self
+            .matches
+            .binary_search_by_key(&start, |m| m.start)
+            .ok()?;
+
+        match start.cmp(&self.cursor_offset) {
+            std::cmp::Ordering::Less => {
+                let before_cursor_end_ix = self
+                    .matches
+                    .partition_point(|m| m.start < self.cursor_offset);
+                Some((
+                    BeamJumpDirection::Backward,
+                    before_cursor_end_ix.saturating_sub(pos),
+                ))
+            }
+            std::cmp::Ordering::Greater => {
+                let after_cursor_start_ix = self
+                    .matches
+                    .partition_point(|m| m.start <= self.cursor_offset);
+                Some((BeamJumpDirection::Forward, pos - after_cursor_start_ix + 1))
+            }
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProximityMatchIter<'a> {
+    matches: &'a [BeamJumpMatch],
+    cursor_offset: MultiBufferOffset,
+    left: isize,
+    right: usize,
+}
+
+impl<'a> ProximityMatchIter<'a> {
+    fn new(matches: &'a [BeamJumpMatch], cursor_offset: MultiBufferOffset) -> Self {
+        let right = matches.partition_point(|m| m.start < cursor_offset);
+        let left = right as isize - 1;
+        Self {
+            matches,
+            cursor_offset,
+            left,
+            right,
+        }
+    }
+}
+
+impl<'a> Iterator for ProximityMatchIter<'a> {
+    type Item = &'a BeamJumpMatch;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left < 0 && self.right >= self.matches.len() {
+            return None;
+        }
+
+        if self.left < 0 {
+            let m = &self.matches[self.right];
+            self.right += 1;
+            return Some(m);
+        }
+
+        if self.right >= self.matches.len() {
+            let m = &self.matches[self.left as usize];
+            self.left -= 1;
+            return Some(m);
+        }
+
+        let left_match = &self.matches[self.left as usize];
+        let right_match = &self.matches[self.right];
+
+        let left_dist = self.cursor_offset.0.abs_diff(left_match.start.0);
+        let right_dist = self.cursor_offset.0.abs_diff(right_match.start.0);
+
+        if left_dist <= right_dist {
+            self.left -= 1;
+            Some(left_match)
+        } else {
+            self.right += 1;
+            Some(right_match)
         }
     }
 }
