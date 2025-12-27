@@ -36,12 +36,13 @@ pub enum FilterEntryState {
     Available { is_applied: bool },
     Unavailable { blocked_by: AnyColumn },
 }
+
 #[derive(Debug, Clone)]
 pub struct FilterEntry {
     /// Pre-computed hash
     pub hash: u64,
-    /// Content to display
-    pub content: SharedString,
+    /// Content to display. None if cell is virtual
+    pub content: Option<SharedString>,
     /// List of rows, in which this value occurs
     pub rows: Vec<DataRow>,
 }
@@ -242,19 +243,18 @@ pub fn calculate_available_filters(
     // For each column, collect all unique cell values and count occurrences
     for col_idx in 0..number_of_cols {
         let column = AnyColumn::new(col_idx);
-        let mut cell_counts: HashMap<u64, (SharedString, Vec<DataRow>)> = HashMap::new();
+        let mut cell_counts: HashMap<u64, (Option<SharedString>, Vec<DataRow>)> = HashMap::new();
 
         // Count occurrences of each cell value
         for (row_id, row) in content_rows.into_iter().enumerate() {
             let row_id = DataRow(row_id);
             if let Some(cell) = row.get(column) {
-                if let Some(display_value) = cell.display_value() {
-                    let hash = cell.hash();
-                    match cell_counts.get_mut(&hash) {
-                        Some((_, rows)) => rows.push(row_id),
-                        None => {
-                            cell_counts.insert(hash, (display_value.clone(), vec![row_id]));
-                        }
+                let display_value = cell.display_value();
+                let hash = cell.hash();
+                match cell_counts.get_mut(&hash) {
+                    Some((_, rows)) => rows.push(row_id),
+                    None => {
+                        cell_counts.insert(hash, (display_value.cloned(), vec![row_id]));
                     }
                 }
             }
