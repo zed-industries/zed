@@ -325,7 +325,7 @@ impl RatePredictionsModal {
 
                 let diff = cx.new::<BufferDiff>(|cx| {
                     let diff_snapshot = BufferDiffSnapshot::new_with_base_buffer(
-                        new_buffer_snapshot.text.clone(),
+                        new_buffer_snapshot.clone(),
                         Some(old_buffer_snapshot.text().into()),
                         old_buffer_snapshot.clone(),
                         cx,

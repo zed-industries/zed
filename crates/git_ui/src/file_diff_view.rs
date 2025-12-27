@@ -146,7 +146,7 @@ impl FileDiffView {
                     let diff_snapshot = cx
                         .update(|cx| {
                             BufferDiffSnapshot::new_with_base_buffer(
-                                new_snapshot.text.clone(),
+                                new_snapshot.clone(),
                                 Some(old_snapshot.text().into()),
                                 old_snapshot,
                                 cx,
@@ -175,7 +175,7 @@ async fn build_buffer_diff(
     let diff_snapshot = cx
         .update(|cx| {
             BufferDiffSnapshot::new_with_base_buffer(
-                new_buffer_snapshot.text.clone(),
+                new_buffer_snapshot.clone(),
                 Some(old_buffer_snapshot.text().into()),
                 old_buffer_snapshot,
                 cx,
@@ -184,7 +184,7 @@ async fn build_buffer_diff(
         .await;
 
     cx.new(|cx| {
-        let mut diff = BufferDiff::new(&new_buffer_snapshot.text, cx);
+        let mut diff = BufferDiff::new(&new_buffer_snapshot, cx);
         diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
         diff
     })

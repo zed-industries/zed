@@ -936,7 +936,7 @@ async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "a\nb\nc")], None, cx);
         diff.update(cx, |diff, cx| {
-            diff.recalculate_diff_sync(buffer.snapshot().text, cx);
+            diff.recalculate_diff_sync(buffer.snapshot(), cx);
         });
         assert_eq!(buffer.text(), "a\nb\nc")
     });
@@ -948,7 +948,7 @@ async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.undo(cx);
         diff.update(cx, |diff, cx| {
-            diff.recalculate_diff_sync(buffer.snapshot().text, cx);
+            diff.recalculate_diff_sync(buffer.snapshot(), cx);
         });
         assert_eq!(buffer.text(), "")
     });
@@ -1448,7 +1448,7 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     // Recalculate the diff, changing the first diff hunk.
     diff.update(cx, |diff, cx| {
-        diff.recalculate_diff_sync(buffer.read(cx).text_snapshot(), cx);
+        diff.recalculate_diff_sync(buffer.read(cx).snapshot(), cx);
     });
     cx.run_until_parked();
     assert_new_snapshot(
@@ -2890,7 +2890,7 @@ async fn test_random_multibuffer_impl(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
-                                diff.recalculate_diff_sync(snapshot.text, cx);
+                                diff.recalculate_diff_sync(snapshot, cx);
                             },
                         );
                     }

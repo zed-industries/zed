@@ -2394,6 +2394,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
+ "syntax_diff",
  "text",
  "unindent",
  "util",
