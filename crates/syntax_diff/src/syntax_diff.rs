@@ -41,8 +41,6 @@ impl NodeId {
 }
 
 /// Compact node representation optimized for diffing.
-///
-/// Uses first-child/next-sibling representation instead of children Vec.
 #[derive(Debug)]
 pub struct DiffNode {
     /// Node's own index
