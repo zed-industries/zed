@@ -28725,7 +28725,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             assert_eq!(
                 relative_number,
                 snapshot
-                    .relative_line_delta(display_row, base_display_row)
+                    .relative_line_delta(display_row, base_display_row, false)
                     .unsigned_abs() as u32,
             );
         }
@@ -28751,7 +28751,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             assert_eq!(
                 relative_number,
                 snapshot
-                    .relative_wrapped_line_delta(display_row, base_display_row)
+                    .relative_line_delta(display_row, base_display_row, true)
                     .unsigned_abs() as u32,
             );
         }
