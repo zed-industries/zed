@@ -735,6 +735,9 @@ impl Vim {
                         (insert_point, SelectionGoal::None)
                     });
                 });
+                if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
+                    format.detach_and_log_err(cx);
+                }
             });
         });
     }
@@ -781,6 +784,9 @@ impl Vim {
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
+                if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
+                    format.detach_and_log_err(cx);
+                }
             });
         });
     }
