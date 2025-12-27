@@ -114,7 +114,7 @@ impl TableDataEngine {
 #[derive(Debug, Default)]
 pub struct DisplayToDataMapping {
     /// All rows sorted, regardless of applied filtering. Applied every time sorting changes
-    pub sorted_mapping: HashMap<DisplayRow, DataRow>,
+    pub sorted_rows: Vec<DataRow>,
     /// All rows filtered out, regardless of applied sorting. Applied every time filtering changes
     pub retained_rows: HashSet<DataRow>,
     /// Filtered and sorted rows. Computed cheaply from `sorted_mapping` and `filtered_out_rows`
@@ -143,6 +143,7 @@ impl DisplayToDataMapping {
 
     /// Get the number of filtered rows
     pub fn visible_row_count(&self) -> usize {
+        log::debug!("Visible row count: {}", self.mapping.len());
         self.mapping.len()
     }
 
@@ -151,16 +152,15 @@ impl DisplayToDataMapping {
         let data_rows: Vec<DataRow> = (0..rows.len()).map(DataRow).collect();
 
         let sorted_rows = if let Some(sorting) = sorting {
+            log::debug!("Sorting data rows by {sorting:?}");
             sort_data_rows(&rows, data_rows, sorting)
         } else {
+            log::debug!("Disabling sorting");
             data_rows
         };
 
-        self.sorted_mapping = sorted_rows
-            .into_iter()
-            .enumerate()
-            .map(|(index, row)| (DisplayRow(index), row))
-            .collect();
+        self.sorted_rows = sorted_rows;
+        log::trace!("Sorted mapping: {:?}", self.sorted_rows);
     }
 
     /// Computes filtering and applies pre-computed sorting results to the mapping
@@ -174,25 +174,23 @@ impl DisplayToDataMapping {
 
     /// Take pre-computed sorting and filtering results, and apply them to the mapping
     fn merge_mappings(&mut self) {
-        let sorted_rows = self.sorted_mapping.len();
+        let sorted_rows = self.sorted_rows.len();
         let retained_rows = self.retained_rows.len();
         log::debug!(
             "Going to merge mappings with {sorted_rows} sorted rows and {retained_rows} retained rows"
         );
 
-        let retained_ordered_rows: Vec<DataRow> = self
-            .sorted_mapping
-            .values()
-            .filter(|row| self.retained_rows.contains(row))
-            .cloned()
-            .collect();
+        log::trace!("Sorted mapping: {:?}", self.sorted_rows);
+        log::trace!("Retained rows: {:?}", self.retained_rows);
 
         self.mapping = Arc::new(
-            retained_ordered_rows
-                .into_iter()
+            self.sorted_rows
+                .iter()
+                .filter(|data_row| self.retained_rows.contains(data_row))
                 .enumerate()
-                .map(|(index, row)| (DisplayRow(index), row))
+                .map(|(display, data)| (DisplayRow(display), *data))
                 .collect(),
         );
+        log::trace!("Merged mapping: {:?}", self.mapping);
     }
 }
