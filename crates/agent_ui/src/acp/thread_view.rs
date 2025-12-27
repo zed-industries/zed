@@ -56,7 +56,7 @@ use workspace::{CollaboratorId, NewTerminal, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
-use super::config_options_view::ConfigOptionsView;
+use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::ModeSelector;

@@ -1,6 +1,4 @@
-mod config_option_picker;
-mod config_option_selector;
-mod config_options_view;
+mod config_options;
 mod entry_view_state;
 mod message_editor;
 mod mode_selector;
