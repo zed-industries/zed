@@ -2710,7 +2710,7 @@ impl LocalSnapshot {
         for entry in self.entries_by_path.cursor::<()>(()) {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
-                if (!entry.is_ignored && !entry.is_external) || entry.is_always_included {
+                if !entry.is_ignored || entry.is_always_included {
                     assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                 }
             }
@@ -3379,8 +3379,7 @@ pub struct Entry {
     /// symlink.
     ///
     /// We only scan entries outside of the worktree once the symlinked
-    /// directory is expanded. External entries are treated like gitignored
-    /// entries in that they are not included in searches.
+    /// directory is expanded.
     pub is_external: bool,
 
     /// Whether this entry is considered to be a `.env` file.
@@ -3585,8 +3584,7 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
-        {
+        let non_ignored_count = if self.is_ignored && !self.is_always_included {
             0
         } else {
             1
