@@ -1022,23 +1022,18 @@ impl DiagnosticPopover {
                                     },
                                 ),
                             )
-                            .child(
-                                h_flex()
-                                    .justify_end()
-                                    .pt_1()
-                                    .child({
-                                        let message = self.local_diagnostic.diagnostic.message.clone();
-                                        IconButton::new("copy-diagnostic", IconName::Copy)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Muted)
-                                            .on_click(move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    message.clone(),
-                                                ));
-                                            })
-                                            .tooltip(Tooltip::text("Copy Diagnostic"))
-                                    }),
-                            ),
+                            .child(h_flex().justify_end().pt_1().child({
+                                let message = self.local_diagnostic.diagnostic.message.clone();
+                                IconButton::new("copy-diagnostic", IconName::Copy)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            message.clone(),
+                                        ));
+                                    })
+                                    .tooltip(Tooltip::text("Copy Diagnostic"))
+                            })),
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
