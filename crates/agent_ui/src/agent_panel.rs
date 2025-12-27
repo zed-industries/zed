@@ -444,6 +444,16 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
+    /// Tracks whether the current thread was opened from history (Recent list or History view).
+    /// When true, a back button is shown in the toolbar that returns to a new thread.
+    ///
+    /// State transitions:
+    /// - Set to `true` by `external_thread()` when `resume_thread.is_some()`
+    /// - Set to `true` by `open_saved_text_thread()` for text threads from history
+    /// - Set to `false` by `external_thread()` when `resume_thread.is_none()` (new threads)
+    /// - Set to `false` by `new_text_thread()` for new text threads
+    /// - Set to `false` by `go_back()` when navigating back (which also creates a new thread)
+    opened_from_history: bool,
 }
 
 impl AgentPanel {
@@ -695,6 +705,7 @@ impl AgentPanel {
             selected_agent: AgentType::default(),
             loading: false,
             show_trust_workspace_message: false,
+            opened_from_history: false,
         };
 
         // Initial sync of agent servers from extensions
@@ -782,6 +793,7 @@ impl AgentPanel {
     }
 
     fn new_text_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.opened_from_history = false;
         telemetry::event!("Agent Thread Started", agent = "zed-text");
 
         let context = self
@@ -847,6 +859,7 @@ impl AgentPanel {
 
         let loading = self.loading;
         let history = self.history_store.clone();
+        self.opened_from_history = resume_thread.is_some();
 
         cx.spawn_in(window, async move |this, cx| {
             let ext_agent = match agent_choice {
@@ -957,6 +970,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        self.opened_from_history = true;
         let text_thread_task = self
             .history_store
             .update(cx, |store, cx| store.load_text_thread(path, cx));
@@ -1026,6 +1040,11 @@ impl AgentPanel {
                         ActiveView::History | ActiveView::Configuration => {}
                     }
                 }
+                cx.notify();
+            }
+            _ if self.opened_from_history => {
+                self.opened_from_history = false;
+                self.new_agent_thread(self.selected_agent.clone(), window, cx);
                 cx.notify();
             }
             _ => {}
@@ -2345,6 +2364,9 @@ impl AgentPanel {
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .child(match &self.active_view {
                         ActiveView::History | ActiveView::Configuration => {
+                            self.render_toolbar_back_button(cx).into_any_element()
+                        }
+                        _ if self.opened_from_history => {
                             self.render_toolbar_back_button(cx).into_any_element()
                         }
                         _ => selected_agent.into_any_element(),
