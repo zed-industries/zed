@@ -937,6 +937,9 @@ impl AgentServerStore {
     }
 }
 
+/// Returns an AgentServerCommand for launching the built-in agent using Zed's bundled Node.js.
+/// The bundled node is always used regardless of system node configuration to ensure
+/// compatibility with modern ES module syntax. See issue #45241.
 fn get_or_npm_install_builtin_agent(
     binary_name: SharedString,
     package_name: SharedString,
@@ -949,7 +952,7 @@ fn get_or_npm_install_builtin_agent(
     cx: &mut AsyncApp,
 ) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
     cx.spawn(async move |cx| {
-        let node_path = node_runtime.binary_path().await?;
+        let node_path = node_runtime.managed_binary_path().await?;
         let dir = paths::external_agents_dir().join(binary_name.as_str());
         fs.create_dir(&dir).await?;
 
@@ -1774,8 +1777,8 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             let cmd = &target_config.cmd;
 
             let cmd_path = if cmd == "node" {
-                // Use Zed's managed Node.js runtime
-                node_runtime.binary_path().await?
+                // Use Zed's managed Node.js runtime for ES module compatibility
+                node_runtime.managed_binary_path().await?
             } else {
                 if cmd.contains("..") {
                     anyhow::bail!("command path cannot contain '..': {}", cmd);
