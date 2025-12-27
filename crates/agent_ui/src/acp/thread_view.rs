@@ -560,7 +560,9 @@ impl AcpThreadView {
                 })
                 .log_err()
             } else {
-                let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
+                // Use temp_dir instead of home_dir to avoid triggering macOS TCC dialogues
+                // when no worktree is available (e.g., during session restoration without a project)
+                let root_dir = root_dir.unwrap_or_else(|| paths::temp_dir().as_path().into());
                 cx.update(|_, cx| {
                     connection
                         .clone()
