@@ -477,13 +477,13 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
+        self.file_history_paginated(path, None, None)
     }
 
     fn file_history_paginated(
         &self,
         path: RepoPath,
-        _skip: usize,
+        _last_commit_hash: Option<SharedString>,
         _limit: Option<usize>,
     ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
         async move {
