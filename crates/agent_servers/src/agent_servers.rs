@@ -4,15 +4,13 @@ mod codex;
 mod custom;
 mod gemini;
 
-use collections::HashSet;
-
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
 
 pub use claude::*;
 use client::ProxySettings;
 pub use codex::*;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
@@ -105,6 +103,24 @@ pub trait AgentServer: Send {
         _value_id: Option<&str>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
+    ) {
+    }
+
+    fn favorite_config_option_value_ids(
+        &self,
+        _config_id: &agent_client_protocol::SessionConfigId,
+        _cx: &mut App,
+    ) -> HashSet<agent_client_protocol::SessionConfigValueId> {
+        HashSet::default()
+    }
+
+    fn toggle_favorite_config_option_value(
+        &self,
+        _config_id: agent_client_protocol::SessionConfigId,
+        _value_id: agent_client_protocol::SessionConfigValueId,
+        _should_be_favorite: bool,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
     ) {
     }
 

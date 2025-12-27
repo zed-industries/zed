@@ -151,6 +151,62 @@ impl AgentServer for Codex {
         });
     }
 
+    fn favorite_config_option_value_ids(
+        &self,
+        config_id: &acp::SessionConfigId,
+        cx: &mut App,
+    ) -> HashSet<acp::SessionConfigValueId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).codex.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.favorite_config_option_values.get(config_id.0.as_ref()))
+            .map(|values| {
+                values
+                    .iter()
+                    .cloned()
+                    .map(acp::SessionConfigValueId::new)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn toggle_favorite_config_option_value(
+        &self,
+        config_id: acp::SessionConfigId,
+        value_id: acp::SessionConfigValueId,
+        should_be_favorite: bool,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        let config_id = config_id.to_string();
+        let value_id = value_id.to_string();
+
+        update_settings_file(fs, cx, move |settings, _| {
+            let favorites = &mut settings
+                .agent_servers
+                .get_or_insert_default()
+                .codex
+                .get_or_insert_default()
+                .favorite_config_option_values;
+
+            let entry = favorites.entry(config_id.clone()).or_insert_with(Vec::new);
+
+            if should_be_favorite {
+                if !entry.iter().any(|v| v == &value_id) {
+                    entry.push(value_id.clone());
+                }
+            } else {
+                entry.retain(|v| v != &value_id);
+                if entry.is_empty() {
+                    favorites.remove(&config_id);
+                }
+            }
+        });
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,

@@ -3,13 +3,19 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
+use collections::HashSet;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
-use gpui::{BackgroundExecutor, Context, DismissEvent, Entity, Task, Window, prelude::*};
+use gpui::{
+    BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
+};
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
-use ui::{ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*};
+use settings::SettingsStore;
+use ui::{
+    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 
 use crate::ui::HoldForDefault;
@@ -167,6 +173,7 @@ impl ConfigOptionSelector {
                     config_id,
                     agent_server,
                     fs,
+                    window,
                     picker_cx,
                 );
 
@@ -298,6 +305,8 @@ struct ConfigOptionPickerDelegate {
     all_options: Vec<ConfigOptionValue>,
     selected_index: usize,
     selected_description: Option<(usize, SharedString, bool)>,
+    favorites: HashSet<acp::SessionConfigValueId>,
+    _settings_subscription: Subscription,
 }
 
 impl ConfigOptionPickerDelegate {
@@ -306,10 +315,13 @@ impl ConfigOptionPickerDelegate {
         config_id: acp::SessionConfigId,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
+        let favorites = agent_server.favorite_config_option_value_ids(&config_id, cx);
+
         let all_options = extract_options(&config_options, &config_id);
-        let filtered_entries = options_to_picker_entries(&all_options);
+        let filtered_entries = options_to_picker_entries(&all_options, &favorites);
 
         let current_value = get_current_value(&config_options, &config_id);
         let selected_index = current_value
@@ -319,6 +331,18 @@ impl ConfigOptionPickerDelegate {
                 })
             })
             .unwrap_or(0);
+
+        let agent_server_for_subscription = agent_server.clone();
+        let config_id_for_subscription = config_id.clone();
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |picker, window, cx| {
+                let new_favorites = agent_server_for_subscription
+                    .favorite_config_option_value_ids(&config_id_for_subscription, cx);
+                if new_favorites != picker.delegate.favorites {
+                    picker.delegate.favorites = new_favorites;
+                    picker.refresh(window, cx);
+                }
+            });
 
         cx.notify();
 
@@ -331,6 +355,8 @@ impl ConfigOptionPickerDelegate {
             all_options,
             selected_index,
             selected_description: None,
+            favorites,
+            _settings_subscription: settings_subscription,
         }
     }
 
@@ -396,7 +422,8 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
             };
 
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries = options_to_picker_entries(&filtered_options);
+                this.delegate.filtered_entries =
+                    options_to_picker_entries(&filtered_options, &this.delegate.favorites);
 
                 let current_value = this.delegate.current_value();
                 let new_index = current_value
@@ -489,6 +516,8 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                     .default_config_option(self.config_id.0.as_ref(), cx);
                 let is_default = default_value.as_deref() == Some(&*option.value.0);
 
+                let is_favorite = self.favorites.contains(&option.value);
+
                 let option_name = option.name.clone();
                 let description = option.description.clone();
 
@@ -513,13 +542,36 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                 .inset(true)
                                 .spacing(ListItemSpacing::Sparse)
                                 .toggle_state(selected)
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .child(Label::new(option_name).truncate()),
-                                )
+                                .child(h_flex().w_full().child(Label::new(option_name).truncate()))
                                 .end_slot(div().pr_2().when(is_selected, |this| {
                                     this.child(Icon::new(IconName::Check).color(Color::Accent))
+                                }))
+                                .end_hover_slot(div().pr_1p5().child({
+                                    let (icon, color, tooltip) = if is_favorite {
+                                        (IconName::StarFilled, Color::Accent, "Unfavorite")
+                                    } else {
+                                        (IconName::Star, Color::Default, "Favorite")
+                                    };
+
+                                    let config_id = self.config_id.clone();
+                                    let value_id = option.value.clone();
+                                    let agent_server = self.agent_server.clone();
+                                    let fs = self.fs.clone();
+
+                                    IconButton::new(("toggle-favorite-config-option", ix), icon)
+                                        .layer(ElevationIndex::ElevatedSurface)
+                                        .icon_color(color)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text(tooltip))
+                                        .on_click(move |_, _, cx| {
+                                            agent_server.toggle_favorite_config_option_value(
+                                                config_id.clone(),
+                                                value_id.clone(),
+                                                !is_favorite,
+                                                fs.clone(),
+                                                cx,
+                                            );
+                                        })
                                 })),
                         )
                         .into_any_element(),
@@ -608,10 +660,36 @@ fn get_current_value(
         })
 }
 
-fn options_to_picker_entries(options: &[ConfigOptionValue]) -> Vec<ConfigOptionPickerEntry> {
+fn options_to_picker_entries(
+    options: &[ConfigOptionValue],
+    favorites: &HashSet<acp::SessionConfigValueId>,
+) -> Vec<ConfigOptionPickerEntry> {
     let mut entries = Vec::new();
-    let mut current_group: Option<String> = None;
 
+    let mut favorite_options = Vec::new();
+
+    for option in options {
+        if favorites.contains(&option.value) {
+            favorite_options.push(option.clone());
+        }
+    }
+
+    if !favorite_options.is_empty() {
+        entries.push(ConfigOptionPickerEntry::Separator("Favorites".into()));
+        for option in favorite_options {
+            entries.push(ConfigOptionPickerEntry::Option(option));
+        }
+
+        // If the remaining list would start ungrouped (group == None), insert a separator so
+        // Favorites doesn't visually run into the main list.
+        if let Some(option) = options.first()
+            && option.group.is_none()
+        {
+            entries.push(ConfigOptionPickerEntry::Separator("All Options".into()));
+        }
+    }
+
+    let mut current_group: Option<String> = None;
     for option in options {
         if option.group != current_group {
             if let Some(group_name) = &option.group {

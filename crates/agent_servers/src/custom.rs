@@ -44,6 +44,86 @@ impl AgentServer for CustomAgentServer {
             .and_then(|s| s.default_mode().map(acp::SessionModeId::new))
     }
 
+    fn favorite_config_option_value_ids(
+        &self,
+        config_id: &acp::SessionConfigId,
+        cx: &mut App,
+    ) -> HashSet<acp::SessionConfigValueId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .custom
+                .get(&self.name())
+                .cloned()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.favorite_config_option_values(config_id.0.as_ref()))
+            .map(|values| {
+                values
+                    .iter()
+                    .cloned()
+                    .map(acp::SessionConfigValueId::new)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn toggle_favorite_config_option_value(
+        &self,
+        config_id: acp::SessionConfigId,
+        value_id: acp::SessionConfigValueId,
+        should_be_favorite: bool,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        let name = self.name();
+        let config_id = config_id.to_string();
+        let value_id = value_id.to_string();
+
+        update_settings_file(fs, cx, move |settings, _| {
+            let settings = settings
+                .agent_servers
+                .get_or_insert_default()
+                .custom
+                .entry(name.clone())
+                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
+                    default_model: None,
+                    default_mode: None,
+                    favorite_models: Vec::new(),
+                    default_config_options: Default::default(),
+                    favorite_config_option_values: Default::default(),
+                });
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom {
+                    favorite_config_option_values,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Extension {
+                    favorite_config_option_values,
+                    ..
+                } => {
+                    let entry = favorite_config_option_values
+                        .entry(config_id.clone())
+                        .or_insert_with(Vec::new);
+
+                    if should_be_favorite {
+                        if !entry.iter().any(|v| v == &value_id) {
+                            entry.push(value_id.clone());
+                        }
+                    } else {
+                        entry.retain(|v| v != &value_id);
+                        if entry.is_empty() {
+                            favorite_config_option_values.remove(&config_id);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
         update_settings_file(fs, cx, move |settings, _| {
@@ -57,6 +137,7 @@ impl AgentServer for CustomAgentServer {
                     default_mode: None,
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
+                    favorite_config_option_values: Default::default(),
                 });
 
             match settings {
@@ -95,6 +176,7 @@ impl AgentServer for CustomAgentServer {
                     default_mode: None,
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
+                    favorite_config_option_values: Default::default(),
                 });
 
             match settings {
@@ -145,6 +227,7 @@ impl AgentServer for CustomAgentServer {
                     default_mode: None,
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
+                    favorite_config_option_values: Default::default(),
                 });
 
             let favorite_models = match settings {
@@ -200,8 +283,9 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
-                    default_config_options: Default::default(),
                     favorite_models: Vec::new(),
+                    default_config_options: Default::default(),
+                    favorite_config_option_values: Default::default(),
                 });
 
             match settings {
