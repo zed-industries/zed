@@ -248,10 +248,11 @@ fn build_tree(
     let byte_range = node.byte_range();
     let content_hash = compute_content_hash(&text[byte_range]);
 
-    // Ensure height_index is large enough
+    // Ensure height_index is large enough and add this node
     if height as usize >= height_index.len() {
-        height_index.resize(height as usize + 1, vec![this_id]);
+        height_index.resize(height as usize + 1, Vec::new());
     }
+    height_index[height as usize].push(this_id);
 
     // Update node
     let node = &mut nodes[this_id.index()];
@@ -468,7 +469,7 @@ fn top_down_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
             };
 
             if let Some(new_id) = matched_new {
-                match_subtrees(old, new, old_id, new_id, matching);
+                match_subtrees(old, old_id, new_id, matching);
             }
         }
     }
@@ -515,32 +516,20 @@ fn find_best_match_by_context(
 }
 
 /// Match all nodes in two isomorphic subtrees.
-fn match_subtrees(
-    old: &DiffTree,
-    new: &DiffTree,
-    old_root: NodeId,
-    new_root: NodeId,
-    matching: &mut Matching,
-) {
-    let mut old_stack = vec![old_root];
-    let mut new_stack = vec![new_root];
+/// Since subtrees have identical structure (same hashes), nodes at the same
+/// relative offset in pre-order correspond to each other.
+#[inline]
+fn match_subtrees(old: &DiffTree, old_root: NodeId, new_root: NodeId, matching: &mut Matching) {
+    let count = old.node(old_root).descendant_count;
+    let old_base = old_root.index();
+    let new_base = new_root.index();
 
-    while let (Some(old_id), Some(new_id)) = (old_stack.pop(), new_stack.pop()) {
-        if matching.is_old_matched(old_id) || matching.is_new_matched(new_id) {
-            continue;
-        }
+    for offset in 0..count {
+        let old_id = NodeId::new(old_base + offset);
+        let new_id = NodeId::new(new_base + offset);
 
-        matching.add(old_id, new_id);
-
-        // Push children in reverse order so they're processed in order
-        let old_children: Vec<_> = old.children(old_id).collect();
-        let new_children: Vec<_> = new.children(new_id).collect();
-
-        for &child in old_children.iter().rev() {
-            old_stack.push(child);
-        }
-        for &child in new_children.iter().rev() {
-            new_stack.push(child);
+        if !matching.is_old_matched(old_id) && !matching.is_new_matched(new_id) {
+            matching.add(old_id, new_id);
         }
     }
 }
