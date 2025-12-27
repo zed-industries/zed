@@ -1,13 +1,13 @@
 use crate::types::{AnyColumn, DataRow, TableCell, TableRow};
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SortDirection {
     Asc,
     Desc,
 }
 
 /// Config or currently active sorting
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct AppliedSorting {
     /// 0-based column index
     pub col_idx: AnyColumn,
@@ -24,6 +24,7 @@ pub fn sort_data_rows(
         let row_a = &content_rows[*a];
         let row_b = &content_rows[*b];
 
+        // TODO: Hanle nulls
         let val_a = row_a
             .get(sorting.col_idx)
             .and_then(|tc| tc.display_value())
