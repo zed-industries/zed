@@ -2185,6 +2185,20 @@
     // The mode can be one of the following: "normal", "replace", "insert", "visual".
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {},
+    // The set of motions that can be repeated with `;` and `,`.
+    // Can be the name of a vim action (e.g. `vim::NextMethodStart`) or one of the following strings:
+    // - "find": `f`, `t`, `F`, `T`
+    // - "sneak": `vim::Sneak`, `vim::SneakBackward`
+    // - "word": `w`, `b`, `e`, `ge`, `gE`
+    // - "paragraph": `{`, `}`
+    // - "sentence": `(`, `)`
+    // - "section": `[[`, `[]`, `][`, `]]`
+    // - "method": `[m`, `]m`, `[M`, `]M`
+    // - "comment": `[*`, `[/`, `]*`, `]/`
+    // - "unmatched": `[(`, `])`, `[{`, `]}`
+    // - "direction": `h`, `l`, `j`, `k`, etc.
+    // - "indent": `vim::PreviousLesserIndent`, `vim::NextGreaterIndent`, etc.
+    "repeatable_motions": ["find", "sneak"],
   },
   // Which-key popup settings
   "which_key": {

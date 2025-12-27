@@ -176,6 +176,7 @@ impl MotionDiscriminants {
     pub fn family_name(&self) -> &str {
         use MotionDiscriminants::*;
 
+        // keep in sync with "vim.repeatable_motions" in `assets/settings/default.json`
         match self {
             Sneak | SneakBackward => "sneak",
             FindForward | FindBackward => "find",
