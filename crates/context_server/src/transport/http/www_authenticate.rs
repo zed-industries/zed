@@ -1,15 +1,13 @@
 use std::borrow::Cow;
 
-use http_client::Uri;
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct WwwAuthenticate<'a> {
-    realm: Option<Cow<'a, str>>,
-    scope: Option<Cow<'a, str>>,
-    error: Option<Cow<'a, str>>,
-    error_description: Option<Cow<'a, str>>,
-    error_uri: Option<Cow<'a, str>>,
-    resource_metadata: Option<Cow<'a, str>>,
+    pub realm: Option<Cow<'a, str>>,
+    pub scope: Option<Cow<'a, str>>,
+    pub error: Option<Cow<'a, str>>,
+    pub error_description: Option<Cow<'a, str>>,
+    pub error_uri: Option<Cow<'a, str>>,
+    pub resource_metadata: Option<Cow<'a, str>>,
 }
 
 const BEARER_SCHEME: &str = "Bearer";
@@ -85,18 +83,6 @@ impl<'a> WwwAuthenticate<'a> {
         }
 
         Some(challenge)
-    }
-
-    pub fn error_uri(&self) -> Option<Uri> {
-        self.error_uri
-            .as_deref()
-            .and_then(|value| value.parse::<Uri>().ok())
-    }
-
-    pub fn resource_metadata(&self) -> Option<Uri> {
-        self.resource_metadata
-            .as_deref()
-            .and_then(|value| value.parse::<Uri>().ok())
     }
 }
 
@@ -218,31 +204,6 @@ mod tests {
                 )),
                 ..Default::default()
             }
-        );
-    }
-
-    #[test]
-    fn parses_error_uri_when_valid() {
-        let challenge = WwwAuthenticate::parse("Bearer error_uri=\"https://example.com/error\"")
-            .expect("should parse");
-
-        let error_uri = challenge.error_uri().expect("should parse error_uri");
-        assert_eq!(error_uri.to_string(), "https://example.com/error");
-    }
-
-    #[test]
-    fn parses_resource_metadata_when_valid() {
-        let challenge = WwwAuthenticate::parse(
-            "Bearer resource_metadata=\"https://example.com/.well-known/oauth-authorization-server\"",
-        )
-        .expect("should parse");
-
-        let resource_metadata = challenge
-            .resource_metadata()
-            .expect("should parse resource_metadata");
-        assert_eq!(
-            resource_metadata.to_string(),
-            "https://example.com/.well-known/oauth-authorization-server"
         );
     }
 

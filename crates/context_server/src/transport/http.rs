@@ -1,3 +1,4 @@
+mod auth;
 mod www_authenticate;
 
 use anyhow::{Result, anyhow};
