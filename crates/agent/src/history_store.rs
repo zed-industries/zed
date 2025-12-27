@@ -124,6 +124,9 @@ pub struct HistoryStore {
     entries: Vec<HistoryEntry>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
+    /// In-memory storage for the global draft message.
+    /// This is preserved when switching between threads so users don't lose their input.
+    draft_message: Option<Vec<acp::ContentBlock>>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
 }
@@ -154,6 +157,7 @@ impl HistoryStore {
             recently_opened_entries: VecDeque::default(),
             threads: Vec::default(),
             entries: Vec::default(),
+            draft_message: None,
             _subscriptions: subscriptions,
             _save_recently_opened_entries_task: Task::ready(()),
         }
@@ -405,5 +409,21 @@ impl HistoryStore {
 
     pub fn entries(&self) -> impl Iterator<Item = HistoryEntry> {
         self.entries.iter().cloned()
+    }
+
+    /// Stores a draft message for a session. This is used to preserve the message
+    /// editor contents when switching between threads.
+    /// Sets the global draft message.
+    pub fn set_draft_message(&mut self, contents: Vec<acp::ContentBlock>) {
+        if contents.is_empty() {
+            self.draft_message = None;
+        } else {
+            self.draft_message = Some(contents);
+        }
+    }
+
+    /// Retrieves and removes the global draft message.
+    pub fn take_draft_message(&mut self) -> Option<Vec<acp::ContentBlock>> {
+        self.draft_message.take()
     }
 }
