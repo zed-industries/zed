@@ -381,6 +381,7 @@
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ToggleRegex",
       "alt-ctrl-x": "search::ToggleRegex",
+      "alt-ctrl-q": "search::ToggleSearchOnInput",
     },
   },
   {
@@ -404,6 +405,7 @@
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ToggleRegex",
       "alt-ctrl-x": "search::ToggleRegex",
+      "alt-ctrl-q": "search::ToggleSearchOnInput",
     },
   },
   {
@@ -453,6 +455,7 @@
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
+      "alt-ctrl-q": "search::ToggleSearchOnInput",
       "ctrl-k shift-enter": "pane::TogglePinTab",
     },
   },
