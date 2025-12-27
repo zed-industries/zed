@@ -130,27 +130,42 @@ The `Flatten` trait in `gpui.rs` exists solely to handle `Result<Result<T>>` whe
 
 ### RunnableMeta
 
-Add optional app weak pointer:
+Add optional app weak pointer using a `MainThreadWeak<T>` newtype that unsafely implements `Send + Sync`:
+
 ```rust
+/// Weak reference that can cross thread boundaries but must only be accessed on the main thread.
+/// SAFETY: Only create, access (upgrade), and drop on the main thread.
+pub struct MainThreadWeak<T>(Weak<T>);
+unsafe impl<T> Send for MainThreadWeak<T> {}
+unsafe impl<T> Sync for MainThreadWeak<T> {}
+
 pub struct RunnableMeta {
     pub location: &'static Location<'static>,
-    pub app: Option<Weak<AppCell>>,  // NEW
+    pub app: Option<MainThreadWeak<AppCell>>,  // NEW
 }
 ```
 
+**Safety invariants:**
+- `app` is `Some` only for foreground tasks (spawned via `ForegroundExecutor::spawn_with_app`)
+- `ForegroundExecutor` is `!Send`, so spawn only happens on main thread
+- Trampolines run on main thread, so `upgrade()` is main-thread only
+- Background tasks always use `app: None`
+
 ## Implementation Phases
 
-### Phase 1: Add Trampoline Check Infrastructure (macOS First)
+### Phase 1: Add Trampoline Check Infrastructure (macOS + Test)
 
-Start with macOS to validate the approach before implementing on other platforms.
+Start with macOS and Test dispatcher to validate the approach.
 
-1. Modify `RunnableMeta` to include `Option<Weak<AppCell>>`
-2. Update trampoline function in Mac dispatcher to check app status before running:
+1. Add `MainThreadWeak<T>` newtype to `crates/gpui/src/platform.rs` with unsafe `Send + Sync` impls
+2. Update `RunnableMeta` to use `Option<MainThreadWeak<AppCell>>` for app field
+3. Update Mac dispatcher trampoline to check `unsafe { app.upgrade() }` before `run()`:
    - `crates/gpui/src/platform/mac/dispatcher.rs`
-3. Update trampoline function in Test dispatcher (needed for tests):
+4. Update Test dispatcher `tick()` to check `unsafe { app.upgrade() }` before `run()`:
    - `crates/gpui/src/platform/test/dispatcher.rs`
-4. Modify spawn paths in `AsyncApp` to populate the app weak pointer in metadata
-5. Write tests to validate cancellation behavior on macOS
+5. Add `ForegroundExecutor::spawn_with_app` that wraps `Weak<AppCell>` in `MainThreadWeak`
+6. Update `AsyncApp::spawn` and `AsyncWindowContext::spawn` to use `spawn_with_app`
+7. Write tests to validate cancellation behavior
 
 ### Phase 2: Extend to Other Platforms
 
