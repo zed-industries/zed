@@ -26,6 +26,10 @@ actions!(
         SelectFirst,
         /// Selects the last item in the menu.
         SelectLast,
+        /// Enters a submenu (navigates to child menu).
+        SelectChild,
+        /// Exits a submenu (navigates to parent menu).
+        SelectParent,
         /// Restarts the menu from the beginning.
         Restart,
         EndSlot,
