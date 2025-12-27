@@ -274,11 +274,11 @@ struct SelectPrevDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-actions!(
-    project_panel,
-    [
-        /// Expands the selected entry in the project tree.
-        ExpandSelectedEntry,
+    actions!(
+        project_panel,
+        [
+            /// Expands the selected entry in the project tree.
+            ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
@@ -337,12 +337,14 @@ actions!(
         SelectPrevGitEntry,
         /// Selects the next directory.
         SelectNextDirectory,
-        /// Selects the previous directory.
-        SelectPrevDirectory,
-        /// Opens a diff view to compare two marked files.
-        CompareMarkedFiles,
-    ]
-);
+            /// Selects the previous directory.
+            SelectPrevDirectory,
+            /// Opens a diff view to compare two marked files.
+            CompareMarkedFiles,
+            /// Reloads all files in the project panel.
+            ReloadFiles,
+        ]
+    );
 
 #[derive(Clone, Debug, Default)]
 struct FoldedAncestors {
@@ -407,6 +409,21 @@ pub fn init(cx: &mut App) {
                         .unwrap_or(false),
                 );
             })
+        });
+
+        workspace.register_action(|workspace, _: &ReloadFiles, _, cx| {
+            let worktrees: Vec<_> = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .collect();
+            for worktree in worktrees {
+                worktree.update(cx, |worktree, _| {
+                    if let Some(local) = worktree.as_local_mut() {
+                        local.refresh_entries_for_paths(vec![RelPath::empty().into()]);
+                    }
+                });
+            }
         });
 
         workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
