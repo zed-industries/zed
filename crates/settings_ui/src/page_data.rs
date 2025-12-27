@@ -892,6 +892,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Text Rendering"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Subpixel Rendering",
+                    description: "Whether to use subpixel rendering for text.",
+                    field: Box::new(SettingField {
+                        json_path: Some("use_subpixel_text_rendering"),
+                        pick: |settings_content| {
+                            settings_content.workspace.use_subpixel_text_rendering.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.use_subpixel_text_rendering = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",

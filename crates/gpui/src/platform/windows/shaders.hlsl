@@ -10,6 +10,11 @@ cbuffer GlobalParams: register(b0) {
 Texture2D<float4> t_sprite: register(t0);
 SamplerState s_sprite: register(s0);
 
+struct DualSourceColorOutput {
+    float4 color0 : SV_Target0;
+    float4 color1 : SV_Target1;
+};
+
 struct Bounds {
     float2 origin;
     float2 size;
@@ -1117,6 +1122,20 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
     return float4(input.color.rgb, input.color.a * alpha_corrected);
+}
+
+MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    return monochrome_sprite_vertex(vertex_id, sprite_id);
+}
+
+DualSourceColorOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
+    float3 sample = t_sprite.Sample(s_sprite, input.tile_position).rgb;
+    float3 alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+
+    DualSourceColorOutput output;
+    output.color0 = float4(input.color.rgb, 1.0f);
+    output.color1 = float4(input.color.a * alpha_corrected, 1.0f);
+    return output;
 }
 
 /*

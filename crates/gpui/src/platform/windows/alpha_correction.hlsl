@@ -17,9 +17,19 @@ float enhance_contrast(float alpha, float k) {
     return alpha * (k + 1.0f) / (alpha * k + 1.0f);
 }
 
+float3 enhance_contrast3(float3 alpha, float k) {
+    return alpha * (k + 1.0f) / (alpha * k + 1.0f);
+}
+
 float apply_alpha_correction(float a, float b, float4 g) {
     float brightness_adjustment = g.x * b + g.y;
     float correction = brightness_adjustment * a + (g.z * b + g.w);
+    return a + a * (1.0f - a) * correction;
+}
+
+float3 apply_alpha_correction3(float3 a, float3 b, float4 g) {
+    float3 brightness_adjustment = g.x * b + g.y;
+    float3 correction = brightness_adjustment * a + (g.z * b + g.w);
     return a + a * (1.0f - a) * correction;
 }
 
@@ -29,4 +39,11 @@ float apply_contrast_and_gamma_correction(float sample, float3 color, float enha
 
     float contrasted = enhance_contrast(sample, enhanced_contrast);
     return apply_alpha_correction(contrasted, brightness, gamma_ratios);
+}
+
+float3 apply_contrast_and_gamma_correction3(float3 sample, float3 color, float enhanced_contrast_factor, float4 gamma_ratios) {
+    float enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+
+    float3 contrasted = enhance_contrast3(sample, enhanced_contrast);
+    return apply_alpha_correction3(contrasted, color, gamma_ratios);
 }
