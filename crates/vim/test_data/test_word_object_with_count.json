@@ -48,3 +48,9 @@
 {"Key":"a"}
 {"Key":"w"}
 {"Get":{"state":"  ˇbar baz","mode":"Normal"}}
+{"Put":{"state":"ˇfoo   "}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"ˇ","mode":"Normal"}}

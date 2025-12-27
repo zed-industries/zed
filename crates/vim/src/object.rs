@@ -1947,6 +1947,14 @@ mod test {
         cx.set_shared_state("  ˇfoo-bar baz").await;
         cx.simulate_shared_keystrokes("2 d a w").await;
         cx.shared_state().await.assert_matches();
+
+        // Test 2diw with trailing whitespace and no next word
+        // In vim, whitespace counts as a word unit, so 2iw selects:
+        // 1st unit: "foo", 2nd unit: "   " (trailing whitespace)
+        // Result: entire line deleted
+        cx.set_shared_state("ˇfoo   ").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
     }
 
     const PARAGRAPH_EXAMPLES: &[&str] = &[
