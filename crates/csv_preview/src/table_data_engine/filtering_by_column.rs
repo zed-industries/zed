@@ -41,10 +41,6 @@ pub struct AppliedFiltering(pub HashMap<AnyColumn, HashSet<u64>>);
 pub type AvailableFilters = HashMap<AnyColumn, Arc<Vec<FilterEntry>>>;
 
 impl AppliedFiltering {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Remove a specific filter entry from a column
     pub fn remove_filter(&mut self, column: AnyColumn, hash: AllowedCellHash) {
         if let Some(column_filters) = self.0.get_mut(&column) {
@@ -118,27 +114,23 @@ pub fn calculate_available_filters(
     available_filters
 }
 
-pub fn filter_data_rows(
+pub fn retain_rows(
     content_rows: &[TableRow<TableCell>],
-    data_row_ids: Vec<DataRow>,
     config: &AppliedFiltering,
-) -> Vec<DataRow> {
+) -> HashSet<DataRow> {
     let config = &config.0;
-
+    let content_len = content_rows.len();
     if config.is_empty() {
-        log::debug!(
-            "No filters applied. Returning all {} data rows.",
-            data_row_ids.len()
-        );
-        return data_row_ids;
+        log::debug!("No filters applied. Returning all {content_len} data rows.",);
+        return (0..content_len).map(DataRow).collect();
     }
 
     log::debug!("Filtering data rows with config: {:#?}", config);
 
-    data_row_ids
-        .into_iter()
-        .filter(|dr| {
-            let row = &content_rows[dr.get()];
+    content_rows
+        .iter()
+        .enumerate()
+        .filter(|(dr, row)| {
             log::trace!("Filtering row {dr:?}: {:#?}", row);
             // For each column that has filters applied, check if the cell value is allowed
             config.iter().all(|(col, allowed_values)| {
@@ -153,5 +145,6 @@ pub fn filter_data_rows(
                 allowed_values.contains(&cell_hash)
             })
         })
+        .map(|(dr, _)| DataRow(dr))
         .collect()
 }

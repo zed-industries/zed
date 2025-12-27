@@ -113,14 +113,10 @@ impl CsvPreviewView {
                             ScrollOffset::NoOffset
                         };
 
-                    let ordered_indices = this.engine.d2d_mapping.clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.engine.selection.start_mouse_selection(
-                        display_cell_id.row,
-                        display_cell_id.col,
-                        &ordered_indices,
-                        preserve_existing,
-                    );
+                    this.engine
+                        .start_mouse_selection(display_cell_id, preserve_existing);
+
                     let selection_duration = start_time.elapsed();
                     this.performance_metrics.timings.insert(
                         "Mouse selection",
@@ -165,14 +161,9 @@ impl CsvPreviewView {
                                 ScrollOffset::NoOffset
                             };
 
-                        let ordered_indices = this.engine.d2d_mapping.clone();
                         let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                        this.engine.selection.extend_mouse_selection(
-                            display_cell_id.row,
-                            display_cell_id.col,
-                            &ordered_indices,
-                            preserve_existing,
-                        );
+                        this.engine
+                            .extend_mouse_selection(&display_cell_id, preserve_existing);
                         scroll
                     });
 

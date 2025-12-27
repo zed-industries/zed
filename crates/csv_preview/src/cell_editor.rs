@@ -37,13 +37,7 @@ pub(crate) struct CellEditorCtx {
 
 impl TableDataEngine {
     pub(crate) fn display_to_data_cell(&self, display_cid: &DisplayCellId) -> DataCellId {
-        let data_row = self
-            .d2d_mapping
-            .get_data_row(display_cid.row)
-            .unwrap_or_else(|| {
-                panic!("Expected {display_cid:?} to correspond to real DataCell, but it's not ")
-            });
-        DataCellId::new(data_row, display_cid.col)
+        self.d2d_mapping().display_to_data_cell(display_cid)
     }
 }
 
