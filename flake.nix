@@ -13,6 +13,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       rust-overlay,
       crane,
@@ -29,12 +30,8 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       mkZed =
         pkgs:
-        let
-          rustBin = rust-overlay.lib.mkRustBin { } pkgs;
-        in
-        pkgs.callPackage ./nix/build.nix {
-          crane = crane.mkLib pkgs;
-          rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
+        pkgs.callPackage ./nix/zed.nix {
+          inherit rust-overlay crane;
         };
     in
     {
