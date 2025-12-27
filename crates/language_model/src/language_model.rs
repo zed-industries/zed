@@ -102,6 +102,7 @@ pub enum LanguageModelCompletionEvent {
         message_id: String,
     },
     ReasoningDetails(serde_json::Value),
+    ReasoningDetailsAccumulable(Vec<serde_json::Value>),
     UsageUpdate(TokenUsage),
 }
 
@@ -690,6 +691,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
+                                Ok(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
