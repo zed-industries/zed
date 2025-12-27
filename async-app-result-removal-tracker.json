@@ -1,0 +1,288 @@
+{
+  "project": "async-app-result-removal",
+  "description": "Remove Result from AsyncApp return types by moving app-alive checks to executor",
+  "phases": [
+    {
+      "id": 1,
+      "name": "Add Trampoline Check Infrastructure",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "1.1",
+          "description": "Add Option<Weak<AppCell>> field to RunnableMeta struct",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.2",
+          "description": "Update trampoline function in Mac dispatcher to check app status before run()",
+          "file": "crates/gpui/src/platform/mac/dispatcher.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.3",
+          "description": "Update trampoline function in Linux dispatcher to check app status before run()",
+          "file": "crates/gpui/src/platform/linux/dispatcher.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.4",
+          "description": "Update trampoline function in Windows dispatcher to check app status before run()",
+          "file": "crates/gpui/src/platform/windows/dispatcher.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.5",
+          "description": "Update trampoline function in Test dispatcher to check app status before run()",
+          "file": "crates/gpui/src/platform/test/dispatcher.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.6",
+          "description": "Modify ForegroundExecutor::spawn_with_priority to accept optional app weak pointer",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.7",
+          "description": "Update AsyncApp::spawn to pass app weak pointer to executor",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.8",
+          "description": "Write unit test verifying task cancellation when app is dropped",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.9",
+          "description": "Write unit test for nested tasks both cancelling cleanly",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "1.10",
+          "description": "Create async_cancellation.rs example demonstrating behavior",
+          "file": "crates/gpui/examples/async_cancellation.rs",
+          "status": "not_started"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Update AsyncApp API",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "2.1",
+          "description": "Rename update() -> Result<R> to try_update() -> Option<R>",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.2",
+          "description": "Add new update() -> R that panics if app is gone",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.3",
+          "description": "Apply try_/non-try pattern to read_entity and update_entity",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.4",
+          "description": "Apply try_/non-try pattern to read_global and update_global",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.5",
+          "description": "Apply try_/non-try pattern to read_window and update_window",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.6",
+          "description": "Apply try_/non-try pattern to new, reserve_entity, insert_entity",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.7",
+          "description": "Apply try_/non-try pattern to refresh, open_window, subscribe, has_global",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.8",
+          "description": "Update AppContext trait Result associated type for AsyncApp",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "2.9",
+          "description": "Apply same changes to AsyncWindowContext",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Audit Cross-Boundary Awaits",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "3.1",
+          "description": "Search for background tasks awaiting foreground tasks",
+          "file": null,
+          "status": "not_started",
+          "notes": "grep for patterns like background_executor().spawn(...).await"
+        },
+        {
+          "id": "3.2",
+          "description": "Identify all Task<T> values passed across thread boundaries",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "3.3",
+          "description": "Migrate identified cases to use try_update or handle Option",
+          "file": null,
+          "status": "not_started"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Codebase Migration",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "4.1",
+          "description": "Update callsites in crates/gpui",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.2",
+          "description": "Update callsites in crates/editor",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.3",
+          "description": "Update callsites in crates/workspace",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.4",
+          "description": "Update callsites in crates/project",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.5",
+          "description": "Update callsites in crates/language",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.6",
+          "description": "Update callsites in crates/agent and crates/agent_ui",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.7",
+          "description": "Update callsites in remaining crates",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "4.8",
+          "description": "Fix all compilation errors",
+          "file": null,
+          "status": "not_started"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Testing and Cleanup",
+      "status": "not_started",
+      "tasks": [
+        {
+          "id": "5.1",
+          "description": "Remove dead error handling code",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "5.2",
+          "description": "Update AsyncApp documentation",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.3",
+          "description": "Add test: try_update returns None when app gone",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.4",
+          "description": "Add test: update works normally when app alive",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.5",
+          "description": "Add test: spawn_executes_when_app_alive",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.6",
+          "description": "Add test: update_entity works via AsyncApp",
+          "file": "crates/gpui/src/app/async_context.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.7",
+          "description": "Verify async_cancellation example runs without panics",
+          "file": "crates/gpui/examples/async_cancellation.rs",
+          "status": "not_started"
+        },
+        {
+          "id": "5.8",
+          "description": "Run cargo test -p gpui",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "5.9",
+          "description": "Run ./script/clippy",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "5.10",
+          "description": "Run full test suite and fix any regressions",
+          "file": null,
+          "status": "not_started"
+        },
+        {
+          "id": "5.11",
+          "description": "Manual test: close windows with pending tasks, verify no panics",
+          "file": null,
+          "status": "not_started"
+        }
+      ]
+    }
+  ]
+}
