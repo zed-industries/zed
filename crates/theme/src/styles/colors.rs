@@ -241,50 +241,34 @@ pub struct ThemeColors {
     pub terminal_ansi_black: Hsla,
     /// Bright black ANSI terminal color.
     pub terminal_ansi_bright_black: Hsla,
-    /// Dim black ANSI terminal color.
-    pub terminal_ansi_dim_black: Hsla,
     /// Red ANSI terminal color.
     pub terminal_ansi_red: Hsla,
     /// Bright red ANSI terminal color.
     pub terminal_ansi_bright_red: Hsla,
-    /// Dim red ANSI terminal color.
-    pub terminal_ansi_dim_red: Hsla,
     /// Green ANSI terminal color.
     pub terminal_ansi_green: Hsla,
     /// Bright green ANSI terminal color.
     pub terminal_ansi_bright_green: Hsla,
-    /// Dim green ANSI terminal color.
-    pub terminal_ansi_dim_green: Hsla,
     /// Yellow ANSI terminal color.
     pub terminal_ansi_yellow: Hsla,
     /// Bright yellow ANSI terminal color.
     pub terminal_ansi_bright_yellow: Hsla,
-    /// Dim yellow ANSI terminal color.
-    pub terminal_ansi_dim_yellow: Hsla,
     /// Blue ANSI terminal color.
     pub terminal_ansi_blue: Hsla,
     /// Bright blue ANSI terminal color.
     pub terminal_ansi_bright_blue: Hsla,
-    /// Dim blue ANSI terminal color.
-    pub terminal_ansi_dim_blue: Hsla,
     /// Magenta ANSI terminal color.
     pub terminal_ansi_magenta: Hsla,
     /// Bright magenta ANSI terminal color.
     pub terminal_ansi_bright_magenta: Hsla,
-    /// Dim magenta ANSI terminal color.
-    pub terminal_ansi_dim_magenta: Hsla,
     /// Cyan ANSI terminal color.
     pub terminal_ansi_cyan: Hsla,
     /// Bright cyan ANSI terminal color.
     pub terminal_ansi_bright_cyan: Hsla,
-    /// Dim cyan ANSI terminal color.
-    pub terminal_ansi_dim_cyan: Hsla,
     /// White ANSI terminal color.
     pub terminal_ansi_white: Hsla,
     /// Bright white ANSI terminal color.
     pub terminal_ansi_bright_white: Hsla,
-    /// Dim white ANSI terminal color.
-    pub terminal_ansi_dim_white: Hsla,
 
     /// Represents a link text hover color.
     pub link_text_hover: Hsla,
@@ -396,28 +380,20 @@ pub enum ThemeColorField {
     TerminalAnsiBackground,
     TerminalAnsiBlack,
     TerminalAnsiBrightBlack,
-    TerminalAnsiDimBlack,
     TerminalAnsiRed,
     TerminalAnsiBrightRed,
-    TerminalAnsiDimRed,
     TerminalAnsiGreen,
     TerminalAnsiBrightGreen,
-    TerminalAnsiDimGreen,
     TerminalAnsiYellow,
     TerminalAnsiBrightYellow,
-    TerminalAnsiDimYellow,
     TerminalAnsiBlue,
     TerminalAnsiBrightBlue,
-    TerminalAnsiDimBlue,
     TerminalAnsiMagenta,
     TerminalAnsiBrightMagenta,
-    TerminalAnsiDimMagenta,
     TerminalAnsiCyan,
     TerminalAnsiBrightCyan,
-    TerminalAnsiDimCyan,
     TerminalAnsiWhite,
     TerminalAnsiBrightWhite,
-    TerminalAnsiDimWhite,
     LinkTextHover,
     VersionControlAdded,
     VersionControlDeleted,
@@ -522,28 +498,20 @@ impl ThemeColors {
             ThemeColorField::TerminalAnsiBackground => self.terminal_ansi_background,
             ThemeColorField::TerminalAnsiBlack => self.terminal_ansi_black,
             ThemeColorField::TerminalAnsiBrightBlack => self.terminal_ansi_bright_black,
-            ThemeColorField::TerminalAnsiDimBlack => self.terminal_ansi_dim_black,
             ThemeColorField::TerminalAnsiRed => self.terminal_ansi_red,
             ThemeColorField::TerminalAnsiBrightRed => self.terminal_ansi_bright_red,
-            ThemeColorField::TerminalAnsiDimRed => self.terminal_ansi_dim_red,
             ThemeColorField::TerminalAnsiGreen => self.terminal_ansi_green,
             ThemeColorField::TerminalAnsiBrightGreen => self.terminal_ansi_bright_green,
-            ThemeColorField::TerminalAnsiDimGreen => self.terminal_ansi_dim_green,
             ThemeColorField::TerminalAnsiYellow => self.terminal_ansi_yellow,
             ThemeColorField::TerminalAnsiBrightYellow => self.terminal_ansi_bright_yellow,
-            ThemeColorField::TerminalAnsiDimYellow => self.terminal_ansi_dim_yellow,
             ThemeColorField::TerminalAnsiBlue => self.terminal_ansi_blue,
             ThemeColorField::TerminalAnsiBrightBlue => self.terminal_ansi_bright_blue,
-            ThemeColorField::TerminalAnsiDimBlue => self.terminal_ansi_dim_blue,
             ThemeColorField::TerminalAnsiMagenta => self.terminal_ansi_magenta,
             ThemeColorField::TerminalAnsiBrightMagenta => self.terminal_ansi_bright_magenta,
-            ThemeColorField::TerminalAnsiDimMagenta => self.terminal_ansi_dim_magenta,
             ThemeColorField::TerminalAnsiCyan => self.terminal_ansi_cyan,
             ThemeColorField::TerminalAnsiBrightCyan => self.terminal_ansi_bright_cyan,
-            ThemeColorField::TerminalAnsiDimCyan => self.terminal_ansi_dim_cyan,
             ThemeColorField::TerminalAnsiWhite => self.terminal_ansi_white,
             ThemeColorField::TerminalAnsiBrightWhite => self.terminal_ansi_bright_white,
-            ThemeColorField::TerminalAnsiDimWhite => self.terminal_ansi_dim_white,
             ThemeColorField::LinkTextHover => self.link_text_hover,
             ThemeColorField::VersionControlAdded => self.version_control_added,
             ThemeColorField::VersionControlDeleted => self.version_control_deleted,

@@ -623,20 +623,12 @@ pub fn theme_colors_refinement(
             .terminal_ansi_bright_black
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_black: this
-            .terminal_ansi_dim_black
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_red: this
             .terminal_ansi_red
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_bright_red: this
             .terminal_ansi_bright_red
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_red: this
-            .terminal_ansi_dim_red
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_green: this
@@ -647,20 +639,12 @@ pub fn theme_colors_refinement(
             .terminal_ansi_bright_green
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_green: this
-            .terminal_ansi_dim_green
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_yellow: this
             .terminal_ansi_yellow
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_bright_yellow: this
             .terminal_ansi_bright_yellow
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_yellow: this
-            .terminal_ansi_dim_yellow
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_blue: this
@@ -671,20 +655,12 @@ pub fn theme_colors_refinement(
             .terminal_ansi_bright_blue
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_blue: this
-            .terminal_ansi_dim_blue
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_magenta: this
             .terminal_ansi_magenta
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_bright_magenta: this
             .terminal_ansi_bright_magenta
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_magenta: this
-            .terminal_ansi_dim_magenta
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_cyan: this
@@ -695,20 +671,12 @@ pub fn theme_colors_refinement(
             .terminal_ansi_bright_cyan
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_cyan: this
-            .terminal_ansi_dim_cyan
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_white: this
             .terminal_ansi_white
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         terminal_ansi_bright_white: this
             .terminal_ansi_bright_white
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        terminal_ansi_dim_white: this
-            .terminal_ansi_dim_white
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
         link_text_hover: this
