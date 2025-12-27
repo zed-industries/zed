@@ -886,7 +886,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
-                let search = project.update(cx, |project, cx| {
+                let (search, search_task) = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
                             query,
@@ -904,6 +904,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                 });
                 drop(project);
                 let search = cx.executor().spawn(async move {
+                    // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+                    let _search_task = search_task;
+
                     let mut results = HashMap::default();
                     while let Ok(result) = search.recv().await {
                         if let SearchResult::Buffer { buffer, ranges } = result {

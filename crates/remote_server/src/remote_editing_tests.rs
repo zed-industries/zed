@@ -194,7 +194,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     cx.run_until_parked();
 
     async fn do_search(project: &Entity<Project>, mut cx: TestAppContext) -> Entity<Buffer> {
-        let receiver = project.update(&mut cx, |project, cx| {
+        let (receiver, search_task) = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
                     "project",
@@ -210,6 +210,10 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                 cx,
             )
         });
+
+        // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+        // We intentionally do not detach it.
+        let _search_task = search_task;
 
         let first_response = receiver.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {

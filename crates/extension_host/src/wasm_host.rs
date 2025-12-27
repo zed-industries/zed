@@ -12,6 +12,7 @@ use extension::{
     WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
+use futures::AsyncReadExt;
 use futures::future::LocalBoxFuture;
 use futures::{
     Future, FutureExt, StreamExt as _,
@@ -763,13 +764,14 @@ impl WasmExtension {
 
         let mut wasm_file = wasm_host
             .fs
-            .open_sync(&path)
+            .open_read(&path)
             .await
             .context(format!("opening wasm file, path: {path:?}"))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
+            .await
             .context(format!("reading wasm file, path: {path:?}"))?;
 
         wasm_host

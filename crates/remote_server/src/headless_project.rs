@@ -771,7 +771,7 @@ impl HeadlessProject {
             message.query.context("missing query field")?,
             PathStyle::local(),
         )?;
-        let results = this.update(&mut cx, |this, cx| {
+        let (results, search_task) = this.update(&mut cx, |this, cx| {
             project::Search::local(
                 this.fs.clone(),
                 this.buffer_store.clone(),
@@ -782,6 +782,10 @@ impl HeadlessProject {
             .into_handle(query, cx)
             .matching_buffers(cx)
         })?;
+
+        // Keep the search task alive while we drain the receiver; dropping it cancels the search.
+        // We intentionally do not detach it.
+        let _search_task = search_task;
 
         let mut response = proto::FindSearchCandidatesResponse {
             buffer_ids: Vec::new(),

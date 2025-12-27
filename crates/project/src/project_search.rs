@@ -1,7 +1,6 @@
 use std::{
     cell::LazyCell,
     collections::BTreeSet,
-    io::{BufRead, BufReader},
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
@@ -11,7 +10,7 @@ use std::{
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
+use futures::{AsyncBufReadExt, SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
@@ -68,13 +67,14 @@ pub struct SearchResultsHandle {
 }
 
 impl SearchResultsHandle {
-    pub fn results(self, cx: &mut App) -> Receiver<SearchResult> {
-        (self.trigger_search)(cx).detach();
-        self.results
+    pub fn results(self, cx: &mut App) -> (Receiver<SearchResult>, Task<()>) {
+        let task = (self.trigger_search)(cx);
+        (self.results, task)
     }
-    pub fn matching_buffers(self, cx: &mut App) -> Receiver<Entity<Buffer>> {
-        (self.trigger_search)(cx).detach();
-        self.matching_buffers
+
+    pub fn matching_buffers(self, cx: &mut App) -> (Receiver<Entity<Buffer>>, Task<()>) {
+        let task = (self.trigger_search)(cx);
+        (self.matching_buffers, task)
     }
 }
 
@@ -683,29 +683,37 @@ impl RequestHandler<'_> {
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
         _=maybe!(async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self.fs.context("Trying to query filesystem in remote project search")?.open_sync(&abs_path).await.log_err() else {
-                return anyhow::Ok(());
-            };
 
-            let mut file = BufReader::new(file);
-            let file_start = file.fill_buf()?;
+            let file = self
+                .fs
+                .context("Trying to query filesystem in remote project search")?
+                .open_read(&abs_path)
+                .await?;
 
-            if let Err(Some(starting_position)) =
-            std::str::from_utf8(file_start).map_err(|e| e.error_len())
-            {
-                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
-                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
-                log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
-                );
-                return Ok(());
+            let mut file = futures::io::BufReader::new(file);
+
+            // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
+            // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
+            //
+            // Use `fill_buf` so we can "peek" without consuming bytes, and reuse the same stream for detection.
+            let buffer = file.fill_buf().await?;
+            let prefix_len = buffer.len().min(8192);
+
+            if let Err(error) = std::str::from_utf8(&buffer[..prefix_len]) {
+                if let Some(starting_position) = error.error_len() {
+                    log::debug!(
+                        "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
+                    );
+                    return Ok(());
+                }
             }
 
-            if self.query.detect(file).unwrap_or(false) {
+            if self.query.detect(file).await.unwrap_or(false) {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send(entry.path).await?;
             }
-            Ok(())
+
+            anyhow::Ok(())
         }).await;
     }
 

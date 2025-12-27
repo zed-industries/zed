@@ -102,9 +102,11 @@ fn main() -> Result<(), anyhow::Error> {
                 println!("Starting a project search");
                 let timer = std::time::Instant::now();
                 let mut first_match = None;
-                let matches = project
+
+                let (matches, _search_task) = project
                     .update(cx, |this, cx| this.search(query, cx))
                     .unwrap();
+
                 let mut matched_files = 0;
                 let mut matched_chunks = 0;
                 while let Ok(match_result) = matches.recv().await {

@@ -8,6 +8,7 @@ use dap::{
     },
 };
 use fs::Fs;
+use futures::AsyncReadExt as _;
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use log::warn;
@@ -557,10 +558,18 @@ async fn handle_envs(
             continue;
         };
 
-        if let Ok(file) = fs.open_sync(&path).await {
-            let file_envs: HashMap<String, String> = dotenvy::from_read_iter(file)
-                .filter_map(Result::ok)
-                .collect();
+        if let Ok(mut file) = fs.open_read(&path).await {
+            let mut bytes = Vec::new();
+            if file.read_to_end(&mut bytes).await.is_err() {
+                warn!("While starting Go debug session: failed to read env file {path:?}");
+                continue;
+            }
+
+            let file_envs: HashMap<String, String> =
+                dotenvy::from_read_iter(std::io::Cursor::new(bytes))
+                    .filter_map(Result::ok)
+                    .collect();
+
             envs.extend(file_envs.iter().map(|(k, v)| (k.clone(), v.clone())));
             env_vars.extend(file_envs);
         } else {
