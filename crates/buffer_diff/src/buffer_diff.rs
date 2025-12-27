@@ -15,6 +15,7 @@ use std::{
 };
 use sum_tree::SumTree;
 use syntax_diff::DiffTree;
+pub use syntax_diff::SyntaxDiff;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
@@ -83,10 +84,12 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
-    // Anchors representing the word diff locations in the active buffer
+    /// Anchors representing the word diff locations in the active buffer
     pub buffer_word_diffs: Vec<Range<Anchor>>,
-    // Offsets relative to the start of the deleted diff that represent word diff locations
+    /// Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
+    /// Pre-computed syntax diff for this hunk
+    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -96,8 +99,7 @@ struct InternalDiffHunk {
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
-    base_diff_tree: Option<DiffTree>,
-    buffer_diff_tree: Option<DiffTree>,
+    syntax_diff: Option<SyntaxDiff>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,31 +277,27 @@ impl BufferDiffSnapshot {
     pub fn new_with_base_buffer(
         buffer: language::BufferSnapshot,
         base_text: Option<Arc<String>>,
-        base_text_snapshot: language::BufferSnapshot,
+        base_snapshot: language::BufferSnapshot,
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
         let diff_options = build_diff_options(
-            base_text_snapshot.file(),
-            base_text_snapshot.language().map(|l| l.name()),
-            base_text_snapshot.language().map(|l| l.default_scope()),
+            base_snapshot.file(),
+            base_snapshot.language().map(|l| l.name()),
+            base_snapshot.language().map(|l| l.default_scope()),
             cx,
         );
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| {
-            debug_assert_eq!(&*text, &base_text_snapshot.text());
-            (text, base_text_snapshot.as_rope().clone())
+            debug_assert_eq!(&*text, &base_snapshot.text());
+            (text, base_snapshot.as_rope().clone())
         });
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                let hunks = compute_hunks(
-                    base_text_pair,
-                    &buffer,
-                    Some(&base_text_snapshot),
-                    diff_options,
-                );
+                let hunks =
+                    compute_hunks(base_text_pair, &buffer, Some(&base_snapshot), diff_options);
                 Self {
                     inner: BufferDiffInner {
-                        base_text: base_text_snapshot,
+                        base_text: base_snapshot,
                         pending_hunks: SumTree::new(&buffer.text),
                         hunks,
                         base_text_exists,
@@ -311,13 +309,11 @@ impl BufferDiffSnapshot {
 
     #[cfg(test)]
     fn new_sync(
-        buffer: text::BufferSnapshot,
+        buffer: language::BufferSnapshot,
         diff_base: String,
         cx: &mut gpui::TestAppContext,
     ) -> BufferDiffSnapshot {
         cx.executor().block(cx.update(|cx| {
-            let buffer =
-                language::Buffer::build_snapshot_from_text_snapshot(buffer, None, None);
             Self::new_with_base_text(buffer, Some(Arc::new(diff_base)), None, None, cx)
         }))
     }
@@ -684,6 +680,7 @@ impl BufferDiffInner {
 
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
+                let syntax_diff = hunk.syntax_diff.clone();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -756,6 +753,7 @@ impl BufferDiffInner {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
+                    syntax_diff,
                 });
             }
         })
@@ -788,6 +786,7 @@ impl BufferDiffInner {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                syntax_diff: hunk.syntax_diff.clone(),
             })
         })
     }
@@ -856,7 +855,7 @@ impl BufferDiffInner {
     }
 }
 
-fn build_diff_tree_for_range(
+fn build_diff_tree(
     snapshot: &language::BufferSnapshot,
     byte_range: Range<usize>,
 ) -> Option<DiffTree> {
@@ -864,11 +863,13 @@ fn build_diff_tree_for_range(
         return None;
     }
 
-    let layer = snapshot.syntax_layers().next()?;
-    let root = layer.node();
-    let subtree_node = root.descendant_for_byte_range(byte_range.start, byte_range.end)?;
     let text = snapshot.text();
-    Some(DiffTree::new(subtree_node.walk(), &text))
+    let layer = snapshot.smallest_syntax_layer_containing(byte_range.clone())?;
+    let subtree = layer
+        .node()
+        .descendant_for_byte_range(byte_range.start, byte_range.end)?;
+
+    Some(DiffTree::new(subtree.walk(), &text))
 }
 
 fn build_diff_options(
@@ -929,8 +930,7 @@ fn compute_hunks(
                     diff_base_byte_range: 0..diff_base.len() - 1,
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
-                    base_diff_tree: None,
-                    buffer_diff_tree: None,
+                    syntax_diff: None,
                 },
                 &buffer.text,
             );
@@ -959,8 +959,7 @@ fn compute_hunks(
                 diff_base_byte_range: 0..0,
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
-                base_diff_tree: None,
-                buffer_diff_tree: None,
+                syntax_diff: None,
             },
             &buffer.text,
         );
@@ -974,7 +973,7 @@ fn process_patch_hunk(
     hunk_index: usize,
     diff_base: &Rope,
     buffer: &language::BufferSnapshot,
-    base_text_snapshot: Option<&language::BufferSnapshot>,
+    base_snapshot: Option<&language::BufferSnapshot>,
     buffer_row_divergence: &mut i64,
     diff_options: Option<&DiffOptions>,
 ) -> InternalDiffHunk {
@@ -1080,27 +1079,33 @@ fn process_patch_hunk(
     };
 
     let total_line_count = buffer_row_range.len() + base_line_count;
-    let (base_diff_tree, buffer_diff_tree) =
-        if total_line_count > 0 && total_line_count <= MAX_SYNTAX_DIFF_LINE_COUNT {
-            let buffer_byte_range = buffer_range.start.to_offset(&buffer.text)
-                ..buffer_range.end.to_offset(&buffer.text);
-            (
-                base_text_snapshot.and_then(|snapshot| {
-                    build_diff_tree_for_range(snapshot, diff_base_byte_range.clone())
-                }),
-                build_diff_tree_for_range(buffer, buffer_byte_range),
-            )
-        } else {
-            (None, None)
-        };
+    let syntax_diff = if total_line_count > 0 && total_line_count <= MAX_SYNTAX_DIFF_LINE_COUNT {
+        let buffer_byte_range =
+            buffer_range.start.to_offset(&buffer.text)..buffer_range.end.to_offset(&buffer.text);
+
+        let base_tree = base_snapshot
+            .and_then(|snapshot| build_diff_tree(snapshot, diff_base_byte_range.clone()));
+        let buffer_tree = build_diff_tree(buffer, buffer_byte_range.clone());
+
+        match (base_tree, buffer_tree) {
+            (Some(base_tree), Some(buffer_tree)) => Some(SyntaxDiff::compute(
+                &base_tree,
+                &buffer_tree,
+                diff_base_byte_range.start,
+                buffer_byte_range.start,
+            )),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     InternalDiffHunk {
         buffer_range,
         diff_base_byte_range,
         base_word_diffs,
         buffer_word_diffs,
-        base_diff_tree,
-        buffer_diff_tree,
+        syntax_diff,
     }
 }
 
