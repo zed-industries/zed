@@ -1180,7 +1180,7 @@ impl ContextMenu {
         }
 
         let (submenu, dismiss_subscription) =
-            Self::create_submenu(builder, cx.entity().clone(), window, cx);
+            Self::create_submenu(builder, cx.entity(), window, cx);
 
         // If we're switching from one submenu item to another, throw away any previously-captured
         // offset so we don't reuse a stale position.
@@ -1524,7 +1524,7 @@ impl ContextMenu {
         let bounds_cell = self.submenu_observed_bounds.clone();
         let canvas = canvas(
             {
-                let bounds_cell = bounds_cell.clone();
+                let bounds_cell = bounds_cell;
                 move |bounds, _window, _cx| {
                     bounds_cell.set(Some(bounds));
                 }
@@ -1949,7 +1949,7 @@ impl Render for ContextMenu {
             let bounds_cell = self.submenu_observed_bounds.clone();
             let menu_bounds_measure = canvas(
                 {
-                    let bounds_cell = bounds_cell.clone();
+                    let bounds_cell = bounds_cell;
                     move |bounds, _window, _cx| {
                         bounds_cell.set(Some(bounds));
                     }
@@ -2059,7 +2059,7 @@ impl Render for ContextMenu {
                         })
                         .child(render_aside(aside, cx))
                 }))
-                .when_some(submenu_container.clone(), |this, (ix, submenu, offset)| {
+                .when_some(submenu_container, |this, (ix, submenu, offset)| {
                     this.child(self.render_submenu_container(ix, submenu, offset, cx))
                 })
         } else {
