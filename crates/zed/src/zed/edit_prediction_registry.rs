@@ -3,12 +3,14 @@ use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
 use copilot::{Copilot, CopilotEditPredictionDelegate};
 use edit_prediction::{SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag};
+use edit_prediction_context::AmpTabEditPredictionDelegate;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
 use settings::{
+    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore,
@@ -118,6 +120,11 @@ fn assign_edit_prediction_providers(
         let mistral = MistralLanguageModelProvider::global(client.http_client(), cx);
         mistral.load_codestral_api_key(cx).detach();
     }
+    if provider
+        == EditPredictionProvider::Experimental(EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME)
+    {
+        AmpTabEditPredictionDelegate::ensure_api_key_loaded(client.http_client(), cx);
+    }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -187,6 +194,16 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            if let EditPredictionProvider::Experimental(
+                EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+            ) = value
+            {
+                let http_client = client.http_client();
+                let provider = cx.new(|_| AmpTabEditPredictionDelegate::new(http_client));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                return;
+            }
+
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()

@@ -668,6 +668,11 @@ impl EditPredictionStore {
         self.mercury.api_token.read(cx).has_key()
     }
 
+    pub fn has_amp_tab_api_token(&self, cx: &App) -> bool {
+        edit_prediction_context::try_amp_tab_api_token(cx)
+            .is_some_and(|token| token.read(cx).has_key())
+    }
+
     #[cfg(feature = "cli-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
