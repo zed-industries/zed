@@ -2414,14 +2414,6 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         256 => colors.terminal_foreground,
         257 => colors.terminal_background,
         258 => theme.players().local().cursor,
-        259 => colors.terminal_ansi_dim_black,
-        260 => colors.terminal_ansi_dim_red,
-        261 => colors.terminal_ansi_dim_green,
-        262 => colors.terminal_ansi_dim_yellow,
-        263 => colors.terminal_ansi_dim_blue,
-        264 => colors.terminal_ansi_dim_magenta,
-        265 => colors.terminal_ansi_dim_cyan,
-        266 => colors.terminal_ansi_dim_white,
         267 => colors.terminal_bright_foreground,
         268 => colors.terminal_ansi_black, // 'Dim Background', non-standard color
 
