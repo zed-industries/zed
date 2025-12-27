@@ -417,6 +417,7 @@ pub enum InlayId {
     // LSP
     Hint(usize),
     Color(usize),
+    ReplResult(usize),
 }
 
 impl InlayId {
@@ -426,6 +427,7 @@ impl InlayId {
             Self::DebuggerValue(id) => *id,
             Self::Hint(id) => *id,
             Self::Color(id) => *id,
+            Self::ReplResult(id) => *id,
         }
     }
 }
