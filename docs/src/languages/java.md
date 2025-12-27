@@ -11,11 +11,12 @@ Java language support in Zed is provided by:
 You will need to install a Java runtime (OpenJDK).
 
 - macOS: `brew install openjdk`
-- Ubuntu: `sudo add-apt-repository ppa:openjdk-23 && sudo apt-get install openjdk-23`
+- Ubuntu 25.04+: `sudo apt-get install openjdk-25-jdk`
+- Ubuntu 24.04 and earlier: `sudo apt-get install openjdk-21-jdk`
 - Windows: `choco install openjdk`
 - Arch Linux: `sudo pacman -S jre-openjdk-headless`
 
-Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
+Or manually download and install [OpenJDK 25](https://jdk.java.net/25/).
 
 ## Extension Install
 
