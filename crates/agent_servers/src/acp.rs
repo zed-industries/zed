@@ -539,7 +539,7 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
             let thread = cx.new(|cx| {
                 AcpThread::new(
-                    self.server_name.clone(),
+                    acp_thread::DEFAULT_THREAD_TITLE,
                     self.clone(),
                     project,
                     action_log,
@@ -562,6 +562,23 @@ impl AgentConnection for AcpConnection {
 
             Ok(thread)
         })
+    }
+
+    fn resume_thread(
+        self: Rc<Self>,
+        _session_id: acp::SessionId,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Entity<AcpThread>>>> {
+        // TODO: Implement session resumption for external agents.
+        //
+        // Currently, external agents don't support resuming sessions via the ACP protocol.
+        // The LoadSessionRequest method doesn't exist in agent-client-protocol.
+        //
+        // For now, return None to indicate that resume is not supported.
+        // The UI will handle this by loading the thread from the database in read-only mode.
+        None
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -709,6 +726,10 @@ impl AgentConnection for AcpConnection {
             watch_tx: config_opts.tx.clone(),
             watch_rx: config_opts.rx.clone(),
         }) as _)
+    }
+
+    fn agent_name(&self) -> SharedString {
+        self.server_name.clone()
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

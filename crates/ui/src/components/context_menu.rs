@@ -157,6 +157,19 @@ impl ContextMenuEntry {
 
         self
     }
+
+    pub fn end_slot_on_hover(
+        mut self,
+        icon: IconName,
+        title: SharedString,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.end_slot_icon = Some(icon);
+        self.end_slot_title = Some(title);
+        self.end_slot_handler = Some(Rc::new(move |_, window, cx| handler(window, cx)));
+        self.show_end_slot_on_hover = true;
+        self
+    }
 }
 
 impl FluentBuilder for ContextMenuEntry {}
@@ -468,6 +481,37 @@ impl ContextMenu {
             custom_icon_path: None,
             custom_icon_svg: None,
             icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: true,
+        }));
+        self
+    }
+
+    pub fn entry_with_icon_end_slot_on_hover(
+        mut self,
+        label: impl Into<SharedString>,
+        icon: IconName,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: Some(icon),
+            custom_icon_path: None,
+            custom_icon_svg: None,
+            icon_position: IconPosition::Start,
             icon_size: IconSize::Small,
             icon_color: None,
             action,

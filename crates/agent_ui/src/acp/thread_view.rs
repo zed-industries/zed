@@ -1,15 +1,18 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
-    ToolCallStatus, UserMessageId,
+    AuthRequired, DEFAULT_THREAD_TITLE, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall,
+    ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use agent::{
+    DbThread, DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, Message as DbMessage,
+    NativeAgentServer,
+};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -23,6 +26,7 @@ use editor::{
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
+use futures::StreamExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
@@ -31,13 +35,18 @@ use gpui::{
     ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
+use watch;
 
-use language_model::LanguageModelRegistry;
+use language_model::{
+    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, MessageContent,
+};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use std::any::Any;
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
@@ -76,6 +85,209 @@ use crate::{
 enum ThreadFeedback {
     Positive,
     Negative,
+}
+
+#[derive(Clone)]
+struct HistoryConnection {
+    agent_name: SharedString,
+    auth_methods: Vec<acp::AuthMethod>,
+}
+
+impl HistoryConnection {
+    fn new(agent_name: SharedString) -> Self {
+        Self {
+            agent_name,
+            auth_methods: Vec::new(),
+        }
+    }
+}
+
+impl AgentConnection for HistoryConnection {
+    fn telemetry_id(&self) -> SharedString {
+        self.agent_name.clone()
+    }
+
+    fn new_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow!("history thread is read-only")))
+    }
+
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &self.auth_methods
+    }
+
+    fn authenticate(&self, _method: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("history thread is read-only")))
+    }
+
+    fn prompt(
+        &self,
+        _user_message_id: Option<UserMessageId>,
+        _params: acp::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        Task::ready(Err(anyhow!("history thread is read-only")))
+    }
+
+    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+    fn agent_name(&self) -> SharedString {
+        self.agent_name.clone()
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+fn build_history_thread(
+    project: Entity<Project>,
+    agent_name: SharedString,
+    session_id: acp::SessionId,
+    db_thread: DbThread,
+    cx: &mut App,
+) -> Entity<AcpThread> {
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let connection: Rc<dyn AgentConnection> = Rc::new(HistoryConnection::new(agent_name));
+    let thread = cx.new(|cx| {
+        AcpThread::new(
+            db_thread.title.clone(),
+            connection,
+            project.clone(),
+            action_log,
+            session_id,
+            watch::Receiver::constant(PromptCapabilities::default()),
+            cx,
+        )
+    });
+
+    thread.update(cx, |thread, cx| {
+        append_history_messages(thread, &db_thread.messages, cx);
+    });
+
+    thread
+}
+
+fn append_history_messages(
+    thread: &mut AcpThread,
+    messages: &[DbMessage],
+    cx: &mut Context<AcpThread>,
+) {
+    for message in messages {
+        match message {
+            DbMessage::User(user_message) => {
+                let text = format_user_message(user_message);
+                if !text.trim().is_empty() {
+                    let _ = thread.handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(text.into())),
+                        cx,
+                    );
+                }
+            }
+            DbMessage::Agent(agent_message) => {
+                for content in &agent_message.content {
+                    match content {
+                        agent::AgentMessageContent::Text(text) => {
+                            let _ = thread.handle_session_update(
+                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                    text.clone().into(),
+                                )),
+                                cx,
+                            );
+                        }
+                        agent::AgentMessageContent::Thinking { text, .. } => {
+                            let _ = thread.handle_session_update(
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                                    text.clone().into(),
+                                )),
+                                cx,
+                            );
+                        }
+                        agent::AgentMessageContent::RedactedThinking(_) => {
+                            let _ = thread.handle_session_update(
+                                acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                                    "<redacted_thinking />".to_string().into(),
+                                )),
+                                cx,
+                            );
+                        }
+                        agent::AgentMessageContent::ToolUse(tool_use) => {
+                            // Get the tool result from the agent message if available
+                            let tool_result = agent_message.tool_results.get(&tool_use.id);
+                            let is_error = tool_result.map(|r| r.is_error).unwrap_or(false);
+                            let status = if tool_result.is_some() {
+                                if is_error {
+                                    acp::ToolCallStatus::Failed
+                                } else {
+                                    acp::ToolCallStatus::Completed
+                                }
+                            } else {
+                                acp::ToolCallStatus::Pending
+                            };
+
+                            // Create proper tool call with title from tool name
+                            let tool_call = acp::ToolCall::new(
+                                tool_use.id.to_string(),
+                                tool_use.name.to_string(),
+                            )
+                            .status(status)
+                            .raw_input(tool_use.input.clone());
+
+                            // Add raw_output from tool result if available
+                            let tool_call = if let Some(result) = tool_result {
+                                tool_call.raw_output(result.output.clone())
+                            } else {
+                                tool_call
+                            };
+
+                            let _ = thread
+                                .handle_session_update(acp::SessionUpdate::ToolCall(tool_call), cx);
+                        }
+                    }
+                }
+            }
+            DbMessage::Resume => {
+                let _ = thread.handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                        "[resume]".to_string().into(),
+                    )),
+                    cx,
+                );
+            }
+        }
+    }
+}
+
+fn format_user_message(user_message: &agent::UserMessage) -> String {
+    let mut text = String::new();
+
+    for (index, content) in user_message.content.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+
+        match content {
+            agent::UserMessageContent::Text(message) => {
+                text.push_str(message);
+            }
+            agent::UserMessageContent::Mention { uri, content } => {
+                if content.is_empty() {
+                    text.push_str(&uri.as_link().to_string());
+                } else {
+                    text.push_str(&format!("{}\n\n{}", uri.as_link(), content));
+                }
+            }
+            agent::UserMessageContent::Image(_) => {
+                text.push_str("<image />");
+            }
+        }
+    }
+
+    text
 }
 
 #[derive(Debug)]
@@ -300,6 +512,7 @@ pub struct AcpThreadView {
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
+    pending_title_generation: Option<Task<()>>,
 }
 
 enum ThreadState {
@@ -425,6 +638,7 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
+                history_store.clone(),
                 track_load_event,
                 window,
                 cx,
@@ -462,6 +676,7 @@ impl AcpThreadView {
             resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
             in_flight_prompt: None,
+            pending_title_generation: None,
         }
     }
 
@@ -471,6 +686,7 @@ impl AcpThreadView {
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
+            self.history_store.clone(),
             true,
             window,
             cx,
@@ -485,6 +701,7 @@ impl AcpThreadView {
         resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        history_store: Entity<HistoryStore>,
         track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -548,18 +765,91 @@ impl AcpThreadView {
                 telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
             }
 
+            let mut history_only = false;
             let result = if let Some(native_agent) = connection
                 .clone()
                 .downcast::<agent::NativeAgentConnection>()
                 && let Some(resume) = resume_thread.clone()
             {
+                // Native agent: use open_thread to restore from database
                 cx.update(|_, cx| {
                     native_agent
                         .0
                         .update(cx, |agent, cx| agent.open_thread(resume.id, cx))
                 })
                 .log_err()
+            } else if let Some(resume) = resume_thread.clone() {
+                // External agent: try to resume session via ACP LoadSessionRequest
+                let root_dir_for_resume = root_dir
+                    .as_deref()
+                    .unwrap_or_else(|| paths::home_dir().as_path());
+                let resume_result = cx.update(|_, cx| {
+                    connection.clone().resume_thread(
+                        resume.id.clone(),
+                        project.clone(),
+                        root_dir_for_resume,
+                        cx,
+                    )
+                })
+                .log_err()
+                .flatten();
+
+                // If resume_thread returned None (agent doesn't support session resumption),
+                // fall back to a read-only history view (or create a new thread).
+                match resume_result {
+                    Some(task) => Some(task),
+                    None => {
+                        let history_task = history_store
+                            .update(cx, |history, cx| {
+                                history.load_thread(resume.id.clone(), cx)
+                            })
+                            .log_err();
+                        let db_thread = match history_task {
+                            Some(task) => task.await.log_err().flatten(),
+                            None => None,
+                        };
+
+                        if let Some(db_thread) = db_thread {
+                            log::info!(
+                                "External agent doesn't support session resumption, loading history for: {}",
+                                resume.id
+                            );
+                            let agent_name = resume.agent_name.clone();
+                            let session_id = resume.id.clone();
+                            let history_thread = cx
+                                .update(|_, cx| {
+                                    build_history_thread(
+                                        project.clone(),
+                                        agent_name,
+                                        session_id,
+                                        db_thread,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                            history_only = history_thread.is_some();
+                            history_thread.map(|thread| Task::ready(Ok(thread)))
+                        } else {
+                            // External agent doesn't support resume, create new thread instead
+                            // This allows users to continue their conversation with a fresh session
+                            log::info!(
+                                "External agent doesn't support session resumption, creating new thread for: {}",
+                                resume.id
+                            );
+                            let fallback_root_dir = root_dir
+                                .clone()
+                                .unwrap_or_else(|| paths::home_dir().as_path().into());
+                            cx.update(|_, cx| {
+                                connection
+                                    .clone()
+                                    .new_thread(project.clone(), &fallback_root_dir, cx)
+                            })
+                            .log_err()
+                        }
+                    }
+                }
             } else {
+                // New thread
                 let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
                 cx.update(|_, cx| {
                     connection
@@ -570,11 +860,21 @@ impl AcpThreadView {
             };
 
             let Some(result) = result else {
+                // No thread could be created (shouldn't happen unless connection failed)
+                this.update_in(cx, |this, _window, cx| {
+                    this.thread_error = Some(ThreadError::Other(
+                        "Failed to create agent thread. Please try again.".into()
+                    ));
+                    this.message_editor.update(cx, |editor, cx| {
+                        editor.set_read_only(true, cx);
+                    });
+                    cx.notify();
+                }).log_err();
                 return;
             };
 
-            let result = match result.await {
-                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
+            let result: Result<Entity<AcpThread>> = match result.await {
+                Err(e) => match e.downcast::<AuthRequired>() {
                     Ok(err) => {
                         cx.update(|window, cx| {
                             Self::handle_auth_required(this, err, agent, connection, window, cx)
@@ -679,10 +979,11 @@ impl AcpThreadView {
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
+                            cx.observe(&thread, Self::save_external_thread),
                         ];
 
                         let title_editor =
-                            if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
+                            if thread.update(cx, |thread: &mut AcpThread, cx| thread.can_set_title(cx)) {
                                 let editor = cx.new(|cx| {
                                     let mut editor = Editor::single_line(window, cx);
                                     editor.set_text(thread.read(cx).title(), window, cx);
@@ -704,6 +1005,10 @@ impl AcpThreadView {
                             mode_selector,
                             _subscriptions: subscriptions,
                         };
+
+                        this.message_editor.update(cx, |editor, cx| {
+                            editor.set_read_only(history_only, cx);
+                        });
 
                         this.profile_selector = this.as_native_thread(cx).map(|thread| {
                             cx.new(|cx| {
@@ -731,8 +1036,9 @@ impl AcpThreadView {
         cx.spawn(async move |this, cx| {
             while let Ok(new_version) = new_version_available_rx.recv().await {
                 if let Some(new_version) = new_version {
+                    let version: String = new_version;
                     this.update(cx, |this, cx| {
-                        this.new_server_version_available = Some(new_version.into());
+                        this.new_server_version_available = Some(version.into());
                         cx.notify();
                     })
                     .ok();
@@ -744,7 +1050,7 @@ impl AcpThreadView {
         let loading_view = cx.new(|cx| {
             let update_title_task = cx.spawn(async move |this, cx| {
                 loop {
-                    let status = status_rx.recv().await?;
+                    let status: SharedString = status_rx.recv().await?;
                     this.update(cx, |this: &mut LoadingView, cx| {
                         this.title = status;
                         cx.notify();
@@ -886,7 +1192,8 @@ impl AcpThreadView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
-            ThreadState::Ready { .. } | ThreadState::Unauthenticated { .. } => "New Thread".into(),
+            ThreadState::Ready { thread, .. } => thread.read(cx).title(),
+            ThreadState::Unauthenticated { .. } => DEFAULT_THREAD_TITLE.into(),
             ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
@@ -905,6 +1212,12 @@ impl AcpThreadView {
         } else {
             None
         }
+    }
+
+    /// Returns true if a title is currently being generated for this thread.
+    /// This works for both native and external agents.
+    pub fn is_generating_title(&self) -> bool {
+        self.pending_title_generation.is_some()
     }
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
@@ -974,7 +1287,7 @@ impl AcpThreadView {
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
                     title_editor.update(cx, |editor, cx| {
-                        editor.set_text("New Thread", window, cx);
+                        editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
                     });
                 }
             }
@@ -1424,6 +1737,149 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn save_external_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let agent_name = thread.read(cx).connection().agent_name();
+        // Native agent (Zed) has its own save logic via NativeAgent::save_thread
+        if agent_name.as_ref() == agent::AgentIdentity::ZED_AGENT_NAME {
+            return;
+        }
+
+        // Don't save empty threads
+        if thread.read(cx).entries().is_empty() {
+            return;
+        }
+
+        let session_id = thread.read(cx).session_id().clone();
+        let title = thread.read(cx).title();
+        let entries = thread.read(cx).entries();
+        let messages = agent::HistoryStore::convert_acp_entries_to_messages(entries, cx);
+
+        self.history_store.update(cx, |history, cx| {
+            history.save_external_thread(session_id, title, agent_name, messages, cx);
+        });
+    }
+
+    fn generate_title(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
+        if self.pending_title_generation.is_some() {
+            return;
+        }
+
+        let registry = LanguageModelRegistry::read_global(cx);
+        // Try thread_summary_model first, then fall back to default_model
+        let Some(model) = registry
+            .thread_summary_model()
+            .or_else(|| registry.default_model())
+            .map(|m| m.model)
+        else {
+            return;
+        };
+
+        let mut request = LanguageModelRequest {
+            intent: Some(cloud_llm_client::CompletionIntent::ThreadSummarization),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+            ..Default::default()
+        };
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: language_model::Role::User,
+            content: vec![MessageContent::Text(
+                agent_settings::SUMMARIZE_THREAD_PROMPT.into(),
+            )],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        let thread_read = thread.read(cx);
+        for entry in thread_read.entries() {
+            match entry {
+                AgentThreadEntry::UserMessage(msg) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: vec![MessageContent::Text(
+                            msg.content.to_markdown(cx).to_string(),
+                        )],
+                        cache: false,
+                        reasoning_details: None,
+                    });
+                }
+                AgentThreadEntry::AssistantMessage(msg) => {
+                    let mut text = String::new();
+                    for chunk in &msg.chunks {
+                        text.push_str(&chunk.to_markdown(cx));
+                        text.push('\n');
+                    }
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: language_model::Role::Assistant,
+                        content: vec![MessageContent::Text(text)],
+                        cache: false,
+                        reasoning_details: None,
+                    });
+                }
+                AgentThreadEntry::ToolCall(tool) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: language_model::Role::Assistant,
+                        content: vec![MessageContent::Text(tool.to_markdown(cx))],
+                        cache: false,
+                        reasoning_details: None,
+                    });
+                }
+            }
+        }
+
+        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
+            let mut title = String::new();
+
+            let generate = async {
+                let mut messages = model.stream_completion(request, cx).await?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        _ => continue,
+                    };
+
+                    let mut lines = text.lines();
+                    if let Some(line) = lines.next() {
+                        title.push_str(line);
+                    }
+
+                    // Stop if the LLM generated multiple lines.
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+                anyhow::Ok(())
+            };
+
+            if generate.await.context("failed to generate title").is_ok() && !title.is_empty() {
+                let title = SharedString::from(title);
+                let update_task = this.update(cx, |this, cx| {
+                    // Clear pending_title_generation at the same time as setting title,
+                    // so the breathing animation stops exactly when the title appears
+                    this.pending_title_generation = None;
+                    thread.update(cx, |thread, cx| {
+                        if thread.title() == DEFAULT_THREAD_TITLE {
+                            Some(thread.set_title(title, cx))
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                if let Ok(Some(task)) = update_task {
+                    task.await.log_err();
+                }
+            } else {
+                this.update(cx, |this, cx| {
+                    this.pending_title_generation = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
+        cx.notify();
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -1474,6 +1930,13 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+
+                if thread.read(cx).title() == DEFAULT_THREAD_TITLE {
+                    self.generate_title(thread.clone(), cx);
+                }
+
+                // Save external agent threads after each turn
+                self.save_external_thread(thread.clone(), cx);
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
@@ -3571,19 +4034,32 @@ impl AcpThreadView {
                                 cx,
                             ),
                         )
-                        .child(
+                        .child({
+                            let agent_server_store =
+                                self.project.read(cx).agent_server_store().clone();
                             v_flex().p_1().pr_1p5().gap_1().children(
                                 recent_history
                                     .into_iter()
                                     .enumerate()
                                     .map(|(index, entry)| {
-                                        // TODO: Add keyboard navigation.
+                                        // Look up custom icon path for this entry
+                                        let custom_icon_path = match &entry {
+                                            HistoryEntry::AcpThread(thread_entry) => {
+                                                let agent_name = ExternalAgentServerName(
+                                                    thread_entry.agent_name.clone(),
+                                                );
+                                                agent_server_store.read(cx).agent_icon(&agent_name)
+                                            }
+                                            HistoryEntry::TextThread(_) => None,
+                                        };
+
                                         let is_hovered =
                                             self.hovered_recent_history_item == Some(index);
                                         crate::acp::thread_history::AcpHistoryEntryElement::new(
                                             entry,
                                             cx.entity().downgrade(),
                                         )
+                                        .custom_icon_path(custom_icon_path)
                                         .hovered(is_hovered)
                                         .on_hover(cx.listener(
                                             move |this, is_hovered, _window, cx| {
@@ -3599,8 +4075,8 @@ impl AcpThreadView {
                                         ))
                                         .into_any_element()
                                     }),
-                            ),
-                        ),
+                            )
+                        }),
                 )
             })
             .into_any()
@@ -4873,6 +5349,9 @@ impl AcpThreadView {
                                     id,
                                     title: name.into(),
                                     updated_at: Default::default(),
+                                    agent_name: agent::AgentIdentity::ZED_AGENT_NAME.into(),
+                                    agent_version: None,
+                                    agent_provider_id: None,
                                 },
                                 window,
                                 cx,
@@ -6845,6 +7324,10 @@ pub(crate) mod tests {
             unimplemented!()
         }
 
+        fn agent_name(&self) -> SharedString {
+            "saboteur".into()
+        }
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
@@ -6907,6 +7390,10 @@ pub(crate) mod tests {
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
             unimplemented!()
+        }
+
+        fn agent_name(&self) -> SharedString {
+            "refusal".into()
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

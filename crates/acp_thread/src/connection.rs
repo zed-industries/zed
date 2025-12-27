@@ -29,6 +29,19 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
+    /// Resume a thread with the given session ID.
+    /// This is used to restore external agent sessions.
+    /// Returns None if the agent doesn't support session resumption.
+    fn resume_thread(
+        self: Rc<Self>,
+        _session_id: acp::SessionId,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Option<Task<Result<Entity<AcpThread>>>> {
+        None
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
@@ -93,6 +106,10 @@ pub trait AgentConnection {
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
         None
     }
+
+    /// Returns the agent name for database storage.
+    /// This is used to identify which agent created a thread.
+    fn agent_name(&self) -> SharedString;
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
@@ -364,6 +381,10 @@ mod test_support {
 
     impl AgentConnection for StubAgentConnection {
         fn telemetry_id(&self) -> SharedString {
+            "stub".into()
+        }
+
+        fn agent_name(&self) -> SharedString {
             "stub".into()
         }
 
