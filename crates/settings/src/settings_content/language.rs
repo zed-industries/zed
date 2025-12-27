@@ -79,6 +79,7 @@ pub enum EditPredictionProvider {
     Experimental(&'static str),
 }
 
+pub const EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME: &str = "amp_tab";
 pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
 pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
@@ -105,6 +106,13 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
             Content::Experimental(name)
                 if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
             {

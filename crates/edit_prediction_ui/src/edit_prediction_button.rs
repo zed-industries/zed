@@ -6,6 +6,7 @@ use copilot::{Copilot, Status};
 use edit_prediction::{
     EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
 };
+use edit_prediction_context::AmpTabEditPredictionDelegate;
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -25,6 +26,7 @@ use language::{
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{
+    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
@@ -293,6 +295,55 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let has_api_key = AmpTabEditPredictionDelegate::has_api_key(cx);
+                let this = cx.weak_entity();
+
+                let tooltip_meta = if has_api_key {
+                    "Powered by Amp Tab"
+                } else {
+                    "Missing API key for Amp Tab"
+                };
+
+                div().child(
+                    PopoverMenu::new("amp-tab")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| this.build_amp_tab_context_menu(window, cx))
+                                .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("amp-tab-icon", IconName::AmpTab)
+                                .shape(IconButtonShape::Square)
+                                .when(!has_api_key, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(has_api_key && !enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+
             provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
@@ -547,6 +598,12 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
+        if AmpTabEditPredictionDelegate::has_api_key(cx) {
+            providers.push(EditPredictionProvider::Experimental(
+                EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+            ));
+        }
+
         if cx.has_flag::<SweepFeatureFlag>()
             && edit_prediction::sweep_ai::sweep_api_token(cx)
                 .read(cx)
@@ -595,6 +652,9 @@ impl EditPredictionButton {
                     EditPredictionProvider::Copilot => "GitHub Copilot",
                     EditPredictionProvider::Supermaven => "Supermaven",
                     EditPredictionProvider::Codestral => "Codestral",
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+                    ) => "Amp Tab",
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => "Sweep",
@@ -977,6 +1037,25 @@ impl EditPredictionButton {
             let menu = self.build_language_settings_menu(menu, window, cx);
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Codestral, cx);
+
+            menu
+        })
+    }
+
+    fn build_amp_tab_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let menu = self.build_language_settings_menu(menu, window, cx);
+            let menu = self.add_provider_switching_section(
+                menu,
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+                ),
+                cx,
+            );
 
             menu
         })

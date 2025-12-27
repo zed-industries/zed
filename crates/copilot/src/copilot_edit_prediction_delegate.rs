@@ -2,6 +2,7 @@ use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
 use gpui::{App, Context, Entity, Task};
+use icons::IconName;
 use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
 use std::{ops::Range, sync::Arc, time::Duration};
 
@@ -42,6 +43,10 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn icon(&self, _cx: &App) -> IconName {
+        IconName::Copilot
     }
 
     fn is_refreshing(&self, _cx: &App) -> bool {

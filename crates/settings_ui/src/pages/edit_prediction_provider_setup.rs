@@ -1,8 +1,5 @@
-use edit_prediction::{
-    ApiKeyState, Zeta2FeatureFlag,
-    mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
-    sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
-};
+use edit_prediction::{ApiKeyState, Zeta2FeatureFlag, mercury, sweep_ai};
+use edit_prediction_context::amp_tab;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
@@ -33,13 +30,26 @@ impl Render for EditPredictionSetupPage {
 
         let providers = [
             Some(render_github_copilot_provider(window, cx).into_any_element()),
+            Some(
+                render_api_key_provider(
+                    IconName::AmpTab,
+                    "Amp Tab",
+                    "https://ampcode.com/".into(),
+                    amp_tab::amp_tab_api_token(cx),
+                    |_cx| amp_tab::AMP_TAB_CREDENTIALS_URL,
+                    None,
+                    window,
+                    cx,
+                )
+                .into_any_element(),
+            ),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,
                     "Mercury",
                     "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
-                    mercury_api_token(cx),
-                    |_cx| MERCURY_CREDENTIALS_URL,
+                    mercury::mercury_api_token(cx),
+                    |_cx| mercury::MERCURY_CREDENTIALS_URL,
                     None,
                     window,
                     cx,
@@ -51,8 +61,8 @@ impl Render for EditPredictionSetupPage {
                     IconName::SweepAi,
                     "Sweep",
                     "https://app.sweep.dev/".into(),
-                    sweep_api_token(cx),
-                    |_cx| SWEEP_CREDENTIALS_URL,
+                    sweep_ai::sweep_api_token(cx),
+                    |_cx| sweep_ai::SWEEP_CREDENTIALS_URL,
                     None,
                     window,
                     cx,

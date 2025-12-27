@@ -75,6 +75,7 @@ gpui_tokio.workspace = true
 rayon.workspace = true
 
 edit_prediction.workspace = true
+edit_prediction_context.workspace = true
 edit_prediction_ui.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
