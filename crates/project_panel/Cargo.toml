@@ -44,6 +44,7 @@ worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
+panel.workspace = true
 telemetry.workspace = true
 notifications.workspace = true
 
