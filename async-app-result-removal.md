@@ -92,18 +92,41 @@ Apply the same pattern to:
 
 ### AppContext Trait
 
-Change the associated type:
+Remove the `Result<T>` associated type entirely. All context types will now return values directly:
+
 ```rust
 // Before
+pub trait AppContext {
+    type Result<T>;
+    fn new<T>(...) -> Self::Result<Entity<T>>;
+    fn update_entity<T, R>(...) -> Self::Result<R>;
+    // etc.
+}
+
 impl AppContext for AsyncApp {
     type Result<T> = Result<T>;
+    // ...
 }
 
 // After
+pub trait AppContext {
+    fn new<T>(...) -> Entity<T>;
+    fn update_entity<T, R>(...) -> R;
+    // etc.
+}
+
 impl AppContext for AsyncApp {
-    type Result<T> = T;
+    // All methods return values directly, panicking if app is gone
+    // ...
 }
 ```
+
+### Remove Flatten Trait
+
+The `Flatten` trait in `gpui.rs` exists solely to handle `Result<Result<T>>` when `WeakEntity` (returns `Result`) is used with `AsyncApp` (also returns `Result`). With this change:
+- `AsyncApp` methods return `T` directly
+- `WeakEntity::update` etc. return `Result<T>` (only for the weak upgrade)
+- No `Result<Result<T>>` case exists, so `Flatten` can be removed
 
 ### RunnableMeta
 
@@ -117,48 +140,36 @@ pub struct RunnableMeta {
 
 ## Implementation Phases
 
-### Phase 1: Add Trampoline Check Infrastructure
+### Phase 1: Add Trampoline Check Infrastructure (macOS First)
+
+Start with macOS to validate the approach before implementing on other platforms.
 
 1. Modify `RunnableMeta` to include `Option<Weak<AppCell>>`
-2. Update trampoline functions in all dispatchers to check app status before running:
+2. Update trampoline function in Mac dispatcher to check app status before running:
    - `crates/gpui/src/platform/mac/dispatcher.rs`
-   - `crates/gpui/src/platform/linux/dispatcher.rs`
-   - `crates/gpui/src/platform/windows/dispatcher.rs`
+3. Update trampoline function in Test dispatcher (needed for tests):
    - `crates/gpui/src/platform/test/dispatcher.rs`
-3. Modify spawn paths in `AsyncApp` to populate the app weak pointer in metadata
+4. Modify spawn paths in `AsyncApp` to populate the app weak pointer in metadata
+5. Write tests to validate cancellation behavior on macOS
 
-### Phase 2: Update AsyncApp API
+### Phase 2: Extend to Other Platforms
+
+After validating on macOS:
+
+1. Update trampoline function in Linux dispatcher:
+   - `crates/gpui/src/platform/linux/dispatcher.rs`
+2. Update trampoline function in Windows dispatcher:
+   - `crates/gpui/src/platform/windows/dispatcher.rs`
+
+### Phase 3: Update AsyncApp API & Remove AppContext::Result
 
 1. Rename `update() -> Result<R>` to `try_update() -> Option<R>`
 2. Add new `update() -> R` that panics if app is gone
 3. Apply same pattern to all fallible methods
-4. Update `AppContext` trait's associated `Result` type
-
-### Phase 3: Audit Cross-Boundary Awaits
-
-Search for patterns where background code awaits foreground tasks:
-```
-background_executor().spawn(...).await  // awaiting foreground work
-```
-
-Migrate these to use `try_update()` or handle the `Option`.
-
-Known patterns to check:
-- `cx.spawn(...).await` called from background context
-- Channels receiving from foreground tasks
-- Any `Task<T>` held across thread boundaries
-
-### Phase 4: Codebase Migration
-
-1. Update all callsites to remove `.unwrap()`, `?`, `.ok()` from `update()` calls
-2. Use `try_update()` where `Option` handling is needed
-3. This is a large mechanical change across ~500+ callsites
-
-### Phase 5: Cleanup
-
-1. Remove now-dead error handling code
-2. Update documentation
-3. Add tests validating cancellation behavior
+4. Remove `type Result<T>` from `AppContext` trait
+5. Update all trait method signatures to return `R` directly
+6. Remove `Flatten` trait from `gpui.rs`
+7. Update `WeakEntity::update`, `WeakEntity::read_with`, etc. to remove `Flatten` bounds
 
 ## Files to Modify
 
@@ -166,13 +177,17 @@ Known patterns to check:
 - `crates/gpui/src/app/async_context.rs` - AsyncApp implementation
 - `crates/gpui/src/executor.rs` - RunnableMeta, spawn functions
 - `crates/gpui/src/platform.rs` - RunnableVariant if needed
-- `crates/gpui/src/gpui.rs` - AppContext trait
+- `crates/gpui/src/gpui.rs` - AppContext trait (remove Result type), remove Flatten trait
+- `crates/gpui/src/app/entity_map.rs` - Update WeakEntity to remove Flatten usage
 
 ### Dispatcher Changes
-- `crates/gpui/src/platform/mac/dispatcher.rs` - trampoline function
-- `crates/gpui/src/platform/linux/dispatcher.rs` - trampoline function
-- `crates/gpui/src/platform/windows/dispatcher.rs` - trampoline function
-- `crates/gpui/src/platform/test/dispatcher.rs` - trampoline function
+- `crates/gpui/src/platform/mac/dispatcher.rs` - trampoline function (Phase 1)
+- `crates/gpui/src/platform/test/dispatcher.rs` - trampoline function (Phase 1)
+- `crates/gpui/src/platform/linux/dispatcher.rs` - trampoline function (Phase 2)
+- `crates/gpui/src/platform/windows/dispatcher.rs` - trampoline function (Phase 2)
+
+### External Crate Changes
+- `crates/eval/src/example.rs` - ExampleContext's AppContext impl (update to remove Result type)
 
 ### Realtime Tasks (No Changes Needed)
 Realtime/audio tasks use a separate code path with their own thread and channel. They don't use `AsyncApp` and won't be affected.
@@ -237,5 +252,13 @@ Entity operations via AsyncApp still work.
 1. `cargo test -p gpui` passes
 2. `cargo run -p gpui --example async_cancellation` works correctly
 3. `./script/clippy` passes
-4. Full test suite `cargo test` passes
+4. Full test suite `cargo test` passes (at least on macOS initially)
 5. Manual test: close windows with pending tasks, verify no panics
+
+## Future Work (Separate Brief)
+
+The following phases will be addressed in a separate brief after this work is validated:
+
+1. **Audit Cross-Boundary Awaits** - Search for patterns where background code awaits foreground tasks and migrate to `try_update()`
+2. **Codebase Migration** - Update all ~500+ callsites to remove `.unwrap()`, `?`, `.ok()` from `update()` calls
+3. **Cleanup** - Remove dead error handling code, update documentation
