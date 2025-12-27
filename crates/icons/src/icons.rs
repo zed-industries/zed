@@ -579,3 +579,30 @@ impl<'de> Deserialize<'de> for IconName {
         deserializer.deserialize_str(IconNameVisitor)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_known_icon() {
+        let json = r#""File""#;
+        let icon: IconName = serde_json::from_str(json).unwrap();
+        assert_eq!(icon, IconName::File);
+    }
+
+    #[test]
+    fn test_deserialize_unknown_icon_falls_back_to_default() {
+        let json = r#""SomeRemovedIcon""#;
+        let icon: IconName = serde_json::from_str(json).unwrap();
+        assert_eq!(icon, IconName::File);
+    }
+
+    #[test]
+    fn test_serialize_roundtrip() {
+        let original = IconName::Folder;
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: IconName = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, deserialized);
+    }
+}
