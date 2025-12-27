@@ -19,5 +19,5 @@ tree-sitter-rust.workspace = true
 criterion.workspace = true
 
 [[bench]]
-name = "gum_tree_benchmark"
+name = "diff_tree"
 harness = false
