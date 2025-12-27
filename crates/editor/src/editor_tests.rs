@@ -28735,6 +28735,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             .into_iter()
             .enumerate()
             .map(|(i, row)| (DisplayRow(row), i.abs_diff(wrapped_base_row) as u32))
+            .filter(|(row, _)| *row != base_display_row)
             .collect_vec();
         let actual_relative_numbers = snapshot
             .calculate_relative_line_numbers(
