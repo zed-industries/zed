@@ -1,21 +1,22 @@
+// Fork of ui/data_table.rs to reduce compilation times
+#![allow(dead_code)]
 use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListAlignment, ListHorizontalSizingBehavior, ListSizingBehavior,
-    ListState, Point, Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black,
-    uniform_list,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
+    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
-use crate::{
+use itertools::intersperse_with;
+use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
-    StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
-    single_example, v_flex,
+    ScrollAxes, ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled,
+    StyledExt as _, StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex,
+    px, single_example, v_flex,
 };
-use itertools::intersperse_with;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
@@ -68,14 +69,16 @@ pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
     pub custom_scrollbar: Option<Scrollbars>,
+    pub list_state: ListState,
 }
 
 impl TableInteractionState {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(cx: &mut App, list_state: ListState) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             custom_scrollbar: None,
+            list_state,
         }
     }
 
@@ -207,6 +210,7 @@ impl TableResizeBehavior {
     }
 }
 
+#[derive(Debug)]
 pub struct TableColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     visible_widths: [DefiniteLength; COLS],
@@ -499,6 +503,7 @@ pub struct Table<const COLS: usize = 3> {
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
+    disable_base_cell_style: bool,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -514,7 +519,15 @@ impl<const COLS: usize> Table<COLS> {
             use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
+            disable_base_cell_style: false,
         }
+    }
+
+    /// Disables based styling of row cell (paddings, overflow hidden, etc), keeping width settings
+    /// Doesn't affect base style of header cell
+    pub fn disable_base_style(mut self) -> Self {
+        self.disable_base_cell_style = true;
+        self
     }
 
     /// Enables uniform list rendering.
@@ -541,9 +554,9 @@ impl<const COLS: usize> Table<COLS> {
     pub fn variable_row_height_list(
         mut self,
         row_count: usize,
+        list_state: ListState,
         render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
     ) -> Self {
-        let list_state = ListState::new(row_count, ListAlignment::Top, px(0.0));
         self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
             render_row_fn: Box::new(render_row_fn),
             list_state,
@@ -694,10 +707,18 @@ pub fn render_table_row<const COLS: usize>(
             .into_iter()
             .zip(column_widths)
             .map(|(cell, width)| {
-                base_cell_style_text(width, table_context.use_ui_font, cx)
-                    .px_1()
-                    .py_0p5()
-                    .child(cell)
+                if table_context.disable_base_cell_style {
+                    div()
+                        .when_some(width, |this, width| this.w(width))
+                        .when(width.is_none(), |this| this.flex_1())
+                        .overflow_hidden()
+                        .child(cell)
+                } else {
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .px_1()
+                        .py_0p5()
+                        .child(cell)
+                }
             }),
     );
 
@@ -782,6 +803,7 @@ pub struct TableRenderContext<const COLS: usize> {
     pub column_widths: Option<[Length; COLS]>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     pub use_ui_font: bool,
+    pub disable_base_cell_style: bool,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -792,6 +814,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
             use_ui_font: table.use_ui_font,
+            disable_base_cell_style: table.disable_base_cell_style,
         }
     }
 }
@@ -965,7 +988,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .read(cx)
                         .custom_scrollbar
                         .clone()
-                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
+                        .unwrap_or_else(|| Scrollbars::new(ScrollAxes::Both));
                     content
                         .custom_scrollbars(
                             scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
