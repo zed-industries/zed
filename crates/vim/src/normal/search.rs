@@ -49,8 +49,6 @@ pub(crate) struct MoveToPrevious {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
-    #[serde(default = "default_true")]
-    regex: bool,
 }
 
 /// Executes a find command to search for patterns in the buffer.
@@ -99,6 +97,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
     Vim::action(editor, cx, Vim::search_deploy);
+
     Vim::action(editor, cx, Vim::find_command);
     Vim::action(editor, cx, Vim::replace_command);
 }
@@ -172,17 +171,13 @@ impl Vim {
                     cx.focus_self(window);
 
                     search_bar.set_replacement(None, cx);
-                    let mut options = SearchOptions::NONE;
-                    if action.regex {
-                        options |= SearchOptions::REGEX;
-                    }
                     if action.backwards {
-                        options |= SearchOptions::BACKWARDS;
+                        search_bar.set_search_options(
+                            search_bar.search_options() | SearchOptions::BACKWARDS,
+                            cx,
+                        );
                     }
-                    if EditorSettings::get_global(cx).search.case_sensitive {
-                        options |= SearchOptions::CASE_SENSITIVE;
-                    }
-                    search_bar.set_search_options(options, cx);
+
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
                     } else {
