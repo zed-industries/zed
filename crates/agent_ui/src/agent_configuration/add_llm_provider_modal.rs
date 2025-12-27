@@ -8,7 +8,7 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
-use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use settings::{CustomHeader, OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
     WithScrollbar, prelude::*,
@@ -63,6 +63,8 @@ struct AddLlmProviderInput {
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
     models: Vec<ModelInput>,
+    custom_header_names: Vec<Entity<InputField>>,
+    custom_header_values: Vec<Entity<InputField>>,
 }
 
 impl AddLlmProviderInput {
@@ -79,11 +81,24 @@ impl AddLlmProviderInput {
             cx,
         );
 
+        let header_name = cx.new(|cx| {
+            InputField::new(window, cx, "Header Name")
+                .tab_index(4)
+                .tab_stop(true)
+        });
+        let header_value = cx.new(|cx| {
+            InputField::new(window, cx, "Header Value")
+                .tab_index(5)
+                .tab_stop(true)
+        });
+
         Self {
             provider_name,
             api_url,
             api_key,
             models: vec![ModelInput::new(0, window, cx)],
+            custom_header_names: vec![header_name],
+            custom_header_values: vec![header_value],
         }
     }
 
@@ -254,7 +269,24 @@ fn save_provider_to_settings(
         }
     }
 
+    // Collect custom headers from input fields
+    let mut headers: Vec<CustomHeader> = Vec::new();
+    for i in 0..input.custom_header_names.len() {
+        let name = input.custom_header_names[i].read(cx).text(cx).to_string();
+        let value = input.custom_header_values[i].read(cx).text(cx).to_string();
+        if !name.trim().is_empty() {
+            headers.push(CustomHeader { name, value });
+        }
+    }
+
+    let custom_headers = if headers.is_empty() {
+        None
+    } else {
+        Some(headers)
+    };
+
     let fs = <dyn Fs>::global(cx);
+
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
     cx.spawn(async move |cx| {
         task.await
@@ -271,6 +303,7 @@ fn save_provider_to_settings(
                         OpenAiCompatibleSettingsContent {
                             api_url,
                             available_models: models,
+                            custom_headers: custom_headers,
                         },
                     );
             });
@@ -327,6 +360,78 @@ impl AddLlmProviderModal {
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
+    }
+
+    fn render_custom_headers_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .mt_1()
+            .gap_2()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new("Custom HTTP headers").size(LabelSize::Small))
+                    .child(
+                        Button::new("add-header", "Add Header")
+                            .icon(IconName::Plus)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _e, window, cx| {
+                                let tab_index =
+                                    (4 + this.input.custom_header_names.len() * 2) as isize;
+                                this.input.custom_header_names.push(cx.new(|cx| {
+                                    InputField::new(window, cx, "Header Name")
+                                        .tab_index(tab_index)
+                                        .tab_stop(true)
+                                }));
+                                this.input.custom_header_values.push(cx.new(|cx| {
+                                    InputField::new(window, cx, "Header Value")
+                                        .tab_index(tab_index + 1)
+                                        .tab_stop(true)
+                                }));
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children(
+                (0..self.input.custom_header_names.len())
+                    .map(|ix| self.render_custom_header(ix, cx)),
+            )
+    }
+
+    fn render_custom_header(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        v_flex()
+            .p_2()
+            .gap_2()
+            .rounded_sm()
+            .border_1()
+            .border_dashed()
+            .border_color(cx.theme().colors().border.opacity(0.6))
+            .bg(cx.theme().colors().element_active.opacity(0.15))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(self.input.custom_header_names[ix].clone())
+                    .child(self.input.custom_header_values[ix].clone()),
+            )
+            .child(
+                Button::new(("remove-header", ix), "Remove Header")
+                    .icon(IconName::Trash)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .full_width()
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        if ix < this.input.custom_header_names.len() {
+                            this.input.custom_header_names.remove(ix);
+                            this.input.custom_header_values.remove(ix);
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     fn render_model_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -531,6 +636,7 @@ impl Render for AddLlmProviderModal {
                                     .child(self.input.provider_name.clone())
                                     .child(self.input.api_url.clone())
                                     .child(self.input.api_key.clone())
+                                    .child(self.render_custom_headers_section(cx))
                                     .child(self.render_model_section(cx)),
                             ),
                     )

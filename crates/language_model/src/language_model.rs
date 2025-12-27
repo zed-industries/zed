@@ -186,7 +186,7 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         message: String,
     },
-    #[error("language model provider API endpoint not found")]
+    #[error("language model provider API endpoint not found: {provider}")]
     ApiEndpointNotFound { provider: LanguageModelProviderName },
     #[error("I/O error reading response from {provider}'s API")]
     ApiReadResponseError {

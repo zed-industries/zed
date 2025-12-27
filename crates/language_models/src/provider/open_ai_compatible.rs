@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use convert_case::{Case, Casing};
+use fs::Fs;
 use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
@@ -11,13 +12,14 @@ use language_model::{
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+pub use settings::CustomHeader;
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -25,6 +27,7 @@ pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: Option<Vec<CustomHeader>>,
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -208,11 +211,12 @@ impl OpenAiCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+        let Ok((api_key, api_url, custom_headers)) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
+                state.settings.custom_headers.clone(),
             )
         }) else {
             return future::ready(Err(anyhow!("App state dropped").into())).boxed();
@@ -229,6 +233,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                custom_headers.as_ref(),
             );
             let response = request.await?;
             Ok(response)
@@ -348,6 +353,8 @@ struct ConfigurationView {
     api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    header_name_inputs: Vec<Entity<InputField>>,
+    header_value_inputs: Vec<Entity<InputField>>,
 }
 
 impl ConfigurationView {
@@ -383,10 +390,27 @@ impl ConfigurationView {
             }
         }));
 
+        // Initialize header input fields from current settings
+        let existing_headers = state
+            .read(cx)
+            .settings
+            .custom_headers
+            .clone()
+            .unwrap_or_default();
+
+        let mut header_name_inputs = Vec::with_capacity(existing_headers.len());
+        let mut header_value_inputs = Vec::with_capacity(existing_headers.len());
+        for h in existing_headers.iter() {
+            header_name_inputs.push(cx.new(|cx| InputField::new(window, cx, &h.name)));
+            header_value_inputs.push(cx.new(|cx| InputField::new(window, cx, &h.value)));
+        }
+
         Self {
             api_key_editor,
             state,
             load_credentials_task,
+            header_name_inputs,
+            header_value_inputs,
         }
     }
 
@@ -424,6 +448,59 @@ impl ConfigurationView {
 
     fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
+    }
+
+    fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.header_name_inputs
+            .push(cx.new(|cx| InputField::new(window, cx, "")));
+        self.header_value_inputs
+            .push(cx.new(|cx| InputField::new(window, cx, "")));
+    }
+
+    fn remove_header(&mut self, index: usize) {
+        if index < self.header_name_inputs.len() && index < self.header_value_inputs.len() {
+            self.header_name_inputs.remove(index);
+            self.header_value_inputs.remove(index);
+        }
+    }
+
+    fn save_headers(&mut self, cx: &mut Context<Self>) {
+        // Collect header entries from inputs
+        let mut headers: Vec<CustomHeader> = Vec::new();
+        for i in 0..self.header_name_inputs.len() {
+            let name = self.header_name_inputs[i]
+                .read(cx)
+                .text(cx)
+                .trim()
+                .to_string();
+            let value = self.header_value_inputs[i].read(cx).text(cx).to_string();
+            if !name.is_empty() {
+                headers.push(CustomHeader { name, value });
+            }
+        }
+
+        // Optional: basic dedup by case-insensitive name; keep first occurrence
+        let mut seen = std::collections::HashSet::<String>::new();
+        headers.retain(|h| seen.insert(h.name.to_lowercase()));
+
+        // Persist to settings
+        let fs = <dyn Fs>::global(cx);
+        let id = self.state.read(cx).id.clone();
+        update_settings_file(fs, cx, move |settings, _| {
+            if let Some(ref mut map) = settings
+                .language_models
+                .as_mut()
+                .and_then(|lm| lm.openai_compatible.as_mut())
+            {
+                if let Some(entry) = map.get_mut(&id) {
+                    entry.custom_headers = if headers.is_empty() {
+                        None
+                    } else {
+                        Some(headers.clone())
+                    };
+                }
+            }
+        });
     }
 }
 
@@ -500,7 +577,84 @@ impl Render for ConfigurationView {
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials…")).into_any()
         } else {
-            v_flex().size_full().child(api_key_section).into_any()
+            // Build Custom Headers section
+            let mut headers_list = v_flex().gap_1();
+            for i in 0..self.header_name_inputs.len() {
+                headers_list = headers_list.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(self.header_name_inputs[i].clone()),
+                        )
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(self.header_value_inputs[i].clone()),
+                        )
+                        .child(
+                            Button::new(("remove-header", i), "")
+                                .style(ButtonStyle::Transparent)
+                                .icon(IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener({
+                                    let index = i;
+                                    move |this, _evt, _window, _cx| {
+                                        this.remove_header(index);
+                                    }
+                                })),
+                        ),
+                );
+            }
+
+            let headers_section = v_flex()
+                .mt_3()
+                .gap_1()
+                .child(Headline::new("Custom HTTP headers"))
+                .child(
+                    Label::new(
+                        "These headers will be sent with each request to this provider’s API URL.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(headers_list)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .justify_between()
+                        .child(
+                            Button::new("add-header", "Add header")
+                                .style(ButtonStyle::Outlined)
+                                .icon(IconName::Plus)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .on_click(cx.listener(|this, _evt, window, cx| {
+                                    this.add_header(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("save-headers", "Save headers")
+                                .style(ButtonStyle::Filled)
+                                .icon(IconName::Check)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .on_click(
+                                    cx.listener(|this, _evt, _window, cx| this.save_headers(cx)),
+                                ),
+                        ),
+                );
+
+            v_flex()
+                .size_full()
+                .on_action(cx.listener(Self::save_api_key))
+                .child(api_key_section)
+                .child(headers_section)
+                .into_any()
         }
     }
 }

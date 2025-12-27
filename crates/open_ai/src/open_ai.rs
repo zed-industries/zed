@@ -6,6 +6,7 @@ use http_client::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::CustomHeader;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
@@ -498,13 +499,20 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    custom_headers: Option<&Vec<CustomHeader>>,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    if let Some(headers) = custom_headers {
+        for custom_header in headers {
+            request_builder = request_builder.header(&custom_header.name, &custom_header.value);
+        }
+    }
 
     let request = request_builder
         .body(AsyncBody::from(
