@@ -165,7 +165,7 @@ impl CsvPreviewView {
         });
 
         // Focus the editor immediately after creation
-        editor.read(cx).focus_handle(cx).focus(window);
+        editor.read(cx).focus_handle(cx).focus(window, cx);
 
         self.cell_editor = Some(CellEditorCtx {
             editor: cx.new(|cx| CellEditor {
