@@ -117,7 +117,7 @@ use indent_guides::ActiveIndentGuidesState;
 use inlays::{InlaySplice, inlay_hints::InlayHintRefreshReason};
 use itertools::{Either, Itertools};
 use language::{
-    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
+    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferId, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, OffsetRangeExt,
@@ -190,7 +190,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
+use text::{FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
     AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
@@ -1190,6 +1190,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    path_overrides: HashMap<BufferId, String>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
@@ -2383,6 +2384,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
             registered_buffers: HashMap::default(),
+            path_overrides: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -21392,6 +21394,10 @@ impl Editor {
 
     pub fn set_breadcrumb_header(&mut self, new_header: String) {
         self.breadcrumb_header = Some(new_header);
+    }
+
+    pub fn set_path_override(&mut self, buffer_id: BufferId, path: String) {
+        self.path_overrides.insert(buffer_id, path);
     }
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut Context<Self>) {

@@ -14,6 +14,8 @@ pub enum CliRequest {
         paths: Vec<String>,
         urls: Vec<String>,
         diff_paths: Vec<[String; 2]>,
+        diff_labels: Vec<String>,
+        diff_all: bool,
         wsl: Option<String>,
         wait: bool,
         open_new_workspace: Option<bool>,
