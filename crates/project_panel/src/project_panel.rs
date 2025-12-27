@@ -274,11 +274,11 @@ struct SelectPrevDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-    actions!(
-        project_panel,
-        [
-            /// Expands the selected entry in the project tree.
-            ExpandSelectedEntry,
+actions!(
+    project_panel,
+    [
+        /// Expands the selected entry in the project tree.
+        ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
@@ -337,14 +337,14 @@ struct SelectPrevDiagnostic {
         SelectPrevGitEntry,
         /// Selects the next directory.
         SelectNextDirectory,
-            /// Selects the previous directory.
-            SelectPrevDirectory,
-            /// Opens a diff view to compare two marked files.
-            CompareMarkedFiles,
-            /// Reloads all files in the project panel.
-            ReloadFiles,
-        ]
-    );
+        /// Selects the previous directory.
+        SelectPrevDirectory,
+        /// Opens a diff view to compare two marked files.
+        CompareMarkedFiles,
+        /// Reloads all files in the project panel.
+        ReloadFiles,
+    ]
+);
 
 #[derive(Clone, Debug, Default)]
 struct FoldedAncestors {
