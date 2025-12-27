@@ -21,8 +21,8 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    remote_client::ConnectionIdentifier,
+    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, SshPortForwardOption,
+    WslConnectionOptions, remote_client::ConnectionIdentifier,
 };
 use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
@@ -161,6 +161,113 @@ impl AddWslDistro {
     }
 }
 
+struct ListPortForwardState {
+    index: SshServerIndex,
+    port_forwards: Vec<PortForward>,
+    port_entries: Vec<NavigableEntry>,
+    add_button_entry: NavigableEntry,
+    go_back_entry: NavigableEntry,
+}
+struct PortForward {
+    local: String,
+    remote: String,
+}
+impl ListPortForwardState {
+    fn new(index: SshServerIndex, _port_index: usize, _window: &mut Window, cx: &mut App) -> Self {
+        let port_forwards = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(index.0)
+            .and_then(|state| {
+                state.port_forwards.as_ref().map(|port_forwards_vec| {
+                    port_forwards_vec
+                        .iter()
+                        .map(|pf| PortForward {
+                            local: pf.local_port.to_string(),
+                            remote: pf.remote_port.to_string(),
+                        })
+                        .collect::<Vec<PortForward>>()
+                })
+            })
+            .unwrap_or_default();
+
+        Self::with_port_forwards(index, port_forwards, cx)
+    }
+
+    fn with_port_forwards(
+        index: SshServerIndex,
+        port_forwards: Vec<PortForward>,
+        cx: &mut App,
+    ) -> Self {
+        let port_entries = (0..port_forwards.len())
+            .map(|_| NavigableEntry::focusable(cx))
+            .collect();
+
+        Self {
+            index,
+            port_forwards,
+            port_entries,
+            add_button_entry: NavigableEntry::focusable(cx),
+            go_back_entry: NavigableEntry::focusable(cx),
+        }
+    }
+}
+struct EditPortForwardState {
+    index: SshServerIndex,
+    port_index: usize,
+    editor: Entity<Editor>,
+    entries: [NavigableEntry; 2],
+}
+impl EditPortForwardState {
+    fn new(index: SshServerIndex, port_index: usize, window: &mut Window, cx: &mut App) -> Self {
+        let editor = cx.new(|cx| Editor::single_line(window, cx));
+
+        if let Some(port_forward_text) = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(index.0)
+            .and_then(|conn| {
+                conn.port_forwards.as_ref().and_then(|forwards| {
+                    forwards
+                        .get(port_index)
+                        .map(|pf| format!("{}:{}", pf.remote_port, pf.local_port))
+                })
+            })
+        {
+            editor.update(cx, |ed, cx| {
+                ed.set_text(port_forward_text, window, cx);
+                ed.set_placeholder_text("remote_port:local_port", window, cx);
+            });
+        }
+
+        editor.focus_handle(cx).focus(window);
+
+        let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
+
+        Self {
+            index,
+            port_index,
+            editor,
+            entries,
+        }
+    }
+}
+struct AddPortForwardState {
+    index: SshServerIndex,
+    editor: Entity<Editor>,
+}
+impl AddPortForwardState {
+    fn new(index: SshServerIndex, window: &mut Window, cx: &mut App) -> Self {
+        let this = Self {
+            index,
+            editor: cx.new(|cx| Editor::single_line(window, cx)),
+        };
+        this.editor.update(cx, |this, cx| {
+            this.set_placeholder_text("remote_port:local_port", window, cx);
+        });
+        this.editor.focus_handle(cx).focus(window);
+        this
+    }
+}
+
 enum ProjectPickerData {
     Ssh {
         connection_string: SharedString,
@@ -236,7 +343,7 @@ impl ProjectPicker {
         let data = match &connection {
             RemoteConnectionOptions::Ssh(connection) => ProjectPickerData::Ssh {
                 connection_string: connection.connection_string().into(),
-                nickname: connection.nickname.clone().map(|nick| nick.into()),
+                nickname: connection.nickname.as_ref().map(|nick| nick.into()),
             },
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
@@ -572,7 +679,7 @@ enum ViewServerOptionsState {
     Ssh {
         connection: SshConnectionOptions,
         server_index: SshServerIndex,
-        entries: [NavigableEntry; 4],
+        entries: [NavigableEntry; 5],
     },
     Wsl {
         connection: WslConnectionOptions,
@@ -599,6 +706,9 @@ enum Mode {
     CreateRemoteDevContainer(CreateRemoteDevContainer),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
+    ListPortForward(ListPortForwardState),
+    EditPortForward(EditPortForwardState),
+    AddPortForward(AddPortForwardState),
 }
 
 impl Mode {
@@ -1076,6 +1186,199 @@ impl RemoteServerProjects {
                 let distro = delegate.selected_distro().unwrap();
                 self.connect_wsl_distro(state.picker.clone(), distro, window, cx);
             }
+            Mode::ListPortForward(_) => {}
+            Mode::EditPortForward(state) => {
+                let input_text = state.editor.read(cx).text(cx);
+                let index = state.index;
+                let port_index = state.port_index;
+
+                let mut port_forwards = SshSettings::get_global(cx)
+                    .ssh_connections()
+                    .nth(index.0)
+                    .and_then(|state| {
+                        state.port_forwards.as_ref().map(|port_forwards_vec| {
+                            port_forwards_vec
+                                .iter()
+                                .map(|pf| PortForward {
+                                    local: pf.local_port.to_string(),
+                                    remote: pf.remote_port.to_string(),
+                                })
+                                .collect::<Vec<PortForward>>()
+                        })
+                    })
+                    .unwrap_or_default();
+
+                if !input_text.is_empty() {
+                    let parts: Vec<&str> = input_text.split(':').collect();
+                    if parts.len() == 2 {
+                        let remote_port_str = parts[0].to_owned();
+                        let local_port_str = parts[1].to_owned();
+
+                        match (
+                            remote_port_str.parse::<u16>(),
+                            local_port_str.parse::<u16>(),
+                        ) {
+                            (Ok(remote_port), Ok(local_port)) => {
+                                let new_port_forward = SshPortForwardOption {
+                                    local_host: Some(String::from("127.0.0.1")),
+                                    local_port,
+                                    remote_host: Some(String::from("127.0.0.1")),
+                                    remote_port,
+                                };
+
+                                if port_index < port_forwards.len() {
+                                    port_forwards[port_index] = PortForward {
+                                        local: local_port.to_string(),
+                                        remote: remote_port.to_string(),
+                                    };
+                                }
+
+                                self.update_settings_file(cx, move |setting, _| {
+                                    if let Some(connections) = setting.ssh_connections.as_mut()
+                                        && let Some(connection) = connections.get_mut(index.0)
+                                    {
+                                        if let Some(forwards) = connection.port_forwards.as_mut() {
+                                            if port_index < forwards.len() {
+                                                forwards[port_index] = new_port_forward;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                            _ => {
+                                log::warn!(
+                                    "Invalid port format. Expected 'remote_port:local_port' with valid u16 integers, got: {}",
+                                    input_text
+                                );
+                                if let Some(workspace) = self.workspace.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_toast(Toast::new(
+                                            NotificationId::composite::<Self>("invalid_port_format"),
+                                            "Invalid port format. Expected 'remote_port:local_port' with valid numbers.".to_string(),
+                                        ), cx);
+                                        anyhow::Ok(())
+                                    }).log_err();
+                                }
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "Invalid port forward format. Expected 'remote_port:local_port', got: {}",
+                            input_text
+                        );
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_toast(Toast::new(
+                                    NotificationId::composite::<Self>("invalid_port_forward_format"),
+                                    "Invalid port forward format. Expected 'remote_port:local_port'.".to_string(),
+                                ), cx);
+                                anyhow::Ok(())
+                            }).log_err();
+                        }
+                    }
+                }
+
+                self.mode = Mode::ListPortForward(ListPortForwardState::with_port_forwards(
+                    index,
+                    port_forwards,
+                    cx,
+                ));
+                self.focus_handle.focus(window);
+            }
+            Mode::AddPortForward(state) => {
+                let input_text = state.editor.read(cx).text(cx);
+                let index = state.index;
+
+                let mut port_forwards = SshSettings::get_global(cx)
+                    .ssh_connections()
+                    .nth(index.0)
+                    .and_then(|state| {
+                        state.port_forwards.as_ref().map(|port_forwards_vec| {
+                            port_forwards_vec
+                                .iter()
+                                .map(|pf| PortForward {
+                                    local: pf.local_port.to_string(),
+                                    remote: pf.remote_port.to_string(),
+                                })
+                                .collect::<Vec<PortForward>>()
+                        })
+                    })
+                    .unwrap_or_default();
+
+                if !input_text.is_empty() {
+                    let parts: Vec<&str> = input_text.split(':').collect();
+                    if parts.len() == 2 {
+                        let remote_port_str = parts[0].to_owned();
+                        let local_port_str = parts[1].to_owned();
+
+                        match (
+                            remote_port_str.parse::<u16>(),
+                            local_port_str.parse::<u16>(),
+                        ) {
+                            (Ok(remote_port), Ok(local_port)) => {
+                                let new_port_forward = SshPortForwardOption {
+                                    local_host: Some(String::from("127.0.0.1")),
+                                    local_port,
+                                    remote_host: Some(String::from("127.0.0.1")),
+                                    remote_port,
+                                };
+
+                                port_forwards.push(PortForward {
+                                    local: local_port.to_string(),
+                                    remote: remote_port.to_string(),
+                                });
+
+                                self.update_settings_file(cx, move |setting, _| {
+                                    if let Some(connections) = setting.ssh_connections.as_mut()
+                                        && let Some(connection) = connections.get_mut(index.0)
+                                    {
+                                        connection
+                                            .port_forwards
+                                            .get_or_insert_with(Default::default)
+                                            .push(new_port_forward);
+                                    }
+                                });
+                            }
+                            _ => {
+                                log::warn!(
+                                    "Invalid port format. Expected 'remote_port:local_port' with valid u16 integers, got: {}",
+                                    input_text
+                                );
+                                if let Some(workspace) = self.workspace.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                                    workspace.show_toast(Toast::new(
+                                                        NotificationId::composite::<Self>("invalid_port_format"),
+                                                        "Invalid port format. Expected 'remote_port:local_port' with valid numbers.".to_string(),
+                                                    ), cx);
+                                                    anyhow::Ok(())
+                                                }).log_err();
+                                }
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "Invalid port forward format. Expected 'remote_port:local_port', got: {}",
+                            input_text
+                        );
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                            workspace.show_toast(Toast::new(
+                                                NotificationId::composite::<Self>("invalid_port_forward_format"),
+                                                "Invalid port forward format. Expected 'remote_port:local_port'.".to_string(),
+                                            ), cx);
+                                            anyhow::Ok(())
+                                        }).log_err();
+                        }
+                    }
+                }
+
+                self.mode = Mode::ListPortForward(ListPortForwardState::with_port_forwards(
+                    index,
+                    port_forwards,
+                    cx,
+                ));
+                self.focus_handle.focus(window);
+            }
         }
     }
 
@@ -1409,7 +1712,6 @@ impl RemoteServerProjects {
                                 .mr_2()
                                 .child({
                                     let project = project.clone();
-                                    // Right-margin to offset it from the Scrollbar
                                     IconButton::new("remove-remote-project", IconName::Trash)
                                         .icon_size(IconSize::Small)
                                         .shape(IconButtonShape::Square)
@@ -1444,6 +1746,27 @@ impl RemoteServerProjects {
         self.update_settings_file(cx, move |setting, _| {
             if let Some(connections) = setting.ssh_connections.as_mut() {
                 connections.remove(server.0);
+            }
+        });
+    }
+
+    fn delete_port_forward(
+        &mut self,
+        server: SshServerIndex,
+        port_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(server) = setting
+                .ssh_connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server.0))
+            {
+                if let Some(port_forwards) = server.port_forwards.as_mut() {
+                    if port_index < port_forwards.len() {
+                        port_forwards.remove(port_index);
+                    }
+                }
             }
         });
     }
@@ -1985,7 +2308,7 @@ impl RemoteServerProjects {
                     ViewServerOptionsState::Ssh { connection, .. } => SshConnectionHeader {
                         connection_string: connection.host.to_string().into(),
                         paths: Default::default(),
-                        nickname: connection.nickname.clone().map(|s| s.into()),
+                        nickname: connection.nickname.as_ref().map(|s| s.into()),
                         is_wsl: false,
                         is_devcontainer: false,
                     }
@@ -2032,7 +2355,7 @@ impl RemoteServerProjects {
                         .child(ListSeparator)
                         .child({
                             div()
-                                .id("ssh-options-copy-server-address")
+                                .id("ssh-options-go-back")
                                 .track_focus(&last_entry.focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                                     this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
@@ -2179,6 +2502,32 @@ impl RemoteServerProjects {
                     )
             })
             .child({
+                div()
+                    .id("ssh-options-port-forwarding")
+                    .track_focus(&entries[1].focus_handle)
+                    .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                        this.mode =
+                            Mode::ListPortForward(ListPortForwardState::new(index, 0, window, cx));
+                        cx.focus_self(window);
+                        cx.notify();
+                    }))
+                    .child(
+                        ListItem::new("port-forwarding")
+                            .toggle_state(entries[1].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
+                            .child(Label::new("Port Forwarding"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.mode = Mode::ListPortForward(ListPortForwardState::new(
+                                    index, 0, window, cx,
+                                ));
+                                cx.focus_self(window);
+                                cx.notify();
+                            })),
+                    )
+            })
+            .child({
                 let workspace = self.workspace.clone();
                 fn callback(
                     workspace: WeakEntity<Workspace>,
@@ -2209,7 +2558,7 @@ impl RemoteServerProjects {
                 }
                 div()
                     .id("ssh-options-copy-server-address")
-                    .track_focus(&entries[1].focus_handle)
+                    .track_focus(&entries[2].focus_handle)
                     .on_action({
                         let connection_string = connection_string.clone();
                         let workspace = self.workspace.clone();
@@ -2219,7 +2568,7 @@ impl RemoteServerProjects {
                     })
                     .child(
                         ListItem::new("copy-server-address")
-                            .toggle_state(entries[1].focus_handle.contains_focused(window, cx))
+                            .toggle_state(entries[2].focus_handle.contains_focused(window, cx))
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
@@ -2272,8 +2621,8 @@ impl RemoteServerProjects {
                     .detach_and_log_err(cx);
                 }
                 div()
-                    .id("ssh-options-copy-server-address")
-                    .track_focus(&entries[2].focus_handle)
+                    .id("ssh-options-remove-server")
+                    .track_focus(&entries[3].focus_handle)
                     .on_action(cx.listener({
                         let connection_string = connection_string.clone();
                         move |_, _: &menu::Confirm, window, cx| {
@@ -2289,7 +2638,7 @@ impl RemoteServerProjects {
                     }))
                     .child(
                         ListItem::new("remove-server")
-                            .toggle_state(entries[2].focus_handle.contains_focused(window, cx))
+                            .toggle_state(entries[3].focus_handle.contains_focused(window, cx))
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Trash).color(Color::Error))
@@ -2325,7 +2674,6 @@ impl RemoteServerProjects {
 
         let connection_string = connection.host.clone();
         let nickname = connection.nickname.map(|s| s.into());
-
         v_flex()
             .id("ssh-edit-nickname")
             .track_focus(&self.focus_handle(cx))
@@ -2346,6 +2694,452 @@ impl RemoteServerProjects {
                     .border_color(cx.theme().colors().border_variant)
                     .child(state.editor.clone()),
             )
+    }
+
+    fn render_list_port_forward(
+        &self,
+        state: &ListPortForwardState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(state.index.0)
+        else {
+            return v_flex()
+                .id("list-port-forward-empty-state")
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(Label::new("Server not found.").color(Color::Error))
+                .into_any_element();
+        };
+
+        let connection_string = connection.host.clone();
+        let server_index = state.index;
+
+        let port_forward_list_items = state
+            .port_forwards
+            .iter()
+            .enumerate()
+            .map(|(ix, port_forward)| {
+                let navigable_entry = &state.port_entries[ix];
+
+                div()
+                    .id(("port-forward-item-container", ix))
+                    .track_focus(&navigable_entry.focus_handle)
+                    .anchor_scroll(navigable_entry.scroll_anchor.clone())
+                    .on_action(cx.listener({
+                        let port_forward_ix = ix;
+                        move |this, _: &menu::Confirm, window, cx| {
+                            this.mode = Mode::EditPortForward(EditPortForwardState::new(
+                                server_index,
+                                port_forward_ix,
+                                window,
+                                cx,
+                            ));
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        ListItem::new(("port-forward-item", ix))
+                            .toggle_state(navigable_entry.focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                            .child(
+                                Label::new(format!(
+                                    "{}:{}",
+                                    port_forward.local, port_forward.remote
+                                ))
+                                .color(Color::Muted),
+                            )
+                            .on_click(cx.listener({
+                                let port_forward_ix = ix;
+                                move |this, _, window, cx| {
+                                    this.mode = Mode::EditPortForward(EditPortForwardState::new(
+                                        server_index,
+                                        port_forward_ix,
+                                        window,
+                                        cx,
+                                    ));
+                                    cx.notify();
+                                }
+                            })),
+                    )
+            })
+            .collect::<Vec<_>>();
+
+        let add_button_element = div()
+            .id("add-port-forward-button")
+            .track_focus(&state.add_button_entry.focus_handle)
+            .anchor_scroll(state.add_button_entry.scroll_anchor.clone())
+            .on_action(cx.listener({
+                let server_index_clone = server_index;
+                move |this, _: &menu::Confirm, window, cx| {
+                    this.mode = Mode::AddPortForward(AddPortForwardState::new(
+                        server_index_clone,
+                        window,
+                        cx,
+                    ));
+                    cx.notify();
+                }
+            }))
+            .child(
+                ListItem::new("add-port-forward")
+                    .toggle_state(
+                        state
+                            .add_button_entry
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                    .child(Label::new("Forward Port"))
+                    .on_click(cx.listener({
+                        let server_index_clone = server_index;
+                        move |this, _, window, cx| {
+                            this.mode = Mode::AddPortForward(AddPortForwardState::new(
+                                server_index_clone,
+                                window,
+                                cx,
+                            ));
+                            cx.notify();
+                        }
+                    })),
+            );
+
+        let go_back_element = div()
+            .id("list-port-forward-go-back")
+            .track_focus(&state.go_back_entry.focus_handle)
+            .anchor_scroll(state.go_back_entry.scroll_anchor.clone())
+            .on_action(cx.listener({
+                let connection = connection.clone();
+                move |this, _: &menu::Confirm, window, cx| {
+                    this.mode = Mode::ViewServerOptions(ViewServerOptionsState::Ssh {
+                        connection: connection.clone().into(),
+                        server_index: server_index,
+                        entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
+                    });
+                    cx.focus_self(window);
+                    cx.notify();
+                }
+            }))
+            .child(
+                ListItem::new("go-back")
+                    .toggle_state(
+                        state
+                            .go_back_entry
+                            .focus_handle
+                            .contains_focused(window, cx),
+                    )
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
+                    .child(Label::new("Go Back"))
+                    .on_click(cx.listener({
+                        let connection = connection.clone();
+                        move |this, _, window, cx| {
+                            this.mode = Mode::ViewServerOptions(ViewServerOptionsState::Ssh {
+                                connection: connection.clone().into(),
+                                server_index: server_index,
+                                entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
+                            });
+                            cx.focus_self(window);
+                            cx.notify()
+                        }
+                    })),
+            );
+
+        let mut view = Navigable::new(
+            v_flex()
+                .id("list-port-forward")
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(
+                    SshConnectionHeader {
+                        connection_string: connection_string,
+                        paths: Default::default(),
+                        nickname: connection.nickname.as_ref().map(|s| s.into()),
+                        is_wsl: false,
+                    }
+                    .render(window, cx),
+                )
+                .child(ListSeparator)
+                .child(
+                    v_flex()
+                        .pb_1()
+                        .child(
+                            List::new()
+                                .empty_message(
+                                    div()
+                                        .px_3()
+                                        .child(
+                                            Label::new("No port forwards configured.")
+                                                .color(Color::Muted),
+                                        )
+                                        .into_any_element(),
+                                )
+                                .children(port_forward_list_items),
+                        )
+                        .child(ListSeparator)
+                        .child(add_button_element)
+                        .child(ListSeparator)
+                        .child(go_back_element),
+                )
+                .into_any_element(),
+        );
+
+        for entry in &state.port_entries {
+            view = view.entry(entry.clone());
+        }
+        view = view.entry(state.add_button_entry.clone());
+        view = view.entry(state.go_back_entry.clone());
+
+        view.render(window, cx).into_any_element()
+    }
+
+    fn render_edit_port_forward(
+        &self,
+        state: &EditPortForwardState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let index = state.index;
+        let port_index = state.port_index;
+
+        let Some(connection) = SshSettings::get_global(cx).ssh_connections().nth(index.0) else {
+            return v_flex()
+                .id("ssh-edit-port-forward")
+                .track_focus(&self.focus_handle(cx))
+                .into_any_element();
+        };
+
+        let connection_string = connection.host.clone();
+        let nickname = connection.nickname.map(|s| s.into());
+
+        let port_forward_display = connection
+            .port_forwards
+            .as_ref()
+            .and_then(|forwards| {
+                forwards
+                    .get(port_index)
+                    .map(|pf| format!("{}:{}", pf.remote_port, pf.local_port))
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let content = v_flex()
+            .id("ssh-edit-port-forward")
+            .child(
+                SshConnectionHeader {
+                    connection_string,
+                    paths: Default::default(),
+                    nickname,
+                    is_wsl: false,
+                }
+                .render(window, cx),
+            )
+            .child(ListSeparator)
+            .child(
+                h_flex().p_3().child(state.editor.clone()).child(
+                    div()
+                        .ml_2()
+                        .child(Label::new(port_forward_display.clone()).color(Color::Muted)),
+                ),
+            )
+            .child({
+                v_flex().child({
+                    fn remove_port_forward(
+                        remote_servers: Entity<RemoteServerProjects>,
+                        index: SshServerIndex,
+                        port_index: usize,
+                        port_forward_display: String,
+                        window: &mut Window,
+                        cx: &mut App,
+                    ) {
+                        let prompt_message = format!("Remove port `{}`?", port_forward_display);
+
+                        let confirmation = window.prompt(
+                            PromptLevel::Warning,
+                            &prompt_message,
+                            None,
+                            &["Yes, remove it", "No, keep it"],
+                            cx,
+                        );
+
+                        cx.spawn(async move |cx| {
+                            if confirmation.await.ok() == Some(0) {
+                                remote_servers
+                                    .update(cx, |this, cx| {
+                                        let port_forwards = SshSettings::get_global(cx)
+                                            .ssh_connections()
+                                            .nth(index.0)
+                                            .and_then(|state| {
+                                                state.port_forwards.as_ref().map(
+                                                    |port_forwards_vec| {
+                                                        port_forwards_vec
+                                                            .iter()
+                                                            .enumerate()
+                                                            .filter_map(|(i, pf)| {
+                                                                if i != port_index {
+                                                                    Some(PortForward {
+                                                                        local: pf
+                                                                            .local_port
+                                                                            .to_string(),
+                                                                        remote: pf
+                                                                            .remote_port
+                                                                            .to_string(),
+                                                                    })
+                                                                } else {
+                                                                    None
+                                                                }
+                                                            })
+                                                            .collect::<Vec<PortForward>>()
+                                                    },
+                                                )
+                                            })
+                                            .unwrap_or_default();
+
+                                        this.delete_port_forward(index, port_index, cx);
+                                        this.mode = Mode::ListPortForward(
+                                            ListPortForwardState::with_port_forwards(
+                                                index,
+                                                port_forwards,
+                                                cx,
+                                            ),
+                                        );
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                    let pf_arc = Arc::new(port_forward_display);
+                    let pf_for_action = pf_arc.clone();
+
+                    v_flex()
+                        .child(
+                            div()
+                                .id("options-remove-port-forward")
+                                .track_focus(&state.entries[0].focus_handle)
+                                .on_action(cx.listener({
+                                    move |_, _: &menu::Confirm, window, cx| {
+                                        remove_port_forward(
+                                            cx.entity(),
+                                            index,
+                                            port_index,
+                                            pf_for_action.as_str().to_string(),
+                                            window,
+                                            cx,
+                                        );
+                                        cx.focus_self(window);
+                                    }
+                                }))
+                                .child(
+                                    ListItem::new("remove-port-forward")
+                                        .toggle_state(
+                                            state.entries[0]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                                        .child(Label::new("Remove Forward").color(Color::Error))
+                                        .on_click(cx.listener({
+                                            move |_, _, window, cx| {
+                                                remove_port_forward(
+                                                    cx.entity(),
+                                                    index,
+                                                    port_index,
+                                                    pf_arc.as_str().to_string(),
+                                                    window,
+                                                    cx,
+                                                );
+                                                cx.focus_self(window);
+                                            }
+                                        })),
+                                ),
+                        )
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("options-go-back")
+                                .track_focus(&state.entries[1].focus_handle)
+                                .on_action(cx.listener(
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.mode = Mode::ListPortForward(
+                                            ListPortForwardState::new(index, 0, window, cx),
+                                        );
+                                        cx.notify();
+                                    },
+                                ))
+                                .child(
+                                    ListItem::new("go-back")
+                                        .toggle_state(
+                                            state.entries[1]
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::ArrowLeft).color(Color::Muted),
+                                        )
+                                        .child(Label::new("Go Back"))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.mode = Mode::ListPortForward(
+                                                ListPortForwardState::new(index, 0, window, cx),
+                                            );
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .pb_1()
+                })
+            })
+            .into_any_element();
+
+        let mut view = Navigable::new(content);
+        for entry in &state.entries {
+            view = view.entry(entry.clone());
+        }
+        view.render(window, cx).into_any_element()
+    }
+
+    fn render_add_port_forward(
+        &self,
+        state: &AddPortForwardState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(state.index.0)
+        else {
+            return v_flex()
+                .id("ssh-edit-nickname")
+                .track_focus(&self.focus_handle(cx));
+        };
+
+        let connection_string = connection.host.clone();
+        let nickname = connection.nickname.map(|s| s.into());
+        v_flex()
+            .id("add-port-forward")
+            .track_focus(&self.focus_handle(cx))
+            .child(
+                SshConnectionHeader {
+                    connection_string,
+                    paths: Default::default(),
+                    nickname,
+                    is_wsl: false,
+                }
+                .render(window, cx),
+            )
+            .child(ListSeparator)
+            .child(h_flex().p_2().child(state.editor.clone()))
     }
 
     fn render_default(
@@ -2779,6 +3573,15 @@ impl Render for RemoteServerProjects {
                 #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self
                     .render_add_wsl_distro(state, window, cx)
+                    .into_any_element(),
+                Mode::ListPortForward(state) => self
+                    .render_list_port_forward(state, window, cx)
+                    .into_any_element(),
+                Mode::EditPortForward(state) => self
+                    .render_edit_port_forward(state, window, cx)
+                    .into_any_element(),
+                Mode::AddPortForward(state) => self
+                    .render_add_port_forward(state, window, cx)
                     .into_any_element(),
             })
     }
