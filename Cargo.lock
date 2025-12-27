@@ -12512,7 +12512,6 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
- "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
