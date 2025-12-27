@@ -1869,6 +1869,8 @@ pub struct BuiltinAgentServerSettings {
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
     pub favorite_models: Vec<String>,
+    pub default_config_options: HashMap<String, String>,
+    pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1893,6 +1895,8 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             default_mode: value.default_mode,
             default_model: value.default_model,
             favorite_models: value.favorite_models,
+            default_config_options: value.default_config_options,
+            favorite_config_option_values: value.favorite_config_option_values,
         }
     }
 }
@@ -1928,6 +1932,18 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: []
         favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -1946,6 +1962,18 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: []
         favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
 }
 
@@ -1983,6 +2011,34 @@ impl CustomAgentServerSettings {
             } => favorite_models,
         }
     }
+
+    pub fn default_config_option(&self, config_id: &str) -> Option<&str> {
+        match self {
+            CustomAgentServerSettings::Custom {
+                default_config_options,
+                ..
+            }
+            | CustomAgentServerSettings::Extension {
+                default_config_options,
+                ..
+            } => default_config_options.get(config_id).map(|s| s.as_str()),
+        }
+    }
+
+    pub fn favorite_config_option_values(&self, config_id: &str) -> Option<&[String]> {
+        match self {
+            CustomAgentServerSettings::Custom {
+                favorite_config_option_values,
+                ..
+            }
+            | CustomAgentServerSettings::Extension {
+                favorite_config_option_values,
+                ..
+            } => favorite_config_option_values
+                .get(config_id)
+                .map(|v| v.as_slice()),
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1995,6 +2051,8 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_model,
                 favorite_models,
+                default_config_options,
+                favorite_config_option_values,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -2004,15 +2062,21 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_model,
                 favorite_models,
+                default_config_options,
+                favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                default_config_options,
                 favorite_models,
+                favorite_config_option_values,
             } => CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                default_config_options,
                 favorite_models,
+                favorite_config_option_values,
             },
         }
     }
@@ -2339,6 +2403,8 @@ mod extension_agent_tests {
             default_mode: None,
             default_model: None,
             favorite_models: vec![],
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2356,6 +2422,8 @@ mod extension_agent_tests {
             default_mode: None,
             default_model: None,
             favorite_models: vec![],
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
         };
 
         let converted: CustomAgentServerSettings = settings.into();
