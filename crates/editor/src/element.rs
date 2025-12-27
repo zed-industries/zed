@@ -34,7 +34,7 @@ use crate::{
         scroll_amount::ScrollAmount,
     },
 };
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind, DiffRowSide};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -2218,6 +2218,214 @@ impl EditorElement {
         }
 
         display_hunks
+    }
+
+    fn layout_gutter_diff_segments(
+        line_height: Pixels,
+        gutter_hitbox: &Hitbox,
+        display_rows: Range<DisplayRow>,
+        row_infos: &[RowInfo],
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        snapshot: &EditorSnapshot,
+    ) -> Vec<GutterDiffSegment> {
+        let mut segments = Vec::new();
+        let scroll_top = snapshot.scroll_position().y * ScrollPixelOffset::from(line_height);
+        let gutter_strip_width = Self::gutter_strip_width(line_height);
+        type SegmentKey = (DiffHunkStatusKind, bool);
+        let mut current_segment: Option<(DiffHunkStatus, SegmentKey, DisplayRow)> = None;
+
+        let push_segment = |segments: &mut Vec<GutterDiffSegment>,
+                            start_row: DisplayRow,
+                            end_row: DisplayRow,
+                            status: DiffHunkStatus| {
+            if start_row >= end_row {
+                return;
+            }
+            let start_y: Pixels =
+                (start_row.as_f64() * ScrollPixelOffset::from(line_height) - scroll_top).into();
+            let end_y: Pixels =
+                (end_row.as_f64() * ScrollPixelOffset::from(line_height) - scroll_top).into();
+            let highlight_origin = gutter_hitbox.bounds.origin + point(px(0.), start_y);
+            let highlight_size = size(gutter_strip_width, end_y - start_y);
+            segments.push(GutterDiffSegment {
+                bounds: Bounds::new(highlight_origin, highlight_size),
+                status,
+                corner_radii: Corners::all(px(0.)),
+            });
+        };
+
+        let segment_key = |status: DiffHunkStatus| (status.kind, status.has_secondary_hunk());
+
+        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+        let mut last_buffer_id = None;
+        let mut last_buffer_snapshot = None;
+        let mut last_diff = None;
+        let display_range_end = display_rows.start + DisplayRow(row_infos.len() as u32);
+        let mut hunk_statuses = vec![None; row_infos.len()];
+        for (row_index, row_info) in row_infos.iter().enumerate() {
+            if let Some(status) = row_info.diff_hunk_status {
+                hunk_statuses[row_index] = Some(status);
+            }
+        }
+        for (hunk, _) in display_hunks {
+            let DisplayDiffHunk::Unfolded {
+                status,
+                display_row_range,
+                ..
+            } = hunk
+            else {
+                continue;
+            };
+            let start_row = display_row_range.start.max(display_rows.start);
+            let end_row = display_row_range.end.min(display_range_end);
+            let start_index =
+                start_row.0.saturating_sub(display_rows.start.0) as usize;
+            let end_index = end_row.0.saturating_sub(display_rows.start.0) as usize;
+            for row_index in start_index..end_index {
+                if let Some(existing_status) = hunk_statuses.get_mut(row_index) {
+                    if existing_status.is_none() {
+                        *existing_status = Some(*status);
+                    }
+                }
+            }
+        }
+        let mut gutter_statuses = Vec::with_capacity(row_infos.len());
+
+        for (row_index, row_info) in row_infos.iter().enumerate() {
+            let hunk_status = hunk_statuses.get(row_index).copied().flatten();
+            let mut line_status = row_info.diff_status;
+            let row_side = row_info.diff_row_side.unwrap_or(DiffRowSide::Buffer);
+
+            let buffer_row = row_info.buffer_row;
+            let (buffer, diff) = if let (Some(buffer_id), Some(_)) =
+                (row_info.buffer_id, buffer_row)
+            {
+                if last_buffer_id != Some(buffer_id) {
+                    last_buffer_id = Some(buffer_id);
+                    last_buffer_snapshot = buffer_snapshot.buffer_snapshot_for_id(buffer_id);
+                    last_diff = buffer_snapshot.diff_for_buffer_id(buffer_id);
+                }
+                (last_buffer_snapshot, last_diff)
+            } else {
+                (None, None)
+            };
+
+            if line_status.is_none()
+                || line_status.is_some_and(|status| status.kind == DiffHunkStatusKind::Modified)
+            {
+                line_status = buffer
+                    .zip(diff)
+                    .and_then(|(buffer, diff)| {
+                        let buffer_row = buffer_row?;
+                        diff.line_for_row(row_side, buffer_row, buffer).map(|line| DiffHunkStatus {
+                            kind: line.kind,
+                            secondary: line.secondary_status,
+                        })
+                    });
+            }
+
+            let status = match (hunk_status, line_status) {
+                (Some(hunk_status), Some(line_status))
+                    if hunk_status.kind == DiffHunkStatusKind::Modified =>
+                {
+                    Some(DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Modified,
+                        secondary: line_status.secondary,
+                    })
+                }
+                (Some(_), Some(line_status)) => Some(line_status),
+                (Some(hunk_status), None) => Some(hunk_status),
+                (None, Some(line_status)) => Some(line_status),
+                (None, None) => None,
+            };
+            gutter_statuses.push(status);
+        }
+
+        for (row_index, status) in gutter_statuses.iter().enumerate() {
+            let display_row = display_rows.start + DisplayRow(row_index as u32);
+            match status {
+                Some(status) => {
+                    let key = segment_key(*status);
+                    match current_segment {
+                        Some((current_status, current_key, start_row)) if current_key == key => {}
+                        Some((current_status, _, start_row)) => {
+                            push_segment(&mut segments, start_row, display_row, current_status);
+                            current_segment = Some((*status, key, display_row));
+                        }
+                        None => {
+                            current_segment = Some((*status, key, display_row));
+                        }
+                    }
+                }
+                None => {
+                    if let Some((current_status, _, start_row)) = current_segment {
+                        push_segment(&mut segments, start_row, display_row, current_status);
+                        current_segment = None;
+                    }
+                }
+            }
+        }
+
+        let end_row = display_range_end;
+        if let Some((current_status, _, start_row)) = current_segment {
+            push_segment(&mut segments, start_row, end_row, current_status);
+        }
+
+        let row_has_status = |row: DisplayRow| {
+            let row_index = row.0.saturating_sub(display_rows.start.0) as usize;
+            gutter_statuses
+                .get(row_index)
+                .is_some_and(|status| status.is_some())
+        };
+
+        for (hunk, _) in display_hunks {
+            match hunk {
+                DisplayDiffHunk::Folded { display_row, .. } => {
+                    if !row_has_status(*display_row) {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            hunk,
+                        );
+                        segments.push(GutterDiffSegment {
+                            bounds: hunk_bounds,
+                            status: DiffHunkStatus::modified_none(),
+                            corner_radii: Corners::all(px(0.)),
+                        });
+                    }
+                }
+                DisplayDiffHunk::Unfolded {
+                    status,
+                    display_row_range,
+                    ..
+                } => {
+                    if status.kind == DiffHunkStatusKind::Deleted && display_row_range.is_empty()
+                    {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            hunk,
+                        );
+                        let expanded_bounds = Bounds::new(
+                            point(
+                                hunk_bounds.origin.x - hunk_bounds.size.width,
+                                hunk_bounds.origin.y,
+                            ),
+                            size(hunk_bounds.size.width * 2., hunk_bounds.size.height),
+                        );
+                        segments.push(GutterDiffSegment {
+                            bounds: expanded_bounds,
+                            status: *status,
+                            corner_radii: Corners::all(1. * line_height),
+                        });
+                    }
+                }
+            }
+        }
+
+        segments
     }
 
     fn layout_inline_diagnostics(
@@ -5622,16 +5830,15 @@ impl EditorElement {
                 row_infos
                     .get(start_row_offset)
                     .and_then(|row_info| row_info.diff_status)
-                    .and_then(|diff_status| {
+                    .map(|diff_status| {
                         let background_color = match diff_status.kind {
                             DiffHunkStatusKind::Added => colors.version_control_word_added,
                             DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
                             DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                return None;
+                                colors.version_control_modified
                             }
                         };
-                        Some((start_point..end_point, background_color))
+                        (start_point..end_point, background_color)
                     })
             });
 
@@ -5733,6 +5940,74 @@ impl EditorElement {
 
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
+
+                    window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
+                        element.prepaint(window, cx)
+                    });
+                    controls.push(element);
+                }
+            }
+        }
+
+        if let Some(cursor_position) = newest_cursor_position {
+            let cursor_row = cursor_position.row();
+            if cursor_row >= row_range.start && cursor_row < row_range.end {
+                let row_ix = (cursor_row - row_range.start).0 as usize;
+                if let Some(row_info) = row_infos.get(row_ix)
+                    && let Some(diff_status) = row_info.diff_status
+                {
+                    let stage = diff_status.has_secondary_hunk();
+                    let label = if stage { "Stage line" } else { "Unstage line" };
+                    let button_id = if stage {
+                        ("stage-line", cursor_row.0 as u64)
+                    } else {
+                        ("unstage-line", cursor_row.0 as u64)
+                    };
+
+                    let mut element = h_flex()
+                        .h(line_height)
+                        .mr_1()
+                        .gap_1()
+                        .px_0p5()
+                        .pb_1()
+                        .border_x_1()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .rounded_b_lg()
+                        .bg(cx.theme().colors().editor_background)
+                        .gap_1()
+                        .block_mouse_except_scroll()
+                        .shadow_md()
+                        .child(
+                            Button::new(button_id, label)
+                                .alpha(if diff_status.is_pending() { 0.66 } else { 1.0 })
+                                .on_click({
+                                    let editor = editor.clone();
+                                    move |_event, _window, cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            let ranges = editor
+                                                .selections
+                                                .disjoint_anchors()
+                                                .iter()
+                                                .map(|s| s.range())
+                                                .collect::<Vec<_>>();
+                                            editor.stage_or_unstage_diff_lines(stage, ranges, cx);
+                                        });
+                                    }
+                                }),
+                        )
+                        .into_any_element();
+
+                    let y = (cursor_row.as_f64()
+                        * ScrollPixelOffset::from(line_height)
+                        + ScrollPixelOffset::from(text_hitbox.bounds.top())
+                        - scroll_pixel_position.y)
+                        .into();
+                    let size =
+                        element.layout_as_root(size(px(140.0), line_height).into(), window, cx);
+                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
+                    let bounds = Bounds::new(gpui::Point::new(x, y), size);
+                    control_bounds.push((cursor_row, bounds));
 
                     window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
                         element.prepaint(window, cx)
@@ -6200,100 +6475,49 @@ impl EditorElement {
     }
 
     fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if layout.display_hunks.is_empty() {
+        if layout.gutter_diff_segments.is_empty() {
             return;
         }
 
-        let line_height = layout.position_map.line_height;
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            for (hunk, hitbox) in &layout.display_hunks {
-                let hunk_to_paint = match hunk {
-                    DisplayDiffHunk::Folded { .. } => {
-                        let hunk_bounds = Self::diff_hunk_bounds(
-                            &layout.position_map.snapshot,
-                            line_height,
-                            layout.gutter_hitbox.bounds,
-                            hunk,
-                        );
-                        Some((
-                            hunk_bounds,
-                            cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
-                            DiffHunkStatus::modified_none(),
-                        ))
-                    }
-                    DisplayDiffHunk::Unfolded {
-                        status,
-                        display_row_range,
-                        ..
-                    } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
-                        DiffHunkStatusKind::Added => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_added,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Modified => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted => (
-                            Bounds::new(
-                                point(
-                                    hunk_hitbox.origin.x - hunk_hitbox.size.width,
-                                    hunk_hitbox.origin.y,
-                                ),
-                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
-                            ),
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(1. * line_height),
-                            *status,
-                        ),
-                    }),
+            for segment in &layout.gutter_diff_segments {
+                let background_color = match segment.status.kind {
+                    DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+                    DiffHunkStatusKind::Modified => cx.theme().colors().version_control_modified,
+                    DiffHunkStatusKind::Deleted => cx.theme().colors().version_control_deleted,
                 };
+                // Flatten the background color with the editor color to prevent
+                // elements below transparent hunks from showing through
+                let flattened_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_background
+                    .blend(background_color);
 
-                if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
-                    // Flatten the background color with the editor color to prevent
-                    // elements below transparent hunks from showing through
-                    let flattened_background_color = cx
+                if !Self::diff_hunk_hollow(segment.status, cx) {
+                    window.paint_quad(quad(
+                        segment.bounds,
+                        segment.corner_radii,
+                        flattened_background_color,
+                        Edges::default(),
+                        transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                } else {
+                    let flattened_unstaged_background_color = cx
                         .theme()
                         .colors()
                         .editor_background
-                        .blend(background_color);
+                        .blend(background_color.opacity(0.3));
 
-                    if !Self::diff_hunk_hollow(status, cx) {
-                        window.paint_quad(quad(
-                            hunk_bounds,
-                            corner_radii,
-                            flattened_background_color,
-                            Edges::default(),
-                            transparent_black(),
-                            BorderStyle::default(),
-                        ));
-                    } else {
-                        let flattened_unstaged_background_color = cx
-                            .theme()
-                            .colors()
-                            .editor_background
-                            .blend(background_color.opacity(0.3));
-
-                        window.paint_quad(quad(
-                            hunk_bounds,
-                            corner_radii,
-                            flattened_unstaged_background_color,
-                            Edges::all(px(1.0)),
-                            flattened_background_color,
-                            BorderStyle::Solid,
-                        ));
-                    }
+                    window.paint_quad(quad(
+                        segment.bounds,
+                        segment.corner_radii,
+                        flattened_unstaged_background_color,
+                        Edges::all(px(1.0)),
+                        flattened_background_color,
+                        BorderStyle::Solid,
+                    ));
                 }
             }
         });
@@ -9280,10 +9504,8 @@ impl Element for EditorElement {
                                 cx.theme().colors().version_control_added,
                             DiffHunkStatusKind::Deleted =>
                                 cx.theme().colors().version_control_deleted,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                continue;
-                            }
+                            DiffHunkStatusKind::Modified =>
+                                cx.theme().colors().version_control_modified,
                         };
 
                         let hunk_opacity = if is_light { 0.16 } else { 0.12 };
@@ -9533,6 +9755,14 @@ impl Element for EditorElement {
                         &snapshot,
                         window,
                         cx,
+                    );
+                    let gutter_diff_segments = Self::layout_gutter_diff_segments(
+                        line_height,
+                        &gutter_hitbox,
+                        start_row..end_row,
+                        &row_infos,
+                        &display_hunks,
+                        &snapshot,
                     );
 
                     Self::layout_word_diff_highlights(
@@ -10243,6 +10473,7 @@ impl Element for EditorElement {
                         hitbox,
                         gutter_hitbox,
                         display_hunks,
+                        gutter_diff_segments,
                         content_origin,
                         scrollbars_layout,
                         minimap,
@@ -10432,6 +10663,7 @@ pub struct EditorLayout {
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
+    gutter_diff_segments: Vec<GutterDiffSegment>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame_layout: Option<InlineBlameLayout>,
@@ -10641,6 +10873,13 @@ struct LineNumberSegment {
 #[derive(Debug)]
 struct LineNumberLayout {
     segments: SmallVec<[LineNumberSegment; 1]>,
+}
+
+#[derive(Clone, Debug)]
+struct GutterDiffSegment {
+    bounds: Bounds<Pixels>,
+    status: DiffHunkStatus,
+    corner_radii: Corners<Pixels>,
 }
 
 struct ColoredRange<T> {

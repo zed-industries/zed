@@ -1,5 +1,5 @@
 use super::*;
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind, DiffRowSide};
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -32,6 +32,8 @@ fn test_empty_singleton(cx: &mut App) {
             base_text_row: None,
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
+            diff_hunk_status: None,
+            diff_row_side: Some(DiffRowSide::Buffer),
             expand_info: None,
             wrapped_buffer_row: None,
         }]
@@ -2588,6 +2590,14 @@ impl ReferenceMultibuffer {
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
+                            diff_hunk_status: region.status,
+                            diff_row_side: Some(match region.status {
+                                Some(DiffHunkStatus {
+                                    kind: DiffHunkStatusKind::Deleted,
+                                    ..
+                                }) => DiffRowSide::Base,
+                                _ => DiffRowSide::Buffer,
+                            }),
                             buffer_row,
                             base_text_row,
                             wrapped_buffer_row: None,
@@ -3879,6 +3889,43 @@ async fn test_base_text_line_numbers(cx: &mut TestAppContext) {
             Some(BaseTextRow(6)),
         ]
     )
+}
+
+#[gpui::test]
+fn test_base_view_row_infos_with_deletion(cx: &mut App) {
+    let base_text = "one\ntwo\n";
+    let buffer_text = "two\n";
+    let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_diff(diff, cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+    });
+
+    let follower = multibuffer.update(cx, |multibuffer, cx| {
+        let follower = multibuffer.get_or_create_follower(cx);
+        follower.update(cx, |follower, _| {
+            follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+        });
+        follower
+    });
+
+    let row_infos = follower
+        .read(cx)
+        .snapshot(cx)
+        .row_infos(MultiBufferRow(0))
+        .collect::<Vec<_>>();
+
+    let base_text_rows = row_infos
+        .iter()
+        .map(|row_info| row_info.base_text_row)
+        .collect::<Vec<_>>();
+    let expected_rows = (0..row_infos.len())
+        .map(|row| Some(BaseTextRow(row as u32)))
+        .collect::<Vec<_>>();
+    assert_eq!(base_text_rows, expected_rows);
 }
 
 #[track_caller]
