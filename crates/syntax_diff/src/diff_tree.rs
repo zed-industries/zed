@@ -630,8 +630,6 @@ fn compute_dice_similarity(
 }
 
 fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
-    use collections::FxHashMap;
-
     let matched: Vec<_> = matching.matched_pairs().collect();
 
     for (old_id, new_id) in matched {
@@ -644,89 +642,68 @@ fn recovery_matching(old: &DiffTree, new: &DiffTree, matching: &mut Matching) {
             continue;
         }
 
-        // Collect unmatched children grouped by kind
-        let mut old_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
-        let mut new_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
-
-        for child in old.children(old_id) {
-            if !matching.is_old_matched(child) {
-                old_by_kind
-                    .entry(old.node(child).kind_id)
-                    .or_default()
-                    .push(child);
-            }
-        }
-
-        for child in new.children(new_id) {
-            if !matching.is_new_matched(child) {
-                new_by_kind
-                    .entry(new.node(child).kind_id)
-                    .or_default()
-                    .push(child);
-            }
-        }
-
-        // Match unique pairs
-        for (kind_id, old_children) in &old_by_kind {
-            if let Some(new_children) = new_by_kind.get(kind_id) {
-                if old_children.len() == 1 && new_children.len() == 1 {
-                    let old_child = old_children[0];
-                    let new_child = new_children[0];
-
-                    if !matching.is_old_matched(old_child) && !matching.is_new_matched(new_child) {
-                        matching.add(old_child, new_child);
-
-                        let dice =
-                            compute_dice_similarity(old, new, old_child, new_child, matching);
-                        if dice >= SIM_THRESHOLD {
-                            recover_subtree(old, new, old_child, new_child, matching);
-                        }
-                    }
-                }
-            }
-        }
+        match_unique_children(old, new, old_id, new_id, matching, true);
     }
 }
 
-fn recover_subtree(
+/// Match unmatched children that have unique kinds on both sides, then recurse.
+/// At the first level (`check_dice=true`), only recurse if Dice similarity >= threshold.
+fn match_unique_children(
     old: &DiffTree,
     new: &DiffTree,
     old_id: NodeId,
     new_id: NodeId,
     matching: &mut Matching,
+    check_dice: bool,
 ) {
     use collections::FxHashMap;
 
-    let mut old_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
-    let mut new_by_kind: FxHashMap<u16, Vec<NodeId>> = FxHashMap::default();
+    // Count children by kind. Store (count, node) - we only need the node if count == 1.
+    let mut old_by_kind: FxHashMap<u16, (usize, NodeId)> = FxHashMap::default();
+    let mut new_by_kind: FxHashMap<u16, (usize, NodeId)> = FxHashMap::default();
 
     for child in old.children(old_id) {
         if !matching.is_old_matched(child) {
+            let kind = old.node(child).kind_id;
             old_by_kind
-                .entry(old.node(child).kind_id)
-                .or_default()
-                .push(child);
+                .entry(kind)
+                .and_modify(|(count, _)| *count += 1)
+                .or_insert((1, child));
         }
     }
 
     for child in new.children(new_id) {
         if !matching.is_new_matched(child) {
+            let kind = new.node(child).kind_id;
             new_by_kind
-                .entry(new.node(child).kind_id)
-                .or_default()
-                .push(child);
+                .entry(kind)
+                .and_modify(|(count, _)| *count += 1)
+                .or_insert((1, child));
         }
     }
 
-    for (kind_id, old_children) in &old_by_kind {
-        if let Some(new_children) = new_by_kind.get(kind_id) {
-            if old_children.len() == 1 && new_children.len() == 1 {
-                let old_child = old_children[0];
-                let new_child = new_children[0];
+    // Match unique pairs (where both sides have exactly one child of that kind)
+    for (kind_id, (old_count, old_child)) in &old_by_kind {
+        if *old_count != 1 {
+            continue;
+        }
 
-                if !matching.is_old_matched(old_child) && !matching.is_new_matched(new_child) {
-                    matching.add(old_child, new_child);
-                    recover_subtree(old, new, old_child, new_child, matching);
+        if let Some(&(new_count, new_child)) = new_by_kind.get(kind_id) {
+            if new_count == 1
+                && !matching.is_old_matched(*old_child)
+                && !matching.is_new_matched(new_child)
+            {
+                matching.add(*old_child, new_child);
+
+                let should_recurse = if check_dice {
+                    compute_dice_similarity(old, new, *old_child, new_child, matching)
+                        >= SIM_THRESHOLD
+                } else {
+                    true
+                };
+
+                if should_recurse {
+                    match_unique_children(old, new, *old_child, new_child, matching, false);
                 }
             }
         }
