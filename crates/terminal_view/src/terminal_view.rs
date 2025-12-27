@@ -1021,6 +1021,9 @@ impl TerminalView {
             );
             if handled {
                 cx.stop_propagation();
+                if term.vi_mode_enabled() {
+                    cx.notify();
+                }
             }
         });
     }
