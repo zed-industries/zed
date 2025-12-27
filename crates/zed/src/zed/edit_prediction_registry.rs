@@ -199,7 +199,13 @@ fn assign_edit_prediction_provider(
             ) = value
             {
                 let http_client = client.http_client();
-                let provider = cx.new(|_| AmpTabEditPredictionDelegate::new(http_client));
+                let provider = if let Some(project) = editor.project() {
+                    cx.new(|cx| {
+                        AmpTabEditPredictionDelegate::new_with_project(http_client, &project, cx)
+                    })
+                } else {
+                    cx.new(|_| AmpTabEditPredictionDelegate::new(http_client))
+                };
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
                 return;
             }

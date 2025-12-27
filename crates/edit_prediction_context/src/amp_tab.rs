@@ -1,19 +1,21 @@
 use anyhow::{Context as _, Result};
+use collections::VecDeque;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::{AsyncBufReadExt, StreamExt, io::BufReader};
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, Point, ToPoint, text_diff};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
+use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write as _, ops::Range, sync::Arc, time::Duration};
+use std::{fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Duration};
 use text::ToOffset;
 use uuid::Uuid;
+use zeta_prompt::{Event, RelatedFile};
 
-use crate::{EditPredictionExcerpt, EditPredictionExcerptOptions};
-
+use crate::{EditPredictionExcerpt, EditPredictionExcerptOptions, RelatedExcerptStore};
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 pub const AMP_TAB_CREDENTIALS_URL: SharedString =
@@ -71,11 +73,23 @@ impl CurrentCompletion {
     }
 }
 
+const EVENT_COUNT_MAX: usize = 20;
+
 pub struct AmpTabEditPredictionDelegate {
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
     queued_refresh: Option<QueuedRefresh>,
+    related_excerpt_store: Option<Entity<RelatedExcerptStore>>,
+    events: VecDeque<Arc<Event>>,
+    registered_buffer: Option<RegisteredBuffer>,
+    _subscriptions: Vec<Subscription>,
+}
+
+struct RegisteredBuffer {
+    buffer_id: gpui::EntityId,
+    snapshot: text::BufferSnapshot,
+    file_path: Option<Arc<Path>>,
 }
 
 struct QueuedRefresh {
@@ -91,7 +105,100 @@ impl AmpTabEditPredictionDelegate {
             pending_request: None,
             current_completion: None,
             queued_refresh: None,
+            related_excerpt_store: None,
+            events: VecDeque::new(),
+            registered_buffer: None,
+            _subscriptions: Vec::new(),
         }
+    }
+
+    pub fn new_with_project(
+        http_client: Arc<dyn HttpClient>,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(project, cx));
+        Self {
+            http_client,
+            pending_request: None,
+            current_completion: None,
+            queued_refresh: None,
+            related_excerpt_store: Some(related_excerpt_store),
+            events: VecDeque::new(),
+            registered_buffer: None,
+            _subscriptions: Vec::new(),
+        }
+    }
+
+    fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let buf = buffer.read(cx);
+        let buffer_id = buffer.entity_id();
+
+        if self
+            .registered_buffer
+            .as_ref()
+            .is_some_and(|rb| rb.buffer_id == buffer_id)
+        {
+            return;
+        }
+
+        let file_path = buf
+            .file()
+            .map(|f| Arc::from(f.path().as_ref().as_std_path()));
+        let snapshot = buf.text_snapshot();
+
+        self.registered_buffer = Some(RegisteredBuffer {
+            buffer_id,
+            snapshot,
+            file_path,
+        });
+
+        let subscription = cx.subscribe(buffer, |this, buffer, event, cx| {
+            if let language::BufferEvent::Edited = event {
+                this.report_changes_for_buffer(&buffer, cx);
+            }
+        });
+        self._subscriptions.push(subscription);
+    }
+
+    fn report_changes_for_buffer(&mut self, buffer: &Entity<Buffer>, cx: &Context<Self>) {
+        let Some(registered) = self.registered_buffer.as_mut() else {
+            return;
+        };
+
+        let buf = buffer.read(cx);
+        let new_snapshot = buf.text_snapshot();
+
+        if new_snapshot.version == registered.snapshot.version {
+            return;
+        }
+
+        let new_file_path = buf
+            .file()
+            .map(|f| Arc::from(f.path().as_ref().as_std_path()));
+        let old_file_path = mem::replace(&mut registered.file_path, new_file_path.clone());
+        let old_snapshot = mem::replace(&mut registered.snapshot, new_snapshot.clone());
+
+        let old_path = old_file_path.unwrap_or_else(|| Arc::from(Path::new("untitled")));
+        let new_path = new_file_path.unwrap_or_else(|| Arc::from(Path::new("untitled")));
+
+        let diff = compute_diff_for_event(&old_snapshot, &new_snapshot);
+        let Some(diff) = diff else {
+            return;
+        };
+
+        let event = Arc::new(Event::BufferChange {
+            path: new_path,
+            old_path,
+            diff,
+            predicted: false,
+            in_open_source_repo: false,
+        });
+
+        if self.events.len() >= EVENT_COUNT_MAX {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
     }
 
     pub fn has_api_key(cx: &App) -> bool {
@@ -220,99 +327,158 @@ impl AmpTabEditPredictionDelegate {
     ) {
         let snapshot = buffer.read(cx).snapshot();
         let http_client = self.http_client.clone();
+        let recent_copy = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
 
-        log::debug!("Amp Tab: Starting new completion request");
+        let related_files: Arc<[RelatedFile]> = self
+            .related_excerpt_store
+            .as_ref()
+            .map(|store| store.read(cx).related_files())
+            .unwrap_or_else(|| Arc::from([]));
 
-        self.pending_request =
-            Some(cx.spawn(async move |this, cx| {
-                if debounce {
-                    log::debug!("Amp Tab: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
-                    smol::Timer::after(DEBOUNCE_TIMEOUT).await;
-                }
+        let events: Vec<Arc<Event>> = self.events.iter().cloned().collect();
 
-                let cursor_offset = cursor_position.to_offset(&snapshot);
-                let cursor_point = cursor_offset.to_point(&snapshot);
-                let excerpt = EditPredictionExcerpt::select_from_buffer(
-                    cursor_point,
-                    &snapshot,
-                    &EXCERPT_OPTIONS,
-                )
-                .context("Line containing cursor doesn't fit in excerpt max bytes")?;
+        log::debug!(
+            "Amp Tab: Starting new completion request (related_files: {}, events: {})",
+            related_files.len(),
+            events.len()
+        );
 
-                let excerpt_text = excerpt.text(&snapshot);
-                let cursor_within_excerpt = cursor_offset
-                    .saturating_sub(excerpt.range.start)
-                    .min(excerpt_text.body.len());
+        self.pending_request = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                log::debug!("Amp Tab: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
+                smol::Timer::after(DEBOUNCE_TIMEOUT).await;
+            }
 
-                let before_cursor = &excerpt_text.body[..cursor_within_excerpt];
-                let after_cursor = &excerpt_text.body[cursor_within_excerpt..];
+            let cursor_offset = cursor_position.to_offset(&snapshot);
+            let cursor_point = cursor_offset.to_point(&snapshot);
+            let excerpt = EditPredictionExcerpt::select_from_buffer(
+                cursor_point,
+                &snapshot,
+                &EXCERPT_OPTIONS,
+            )
+            .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 
-                let diagnostics = format_diagnostics_for_prompt(&snapshot, cursor_point);
-                let prompt = build_amp_tab_prompt(before_cursor, after_cursor, &diagnostics);
-                let prediction_content = excerpt_text.body.clone();
+            let excerpt_text = excerpt.text(&snapshot);
+            let cursor_within_excerpt = cursor_offset
+                .saturating_sub(excerpt.range.start)
+                .min(excerpt_text.body.len());
 
-                let completion_text =
-                    match Self::fetch_completion(http_client, api_key, prompt, prediction_content)
-                        .await
-                    {
-                        Ok(completion) => completion,
-                        Err(e) => {
-                            log::error!("Amp Tab: Failed to fetch completion: {}", e);
-                            this.update(cx, |this, cx| {
-                                this.finish_request_and_process_queue(cx);
-                            })?;
-                            return Err(e);
-                        }
-                    };
+            let before_cursor = &excerpt_text.body[..cursor_within_excerpt];
+            let after_cursor = &excerpt_text.body[cursor_within_excerpt..];
 
-                let new_excerpt_text = extract_edited_region_from_response(&completion_text);
+            let file_path = snapshot.file().map(|f| f.path().as_unix_str());
+            let lint_errors = format_lint_errors_for_prompt(&snapshot, cursor_point);
+            let recently_viewed_snippets = format_recently_viewed_snippets(&related_files);
+            let diff_history = format_diff_history(&events);
 
-                if new_excerpt_text.is_none() {
-                    log::debug!("Amp Tab: Could not extract edited region from response; ignoring");
+            let prompt_ctx = AmpTabPromptContext {
+                file_path,
+                before_cursor,
+                after_cursor,
+                lint_errors: &lint_errors,
+                recently_viewed_snippets: &recently_viewed_snippets,
+                diff_history: &diff_history,
+                recent_copy: &recent_copy,
+            };
+            let prompt = build_amp_tab_prompt(&prompt_ctx);
+            let prediction_content = excerpt_text.body.clone();
+
+            let completion_text = match Self::fetch_completion(
+                http_client,
+                api_key,
+                prompt,
+                prediction_content,
+            )
+            .await
+            {
+                Ok(completion) => completion,
+                Err(e) => {
+                    log::error!("Amp Tab: Failed to fetch completion: {}", e);
                     this.update(cx, |this, cx| {
                         this.finish_request_and_process_queue(cx);
                     })?;
-                    return Ok(());
+                    return Err(e);
                 }
-                let new_excerpt_text = new_excerpt_text.unwrap();
+            };
 
-                let old_excerpt_text = &excerpt_text.body;
-                let excerpt_start_offset = excerpt.range.start;
+            let new_excerpt_text = extract_edited_region_from_response(&completion_text);
 
-                let edits = compute_edits_from_diff(
-                    old_excerpt_text,
-                    &new_excerpt_text,
-                    excerpt_start_offset,
-                    &snapshot,
-                );
-
-                if edits.is_empty() {
-                    log::debug!("Amp Tab: No changes detected in completion; ignoring");
-                    this.update(cx, |this, cx| {
-                        this.finish_request_and_process_queue(cx);
-                    })?;
-                    return Ok(());
-                }
-
-                log::debug!("Amp Tab: Computed {} edit(s) from diff", edits.len());
-
-                let edits: Arc<[(Range<Anchor>, Arc<str>)]> = edits.into();
-                let edit_preview = buffer
-                    .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
-                    .await;
-
+            if new_excerpt_text.is_none() {
+                log::debug!("Amp Tab: Could not extract edited region from response; ignoring");
                 this.update(cx, |this, cx| {
-                    log::debug!("Amp Tab: Completion stored and ready for suggestion");
-                    this.current_completion = Some(CurrentCompletion {
-                        snapshot,
-                        edits,
-                        edit_preview,
-                    });
                     this.finish_request_and_process_queue(cx);
                 })?;
+                return Ok(());
+            }
+            let new_excerpt_text = new_excerpt_text.unwrap();
 
-                Ok(())
-            }));
+            let old_excerpt_text = &excerpt_text.body;
+            let excerpt_start_offset = excerpt.range.start;
+
+            let edits = compute_edits_from_diff(
+                old_excerpt_text,
+                &new_excerpt_text,
+                excerpt_start_offset,
+                &snapshot,
+            );
+
+            if edits.is_empty() {
+                log::debug!("Amp Tab: No changes detected in completion; ignoring");
+                this.update(cx, |this, cx| {
+                    this.finish_request_and_process_queue(cx);
+                })?;
+                return Ok(());
+            }
+
+            let whitespace_only = edits.iter().all(|(_, text)| text.trim().is_empty());
+            if whitespace_only {
+                log::debug!("Amp Tab: Rejecting prediction - whitespace-only change");
+                this.update(cx, |this, cx| {
+                    this.finish_request_and_process_queue(cx);
+                })?;
+                return Ok(());
+            }
+
+            let total_edit_len: usize = edits.iter().map(|(_, text)| text.len()).sum();
+            const MAX_EDIT_CHARS: usize = 8000;
+            if total_edit_len > MAX_EDIT_CHARS {
+                log::debug!(
+                    "Amp Tab: Rejecting prediction - big modification ({} chars exceeds {} limit)",
+                    total_edit_len,
+                    MAX_EDIT_CHARS
+                );
+                this.update(cx, |this, cx| {
+                    this.finish_request_and_process_queue(cx);
+                })?;
+                return Ok(());
+            }
+
+            log::debug!(
+                "Amp Tab: Computed {} edit(s) from diff ({} chars)",
+                edits.len(),
+                total_edit_len
+            );
+
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> = edits.into();
+            let edit_preview = buffer
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .await;
+
+            this.update(cx, |this, cx| {
+                log::debug!("Amp Tab: Completion stored and ready for suggestion");
+                this.current_completion = Some(CurrentCompletion {
+                    snapshot,
+                    edits,
+                    edit_preview,
+                });
+                this.finish_request_and_process_queue(cx);
+            })?;
+
+            Ok(())
+        }));
     }
 
     fn finish_request_and_process_queue(&mut self, cx: &mut Context<Self>) {
@@ -410,6 +576,14 @@ impl EditPredictionDelegate for AmpTabEditPredictionDelegate {
             snapshot.file().map(|f| f.path().as_unix_str())
         );
 
+        self.register_buffer(&buffer, cx);
+
+        if let Some(related_excerpt_store) = &self.related_excerpt_store {
+            related_excerpt_store.update(cx, |store, cx| {
+                store.refresh(buffer.clone(), cursor_position, cx);
+            });
+        }
+
         let Some(api_key) = Self::api_key(cx) else {
             log::warn!("Amp Tab: No API key configured, skipping refresh");
             return;
@@ -501,37 +675,183 @@ impl EditPredictionDelegate for AmpTabEditPredictionDelegate {
     }
 }
 
-fn build_amp_tab_prompt(before_cursor: &str, after_cursor: &str, diagnostics: &str) -> String {
-    let (diagnostics_section, diagnostics_instruction) = if diagnostics.is_empty() {
-        (String::new(), String::new())
-    } else {
-        (
-            format!(
-                r#"
-Diagnostics near the cursor:
+struct AmpTabPromptContext<'a> {
+    file_path: Option<&'a str>,
+    before_cursor: &'a str,
+    after_cursor: &'a str,
+    lint_errors: &'a str,
+    recently_viewed_snippets: &'a str,
+    diff_history: &'a str,
+    recent_copy: &'a str,
+}
 
-<diagnostics>
-{diagnostics}</diagnostics>
-"#
-            ),
-            " If there are any errors or warnings in the diagnostics, fix them.".to_string(),
+fn build_amp_tab_prompt(ctx: &AmpTabPromptContext<'_>) -> String {
+    let mut prompt = String::new();
+
+    prompt.push_str(
+        "You are an intelligent programmer and an expert at coding. \
+Your goal is to help a colleague finish a code change.\n\n",
+    );
+
+    prompt.push_str(
+        "Help me finish a coding change. You will see snippets from current open files in my \
+editor, files I have recently viewed, the file I am editing, then a history of my recent \
+codebase changes, then current compiler and linter errors. You will then rewrite the code \
+between the <|editable_region_start|> and <|editable_region_end|> tags, to match what you \
+think I would do next in the codebase. <|user_cursor_is_here|> indicates the position of \
+the cursor in the current file. Note: I might have stopped in the middle of typing.\n\n",
+    );
+
+    if !ctx.recently_viewed_snippets.is_empty() {
+        writeln!(
+            &mut prompt,
+            "Code snippets I have recently viewed, roughly from oldest to newest. \
+Some may be irrelevant to the change:\n"
         )
-    };
+        .ok();
+        writeln!(
+            &mut prompt,
+            "<recently_viewed_snippets>\n{}</recently_viewed_snippets>\n",
+            ctx.recently_viewed_snippets,
+        )
+        .ok();
+    }
 
-    format!(
-        r#"Help me finish a coding change. You will see the file I am editing. You will then rewrite the code between the <|editable_region_start|> and <|editable_region_end|> tags, to match what you think I would do next in the codebase. <|user_cursor_is_here|> indicates the position of the cursor in the current file. Note: I might have stopped in the middle of typing.
-{diagnostics_section}
-The file currently open:
+    if !ctx.diff_history.is_empty() {
+        writeln!(&mut prompt, "My recent edits, from oldest to newest:\n").ok();
+        writeln!(
+            &mut prompt,
+            "<diff_history>\n{}</diff_history>\n",
+            ctx.diff_history,
+        )
+        .ok();
+    }
 
-<file>
-<|editable_region_start|>
-{before_cursor}<|user_cursor_is_here|>{after_cursor}
-<|editable_region_end|>
-</file>
+    if !ctx.lint_errors.is_empty() {
+        writeln!(
+            &mut prompt,
+            "Linter errors from the code that you will rewrite:\n"
+        )
+        .ok();
+        writeln!(
+            &mut prompt,
+            "<lint_errors>\n{}</lint_errors>\n",
+            ctx.lint_errors,
+        )
+        .ok();
+    }
 
-Continue where I left off and finish my change by rewriting the code between the <|editable_region_start|> and <|editable_region_end|> tags:{diagnostics_instruction}
-"#
+    if !ctx.recent_copy.is_empty() {
+        writeln!(&mut prompt, "Code I recently copied to clipboard:\n").ok();
+        writeln!(
+            &mut prompt,
+            "<recent_copy>\n{}</recent_copy>\n",
+            ctx.recent_copy,
+        )
+        .ok();
+    }
+
+    writeln!(&mut prompt, "The file currently open:\n").ok();
+    writeln!(&mut prompt, "<file>").ok();
+    if let Some(path) = ctx.file_path {
+        writeln!(&mut prompt, "file_path: {}", path).ok();
+    }
+    writeln!(
+        &mut prompt,
+        "<|editable_region_start|>\n{}<|user_cursor_is_here|>{}\n<|editable_region_end|>",
+        ctx.before_cursor, ctx.after_cursor
     )
+    .ok();
+    writeln!(&mut prompt, "</file>\n").ok();
+
+    prompt.push_str(
+        "Continue where I left off and finish my change by rewriting the code between the \
+<|editable_region_start|> and <|editable_region_end|> tags:",
+    );
+
+    if !ctx.lint_errors.is_empty() {
+        prompt.push_str(" Fix any relevant linter errors in the code you rewrite.");
+    }
+
+    prompt.push('\n');
+    prompt
+}
+
+fn format_recently_viewed_snippets(related_files: &[RelatedFile]) -> String {
+    let mut out = String::new();
+    for related_file in related_files {
+        for excerpt in &related_file.excerpts {
+            writeln!(&mut out, "<snippet>").ok();
+            writeln!(
+                &mut out,
+                "file_path: {}",
+                related_file.path.to_string_lossy()
+            )
+            .ok();
+            out.push_str(&excerpt.text);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            writeln!(&mut out, "</snippet>").ok();
+        }
+    }
+    out
+}
+
+fn format_diff_history(events: &[Arc<Event>]) -> String {
+    let mut out = String::new();
+    for event in events {
+        zeta_prompt::write_event(&mut out, event);
+    }
+    out
+}
+
+fn compute_diff_for_event(
+    old_snapshot: &text::BufferSnapshot,
+    new_snapshot: &text::BufferSnapshot,
+) -> Option<String> {
+    use text::Edit;
+
+    let edits: Vec<Edit<usize>> = new_snapshot
+        .edits_since::<usize>(&old_snapshot.version)
+        .collect();
+
+    let (first_edit, last_edit) = edits.first().zip(edits.last())?;
+
+    let old_start_point = old_snapshot.offset_to_point(first_edit.old.start);
+    let old_end_point = old_snapshot.offset_to_point(last_edit.old.end);
+    let new_start_point = new_snapshot.offset_to_point(first_edit.new.start);
+    let new_end_point = new_snapshot.offset_to_point(last_edit.new.end);
+
+    const CONTEXT_LINES: u32 = 3;
+
+    let old_context_start_row = old_start_point.row.saturating_sub(CONTEXT_LINES);
+    let new_context_start_row = new_start_point.row.saturating_sub(CONTEXT_LINES);
+    let old_context_end_row =
+        (old_end_point.row + 1 + CONTEXT_LINES).min(old_snapshot.max_point().row);
+    let new_context_end_row =
+        (new_end_point.row + 1 + CONTEXT_LINES).min(new_snapshot.max_point().row);
+
+    let old_start_line_offset = old_snapshot.point_to_offset(Point::new(old_context_start_row, 0));
+    let new_start_line_offset = new_snapshot.point_to_offset(Point::new(new_context_start_row, 0));
+    let old_end_line_offset = old_snapshot
+        .point_to_offset(Point::new(old_context_end_row + 1, 0).min(old_snapshot.max_point()));
+    let new_end_line_offset = new_snapshot
+        .point_to_offset(Point::new(new_context_end_row + 1, 0).min(new_snapshot.max_point()));
+    let old_edit_range = old_start_line_offset..old_end_line_offset;
+    let new_edit_range = new_start_line_offset..new_end_line_offset;
+
+    let old_region_text: String = old_snapshot.text_for_range(old_edit_range).collect();
+    let new_region_text: String = new_snapshot.text_for_range(new_edit_range).collect();
+
+    let diff = language::unified_diff_with_offsets(
+        &old_region_text,
+        &new_region_text,
+        old_context_start_row,
+        new_context_start_row,
+    );
+
+    if diff.is_empty() { None } else { Some(diff) }
 }
 
 /// Extracts the edited region content from the model's response.
@@ -589,7 +909,7 @@ fn compute_edits_from_diff(
         .collect()
 }
 
-fn format_diagnostics_for_prompt(snapshot: &BufferSnapshot, cursor_point: Point) -> String {
+fn format_lint_errors_for_prompt(snapshot: &BufferSnapshot, cursor_point: Point) -> String {
     let diagnostic_search_start = cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
     let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
     let diagnostic_search_range =
@@ -609,13 +929,14 @@ fn format_diagnostics_for_prompt(snapshot: &BufferSnapshot, cursor_point: Point)
             _ => continue,
         };
 
-        let _ = writeln!(
+        writeln!(
             &mut diagnostic_content,
             "{} at line {}: {}",
             severity,
             start_point.row + 1,
             entry.diagnostic.message
-        );
+        )
+        .ok();
     }
 
     diagnostic_content
@@ -624,6 +945,7 @@ fn format_diagnostics_for_prompt(snapshot: &BufferSnapshot, cursor_point: Point)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_extract_edited_region_basic() {
@@ -676,20 +998,135 @@ mod tests {
 
     #[test]
     fn test_build_prompt_without_diagnostics() {
-        let prompt = build_amp_tab_prompt("let x = ", ";", "");
+        let ctx = AmpTabPromptContext {
+            file_path: None,
+            before_cursor: "let x = ",
+            after_cursor: ";",
+            lint_errors: "",
+            recently_viewed_snippets: "",
+            diff_history: "",
+            recent_copy: "",
+        };
+        let prompt = build_amp_tab_prompt(&ctx);
+
+        assert!(prompt.contains("You are an intelligent programmer"));
         assert!(prompt.contains("let x = <|user_cursor_is_here|>;"));
-        assert!(!prompt.contains("<diagnostics>"));
+        assert!(!prompt.contains("<lint_errors>"));
+        assert!(!prompt.contains("<recent_copy>"));
     }
 
     #[test]
-    fn test_build_prompt_with_diagnostics() {
-        let diagnostics =
-            "error at line 5: cannot find value `foo`\nwarning at line 7: unused variable\n";
-        let prompt = build_amp_tab_prompt("let x = ", ";", diagnostics);
+    fn test_build_prompt_with_lint_errors() {
+        let ctx = AmpTabPromptContext {
+            file_path: Some("src/main.rs"),
+            before_cursor: "let x = ",
+            after_cursor: ";",
+            lint_errors: "error at line 5: cannot find value `foo`\nwarning at line 7: unused variable\n",
+            recently_viewed_snippets: "",
+            diff_history: "",
+            recent_copy: "",
+        };
+        let prompt = build_amp_tab_prompt(&ctx);
+
+        assert!(prompt.contains("You are an intelligent programmer"));
         assert!(prompt.contains("let x = <|user_cursor_is_here|>;"));
-        assert!(prompt.contains("<diagnostics>"));
+        assert!(prompt.contains("<lint_errors>"));
         assert!(prompt.contains("error at line 5: cannot find value `foo`"));
         assert!(prompt.contains("warning at line 7: unused variable"));
-        assert!(prompt.contains("</diagnostics>"));
+        assert!(prompt.contains("</lint_errors>"));
+        assert!(prompt.contains("file_path: src/main.rs"));
+        assert!(prompt.contains("Fix any relevant linter errors"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_recently_viewed_snippets() {
+        let ctx = AmpTabPromptContext {
+            file_path: None,
+            before_cursor: "fn main() {",
+            after_cursor: "}",
+            lint_errors: "",
+            recently_viewed_snippets: "<snippet>\nfile_path: src/lib.rs\nfn helper() {}\n</snippet>\n",
+            diff_history: "",
+            recent_copy: "",
+        };
+        let prompt = build_amp_tab_prompt(&ctx);
+
+        assert!(prompt.contains("<recently_viewed_snippets>"));
+        assert!(prompt.contains("file_path: src/lib.rs"));
+        assert!(prompt.contains("fn helper() {}"));
+        assert!(prompt.contains("</recently_viewed_snippets>"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_diff_history() {
+        let ctx = AmpTabPromptContext {
+            file_path: None,
+            before_cursor: "let y = ",
+            after_cursor: ";",
+            lint_errors: "",
+            recently_viewed_snippets: "",
+            diff_history: "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-old\n+new\n",
+            recent_copy: "",
+        };
+        let prompt = build_amp_tab_prompt(&ctx);
+
+        assert!(prompt.contains("<diff_history>"));
+        assert!(prompt.contains("--- a/src/main.rs"));
+        assert!(prompt.contains("+++ b/src/main.rs"));
+        assert!(prompt.contains("</diff_history>"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_recent_copy() {
+        let ctx = AmpTabPromptContext {
+            file_path: None,
+            before_cursor: "let z = ",
+            after_cursor: ";",
+            lint_errors: "",
+            recently_viewed_snippets: "",
+            diff_history: "",
+            recent_copy: "some_function(arg1, arg2)",
+        };
+        let prompt = build_amp_tab_prompt(&ctx);
+
+        assert!(prompt.contains("<recent_copy>"));
+        assert!(prompt.contains("some_function(arg1, arg2)"));
+        assert!(prompt.contains("</recent_copy>"));
+        assert!(prompt.contains("Code I recently copied to clipboard"));
+    }
+
+    #[test]
+    fn test_format_recently_viewed_snippets() {
+        let related_files = vec![RelatedFile {
+            path: Arc::from(Path::new("src/utils.rs")),
+            max_row: 10,
+            excerpts: vec![zeta_prompt::RelatedExcerpt {
+                row_range: 0..5,
+                text: "fn helper() {\n    println!(\"hello\");\n}".to_string(),
+            }],
+        }];
+
+        let output = format_recently_viewed_snippets(&related_files);
+        assert!(output.contains("<snippet>"));
+        assert!(output.contains("file_path: src/utils.rs"));
+        assert!(output.contains("fn helper()"));
+        assert!(output.contains("</snippet>"));
+    }
+
+    #[test]
+    fn test_format_diff_history() {
+        let events = vec![Arc::new(Event::BufferChange {
+            path: Arc::from(Path::new("src/main.rs")),
+            old_path: Arc::from(Path::new("src/main.rs")),
+            diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+            predicted: false,
+            in_open_source_repo: false,
+        })];
+
+        let output = format_diff_history(&events);
+        assert!(output.contains("--- a/src/main.rs"));
+        assert!(output.contains("+++ b/src/main.rs"));
+        assert!(output.contains("-old"));
+        assert!(output.contains("+new"));
     }
 }
