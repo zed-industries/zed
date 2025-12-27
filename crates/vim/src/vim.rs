@@ -725,7 +725,7 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, action: &PushSneak, window, cx| {
                 if VimSettings::get_global(cx).beam_jump {
-                    vim.start_beam_jump(BeamJumpDirection::Forward, action.first_char, window, cx);
+                    vim.start_beam_jump(action.first_char, window, cx);
                 }
                 vim.push_operator(
                     Operator::Sneak {
@@ -738,7 +738,16 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, action: &PushSneakBackward, window, cx| {
                 if VimSettings::get_global(cx).beam_jump {
-                    vim.start_beam_jump(BeamJumpDirection::Backward, action.first_char, window, cx);
+                    // When Beam Jump is enabled, preserve `S`'s normal Vim behavior
+                    // (substitute line) and intentionally disable backward Sneak.
+                    vim.start_recording(cx);
+                    if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
+                        vim.switch_mode(Mode::VisualLine, false, window, cx)
+                    }
+                    let count = Vim::take_count(cx);
+                    Vim::take_forced_motion(cx);
+                    vim.substitute(count, true, window, cx);
+                    return;
                 }
                 vim.push_operator(
                     Operator::SneakBackward {
@@ -1588,7 +1597,6 @@ impl Vim {
 
     fn start_beam_jump(
         &mut self,
-        direction: BeamJumpDirection,
         first_char: Option<char>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1614,23 +1622,11 @@ impl Vim {
             let buffer = snapshot.display_snapshot.buffer_snapshot();
             let (visible_start, visible_end) = Self::compute_visible_range(&buffer, &layout);
 
-            let right_of_cursor = movement::right(&snapshot.display_snapshot, cursor)
-                .to_offset(&snapshot.display_snapshot, Bias::Right);
-
-            let search_start = match direction {
-                BeamJumpDirection::Forward => std::cmp::max(right_of_cursor, visible_start),
-                BeamJumpDirection::Backward => visible_start,
-            };
-            let search_end = match direction {
-                BeamJumpDirection::Forward => visible_end,
-                BeamJumpDirection::Backward => std::cmp::min(cursor_offset, visible_end),
-            };
-
             vim.beam_jump = Some(BeamJumpState::new(
-                direction,
                 smartcase,
-                search_start,
-                search_end,
+                cursor_offset,
+                visible_start,
+                visible_end,
                 previous_last_find.clone(),
             ));
         });
@@ -1655,53 +1651,20 @@ impl Vim {
                     match ch {
                         ';' => {
                             return BeamJumpAction::Jump(BeamJumpJump {
-                                direction: state.direction,
+                                direction: BeamJumpDirection::Forward,
                                 pattern: state.pattern.clone(),
                                 smartcase: state.smartcase,
                                 count: 1,
-                                search_range: state.search_start..state.search_end,
+                                search_range: None,
                             });
                         }
                         ',' => {
-                            let direction = match state.direction {
-                                BeamJumpDirection::Forward => BeamJumpDirection::Backward,
-                                BeamJumpDirection::Backward => BeamJumpDirection::Forward,
-                            };
-                            let snapshot = editor.snapshot(window, cx);
-                            let layout = editor.text_layout_details(window);
-                            let cursor = editor
-                                .selections
-                                .newest_anchor()
-                                .head()
-                                .to_display_point(&snapshot.display_snapshot);
-                            let cursor_offset =
-                                cursor.to_offset(&snapshot.display_snapshot, Bias::Left);
-                            let buffer = snapshot.display_snapshot.buffer_snapshot();
-                            let (visible_start, visible_end) =
-                                Self::compute_visible_range(&buffer, &layout);
-
-                            let right_of_cursor =
-                                movement::right(&snapshot.display_snapshot, cursor)
-                                    .to_offset(&snapshot.display_snapshot, Bias::Right);
-
-                            let search_start = match direction {
-                                BeamJumpDirection::Forward => {
-                                    std::cmp::max(right_of_cursor, visible_start)
-                                }
-                                BeamJumpDirection::Backward => visible_start,
-                            };
-                            let search_end = match direction {
-                                BeamJumpDirection::Forward => visible_end,
-                                BeamJumpDirection::Backward => {
-                                    std::cmp::min(cursor_offset, visible_end)
-                                }
-                            };
                             return BeamJumpAction::Jump(BeamJumpJump {
-                                direction,
+                                direction: BeamJumpDirection::Backward,
                                 pattern: state.pattern.clone(),
                                 smartcase: state.smartcase,
                                 count: 1,
-                                search_range: search_start..search_end,
+                                search_range: None,
                             });
                         }
                         _ => {}
@@ -1757,20 +1720,16 @@ impl Vim {
             }
             BeamJumpAction::Jump(jump) => {
                 let pattern: Arc<str> = jump.pattern.into();
-                let search_range = match jump.direction {
-                    BeamJumpDirection::Backward => Some(jump.search_range.clone()),
-                    BeamJumpDirection::Forward => None,
-                };
                 let motion = Motion::BeamJumpFind {
                     pattern: pattern.clone(),
                     direction: jump.direction,
                     smartcase: jump.smartcase,
-                    search_range,
+                    search_range: jump.search_range.clone(),
                 };
 
                 Vim::globals(cx).last_find = Some(Motion::BeamJumpFind {
                     pattern,
-                    direction: jump.direction,
+                    direction: BeamJumpDirection::Forward,
                     smartcase: jump.smartcase,
                     search_range: None,
                 });

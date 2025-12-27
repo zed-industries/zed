@@ -7,10 +7,10 @@ use std::{sync::Arc, time::Duration};
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::{DeleteLine, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
-    display_map::DisplayRow,
+    display_map::{DisplayRow, ToDisplayPoint},
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
@@ -31,7 +31,7 @@ use search::{ProjectSearchView, project_search};
 use serde_json::json;
 use workspace::DeploySearch;
 
-use crate::beam_jump::{BeamJumpAction, BeamJumpDirection, BeamJumpState};
+use crate::beam_jump::{BeamJumpAction, BeamJumpState};
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
@@ -1781,6 +1781,160 @@ async fn test_beam_jump_labels_forward(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_beam_jump_viewport_range_includes_before_and_after_cursor(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let text = "abxxabyyˇzzabxxab";
+    cx.set_state(text, Mode::Normal);
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state(text, Mode::Normal);
+
+    let (cursor_offset, highlights) = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let cursor = editor
+            .selections
+            .newest_anchor()
+            .head()
+            .to_display_point(&snapshot.display_snapshot);
+        let cursor_offset = cursor.to_offset(&snapshot.display_snapshot, Bias::Left);
+
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        let highlights = editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec();
+
+        (cursor_offset, highlights)
+    });
+
+    assert!(
+        highlights.iter().any(|h| h.range.start < cursor_offset),
+        "expected Beam Jump highlights before cursor. {}",
+        cx.assertion_context()
+    );
+    assert!(
+        highlights.iter().any(|h| h.range.start > cursor_offset),
+        "expected Beam Jump highlights after cursor. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_labels_prioritize_cursor_proximity(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("abˇxxab", Mode::Normal);
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state("abˇxxab", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+
+    assert_eq!(
+        highlights.len(),
+        2,
+        "expected 2 visible matches. {}",
+        cx.assertion_context()
+    );
+
+    let first = highlights
+        .iter()
+        .find(|h| h.range.start == MultiBufferOffset(0))
+        .and_then(|h| h.label.as_ref())
+        .map(|label| label.as_str().to_string())
+        .expect("expected a label for the first match");
+    let second = highlights
+        .iter()
+        .find(|h| h.range.start == MultiBufferOffset(4))
+        .and_then(|h| h.label.as_ref())
+        .map(|label| label.as_str().to_string())
+        .expect("expected a label for the second match");
+
+    assert_eq!(
+        first,
+        "f",
+        "closest match (tie-break by offset) should receive the first label. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        second,
+        "j",
+        "second-priority match should receive the next label. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_defers_global_search_until_repeat_keys(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    let mut lines = vec!["xx".to_string(); 2000];
+    lines[0] = "ˇxx".to_string();
+    lines[1500] = "ab".to_string();
+    let text = lines.join("\n");
+    cx.set_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state(&text, Mode::Normal);
+
+    cx.simulate_keystrokes(";");
+
+    let mut expected_lines = vec!["xx".to_string(); 2000];
+    expected_lines[1500] = "ˇab".to_string();
+    let expected = expected_lines.join("\n");
+    cx.assert_state(&expected, Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+}
+
+#[perf]
+#[gpui::test]
 async fn test_beam_jump_labels_avoid_suffix_chars(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.update_global(|store: &mut SettingsStore, cx| {
@@ -2013,11 +2167,15 @@ async fn test_beam_jump_semicolon_jumps_global_and_exits(cx: &mut gpui::TestAppC
         "beam jump highlights should be cleared after in-session ;. {}",
         cx.assertion_context()
     );
+
+    // Subsequent repeats continue using the last Beam Jump pattern.
+    cx.simulate_keystrokes(";");
+    cx.assert_state("xxabxxˇabyyab", Mode::Normal);
 }
 
 #[perf]
 #[gpui::test]
-async fn test_beam_jump_comma_jumps_opposite_direction_and_exits(cx: &mut gpui::TestAppContext) {
+async fn test_beam_jump_repeat_uses_arbitrary_length_pattern(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.update_user_settings(cx, |s| {
@@ -2027,20 +2185,118 @@ async fn test_beam_jump_comma_jumps_opposite_direction_and_exits(cx: &mut gpui::
 
     cx.update(|_window, cx| {
         cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("ˇxxabcxxabcxxabc", Mode::Normal);
+
+    cx.simulate_keystrokes("s a b c");
+    cx.assert_state("ˇxxabcxxabcxxabc", Mode::Normal);
+
+    cx.simulate_keystrokes(";");
+    cx.assert_state("xxˇabcxxabcxxabc", Mode::Normal);
+
+    cx.simulate_keystrokes(";");
+    cx.assert_state("xxabcxxˇabcxxabc", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_comma_jumps_global_and_exits(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("abxxabxxabxxˇab", Mode::Normal);
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state("abxxabxxabxxˇab", Mode::Normal);
+
+    cx.simulate_keystrokes(",");
+    cx.assert_state("abxxabxxˇabxxab", Mode::Normal);
+    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "beam jump highlights should be cleared after in-session ,. {}",
+        cx.assertion_context()
+    );
+
+    // Subsequent repeats continue using the last Beam Jump pattern, with `;` forward.
+    cx.simulate_keystrokes(";");
+    cx.assert_state("abxxabxxabxxˇab", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_shift_s_preserves_substitute_line(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    // Simulate the Sneak docs keybinding even though Beam Jump is enabled.
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
             "shift-s",
             PushSneakBackward { first_char: None },
             Some("vim_mode == normal"),
         )])
     });
 
-    cx.set_state("abxxabxxabˇxxab", Mode::Normal);
+    cx.set_state(
+        indoc! {"
+        one
+        ˇtwo
+        three
+    "},
+        Mode::Normal,
+    );
 
-    cx.simulate_keystrokes("S a b");
-    cx.assert_state("abxxabxxabˇxxab", Mode::Normal);
+    cx.simulate_keystrokes("S");
+    cx.assert_state(
+        indoc! {"
+        one
+        ˇ
+        three
+    "},
+        Mode::Insert,
+    );
 
-    cx.simulate_keystrokes(",");
-    cx.assert_state("abxxabxxabxxˇab", Mode::Normal);
-    assert_eq!(cx.active_operator(), None, "{}", cx.assertion_context());
+    let remaining = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        remaining.is_empty(),
+        "expected `S` to not enter Beam Jump when enabled. {}",
+        cx.assertion_context()
+    );
 }
 
 #[perf]
@@ -2192,7 +2448,7 @@ async fn test_beam_jump_backfills_labels_after_narrowing(cx: &mut gpui::TestAppC
 
 #[perf]
 #[gpui::test]
-async fn test_beam_jump_v0_fallback_returns_jump(cx: &mut gpui::TestAppContext) {
+async fn test_beam_jump_v0_does_not_jump_while_typing(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.set_state("ˇxxabxx", Mode::Normal);
 
@@ -2201,8 +2457,8 @@ async fn test_beam_jump_v0_fallback_returns_jump(cx: &mut gpui::TestAppContext) 
         let buffer = snapshot.display_snapshot.buffer_snapshot();
 
         let mut state = BeamJumpState::new(
-            BeamJumpDirection::Forward,
             false,
+            MultiBufferOffset(0),
             MultiBufferOffset(0),
             MultiBufferOffset(2),
             None,
@@ -2212,12 +2468,8 @@ async fn test_beam_jump_v0_fallback_returns_jump(cx: &mut gpui::TestAppContext) 
     });
 
     match action {
-        BeamJumpAction::Jump(jump) => {
-            assert_eq!(jump.direction, BeamJumpDirection::Forward);
-            assert_eq!(jump.pattern, "ab");
-            assert_eq!(jump.count, 1);
-        }
-        other => panic!("expected Jump, got {other:?}"),
+        BeamJumpAction::Continue => {}
+        other => panic!("expected Continue, got {other:?}"),
     }
 }
 
@@ -2240,7 +2492,7 @@ async fn test_beam_jump_moves_primary_cursor_only(cx: &mut gpui::TestAppContext)
     });
 
     cx.set_state("ˇxxab xxab ˇxxab", Mode::Normal);
-    cx.simulate_keystrokes("s a b");
+    cx.simulate_keystrokes("s a b ;");
     cx.assert_state("ˇxxab xxab xxˇab", Mode::Normal);
 }
 
