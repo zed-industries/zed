@@ -1,0 +1,241 @@
+# Project: Remove Result from AsyncApp Return Types
+
+## Problem
+
+`AsyncApp` holds a `Weak<AppCell>` to avoid leaking the app through cyclic references. Every method must upgrade this weak pointer and return `Result<T>` to handle the case where the app was dropped. This pushes error handling complexity to every callsite throughout the codebase.
+
+```rust
+// Current: Every call requires error handling
+cx.update(|app| { ... })?
+cx.update(|app| { ... }).ok();
+cx.update(|app| { ... }).unwrap();
+```
+
+## Solution
+
+Move the app-alive check into the executor's task execution path. Before running any task that needs the app, check if the app is still alive. If not, cancel the task by dropping its runnable. This guarantees that any code inside a foreground task only executes when the app is alive, allowing us to remove the `Result` wrapper.
+
+## Technical Background
+
+### How async-task Works
+
+The `async-task` crate's `spawn()` returns a `(Runnable, Task)` pair:
+- `Runnable`: Executes the future via `runnable.run()`
+- `Task`: A handle to await the future's output
+- Dropping a `Runnable` cancels the task
+- The `schedule` closure determines where/when the runnable is dispatched
+
+### Current Executor Architecture
+
+Tasks are spawned with metadata and a schedule closure:
+```rust
+async_task::Builder::new()
+    .metadata(RunnableMeta { location })
+    .spawn(
+        move |_| future,
+        move |runnable| {
+            dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
+        },
+    )
+```
+
+The dispatcher queues the runnable, and a trampoline function executes it:
+```rust
+extern "C" fn trampoline(runnable: *mut c_void) {
+    let task = unsafe { Runnable::<RunnableMeta>::from_raw(...) };
+    task.run();  // <-- We add the check BEFORE this
+}
+```
+
+### Why This Is Safe
+
+1. **Foreground tasks run on the main thread.** The App also lives on the main thread. While a task runs synchronously, nothing else on the main thread can run, so the App cannot be dropped mid-execution.
+
+2. **The check happens before each poll.** Between await points, the task yields. When rescheduled, the trampoline checks the app status again. If dead, the task is cancelled before user code runs.
+
+3. **Recursive cancellation handles nested awaits.** If an outer foreground task awaits an inner foreground task and the app dies:
+   - Inner task scheduled → trampoline sees app dead → cancels (drops runnable)
+   - Outer task woken → scheduled → trampoline sees app dead → cancels
+   - Neither task's code runs after app death → no panic
+
+4. **Background tasks cannot hold AsyncApp.** `AsyncApp` contains `Weak<Rc<...>>` which is `!Send`, so it cannot be moved into a `Send` future on a background thread.
+
+### The One Edge Case
+
+A background task (no app check) awaiting a foreground task (has app check):
+- Foreground task cancelled when app dies
+- Background task's await sees cancellation → panic
+
+Solution: Provide `try_update()` returning `Option<T>` for these cases.
+
+## API Changes
+
+### AsyncApp Methods
+
+Rename existing methods and add non-Result versions:
+
+| Old Signature | New Signature |
+|--------------|---------------|
+| `fn update(...) -> Result<R>` | `fn update(...) -> R` (panics if app gone) |
+| (new) | `fn try_update(...) -> Option<R>` (returns None if app gone) |
+
+Apply the same pattern to:
+- `update`
+- `read_entity` / `update_entity`
+- `read_global` / `update_global`
+- `read_window` / `update_window`
+- `new` / `reserve_entity` / `insert_entity`
+- `refresh`
+- `open_window`
+- `subscribe`
+- `has_global`
+
+### AppContext Trait
+
+Change the associated type:
+```rust
+// Before
+impl AppContext for AsyncApp {
+    type Result<T> = Result<T>;
+}
+
+// After
+impl AppContext for AsyncApp {
+    type Result<T> = T;
+}
+```
+
+### RunnableMeta
+
+Add optional app weak pointer:
+```rust
+pub struct RunnableMeta {
+    pub location: &'static Location<'static>,
+    pub app: Option<Weak<AppCell>>,  // NEW
+}
+```
+
+## Implementation Phases
+
+### Phase 1: Add Trampoline Check Infrastructure
+
+1. Modify `RunnableMeta` to include `Option<Weak<AppCell>>`
+2. Update trampoline functions in all dispatchers to check app status before running:
+   - `crates/gpui/src/platform/mac/dispatcher.rs`
+   - `crates/gpui/src/platform/linux/dispatcher.rs`
+   - `crates/gpui/src/platform/windows/dispatcher.rs`
+   - `crates/gpui/src/platform/test/dispatcher.rs`
+3. Modify spawn paths in `AsyncApp` to populate the app weak pointer in metadata
+
+### Phase 2: Update AsyncApp API
+
+1. Rename `update() -> Result<R>` to `try_update() -> Option<R>`
+2. Add new `update() -> R` that panics if app is gone
+3. Apply same pattern to all fallible methods
+4. Update `AppContext` trait's associated `Result` type
+
+### Phase 3: Audit Cross-Boundary Awaits
+
+Search for patterns where background code awaits foreground tasks:
+```
+background_executor().spawn(...).await  // awaiting foreground work
+```
+
+Migrate these to use `try_update()` or handle the `Option`.
+
+Known patterns to check:
+- `cx.spawn(...).await` called from background context
+- Channels receiving from foreground tasks
+- Any `Task<T>` held across thread boundaries
+
+### Phase 4: Codebase Migration
+
+1. Update all callsites to remove `.unwrap()`, `?`, `.ok()` from `update()` calls
+2. Use `try_update()` where `Option` handling is needed
+3. This is a large mechanical change across ~500+ callsites
+
+### Phase 5: Cleanup
+
+1. Remove now-dead error handling code
+2. Update documentation
+3. Add tests validating cancellation behavior
+
+## Files to Modify
+
+### Core Changes
+- `crates/gpui/src/app/async_context.rs` - AsyncApp implementation
+- `crates/gpui/src/executor.rs` - RunnableMeta, spawn functions
+- `crates/gpui/src/platform.rs` - RunnableVariant if needed
+- `crates/gpui/src/gpui.rs` - AppContext trait
+
+### Dispatcher Changes
+- `crates/gpui/src/platform/mac/dispatcher.rs` - trampoline function
+- `crates/gpui/src/platform/linux/dispatcher.rs` - trampoline function
+- `crates/gpui/src/platform/windows/dispatcher.rs` - trampoline function
+- `crates/gpui/src/platform/test/dispatcher.rs` - trampoline function
+
+### Realtime Tasks (No Changes Needed)
+Realtime/audio tasks use a separate code path with their own thread and channel. They don't use `AsyncApp` and won't be affected.
+
+## Testing Strategy
+
+### Unit Tests (`crates/gpui/src/executor.rs`)
+
+**`test_task_cancelled_when_app_dropped`**
+Verifies the core mechanism: tasks don't execute after the app is gone.
+
+Test spec:
+```
+spawn task that sets flag on completion
+run_until_parked (task starts, blocks on channel)
+quit app
+assert flag was never set
+```
+
+**`test_nested_tasks_both_cancel`**
+Validates recursive cancellation: awaiting a cancelled task doesn't panic when both have app checks.
+
+Test spec:
+```
+spawn outer task that awaits inner task
+both tasks set flags if they run after quit
+quit app
+assert neither flag was set (no panic from awaiting cancelled inner)
+```
+
+**`test_try_update_returns_none_when_app_gone`**
+Confirms the fallback API works for edge cases like background-awaits-foreground.
+
+Test spec:
+```
+get async_cx, quit app
+call try_update
+assert returns None
+```
+
+### GPUI Example (`crates/gpui/examples/async_cancellation.rs`)
+
+Interactive demo for manual validation of cancellation behavior.
+```
+window with "Spawn Task" button
+each task runs 10-second timer, updating status each second
+closing window cancels pending tasks (no panic, no zombie tasks)
+```
+
+Run with: `cargo run -p gpui --example async_cancellation`
+
+### Integration Tests (`crates/gpui/src/app/async_context.rs`)
+
+**`test_spawn_executes_when_app_alive`**
+Basic spawn/await still works.
+
+**`test_update_entity_works`**
+Entity operations via AsyncApp still work.
+
+### Validation Checklist
+
+1. `cargo test -p gpui` passes
+2. `cargo run -p gpui --example async_cancellation` works correctly
+3. `./script/clippy` passes
+4. Full test suite `cargo test` passes
+5. Manual test: close windows with pending tasks, verify no panics
