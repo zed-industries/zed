@@ -4690,17 +4690,36 @@ impl GitPanel {
         &self,
         ix: usize,
         header: &GitHeaderEntry,
-        _: bool,
-        _: &Window,
-        _: &Context<Self>,
+        has_write_access: bool,
+        _window: &Window,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+        let group_name: SharedString = format!("header_group_{}", ix).into();
+        let section = header.header;
+
+        let has_entries = match section {
+            Section::Tracked => self.tracked_count > 0,
+            Section::New => self.new_count > 0,
+            Section::Conflict => self.conflicted_count > 0,
+        };
+
+        let discard_icon = match section {
+            Section::New => IconName::Trash,
+            _ => IconName::Undo,
+        };
+        let discard_tooltip: SharedString = match section {
+            Section::New => "Trash Untracked Files".into(),
+            _ => "Discard Tracked Changes".into(),
+        };
 
         h_flex()
             .id(id)
+            .group(group_name.clone())
             .h(self.list_item_height())
             .w_full()
-            .items_end()
+            .items_center()
+            .justify_between()
             .px_3()
             .pb_1()
             .child(
@@ -4710,6 +4729,44 @@ impl GitPanel {
                     .line_height_style(LineHeightStyle::UiLabel)
                     .single_line(),
             )
+            .when(has_entries && has_write_access, |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .visible_on_hover(group_name)
+                        .child(
+                            panel_icon_button("stage-section", IconName::Plus)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Stage All"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let header_entry = GitHeaderEntry { header: section };
+                                    let list_entry = GitListEntry::Header(header_entry);
+                                    this.toggle_staged_for_entry(&list_entry, window, cx);
+                                })),
+                        )
+                        .child(
+                            panel_icon_button("discard-section", discard_icon)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text(discard_tooltip))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    match section {
+                                        Section::New => {
+                                            this.clean_all(&TrashUntrackedFiles, window, cx);
+                                        }
+                                        _ => {
+                                            this.restore_tracked_files(
+                                                &RestoreTrackedFiles,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                })),
+                        ),
+                )
+            })
             .into_any_element()
     }
 
@@ -4936,8 +4993,23 @@ impl GitPanel {
                 }
             });
 
+        let is_created = status.is_created();
+        let discard_icon = if is_created {
+            IconName::Trash
+        } else {
+            IconName::Undo
+        };
+        let discard_tooltip: SharedString = if is_created {
+            "Trash File".into()
+        } else {
+            "Discard Changes".into()
+        };
+        let entry_for_discard = entry.clone();
+        let entry_group_name: SharedString = format!("entry_group_{}", ix).into();
+
         h_flex()
             .id(id)
+            .group(entry_group_name.clone())
             .h(self.list_item_height())
             .w_full()
             .pl_3()
@@ -4952,6 +5024,18 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
+            .when(has_write_access, |this| {
+                this.child(
+                    panel_icon_button("discard-entry", discard_icon)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .visible_on_hover(entry_group_name)
+                        .tooltip(Tooltip::text(discard_tooltip))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.revert_entry(&entry_for_discard, window, cx);
+                        })),
+                )
+            })
             .child(
                 div()
                     .id(checkbox_wrapper_id)
