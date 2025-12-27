@@ -801,7 +801,7 @@ async fn build_buffer_diff(
     let diff_snapshot = cx
         .update(|cx| {
             BufferDiffSnapshot::new_with_base_buffer(
-                buffer.text.clone(),
+                buffer.clone(),
                 old_text.map(Arc::new),
                 base_buffer,
                 cx,
@@ -810,7 +810,7 @@ async fn build_buffer_diff(
         .await;
 
     cx.new(|cx| {
-        let mut diff = BufferDiff::new(&buffer.text, cx);
+        let mut diff = BufferDiff::new(&buffer, cx);
         diff.set_snapshot(diff_snapshot, &buffer.text, cx);
         diff
     })

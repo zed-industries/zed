@@ -11,7 +11,7 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::{Result, anyhow};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
-    DiffHunkStatusKind,
+    DiffHunkStatusKind, SyntaxDiff,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -155,6 +155,8 @@ pub struct MultiBufferDiffHunk {
     pub secondary_status: DiffHunkSecondaryStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    /// Pre-computed syntax diff ranges for this hunk.
+    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3910,6 +3912,7 @@ impl MultiBufferSnapshot {
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 secondary_status: hunk.secondary_status,
+                syntax_diff: hunk.syntax_diff.clone(),
             })
         })
     }
