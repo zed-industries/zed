@@ -5956,6 +5956,11 @@ impl EditorElement {
                                 ),
                             };
                             window.paint_quad(fill(bounds, active_line_bg));
+                            window.paint_quad(outline(
+                                bounds,
+                                cx.theme().colors().editor_active_line_border,
+                                BorderStyle::Solid,
+                            ));
                         }
                     }
                 }
