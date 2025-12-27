@@ -942,6 +942,34 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Smooth Cursor Animation",
+                    description: "Enable smooth cursor movement animation.",
+                    field: Box::new(SettingField {
+                        json_path: Some("smooth_caret"),
+                        pick: |settings_content| settings_content.editor.smooth_caret.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.editor.smooth_caret = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Effect",
+                    description: "Visual effect when cursor stops moving.",
+                    field: Box::new(SettingField {
+                        json_path: Some("cursor_vfx.mode"),
+                        pick: |settings_content| {
+                            settings_content.editor.cursor_vfx.as_ref().and_then(|c| c.mode.as_ref())
+                        },
+                        write: |settings_content, value| {
+                            settings_content.editor.cursor_vfx.get_or_insert_default().mode = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Highlighting"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Unnecessary Code Fade",

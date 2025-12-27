@@ -170,6 +170,23 @@ impl Scene {
     }
 }
 
+impl Clone for Scene {
+    fn clone(&self) -> Self {
+        Scene {
+            paint_operations: self.paint_operations.clone(),
+            primitive_bounds: BoundsTree::default(), // Not needed for replay
+            layer_stack: self.layer_stack.clone(),
+            shadows: self.shadows.clone(),
+            quads: self.quads.clone(),
+            paths: self.paths.clone(),
+            underlines: self.underlines.clone(),
+            monochrome_sprites: self.monochrome_sprites.clone(),
+            polychrome_sprites: self.polychrome_sprites.clone(),
+            surfaces: self.surfaces.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 #[cfg_attr(
     all(
@@ -189,6 +206,7 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
