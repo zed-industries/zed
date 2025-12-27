@@ -2155,12 +2155,20 @@ impl Buffer {
 
     /// Spawns a background task that searches the buffer for any whitespace
     /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
-    pub fn remove_trailing_whitespace(&self, cx: &App) -> Task<Diff> {
+    ///
+    /// If `remove_whitespace_on_empty_lines` is false, lines that contain only
+    /// whitespace (empty lines with indentation) will preserve their whitespace.
+    pub fn remove_trailing_whitespace(
+        &self,
+        remove_whitespace_on_empty_lines: bool,
+        cx: &App,
+    ) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
+        let skip_whitespace_only_lines = !remove_whitespace_on_empty_lines;
         cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges(&old_text);
+            let ranges = trailing_whitespace_ranges(&old_text, skip_whitespace_only_lines);
             let empty = Arc::<str>::from("");
             Diff {
                 base_version,
@@ -2175,26 +2183,46 @@ impl Buffer {
 
     /// Ensures that the buffer ends with a single newline character, and
     /// no other whitespace. Skips if the buffer is empty.
-    pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
+    ///
+    /// If `remove_whitespace_on_empty_lines` is false, and the last line contains
+    /// only whitespace, that whitespace is preserved.
+    pub fn ensure_final_newline(
+        &mut self,
+        remove_whitespace_on_empty_lines: bool,
+        cx: &mut Context<Self>,
+    ) {
         let len = self.len();
         if len == 0 {
             return;
         }
-        let mut offset = len;
-        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
-            let non_whitespace_len = chunk
-                .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                .len();
-            offset -= chunk.len();
-            offset += non_whitespace_len;
-            if non_whitespace_len != 0 {
-                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                    return;
+
+        if remove_whitespace_on_empty_lines {
+            // Original behavior: remove all trailing whitespace and add newline
+            let mut offset = len;
+            for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    // If buffer ends with just "\n" after the last non-whitespace char, nothing to do
+                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
+                        return;
+                    }
+                    break;
                 }
-                break;
             }
+            self.edit([(offset..len, "\n")], None, cx);
+        } else {
+            // When preserving whitespace on empty lines, we need to handle the case
+            // where the last line contains only whitespace - append newline after it
+            if self.as_rope().chars_at(len - 1).next() == Some('\n') {
+                // Already ends with newline - nothing to do
+                return;
+            }
+            self.edit([(len..len, "\n")], None, cx);
         }
-        self.edit([(offset..len, "\n")], None, cx);
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
@@ -5709,37 +5737,78 @@ impl CharClassifier {
 /// Find all of the ranges of whitespace that occur at the ends of lines
 /// in the given rope.
 ///
+/// If `skip_whitespace_only_lines` is true, lines that contain only whitespace
+/// will not have their whitespace removed (preserving indentation on empty lines).
+///
 /// This could also be done with a regex search, but this implementation
 /// avoids copying text.
-pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
+pub fn trailing_whitespace_ranges(
+    rope: &Rope,
+    skip_whitespace_only_lines: bool,
+) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
 
     let mut offset = 0;
     let mut prev_chunk_trailing_whitespace_range = 0..0;
+    // Track whether the previous chunk's last line segment contained non-whitespace content
+    let mut prev_chunk_had_content = false;
     for chunk in rope.chunks() {
         let mut prev_line_trailing_whitespace_range = 0..0;
+        // Track whether the current line (possibly spanning chunks) contains content
+        let mut prev_line_had_content = false;
         for (i, line) in chunk.split('\n').enumerate() {
             let line_end_offset = offset + line.len();
             let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
             let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
+            let this_segment_has_content = trimmed_line_len > 0;
 
-            if i == 0 && trimmed_line_len == 0 {
-                trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
-            }
+            // For the first segment in a chunk, we're continuing the last line from the previous chunk
+            let line_has_content = if i == 0 {
+                // The full line has content if either the previous chunk's part or
+                // this chunk's continuation has non-whitespace content
+                let combined_has_content = prev_chunk_had_content || this_segment_has_content;
+
+                if !this_segment_has_content && !prev_chunk_trailing_whitespace_range.is_empty() {
+                    // This continuation is all whitespace; extend the range from the previous chunk
+                    trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
+                }
+
+                // If we're skipping whitespace-only lines and the combined line has no content,
+                // clear the range
+                if skip_whitespace_only_lines && !combined_has_content {
+                    trailing_whitespace_range = 0..0;
+                }
+
+                combined_has_content
+            } else {
+                this_segment_has_content
+            };
+
+            // Push the previous line's range if applicable
             if !prev_line_trailing_whitespace_range.is_empty() {
-                ranges.push(prev_line_trailing_whitespace_range);
+                // Skip if the line was whitespace-only and we're preserving those
+                let should_skip = skip_whitespace_only_lines && !prev_line_had_content;
+                if !should_skip {
+                    ranges.push(prev_line_trailing_whitespace_range);
+                }
             }
 
             offset = line_end_offset + 1;
             prev_line_trailing_whitespace_range = trailing_whitespace_range;
+            prev_line_had_content = line_has_content;
         }
 
         offset -= 1;
         prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
+        prev_chunk_had_content = prev_line_had_content;
     }
 
+    // Handle the final line
     if !prev_chunk_trailing_whitespace_range.is_empty() {
-        ranges.push(prev_chunk_trailing_whitespace_range);
+        let should_skip = skip_whitespace_only_lines && !prev_chunk_had_content;
+        if !should_skip {
+            ranges.push(prev_chunk_trailing_whitespace_range);
+        }
     }
 
     ranges

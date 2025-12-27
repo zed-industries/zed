@@ -87,6 +87,9 @@ pub struct LanguageSettings {
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.
     pub remove_trailing_whitespace_on_save: bool,
+    /// Whether or not to remove whitespace from lines that contain only whitespace
+    /// when saving. When set to `false`, indentation on empty lines is preserved.
+    pub remove_whitespace_on_empty_lines: bool,
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
@@ -551,6 +554,9 @@ impl settings::Settings for AllLanguageSettings {
                 format_on_save: settings.format_on_save.unwrap(),
                 remove_trailing_whitespace_on_save: settings
                     .remove_trailing_whitespace_on_save
+                    .unwrap(),
+                remove_whitespace_on_empty_lines: settings
+                    .remove_whitespace_on_empty_lines
                     .unwrap(),
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
                 formatter: settings.formatter.unwrap(),

@@ -842,9 +842,11 @@ impl SettingsPageItem {
                 let (field_with_padding, _) =
                     render_setting_item_inner(setting_item, true, false, cx);
 
+                let indent_px = setting_item.indent_level as f32 * 24.0;
                 v_flex()
                     .group("setting-item")
                     .px_8()
+                    .pl(px(32.0 + indent_px))
                     .child(field_with_padding)
                     .when(!is_last, |this| this.child(Divider::horizontal()))
                     .into_any_element()
@@ -1162,6 +1164,8 @@ struct SettingItem {
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
     files: FileMask,
+    /// Indentation level for child settings (0 = no indent, 1 = one level, etc.)
+    indent_level: u8,
 }
 
 struct DynamicItem {
