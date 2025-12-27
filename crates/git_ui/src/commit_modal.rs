@@ -1,7 +1,7 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
 use git::repository::CommitOptions;
-use git::{Amend, Commit, GenerateCommitMessage, Signoff};
+use git::{Amend, Commit, GenerateCommitMessage, Signoff, StashPush, ToggleCommitMode};
 use panel::{panel_button, panel_editor_style};
 use project::DisableAiSettings;
 use settings::Settings;
@@ -105,6 +105,7 @@ struct RestoreDock {
 pub enum ForceMode {
     Amend,
     Commit,
+    Stash,
 }
 
 impl CommitModal {
@@ -114,6 +115,9 @@ impl CommitModal {
         });
         workspace.register_action(|workspace, _: &Amend, window, cx| {
             CommitModal::toggle(workspace, Some(ForceMode::Amend), window, cx);
+        });
+        workspace.register_action(|workspace, _: &StashPush, window, cx| {
+            CommitModal::toggle(workspace, Some(ForceMode::Stash), window, cx);
         });
     }
 
@@ -146,6 +150,12 @@ impl CommitModal {
                         if git_panel.amend_pending() {
                             git_panel.set_amend_pending(false, cx);
                         }
+                    }
+                    ForceMode::Stash => {
+                        if git_panel.amend_pending() {
+                            git_panel.set_amend_pending(false, cx);
+                        }
+                        git_panel.set_stash(true);
                     }
                 }
             }
@@ -282,13 +292,14 @@ impl CommitModal {
                     let amend_enabled = git_panel.amend_pending();
                     let signoff_enabled = git_panel.signoff_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
+                    let is_stash = git_panel.stash();
 
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
                             .when_some(keybinding_target.clone(), |el, keybinding_target| {
                                 el.context(keybinding_target)
                             })
-                            .when(has_previous_commit, |this| {
+                            .when(has_previous_commit && !is_stash, |this| {
                                 this.toggleable_entry(
                                     "Amend",
                                     amend_enabled,
@@ -306,16 +317,37 @@ impl CommitModal {
                                     },
                                 )
                             })
+                            .when(!is_stash, |this| {
+                                this.toggleable_entry(
+                                    "Signoff",
+                                    signoff_enabled,
+                                    IconPosition::Start,
+                                    Some(Box::new(Signoff)),
+                                    {
+                                        let git_panel = git_panel_entity.clone();
+                                        move |window, cx| {
+                                            git_panel.update(cx, |git_panel, cx| {
+                                                git_panel
+                                                    .toggle_signoff_enabled(&Signoff, window, cx);
+                                            })
+                                        }
+                                    },
+                                )
+                            })
                             .toggleable_entry(
-                                "Signoff",
-                                signoff_enabled,
+                                format!("Change to {}", if is_stash { "commit" } else { "stash" }),
+                                false,
                                 IconPosition::Start,
-                                Some(Box::new(Signoff)),
+                                Some(Box::new(ToggleCommitMode)),
                                 {
                                     let git_panel = git_panel_entity.clone();
                                     move |window, cx| {
                                         git_panel.update(cx, |git_panel, cx| {
-                                            git_panel.toggle_signoff_enabled(&Signoff, window, cx);
+                                            git_panel.toggle_commit_mode(
+                                                &ToggleCommitMode,
+                                                window,
+                                                cx,
+                                            );
                                         })
                                     }
                                 },
@@ -338,6 +370,7 @@ impl CommitModal {
             is_amend_pending,
             is_signoff_enabled,
             workspace,
+            is_stash,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
             let title = git_panel.commit_button_title();
@@ -346,6 +379,7 @@ impl CommitModal {
             let active_repo = git_panel.active_repository.clone();
             let is_amend_pending = git_panel.amend_pending();
             let is_signoff_enabled = git_panel.signoff_enabled();
+            let is_stash = git_panel.stash();
             (
                 can_commit,
                 tooltip,
@@ -356,6 +390,7 @@ impl CommitModal {
                 is_amend_pending,
                 is_signoff_enabled,
                 git_panel.workspace.clone(),
+                is_stash,
             )
         });
 
@@ -447,14 +482,18 @@ impl CommitModal {
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             telemetry::event!("Git Committed", source = "Git Modal");
                             this.git_panel.update(cx, |git_panel, cx| {
-                                git_panel.commit_changes(
-                                    CommitOptions {
-                                        amend: is_amend_pending,
-                                        signoff: is_signoff_enabled,
-                                    },
-                                    window,
-                                    cx,
-                                )
+                                if is_stash {
+                                    git_panel.stash_push(window, cx);
+                                } else {
+                                    git_panel.commit_changes(
+                                        CommitOptions {
+                                            amend: is_amend_pending,
+                                            signoff: is_signoff_enabled,
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                }
                             });
                             cx.emit(DismissEvent);
                         }))
@@ -467,6 +506,8 @@ impl CommitModal {
                                         tooltip,
                                         Some(if is_amend_pending {
                                             &git::Amend
+                                        } else if is_stash {
+                                            &git::StashAll
                                         } else {
                                             &git::Commit
                                         }),
@@ -510,6 +551,15 @@ impl CommitModal {
         }
     }
 
+    fn on_stash(&mut self, _: &git::StashAll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.stash_with_message(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
+            // telemetry::event!("Git Push Stash", source = "Git Modal");
+            cx.emit(DismissEvent);
+        }
+    }
+
     fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
         if self.git_panel.update(cx, |git_panel, cx| {
             git_panel.amend(&self.commit_editor.focus_handle(cx), window, cx)
@@ -541,6 +591,7 @@ impl Render for CommitModal {
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::on_commit))
+            .on_action(cx.listener(Self::on_stash))
             .on_action(cx.listener(Self::on_amend))
             .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
                 this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
