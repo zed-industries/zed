@@ -3412,13 +3412,19 @@ impl Workspace {
         }
     }
 
-    pub fn close_panel<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut did_close = false;
         for dock in self.all_docks().iter() {
             dock.update(cx, |dock, cx| {
-                if dock.panel::<T>().is_some() {
-                    dock.set_open(false, window, cx)
+                if dock.panel::<T>().is_some() && dock.is_open() {
+                    dock.set_open(false, window, cx);
+                    did_close = true;
                 }
-            })
+            });
+        }
+        // Serialize workspace to persist dock visibility change
+        if did_close {
+            self.serialize_workspace(window, cx);
         }
     }
 

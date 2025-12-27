@@ -20,7 +20,7 @@ use workspace::{
 };
 
 use crate::{
-    TerminalView, default_working_directory,
+    TerminalView,
     terminal_panel::{TerminalPanel, new_terminal_pane},
 };
 
@@ -240,44 +240,15 @@ async fn deserialize_pane_group(
                 async move |cx| {
                     let new_items = new_items.await;
 
-                    let items = pane.update_in(cx, |pane, window, cx| {
+                    let _items = pane.update_in(cx, |pane, window, cx| {
                         populate_pane_items(pane, new_items, active_item, window, cx);
                         pane.set_pinned_count(pinned_count);
                         pane.items_len()
                     });
-                    // Avoid blank panes in splits
-                    if items.is_ok_and(|items| items == 0) {
-                        let working_directory = workspace
-                            .update(cx, |workspace, cx| default_working_directory(workspace, cx))
-                            .ok()
-                            .flatten();
-                        let Some(terminal) = project
-                            .update(cx, |project, cx| {
-                                project.create_terminal_shell(working_directory, cx)
-                            })
-                            .log_err()
-                        else {
-                            return;
-                        };
-
-                        let terminal = terminal.await.log_err();
-                        pane.update_in(cx, |pane, window, cx| {
-                            if let Some(terminal) = terminal {
-                                let terminal_view = Box::new(cx.new(|cx| {
-                                    TerminalView::new(
-                                        terminal,
-                                        workspace.clone(),
-                                        Some(workspace_id),
-                                        project.downgrade(),
-                                        window,
-                                        cx,
-                                    )
-                                }));
-                                pane.add_item(terminal_view, true, false, None, window, cx);
-                            }
-                        })
-                        .ok();
-                    }
+                    // Previously this created a terminal for empty panes in splits,
+                    // but this was causing extra terminals when the dock was opened
+                    // programmatically (e.g., by task spawn). Users can create terminals
+                    // explicitly via ctrl+` or the new terminal action.
                 }
             })
             .await;
