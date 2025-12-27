@@ -31,6 +31,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
+menu.workspace = true
 multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", rev = "764dd270c642f77f10f3e19d05cc178a6cbe69f3", features = ["use_tokio"], optional = true }
 picker.workspace = true
@@ -41,10 +42,10 @@ search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+strum.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
-menu.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
