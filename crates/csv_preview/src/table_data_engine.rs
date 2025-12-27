@@ -12,10 +12,7 @@ use std::{
 
 use crate::{
     table_data_engine::{
-        filtering_by_column::{
-            AppliedFiltering, AvailableFilters, FilterEntry, calculate_available_filters,
-            retain_rows,
-        },
+        filtering_by_column::{FilterEntry, FilterStack, calculate_available_filters, retain_rows},
         selection::{NavigationDirection, NavigationOperation, TableSelection},
         sorting_by_column::{AppliedSorting, sort_data_rows},
     },
@@ -32,9 +29,9 @@ pub mod sorting_by_column;
 
 #[derive(Default)]
 pub(crate) struct TableDataEngine {
-    pub applied_filtering: AppliedFiltering,
-    /// All available filters in unfiltered state
-    pub available_filters: AvailableFilters,
+    pub filter_stack: FilterStack,
+    /// All filters in unfiltered state
+    all_filters: HashMap<AnyColumn, Vec<FilterEntry>>,
     pub applied_sorting: Option<AppliedSorting>,
     d2d_mapping: DisplayToDataMapping,
     pub contents: TableLikeContent,
@@ -55,7 +52,8 @@ impl TableDataEngine {
     /// Applies filtering to the data and produces display to data mapping from existing sorting
     pub(crate) fn apply_filtering(&mut self) {
         self.d2d_mapping
-            .apply_filtering(&self.applied_filtering, &self.contents.rows);
+            .apply_filtering(&self.filter_stack, &self.contents.rows);
+        // self.calculate_filters_with_availability();
         self.d2d_mapping.merge_mappings();
     }
 
@@ -64,12 +62,13 @@ impl TableDataEngine {
         self.d2d_mapping
             .apply_sorting(self.applied_sorting, &self.contents.rows);
         self.d2d_mapping
-            .apply_filtering(&self.applied_filtering, &self.contents.rows);
+            .apply_filtering(&self.filter_stack, &self.contents.rows);
+        // self.calculate_filters_with_availability();
         self.d2d_mapping.merge_mappings();
     }
 
     pub fn calculate_available_filters(&mut self) {
-        self.available_filters =
+        self.all_filters =
             calculate_available_filters(&self.contents.rows, self.contents.number_of_cols);
     }
 
@@ -83,43 +82,6 @@ impl TableDataEngine {
 
         self.selection
             .navigate(direction, operation, &self.d2d_mapping, max_rows, max_cols);
-    }
-
-    /// Toggle a filter for a specific column and value
-    /// If the filter is currently applied, it will be removed
-    /// If the filter is not applied, it will be added
-    pub(crate) fn toggle_filter(&mut self, column: AnyColumn, hash: u64) -> bool {
-        let is_currently_applied = self.applied_filtering.is_filter_applied(column, hash);
-        log::debug!("Applied filters: {:?}", self.applied_filtering);
-
-        if is_currently_applied {
-            log::debug!("Removing filter for column {column:?} with hash {hash}");
-            self.applied_filtering.remove_filter(column, hash);
-            false // Filter was removed
-        } else {
-            log::debug!("Applying filter for column {column:?} with hash {hash}");
-            self.applied_filtering
-                .0
-                .entry(column)
-                .or_default()
-                .insert(hash);
-            true // Filter was added
-        }
-    }
-
-    /// Get available filters for a specific column
-    pub(crate) fn get_available_filters_for_column(
-        &self,
-        column: AnyColumn,
-    ) -> Arc<Vec<FilterEntry>> {
-        self.available_filters
-            .get(&column)
-            .cloned()
-            .unwrap_or_else(|| panic!("Expected filters to be present for column: {column:?}"))
-    }
-
-    pub(crate) fn clear_filters(&mut self, col_idx: AnyColumn) {
-        self.applied_filtering.0.remove(&col_idx);
     }
 
     pub(crate) fn start_mouse_selection(
@@ -202,12 +164,12 @@ impl DisplayToDataMapping {
     }
 
     /// Computes filtering and applies pre-computed sorting results to the mapping
-    fn apply_filtering(
+    pub(super) fn apply_filtering(
         &mut self,
-        applied_filtering: &AppliedFiltering,
+        filter_stack: &FilterStack,
         rows: &[TableRow<TableCell>],
     ) {
-        self.retained_rows = retain_rows(rows, applied_filtering);
+        self.retained_rows = retain_rows(rows, filter_stack);
     }
 
     /// Take pre-computed sorting and filtering results, and apply them to the mapping

@@ -1,12 +1,11 @@
 use gpui::ElementId;
-use std::collections::HashSet;
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 
 use crate::{
     CsvPreviewView,
     settings::FontType,
     table_data_engine::{
-        filtering_by_column::FilterEntry,
+        filtering_by_column::{FilterEntry, FilterEntryState},
         sorting_by_column::{AppliedSorting, SortDirection},
     },
     types::AnyColumn,
@@ -104,28 +103,24 @@ impl CsvPreviewView {
     fn create_filter_button(
         &self,
         cx: &mut Context<'_, CsvPreviewView>,
-        col_idx: AnyColumn,
+        col: AnyColumn,
     ) -> PopoverMenu<ContextMenu> {
-        let has_filters = self
-            .engine
-            .applied_filtering
-            .get_column_filters(col_idx)
-            .map_or(false, |filters| !filters.is_empty());
+        let has_active_filters = self.engine.has_active_filters(col);
 
-        let id = ElementId::NamedInteger("filter-menu".into(), col_idx.get() as u64);
+        let id = ElementId::NamedInteger("filter-menu".into(), col.get() as u64);
         PopoverMenu::new(id)
             .trigger_with_tooltip(
                 Button::new(
-                    ElementId::NamedInteger("filter-button".into(), col_idx.get() as u64),
+                    ElementId::NamedInteger("filter-button".into(), col.get() as u64),
                     "⚏",
                 )
                 .size(ButtonSize::Compact)
-                .style(if has_filters {
+                .style(if has_active_filters {
                     ButtonStyle::Filled
                 } else {
                     ButtonStyle::Subtle
                 }),
-                Tooltip::text(if has_filters {
+                Tooltip::text(if has_active_filters {
                     "Column has active filters. Click to manage filters"
                 } else {
                     "No filters applied. Click to add filters"
@@ -135,20 +130,14 @@ impl CsvPreviewView {
                 let view_entity = cx.entity();
                 move |window, cx| {
                     let view = view_entity.read(cx);
-                    let available_filters = view.engine.get_available_filters_for_column(col_idx);
-                    let applied_filters = view
-                        .engine
-                        .applied_filtering
-                        .get_column_filters(col_idx)
-                        .cloned();
-
+                    let column_filters = view.engine.get_filters_for_column(col);
                     let filter_menu = Self::create_filter_menu(
                         window,
                         cx,
                         view_entity.clone(),
-                        col_idx,
-                        &available_filters,
-                        &applied_filters,
+                        col,
+                        &column_filters,
+                        has_active_filters,
                     );
                     Some(filter_menu)
                 }
@@ -160,12 +149,12 @@ impl CsvPreviewView {
         cx: &mut ui::App,
         view_entity: gpui::Entity<CsvPreviewView>,
         col_idx: AnyColumn,
-        sorted_filters: &[FilterEntry],
-        applied_filters: &Option<HashSet<u64>>,
+        column_filters: &[(FilterEntry, FilterEntryState)],
+        has_active_filters: bool,
     ) -> gpui::Entity<ContextMenu> {
         ContextMenu::build(window, cx, move |menu, _, _| {
             let mut menu = menu;
-            if applied_filters.is_some() {
+            if has_active_filters {
                 menu = menu
                     .toggleable_entry("Clear all", false, ui::IconPosition::Start, None, {
                         let view_entity = view_entity.clone();
@@ -179,13 +168,13 @@ impl CsvPreviewView {
                     .separator();
             }
 
-            for filter in sorted_filters.iter() {
-                let is_applied = applied_filters
-                    .as_ref()
-                    .map_or(false, |filters| filters.contains(&filter.hash));
-
+            for (filter, &state) in column_filters.iter() {
+                let is_applied = match state {
+                    FilterEntryState::Available { is_applied } => is_applied,
+                    FilterEntryState::Unavailable { .. } => false, // TODO: Instead of false, make the toggleable_entry non-interactive
+                };
                 menu = menu.toggleable_entry(
-                    &format!("{} ({})", filter.content, filter.occured_times),
+                    &format!("{} ({}) {state:?}", filter.content, filter.occured_times()),
                     is_applied,
                     ui::IconPosition::Start,
                     None,
@@ -194,8 +183,10 @@ impl CsvPreviewView {
                         let content_hash = filter.hash;
                         move |_window, cx| {
                             view_entity.update(cx, |view, cx| {
-                                view.toggle_filter(col_idx, content_hash);
-                                cx.notify();
+                                if matches!(state, FilterEntryState::Available { .. }) {
+                                    view.toggle_filter(col_idx, content_hash);
+                                    cx.notify();
+                                }
                             });
                         }
                     },

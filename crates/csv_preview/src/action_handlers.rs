@@ -7,7 +7,7 @@ mod selection_handlers;
 
 impl CsvPreviewView {
     pub fn clear_filters(&mut self, col_idx: AnyColumn) {
-        self.engine.clear_filters(col_idx);
+        self.engine.clear_filters_for_col(col_idx);
         self.engine.apply_filtering();
         self.list_state = gpui::ListState::new(
             self.engine.d2d_mapping().visible_row_count(),
