@@ -1,3 +1,5 @@
+mod www_authenticate;
+
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -129,6 +131,9 @@ impl HttpTransport {
             status if status.as_u16() == 202 => {
                 // Accepted - notification acknowledged, no response needed
                 log::debug!("Notification accepted");
+            }
+            status if status.as_u16() == 401 => {
+                todo!();
             }
             _ => {
                 let mut error_body = String::new();
