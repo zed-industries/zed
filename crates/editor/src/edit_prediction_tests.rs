@@ -1,5 +1,6 @@
 use edit_prediction_types::EditPredictionDelegate;
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
+use icons::IconName;
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{ops::Range, sync::Arc};
@@ -463,6 +464,10 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         true
     }
 
+    fn icon(&self, _cx: &gpui::App) -> IconName {
+        IconName::ZedPredict
+    }
+
     fn is_enabled(
         &self,
         _buffer: &gpui::Entity<language::Buffer>,
@@ -528,6 +533,10 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
 
     fn supports_jump_to_edit() -> bool {
         false
+    }
+
+    fn icon(&self, _cx: &gpui::App) -> IconName {
+        IconName::ZedPredict
     }
 
     fn is_enabled(

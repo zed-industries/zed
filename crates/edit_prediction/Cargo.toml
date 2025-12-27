@@ -31,6 +31,7 @@ feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+icons.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
