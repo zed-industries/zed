@@ -22,7 +22,6 @@ use smol::{
     future::FutureExt,
 };
 
-use text::BufferId;
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
@@ -263,8 +262,15 @@ impl Search {
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
                                     let response = request.await?;
-                                    for buffer_id in response.buffer_ids {
-                                        let buffer_id = BufferId::new(buffer_id)?;
+                                    let (tx, rx) = unbounded();
+                                    buffer_store.update(cx, |this, _| {
+                                        this.register_project_search_result_handle(
+                                            response.handle,
+                                            tx,
+                                        );
+                                    })?;
+
+                                    while let Ok(buffer_id) = rx.recv().await {
                                         let buffer = buffer_store
                                             .update(cx, |buffer_store, cx| {
                                                 buffer_store.wait_for_remote_buffer(buffer_id, cx)
