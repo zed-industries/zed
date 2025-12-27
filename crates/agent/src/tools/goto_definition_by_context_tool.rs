@@ -8,7 +8,11 @@ use project::{Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use text::OffsetRangeExt;
 use text::ToPoint as _;
+
+const MAX_SCOPE_LINES: usize = 42;
+const PAGINATE_LIMIT: usize = 24;
 
 /// Input used by both goto-definition and find-references tools that locate a token
 /// by searching for a multi-word `context` that must contain the `token`.
@@ -146,6 +150,8 @@ impl AgentTool for GotoDefinitionByContextTool {
                 .await;
 
             // Gather candidates: find each occurrence of context, then token within it.
+            // Validate each token occurrence with Tree-sitter (via snapshot.syntax_ancestor)
+            // to ensure the substring corresponds to an identifier/token in the parse tree.
             let candidates: Vec<usize> = buffer.read_with(cx, |buffer, _| {
                 let text = buffer.text();
                 let mut found = Vec::new();
@@ -157,7 +163,48 @@ impl AgentTool for GotoDefinitionByContextTool {
                     let mut inner = 0usize;
                     while let Some(tokpos) = ctx_slice[inner..].find(&input.token) {
                         let tok_abs = ctx_start + inner + tokpos;
-                        found.push(tok_abs);
+
+                        // Validate token occurrence against syntax tree.
+                        let snapshot = buffer.snapshot();
+                        // Convert byte offset to point
+                        let pt = snapshot.offset_to_point(tok_abs);
+                        let token_point = Point::new(pt.row, pt.column);
+                        let token_point_end =
+                            Point::new(pt.row, pt.column.saturating_add(input.token.len() as u32));
+                        let token_point_range = token_point..token_point_end;
+
+                        let mut accept = false;
+                        if let Some(node) = snapshot.syntax_ancestor(token_point_range.clone()) {
+                            if node.is_named() {
+                                // Read node text using snapshot anchors for accurate comparison
+                                let node_range = node.byte_range().to_point(&snapshot);
+                                let start_anchor = Point::new(node_range.start.row, 0);
+                                let end_row = node_range.end.row;
+                                let end_anchor = Point::new(end_row, snapshot.line_len(end_row));
+                                let node_text = snapshot
+                                    .text_for_range(
+                                        snapshot.anchor_before(start_anchor)
+                                            ..snapshot.anchor_after(end_anchor),
+                                    )
+                                    .collect::<String>();
+                                let node_kind = node.kind();
+                                // Accept only if the node text exactly equals the token (excluding comments/strings)
+                                if node_text.trim() == input.token
+                                    && node_kind != "comment"
+                                    && node_kind != "string"
+                                {
+                                    accept = true;
+                                }
+                            }
+                        } else {
+                            // No parse tree available for this region: permissive fallback — accept candidate.
+                            accept = true;
+                        }
+
+                        if accept {
+                            found.push(tok_abs);
+                        }
+
                         inner += tokpos + input.token.len();
                         if inner >= ctx_slice.len() {
                             break;
@@ -192,21 +239,67 @@ impl AgentTool for GotoDefinitionByContextTool {
                     input.path
                 );
                 for (i, &off) in candidates.iter().enumerate() {
-                    let (row, line_preview) = buffer.read_with(cx, |buffer, _| {
+                    // For each candidate, extract a scope preview using tree-sitter if available,
+                    // otherwise fallback to -10..+9 lines around the match.
+                    let (row, preview) = buffer.read_with(cx, |buffer, _| {
                         let snapshot = buffer.snapshot();
                         let pt = snapshot.offset_to_point(off);
-                        let start_row = pt.row.saturating_sub(1);
-                        let end_row = (pt.row + 1).min(snapshot.max_point().row);
-                        let start = Point::new(start_row, 0);
-                        let end = Point::new(end_row, snapshot.line_len(end_row));
-                        let text = snapshot
-                            .text_for_range(
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            )
-                            .collect::<String>();
-                        (pt.row + 1, text.lines().next().unwrap_or("").to_string())
+                        // Try to get enclosing syntax node for a small token range
+                        let token_point = Point::new(pt.row, pt.column);
+                        let token_point_end =
+                            Point::new(pt.row, pt.column + input.token.len() as u32);
+                        let token_range = token_point..token_point_end;
+                        let preview = if let Some(node) =
+                            snapshot.syntax_ancestor(token_range.clone())
+                        {
+                            let full_range = node.byte_range().to_point(&snapshot);
+                            let span_lines =
+                                full_range.end.row.saturating_sub(full_range.start.row);
+                            if (span_lines as usize) <= MAX_SCOPE_LINES {
+                                let start_anchor = Point::new(full_range.start.row, 0);
+                                let end_row = full_range.end.row;
+                                let end_anchor = Point::new(end_row, snapshot.line_len(end_row));
+                                snapshot
+                                    .text_for_range(
+                                        snapshot.anchor_before(start_anchor)
+                                            ..snapshot.anchor_after(end_anchor),
+                                    )
+                                    .collect::<String>()
+                            } else {
+                                // fallback to -10..+9 around match row
+                                let start_row = full_range.start.row.saturating_sub(10);
+                                let end_row =
+                                    (full_range.start.row + 9).min(snapshot.max_point().row);
+                                let start_anchor = Point::new(start_row, 0);
+                                let end_anchor = Point::new(end_row, snapshot.line_len(end_row));
+                                snapshot
+                                    .text_for_range(
+                                        snapshot.anchor_before(start_anchor)
+                                            ..snapshot.anchor_after(end_anchor),
+                                    )
+                                    .collect::<String>()
+                            }
+                        } else {
+                            // No syntax node: fallback to -10..+9 around pt
+                            let start_row = pt.row.saturating_sub(10);
+                            let end_row = (pt.row + 9).min(snapshot.max_point().row);
+                            let start_anchor = Point::new(start_row, 0);
+                            let end_anchor = Point::new(end_row, snapshot.line_len(end_row));
+                            snapshot
+                                .text_for_range(
+                                    snapshot.anchor_before(start_anchor)
+                                        ..snapshot.anchor_after(end_anchor),
+                                )
+                                .collect::<String>()
+                        };
+                        (pt.row + 1, preview)
                     })?;
-                    out.push_str(&format!("[{}] L{}: {}\n", i, row, line_preview.trim()));
+                    out.push_str(&format!(
+                        "[{}] L{}:\n\n```\n{}\n```\n\n",
+                        i,
+                        row,
+                        preview.trim()
+                    ));
                 }
                 out.push_str("\nProvide `index` (0-based) to disambiguate.");
                 return Ok(LanguageModelToolResultContent::Text(Arc::from(out)));
@@ -228,25 +321,64 @@ impl AgentTool for GotoDefinitionByContextTool {
             let output = match defs {
                 Some(loc_links) if !loc_links.is_empty() => {
                     let mut out = String::new();
-                    for link in loc_links {
-                        // For each LocationLink, produce a short preview and obtain file path + start/end lines
+                    let total = loc_links.len();
+                    let page_limit = PAGINATE_LIMIT;
+                    for link in loc_links.into_iter().take(page_limit) {
+                        // For each LocationLink, produce a preview preferring Tree-sitter scope
                         let (start_line, end_line, preview, maybe_path) =
                             link.target.buffer.read_with(cx, |buffer, cx| {
                                 let snapshot = buffer.snapshot();
                                 let start_pt = link.target.range.start.to_point(&snapshot);
                                 let end_pt = link.target.range.end.to_point(&snapshot);
-                                let preview_start_row = start_pt.row.saturating_sub(1);
-                                let preview_end_row =
-                                    (end_pt.row + 1).min(snapshot.max_point().row);
-                                let start_anchor = Point::new(preview_start_row, 0);
-                                let end_anchor =
-                                    Point::new(preview_end_row, snapshot.line_len(preview_end_row));
-                                let preview = snapshot
-                                    .text_for_range(
-                                        snapshot.anchor_before(start_anchor)
-                                            ..snapshot.anchor_after(end_anchor),
-                                    )
-                                    .collect::<String>();
+                                // Try syntax ancestor for the target range
+                                let point_start = Point::new(start_pt.row, start_pt.column);
+                                let point_end = Point::new(end_pt.row, end_pt.column);
+                                let preview = if let Some(node) =
+                                    snapshot.syntax_ancestor(point_start..point_end)
+                                {
+                                    let full_range = node.byte_range().to_point(&snapshot);
+                                    let span_lines =
+                                        full_range.end.row.saturating_sub(full_range.start.row);
+                                    if (span_lines as usize) <= MAX_SCOPE_LINES {
+                                        let start_anchor = Point::new(full_range.start.row, 0);
+                                        let end_row = full_range.end.row;
+                                        let end_anchor =
+                                            Point::new(end_row, snapshot.line_len(end_row));
+                                        snapshot
+                                            .text_for_range(
+                                                snapshot.anchor_before(start_anchor)
+                                                    ..snapshot.anchor_after(end_anchor),
+                                            )
+                                            .collect::<String>()
+                                    } else {
+                                        // fallback to -10..+9 around start_pt
+                                        let start_row = start_pt.row.saturating_sub(10);
+                                        let end_row =
+                                            (start_pt.row + 9).min(snapshot.max_point().row);
+                                        let start_anchor = Point::new(start_row, 0);
+                                        let end_anchor =
+                                            Point::new(end_row, snapshot.line_len(end_row));
+                                        snapshot
+                                            .text_for_range(
+                                                snapshot.anchor_before(start_anchor)
+                                                    ..snapshot.anchor_after(end_anchor),
+                                            )
+                                            .collect::<String>()
+                                    }
+                                } else {
+                                    // fallback to clamped lines around start_pt
+                                    let start_row = start_pt.row.saturating_sub(10);
+                                    let end_row = (start_pt.row + 9).min(snapshot.max_point().row);
+                                    let start_anchor = Point::new(start_row, 0);
+                                    let end_anchor =
+                                        Point::new(end_row, snapshot.line_len(end_row));
+                                    snapshot
+                                        .text_for_range(
+                                            snapshot.anchor_before(start_anchor)
+                                                ..snapshot.anchor_after(end_anchor),
+                                        )
+                                        .collect::<String>()
+                                };
                                 let path = buffer.file().map(|f| f.full_path(cx));
                                 (start_pt.row + 1, end_pt.row + 1, preview, path)
                             })?;
@@ -261,6 +393,12 @@ impl AgentTool for GotoDefinitionByContextTool {
                         out.push_str("```\n");
                         out.push_str(&preview);
                         out.push_str("\n```\n\n");
+                    }
+                    if total > page_limit {
+                        out.push_str(&format!(
+                            "Showing {} of {} definitions. Request additional pages to see more.\n",
+                            page_limit, total
+                        ));
                     }
                     out
                 }
