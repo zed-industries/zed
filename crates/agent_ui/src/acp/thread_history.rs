@@ -6,7 +6,7 @@ use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
-    UniformListScrollHandle, WeakEntity, Window, uniform_list,
+    UniformListScrollHandle, WeakEntity, Window, svg, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
 use text::Bias;
@@ -431,16 +431,28 @@ impl AcpThreadHistory {
                         h_flex()
                             .w_full()
                             .gap_2()
-                            .justify_between()
                             .child(
-                                HighlightedLabel::new(entry.title(), highlight_positions)
-                                    .size(LabelSize::Small)
-                                    .truncate(),
+                                Icon::new(crate::icon_for_agent_name(
+                                    entry.agent_name().as_deref().map(|s| s.as_ref()),
+                                ))
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
                             )
                             .child(
-                                Label::new(display_text)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::XSmall),
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(
+                                        HighlightedLabel::new(entry.title(), highlight_positions)
+                                            .size(LabelSize::Small)
+                                            .truncate(),
+                                    )
+                                    .child(
+                                        Label::new(display_text)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall),
+                                    ),
                             ),
                     )
                     .tooltip(move |_, cx| {
@@ -623,6 +635,7 @@ pub struct AcpHistoryEntryElement {
     thread_view: WeakEntity<AcpThreadView>,
     selected: bool,
     hovered: bool,
+    custom_icon_path: Option<SharedString>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
@@ -633,6 +646,7 @@ impl AcpHistoryEntryElement {
             thread_view,
             selected: false,
             hovered: false,
+            custom_icon_path: None,
             on_hover: Box::new(|_, _, _| {}),
         }
     }
@@ -644,6 +658,11 @@ impl AcpHistoryEntryElement {
 
     pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_hover = Box::new(on_hover);
+        self
+    }
+
+    pub fn custom_icon_path(mut self, path: Option<SharedString>) -> Self {
+        self.custom_icon_path = path;
         self
     }
 }
@@ -677,12 +696,31 @@ impl RenderOnce for AcpHistoryEntryElement {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .justify_between()
-                    .child(Label::new(title).size(LabelSize::Small).truncate())
+                    .child(if let Some(icon_path) = &self.custom_icon_path {
+                        svg()
+                            .external_path(icon_path.clone())
+                            .size(IconSize::Small.rems())
+                            .text_color(_cx.theme().colors().icon_muted)
+                            .into_any_element()
+                    } else {
+                        Icon::new(crate::icon_for_agent_name(
+                            self.entry.agent_name().as_deref().map(|s| s.as_ref()),
+                        ))
+                        .color(Color::Muted)
+                        .size(IconSize::Small)
+                        .into_any_element()
+                    })
                     .child(
-                        Label::new(formatted_time)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(Label::new(title).size(LabelSize::Small).truncate())
+                            .child(
+                                Label::new(formatted_time)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            ),
                     ),
             )
             .on_hover(self.on_hover)

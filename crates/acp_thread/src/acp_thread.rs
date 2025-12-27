@@ -108,7 +108,7 @@ impl AssistantMessageChunk {
         }
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::Message { block } => block.to_markdown(cx).to_string(),
             Self::Thought { block } => {
@@ -349,7 +349,7 @@ impl ToolCall {
         })
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
@@ -889,6 +889,8 @@ pub enum AcpThreadEvent {
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
 
+pub const DEFAULT_THREAD_TITLE: &'static str = "New Thread";
+
 #[derive(Debug, Clone)]
 pub enum TerminalProviderEvent {
     Created {
@@ -1326,6 +1328,7 @@ impl AcpThread {
         if title != self.title {
             self.title = title.clone();
             cx.emit(AcpThreadEvent::TitleUpdated);
+            cx.notify();
             if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
                 return set_title.run(title, cx);
             }
@@ -3710,6 +3713,10 @@ mod tests {
             Some(Rc::new(FakeAgentSessionEditor {
                 _session_id: session_id.clone(),
             }))
+        }
+
+        fn agent_name(&self) -> SharedString {
+            "fake".into()
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

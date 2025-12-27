@@ -1,5 +1,7 @@
 use super::*;
-use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
+use acp_thread::{
+    AgentConnection, AgentModelGroupName, AgentModelList, DEFAULT_THREAD_TITLE, UserMessageId,
+};
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -1984,9 +1986,9 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_text_chunk("Hey!");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "New Thread"));
-
-    // Ensure the summary model has been invoked to generate a title.
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), DEFAULT_THREAD_TITLE)
+    }); // Ensure the summary model has been invoked to generate a title.
     summary_model.send_last_completion_stream_text_chunk("Hello ");
     summary_model.send_last_completion_stream_text_chunk("world\nG");
     summary_model.send_last_completion_stream_text_chunk("oodnight Moon");

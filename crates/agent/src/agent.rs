@@ -810,7 +810,17 @@ impl NativeAgent {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            // Save with agent metadata for Zed Native Agent
+            database
+                .save_thread(
+                    id.clone(),
+                    db_thread,
+                    AgentIdentity::ZED_AGENT_NAME,
+                    None,
+                    None,
+                )
+                .await
+                .log_err();
             history.update(cx, |history, cx| history.reload(cx)).ok();
         });
     }
@@ -1347,6 +1357,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn telemetry(&self) -> Option<Rc<dyn acp_thread::AgentTelemetry>> {
         Some(Rc::new(self.clone()) as Rc<dyn acp_thread::AgentTelemetry>)
+    }
+
+    fn agent_name(&self) -> SharedString {
+        AgentIdentity::ZED_AGENT_NAME.into()
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

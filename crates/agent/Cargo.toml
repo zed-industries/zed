@@ -59,6 +59,7 @@ settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 sqlez.workspace = true
+sqlez_macros.workspace = true
 streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
@@ -92,6 +93,7 @@ language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 lsp = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
+markdown = { workspace = true }
 project = { workspace = true, "features" = ["test-support"] }
 rand.workspace = true
 reqwest_client.workspace = true

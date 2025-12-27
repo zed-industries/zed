@@ -23,6 +23,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use ::ui::IconName;
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -161,6 +162,25 @@ pub enum ExternalAgent {
 }
 
 impl ExternalAgent {
+    /// Create an ExternalAgent from a stored agent name string.
+    /// Handles both identifier names (e.g., "codex", "gemini", "claude") and
+    /// display names (e.g., "Codex", "Gemini CLI", "Claude Code") with case-insensitive matching.
+    pub fn from_agent_name(name: &str) -> Self {
+        let name_lower = name.to_lowercase();
+        match name_lower.as_str() {
+            "zed" => Self::NativeAgent,
+            // Match both identifier ("gemini") and display name ("gemini cli")
+            "gemini" | "gemini cli" => Self::Gemini,
+            // Match both identifier ("claude") and display name ("claude code")
+            "claude" | "claude code" | "claude-code" => Self::ClaudeCode,
+            // Match both identifier and display name ("codex")
+            "codex" => Self::Codex,
+            _ => Self::Custom {
+                name: name.to_string().into(),
+            },
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
@@ -173,6 +193,16 @@ impl ExternalAgent {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
+    }
+}
+
+pub(crate) fn icon_for_agent_name(agent_name: Option<&str>) -> IconName {
+    match agent_name.map(|name| name.to_ascii_lowercase()).as_deref() {
+        Some("zed") => IconName::AiZed,
+        Some("gemini") | Some("gemini cli") => IconName::AiGemini,
+        Some("claude") | Some("claude code") | Some("claude-code") => IconName::AiClaude,
+        Some("codex") | Some("codex cli") => IconName::AiOpenAi,
+        _ => IconName::Sparkle,
     }
 }
 

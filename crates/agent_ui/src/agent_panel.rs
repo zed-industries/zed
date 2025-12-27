@@ -256,7 +256,8 @@ impl AgentType {
 
     fn icon(&self) -> Option<IconName> {
         match self {
-            Self::NativeAgent | Self::TextThread => None,
+            Self::NativeAgent => Some(IconName::AiZed),
+            Self::TextThread => Some(IconName::TextThread),
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Codex => Some(IconName::AiOpenAi),
@@ -550,8 +551,10 @@ impl AgentPanel {
             window,
             |this, _, event, window, cx| match event {
                 ThreadHistoryEvent::Open(HistoryEntry::AcpThread(thread)) => {
+                    // Route to the correct agent based on the saved agent_name
+                    let external_agent = ExternalAgent::from_agent_name(thread.agent_name.as_ref());
                     this.external_thread(
-                        Some(crate::ExternalAgent::NativeAgent),
+                        Some(external_agent),
                         Some(thread.clone()),
                         None,
                         window,
@@ -1324,51 +1327,91 @@ impl AgentPanel {
             return menu;
         }
 
+        // Get agent_server_store to look up custom icons
+        let agent_server_store = panel.read(cx).project.read(cx).agent_server_store().clone();
+
         menu = menu.header("Recently Opened");
 
         for entry in entries {
             let title = entry.title().clone();
 
-            menu = menu.entry_with_end_slot_on_hover(
-                title,
-                None,
-                {
-                    let panel = panel.downgrade();
+            // Check for custom icon path from agent_server_store
+            let custom_icon_path = match &entry {
+                HistoryEntry::AcpThread(entry) => {
+                    let agent_name = ExternalAgentServerName(entry.agent_name.clone());
+                    agent_server_store.read(cx).agent_icon(&agent_name)
+                }
+                HistoryEntry::TextThread(_) => None,
+            };
+
+            let entry_icon = match &entry {
+                HistoryEntry::AcpThread(entry) => {
+                    crate::icon_for_agent_name(Some(entry.agent_name.as_ref()))
+                }
+                HistoryEntry::TextThread(_) => IconName::TextThread,
+            };
+
+            // Create the handler for opening the entry
+            let handler = {
+                let panel = panel.downgrade();
+                let entry = entry.clone();
+                move |window: &mut Window, cx: &mut App| {
                     let entry = entry.clone();
-                    move |window, cx| {
-                        let entry = entry.clone();
-                        panel
-                            .update(cx, move |this, cx| match &entry {
-                                agent::HistoryEntry::AcpThread(entry) => this.external_thread(
-                                    Some(ExternalAgent::NativeAgent),
+                    panel
+                        .update(cx, move |this, cx| match &entry {
+                            HistoryEntry::AcpThread(entry) => {
+                                let external_agent =
+                                    ExternalAgent::from_agent_name(entry.agent_name.as_ref());
+                                this.external_thread(
+                                    Some(external_agent),
                                     Some(entry.clone()),
                                     None,
                                     window,
                                     cx,
-                                ),
-                                agent::HistoryEntry::TextThread(entry) => this
-                                    .open_saved_text_thread(entry.path.clone(), window, cx)
-                                    .detach_and_log_err(cx),
-                            })
-                            .ok();
-                    }
-                },
-                IconName::Close,
-                "Close Entry".into(),
-                {
-                    let panel = panel.downgrade();
-                    let id = entry.id();
-                    move |_window, cx| {
-                        panel
-                            .update(cx, |this, cx| {
-                                this.history_store.update(cx, |history_store, cx| {
-                                    history_store.remove_recently_opened_entry(&id, cx);
-                                });
-                            })
-                            .ok();
-                    }
-                },
-            );
+                                )
+                            }
+                            HistoryEntry::TextThread(entry) => this
+                                .open_saved_text_thread(entry.path.clone(), window, cx)
+                                .detach_and_log_err(cx),
+                        })
+                        .ok();
+                }
+            };
+
+            // Create the handler for the close button
+            let end_slot_handler = {
+                let panel = panel.downgrade();
+                let id = entry.id();
+                move |_window: &mut Window, cx: &mut App| {
+                    panel
+                        .update(cx, |this, cx| {
+                            this.history_store.update(cx, |history_store, cx| {
+                                history_store.remove_recently_opened_entry(&id, cx);
+                            });
+                        })
+                        .ok();
+                }
+            };
+
+            // Use custom icon path if available, otherwise use hardcoded icon
+            if let Some(icon_path) = custom_icon_path {
+                menu = menu.item(
+                    ContextMenuEntry::new(title)
+                        .custom_icon_path(icon_path)
+                        .handler(handler)
+                        .end_slot_on_hover(IconName::Close, "Close Entry".into(), end_slot_handler),
+                );
+            } else {
+                menu = menu.entry_with_icon_end_slot_on_hover(
+                    title,
+                    entry_icon,
+                    None,
+                    handler,
+                    IconName::Close,
+                    "Close Entry".into(),
+                    end_slot_handler,
+                );
+            }
         }
 
         menu = menu.separator();
@@ -1457,13 +1500,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(
-            Some(ExternalAgent::NativeAgent),
-            Some(thread),
-            None,
-            window,
-            cx,
-        );
+        // Route to the correct agent based on the saved agent_name
+        let external_agent = ExternalAgent::from_agent_name(thread.agent_name.as_ref());
+        self.external_thread(Some(external_agent), Some(thread), None, window, cx);
     }
 
     fn _external_thread(
@@ -1620,10 +1659,8 @@ impl AgentPanel {
 
         let content = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
-                let is_generating_title = thread_view
-                    .read(cx)
-                    .as_native_thread(cx)
-                    .map_or(false, |t| t.read(cx).is_generating_title());
+                // Check if title is being generated - works for both native and external agents
+                let is_generating_title = thread_view.read(cx).is_generating_title();
 
                 if let Some(title_editor) = thread_view.read(cx).title_editor() {
                     let container = div()

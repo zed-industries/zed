@@ -5,7 +5,7 @@ use crate::{
     RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
     ThinkingTool, WebSearchTool,
 };
-use acp_thread::{MentionUri, UserMessageId};
+use acp_thread::{DEFAULT_THREAD_TITLE, MentionUri, UserMessageId};
 use action_log::ActionLog;
 
 use agent_client_protocol as acp;
@@ -1718,7 +1718,7 @@ impl Thread {
     }
 
     pub fn title(&self) -> SharedString {
-        self.title.clone().unwrap_or("New Thread".into())
+        self.title.clone().unwrap_or(DEFAULT_THREAD_TITLE.into())
     }
 
     pub fn is_generating_summary(&self) -> bool {

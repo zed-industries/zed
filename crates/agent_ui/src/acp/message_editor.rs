@@ -2172,6 +2172,9 @@ mod tests {
             id: acp::SessionId::new("thread-123"),
             title: "Previous Conversation".into(),
             updated_at: chrono::Utc::now(),
+            agent_name: agent::AgentIdentity::ZED_AGENT_NAME.into(),
+            agent_version: None,
+            agent_provider_id: None,
         };
 
         let message_editor = cx.update(|window, cx| {
