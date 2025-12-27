@@ -19,8 +19,9 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::motion::MotionDiscriminants;
 use crate::normal::paste::Paste as VimPaste;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
     SelectionEffects, ToPoint,
@@ -47,6 +48,7 @@ pub use settings::{
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
+use strum::IntoEnumIterator;
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
@@ -1792,7 +1794,6 @@ impl Vim {
                     },
                     smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
-                Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
             Some(Operator::FindBackward { after, multiline }) => {
@@ -1806,7 +1807,6 @@ impl Vim {
                     },
                     smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
-                Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
             Some(Operator::Sneak { first_char }) => {
@@ -1817,7 +1817,6 @@ impl Vim {
                             second_char,
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
-                        Vim::globals(cx).last_find = Some(sneak.clone());
                         self.motion(sneak, window, cx)
                     }
                 } else {
@@ -1834,7 +1833,6 @@ impl Vim {
                             second_char,
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
-                        Vim::globals(cx).last_find = Some(sneak.clone());
                         self.motion(sneak, window, cx)
                     }
                 } else {
@@ -2024,6 +2022,7 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+    pub repeatable_motions: HashSet<MotionDiscriminants>,
 }
 
 /// The settings for cursor shape.
@@ -2070,6 +2069,17 @@ impl From<settings::ModeContent> for Mode {
 impl Settings for VimSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let vim = content.vim.clone().unwrap();
+        let names: HashSet<_> = vim
+            .repeatable_motions
+            .unwrap_or_else(|| vec!["find".to_string(), "sneak".to_string()])
+            .into_iter()
+            .collect();
+        let repeatable_motions: HashSet<_> = MotionDiscriminants::iter()
+            .filter(|m| -> bool {
+                m.is_eligible_for_repeat()
+                    && (names.contains(&format!("vim::{m:?}")) || names.contains(m.family_name()))
+            })
+            .collect();
         Self {
             default_mode: vim.default_mode.unwrap().into(),
             toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
@@ -2078,6 +2088,7 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
+            repeatable_motions,
         }
     }
 }

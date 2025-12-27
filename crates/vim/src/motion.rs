@@ -10,12 +10,13 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::{f64, ops::Range};
 use strum::{EnumDiscriminants, EnumIter, IntoDiscriminant};
 use workspace::searchable::Direction;
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
@@ -796,6 +797,14 @@ impl Vim {
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
+        let is_repeatable = motion.discriminant().is_eligible_for_repeat()
+            && VimSettings::get_global(cx)
+                .repeatable_motions
+                .contains(&motion.discriminant());
+        if is_repeatable {
+            Vim::globals(cx).last_find = Some(motion.clone());
+        }
+
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })
         | Some(Operator::SneakBackward { .. })
@@ -1151,7 +1160,8 @@ impl Motion {
         }
     }
 
-    pub fn move_point(
+    // Compute the move_point for a non-repeat motion
+    fn _move_point(
         &self,
         map: &DisplaySnapshot,
         point: DisplayPoint,
@@ -1292,147 +1302,6 @@ impl Motion {
                 return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
                     .map(|new_point| (new_point, SelectionGoal::None));
             }
-            // ; -- repeat the last find done with t, f, T, F
-            RepeatFind { last_find } => match **last_find {
-                Motion::FindForward {
-                    before,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_forward(map, point, before, char, times, mode, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            find_forward(map, point, before, char, times + 1, mode, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::FindBackward {
-                    after,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_backward(map, point, after, char, times, mode, smartcase);
-                    if new_point == point {
-                        new_point =
-                            find_backward(map, point, after, char, times + 1, mode, smartcase);
-                    }
-
-                    (new_point, SelectionGoal::None)
-                }
-                Motion::Sneak {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            sneak(map, point, first_char, second_char, times + 1, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::SneakBackward {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak_backward(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point = sneak_backward(
-                            map,
-                            point,
-                            first_char,
-                            second_char,
-                            times + 1,
-                            smartcase,
-                        );
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-                _ => return None,
-            },
-            // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
-            RepeatFindReversed { last_find } => match **last_find {
-                Motion::FindForward {
-                    before,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_backward(map, point, before, char, times, mode, smartcase);
-                    if new_point == point {
-                        new_point =
-                            find_backward(map, point, before, char, times + 1, mode, smartcase);
-                    }
-
-                    (new_point, SelectionGoal::None)
-                }
-
-                Motion::FindBackward {
-                    after,
-                    char,
-                    mode,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        find_forward(map, point, after, char, times, mode, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            find_forward(map, point, after, char, times + 1, mode, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::Sneak {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak_backward(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point = sneak_backward(
-                            map,
-                            point,
-                            first_char,
-                            second_char,
-                            times + 1,
-                            smartcase,
-                        );
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-
-                Motion::SneakBackward {
-                    first_char,
-                    second_char,
-                    smartcase,
-                } => {
-                    let mut new_point =
-                        sneak(map, point, first_char, second_char, times, smartcase);
-                    if new_point == Some(point) {
-                        new_point =
-                            sneak(map, point, first_char, second_char, times + 1, smartcase);
-                    }
-
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
-                }
-                _ => return None,
-            },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             PreviousLineStart => (previous_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
@@ -1519,8 +1388,37 @@ impl Motion {
                 indent_motion(map, point, times, Direction::Next, IndentType::Same),
                 SelectionGoal::None,
             ),
+            RepeatFind { .. } | RepeatFindReversed { .. } => return None,
         };
         (new_point != point || infallible).then_some((new_point, goal))
+    }
+
+    pub fn move_point(
+        &self,
+        map: &DisplaySnapshot,
+        point: DisplayPoint,
+        goal: SelectionGoal,
+        maybe_times: Option<usize>,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<(DisplayPoint, SelectionGoal)> {
+        use Motion::*;
+
+        let base = match *self {
+            RepeatFindReversed { ref last_find } => last_find
+                .reversed()
+                .unwrap_or_else(|| (**last_find).clone()),
+            RepeatFind { ref last_find } => (**last_find).clone(),
+
+            _ => return self._move_point(map, point, goal, maybe_times, text_layout_details),
+        };
+
+        if let Some(ret) = base._move_point(map, point, goal, maybe_times, text_layout_details) {
+            return Some(ret);
+        }
+
+        // TODO: Explain why this is necessary
+        let times_succ = maybe_times.unwrap_or(1) + 1;
+        base._move_point(map, point, goal, Some(times_succ), text_layout_details)
     }
 
     // Get the range value after self is applied to the specified selection.
