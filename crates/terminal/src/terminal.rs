@@ -1980,7 +1980,7 @@ impl Terminal {
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
         if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
-            if mouse_mode {
+            if mouse_mode && scroll_lines != 0 {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
                     self.last_content.terminal_bounds,
