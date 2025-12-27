@@ -92,37 +92,28 @@ impl CellSelectionManager {
     /// # Arguments
     /// * `display_cell` - Cell coordinates in display space
     /// * `ordered_indices` - Mapping between display and data coordinates
-    pub fn add_cell(
-        &mut self,
-        display_cell: DisplayCellId,
-        ordered_indices: &DisplayToDataMapping,
-    ) {
-        if let Some(data_row) =
-            ordered_indices.get_data_row(DisplayRow::from(display_cell.row.get()))
-        {
-            let data_cell_id = DataCellId::new(data_row, display_cell.col.get());
+    pub fn add_cell(&mut self, display_cell: DisplayCellId, d2d_mapping: &DisplayToDataMapping) {
+        let data_cell_id = d2d_mapping.display_to_data_cell(&display_cell);
+        match &mut self.strategy {
+            SelectionStrategy::Empty => {
+                self.strategy = SelectionStrategy::SingleCell(data_cell_id);
+            }
+            SelectionStrategy::AllCells => {
+                // Already all selected, nothing to add
+            }
+            SelectionStrategy::SingleCell(existing) => {
+                if *existing == data_cell_id {
+                    return; // Same cell, nothing to change
+                }
 
-            match &mut self.strategy {
-                SelectionStrategy::Empty => {
-                    self.strategy = SelectionStrategy::SingleCell(data_cell_id);
-                }
-                SelectionStrategy::AllCells => {
-                    // Already all selected, nothing to add
-                }
-                SelectionStrategy::SingleCell(existing) => {
-                    if *existing == data_cell_id {
-                        return; // Same cell, nothing to change
-                    }
-
-                    // Convert to MultiCell strategy
-                    let mut cells = HashSet::new();
-                    cells.insert(*existing);
-                    cells.insert(data_cell_id);
-                    self.strategy = SelectionStrategy::MultiCell(cells);
-                }
-                SelectionStrategy::MultiCell(cells) => {
-                    cells.insert(data_cell_id);
-                }
+                // Convert to MultiCell strategy
+                let mut cells = HashSet::new();
+                cells.insert(*existing);
+                cells.insert(data_cell_id);
+                self.strategy = SelectionStrategy::MultiCell(cells);
+            }
+            SelectionStrategy::MultiCell(cells) => {
+                cells.insert(data_cell_id);
             }
         }
     }
@@ -308,9 +299,8 @@ impl TableSelection {
     /// Start cell selection with option to preserve existing selection (cumulative).
     pub fn start_mouse_selection(
         &mut self,
-        display_row: DisplayRow,
-        col: AnyColumn,
-        ordered_indices: &DisplayToDataMapping,
+        display_cell_id: DisplayCellId,
+        d2d_mapping: &DisplayToDataMapping,
         preserve_existing: bool,
     ) {
         if !preserve_existing {
@@ -318,11 +308,10 @@ impl TableSelection {
         }
 
         // Set focus and anchor to the clicked cell in display coordinates
-        let display_cell_id = DisplayCellId::new(display_row, col);
         self.focused_cell = Some(display_cell_id);
         self.selection_anchor = Some(display_cell_id);
         self.selection_manager
-            .add_cell(display_cell_id, ordered_indices);
+            .add_cell(display_cell_id, d2d_mapping);
 
         self.is_selecting = true;
     }
@@ -332,7 +321,7 @@ impl TableSelection {
         &mut self,
         display_row: DisplayRow,
         col: AnyColumn,
-        ordered_indices: &DisplayToDataMapping,
+        d2d_mapping: &DisplayToDataMapping,
         preserve_existing: bool,
     ) {
         let Some(anchor_cell) = self.selection_anchor else {
@@ -353,8 +342,7 @@ impl TableSelection {
         for display_r in min_display_row..=max_display_row {
             for c in min_col..=max_col {
                 let display_cell = DisplayCellId::new(display_r, c);
-                self.selection_manager
-                    .add_cell(display_cell, ordered_indices);
+                self.selection_manager.add_cell(display_cell, d2d_mapping);
             }
         }
 

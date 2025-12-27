@@ -4,10 +4,10 @@ use crate::{
     types::{LineNumber, TableCell, TableRow},
 };
 use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Context, Entity, ListAlignment, ListState, Subscription, Task};
+use gpui::{AppContext, Context, Entity, Subscription, Task};
 use std::time::{Duration, Instant};
 use text::BufferSnapshot;
-use ui::{SharedString, px};
+use ui::SharedString;
 
 pub(crate) const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -117,7 +117,7 @@ impl CsvPreviewView {
                     .timings
                     .insert("Parsing", (parse_duration, Instant::now()));
 
-                view.list_state = ListState::new(parsed_csv.rows.len(), ListAlignment::Top, px(1.));
+                log::debug!("Parsed {} rows", parsed_csv.rows.len());
                 view.engine.contents = parsed_csv;
                 view.last_parse_end_time = Some(parse_end_time);
                 view.performance_metrics.record("Filters recalc", || {

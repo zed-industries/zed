@@ -5,18 +5,24 @@
 //!
 //! It's designed to contain core logic of operations without relying on `CsvPreviewView`, context or window handles.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
     table_data_engine::{
         filtering_by_column::{
             AppliedFiltering, AvailableFilters, FilterEntry, calculate_available_filters,
-            filter_data_rows,
+            retain_rows,
         },
         selection::{NavigationDirection, NavigationOperation, TableSelection},
         sorting_by_column::{AppliedSorting, sort_data_rows},
     },
-    types::{AnyColumn, DataRow, DisplayRow, TableLikeContent},
+    types::{
+        AnyColumn, DataCellId, DataRow, DisplayCellId, DisplayRow, TableCell, TableLikeContent,
+        TableRow,
+    },
 };
 
 pub mod copy_selected;
@@ -24,67 +30,42 @@ pub mod filtering_by_column;
 pub mod selection;
 pub mod sorting_by_column;
 
+#[derive(Default)]
 pub(crate) struct TableDataEngine {
     pub applied_filtering: AppliedFiltering,
+    /// All available filters in unfiltered state
     pub available_filters: AvailableFilters,
     pub applied_sorting: Option<AppliedSorting>,
-    pub d2d_mapping: Arc<DisplayToDataMapping>,
+    d2d_mapping: DisplayToDataMapping,
     pub contents: TableLikeContent,
     pub selection: TableSelection,
 }
 
 impl TableDataEngine {
-    pub(crate) fn get_d2d_mapping(&self) -> &DisplayToDataMapping {
-        self.d2d_mapping.as_ref()
+    pub(crate) fn d2d_mapping(&self) -> &DisplayToDataMapping {
+        &self.d2d_mapping
     }
 
-    /// Cheaper than `calculate_d2d_mapping`, as it reorders in place existing data
-    pub(crate) fn re_apply_sort(&mut self) {
-        let mut existing = self
-            .d2d_mapping
-            .mapping
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let sorted_rows = if let Some(sorting) = self.applied_sorting {
-            sort_data_rows(&self.contents.rows, existing, sorting)
-        } else {
-            // Cancel special sorting by resetting the order
-            existing.sort();
-            existing
-        };
-        self.produce_and_store_mapping(sorted_rows);
+    pub(crate) fn apply_sort(&mut self) {
+        self.d2d_mapping
+            .apply_sorting(self.applied_sorting, &self.contents.rows);
+        self.d2d_mapping.merge_mappings();
     }
 
-    /// Takes applied filters/sorting, source content and produces display to data mapping
+    /// Applies filtering to the data and produces display to data mapping from existing sorting
+    pub(crate) fn apply_filtering(&mut self) {
+        self.d2d_mapping
+            .apply_filtering(&self.applied_filtering, &self.contents.rows);
+        self.d2d_mapping.merge_mappings();
+    }
+
+    /// Applies sorting and filtering to the data and produces display to data mapping
     pub(crate) fn calculate_d2d_mapping(&mut self) {
-        let data_rows: Vec<DataRow> = (0..self.contents.rows.len()).map(DataRow).collect();
-
-        let filtered_rows =
-            filter_data_rows(&self.contents.rows, data_rows, &self.applied_filtering);
-
-        let sorted_rows = if let Some(sorting) = self.applied_sorting {
-            sort_data_rows(&self.contents.rows, filtered_rows, sorting)
-        } else {
-            filtered_rows
-        };
-
-        // Create mapping from display position to data row
-        self.produce_and_store_mapping(sorted_rows);
-    }
-
-    /// Takes sorted and filtered rows and produces display to data mapping
-    fn produce_and_store_mapping(&mut self, sorted_rows: Vec<DataRow>) {
-        let mapping: HashMap<DisplayRow, DataRow> = sorted_rows
-            .iter()
-            .enumerate()
-            .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), data_idx))
-            .collect();
-
-        log::trace!("Computed D2D mapping: {mapping:#?}");
-        let data = { DisplayToDataMapping { mapping } };
-        self.d2d_mapping = Arc::new(data);
+        self.d2d_mapping
+            .apply_sorting(self.applied_sorting, &self.contents.rows);
+        self.d2d_mapping
+            .apply_filtering(&self.applied_filtering, &self.contents.rows);
+        self.d2d_mapping.merge_mappings();
     }
 
     pub fn calculate_available_filters(&mut self) {
@@ -140,6 +121,28 @@ impl TableDataEngine {
     pub(crate) fn clear_filters(&mut self, col_idx: AnyColumn) {
         self.applied_filtering.0.remove(&col_idx);
     }
+
+    pub(crate) fn start_mouse_selection(
+        &mut self,
+        display_cell_id: DisplayCellId,
+        preserve_existing: bool,
+    ) {
+        self.selection
+            .start_mouse_selection(display_cell_id, &self.d2d_mapping, preserve_existing);
+    }
+
+    pub(crate) fn extend_mouse_selection(
+        &mut self,
+        display_cell_id: &DisplayCellId,
+        preserve_existing: bool,
+    ) {
+        self.selection.extend_mouse_selection(
+            display_cell_id.row,
+            display_cell_id.col,
+            &self.d2d_mapping,
+            preserve_existing,
+        );
+    }
 }
 
 /// Relation of Display (rendered) rows to Data (src) rows with applied transformations
@@ -148,10 +151,21 @@ impl TableDataEngine {
 /// - todo: filtering
 #[derive(Debug, Default)]
 pub struct DisplayToDataMapping {
-    pub mapping: HashMap<DisplayRow, DataRow>,
+    /// All rows sorted, regardless of applied filtering. Applied every time sorting changes
+    pub sorted_mapping: HashMap<DisplayRow, DataRow>,
+    /// All rows filtered out, regardless of applied sorting. Applied every time filtering changes
+    pub retained_rows: HashSet<DataRow>,
+    /// Filtered and sorted rows. Computed cheaply from `sorted_mapping` and `filtered_out_rows`
+    pub mapping: Arc<HashMap<DisplayRow, DataRow>>,
 }
 
 impl DisplayToDataMapping {
+    pub(crate) fn display_to_data_cell(&self, display_cid: &DisplayCellId) -> DataCellId {
+        let data_row = self.get_data_row(display_cid.row).unwrap_or_else(|| {
+            panic!("Expected {display_cid:?} to correspond to real DataCell, but it's not")
+        });
+        DataCellId::new(data_row, display_cid.col)
+    }
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
@@ -166,7 +180,57 @@ impl DisplayToDataMapping {
     }
 
     /// Get the number of filtered rows
-    pub fn filtered_row_count(&self) -> usize {
+    pub fn visible_row_count(&self) -> usize {
         self.mapping.len()
+    }
+
+    /// Computes sorting
+    fn apply_sorting(&mut self, sorting: Option<AppliedSorting>, rows: &[TableRow<TableCell>]) {
+        let data_rows: Vec<DataRow> = (0..rows.len()).map(DataRow).collect();
+
+        let sorted_rows = if let Some(sorting) = sorting {
+            sort_data_rows(&rows, data_rows, sorting)
+        } else {
+            data_rows
+        };
+
+        self.sorted_mapping = sorted_rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| (DisplayRow(index), row))
+            .collect();
+    }
+
+    /// Computes filtering and applies pre-computed sorting results to the mapping
+    fn apply_filtering(
+        &mut self,
+        applied_filtering: &AppliedFiltering,
+        rows: &[TableRow<TableCell>],
+    ) {
+        self.retained_rows = retain_rows(rows, applied_filtering);
+    }
+
+    /// Take pre-computed sorting and filtering results, and apply them to the mapping
+    fn merge_mappings(&mut self) {
+        let sorted_rows = self.sorted_mapping.len();
+        let retained_rows = self.retained_rows.len();
+        log::debug!(
+            "Going to merge mappings with {sorted_rows} sorted rows and {retained_rows} retained rows"
+        );
+
+        let retained_ordered_rows: Vec<DataRow> = self
+            .sorted_mapping
+            .values()
+            .filter(|row| self.retained_rows.contains(row))
+            .cloned()
+            .collect();
+
+        self.mapping = Arc::new(
+            retained_ordered_rows
+                .into_iter()
+                .enumerate()
+                .map(|(index, row)| (DisplayRow(index), row))
+                .collect(),
+        );
     }
 }

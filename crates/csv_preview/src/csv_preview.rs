@@ -5,26 +5,18 @@ use gpui::{
 };
 use std::{
     collections::HashMap,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use crate::{
-    cell_editor::CellEditorCtx,
-    data_table::TableInteractionState,
-    table_data_engine::{
-        DisplayToDataMapping, TableDataEngine, filtering_by_column::AppliedFiltering,
-    },
-    types::AnyColumn,
+    cell_editor::CellEditorCtx, data_table::TableInteractionState,
+    table_data_engine::TableDataEngine,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::renderer::nasty_code_duplication::ColumnWidths;
-use crate::{
-    parser::EditorState, settings::CsvPreviewSettings,
-    table_data_engine::selection::TableSelection, types::TableLikeContent,
-};
+use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
 pub use types::data_table;
 mod action_handlers;
@@ -133,7 +125,7 @@ impl CsvPreviewView {
     }
     pub(crate) fn apply_sort(&mut self) {
         self.performance_metrics.record("Sort", || {
-            self.engine.re_apply_sort();
+            self.engine.apply_sort();
         });
     }
 
@@ -144,8 +136,8 @@ impl CsvPreviewView {
         });
 
         // Update list state with filtered row count
-        let filtered_row_count = self.engine.get_d2d_mapping().filtered_row_count();
-        self.list_state = gpui::ListState::new(filtered_row_count, ListAlignment::Top, px(1.));
+        let visible_rows = self.engine.d2d_mapping().visible_row_count();
+        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(1.));
     }
 
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
@@ -186,14 +178,7 @@ impl CsvPreviewView {
                 last_parse_end_time: None,
                 cell_edited_flag: false,
                 scroll_handle: ScrollHandle::default(),
-                engine: TableDataEngine {
-                    applied_sorting: None,
-                    available_filters: HashMap::new(),
-                    d2d_mapping: Arc::new(DisplayToDataMapping::default()),
-                    contents: contents.clone(),
-                    selection: TableSelection::default(),
-                    applied_filtering: AppliedFiltering::new(),
-                },
+                engine: TableDataEngine::default(),
             };
 
             // No need to trigger any filtering / sorting here, as it's retrigered on parsing

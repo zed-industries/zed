@@ -194,15 +194,7 @@ impl CsvPreviewView {
                         let content_hash = filter.hash;
                         move |_window, cx| {
                             view_entity.update(cx, |view, cx| {
-                                view.engine.toggle_filter(col_idx, content_hash);
-                                view.engine.calculate_d2d_mapping();
-                                let filtered_row_count =
-                                    view.engine.get_d2d_mapping().filtered_row_count();
-                                view.list_state = gpui::ListState::new(
-                                    filtered_row_count,
-                                    gpui::ListAlignment::Top,
-                                    ui::px(1.),
-                                );
+                                view.toggle_filter(col_idx, content_hash);
                                 cx.notify();
                             });
                         }

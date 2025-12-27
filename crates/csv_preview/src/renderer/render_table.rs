@@ -144,10 +144,8 @@ impl CsvPreviewView {
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
-        let sorted_indices = this.engine.get_d2d_mapping();
-
         // Get the actual row index from our sorted indices
-        let data_row = sorted_indices.get_data_row(display_row)?;
+        let data_row = this.engine.d2d_mapping().get_data_row(display_row)?;
         let row = this.engine.contents.get_row(data_row)?;
 
         let mut elements = Vec::with_capacity(COLS);
@@ -168,10 +166,11 @@ impl CsvPreviewView {
             let display_cell_id = DisplayCellId::new(display_row, col);
 
             // Check if this cell is selected using display coordinates
-            let is_selected =
-                this.engine
-                    .selection
-                    .is_cell_selected(display_row, col, &sorted_indices);
+            let is_selected = this.engine.selection.is_cell_selected(
+                display_row,
+                col,
+                &this.engine.d2d_mapping(),
+            );
 
             // Check if this cell is focused using display coordinates
             let is_focused = this.engine.selection.is_cell_focused(display_row, col);
