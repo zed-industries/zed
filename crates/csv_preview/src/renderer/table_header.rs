@@ -168,29 +168,41 @@ impl CsvPreviewView {
                     .separator();
             }
 
-            for (filter, &state) in column_filters.iter() {
+            for (filter, state) in column_filters.iter() {
+                let state = *state;
                 let is_applied = match state {
                     FilterEntryState::Available { is_applied } => is_applied,
                     FilterEntryState::Unavailable { .. } => false, // TODO: Instead of false, make the toggleable_entry non-interactive
                 };
-                menu = menu.toggleable_entry(
-                    &format!("{} ({}) {state:?}", filter.content, filter.occured_times()),
-                    is_applied,
-                    ui::IconPosition::Start,
-                    None,
-                    {
-                        let view_entity = view_entity.clone();
-                        let content_hash = filter.hash;
-                        move |_window, cx| {
-                            view_entity.update(cx, |view, cx| {
-                                if matches!(state, FilterEntryState::Available { .. }) {
-                                    view.toggle_filter(col_idx, content_hash);
-                                    cx.notify();
-                                }
-                            });
-                        }
-                    },
-                );
+                let content = filter
+                    .content
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or("<null>");
+                let text = match state {
+                    FilterEntryState::Available { .. } => {
+                        format!("{} ({})", content, filter.occured_times())
+                    }
+                    FilterEntryState::Unavailable { blocked_by } => format!(
+                        "X({}) {} ({})",
+                        *blocked_by,
+                        content,
+                        filter.occured_times(),
+                    ),
+                };
+                // TODO: Use more customizeable entries
+                menu = menu.toggleable_entry(&text, is_applied, ui::IconPosition::Start, None, {
+                    let view_entity = view_entity.clone();
+                    let content_hash = filter.hash;
+                    move |_window, cx| {
+                        view_entity.update(cx, |view, cx| {
+                            if matches!(state, FilterEntryState::Available { .. }) {
+                                view.toggle_filter(col_idx, content_hash);
+                                cx.notify();
+                            }
+                        });
+                    }
+                });
             }
 
             menu
