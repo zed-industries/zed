@@ -17,7 +17,6 @@ libsqlite3-sys.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
-sqlformat.workspace = true
 thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true

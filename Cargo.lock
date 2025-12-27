@@ -15333,7 +15333,6 @@ dependencies = [
  "log",
  "parking_lot",
  "smol",
- "sqlformat",
  "thread_local",
  "util",
  "uuid",

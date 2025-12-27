@@ -678,6 +678,171 @@ impl WasmHost {
         })
     }
 
+    /// Load a pre-compiled WASM component without recompilation.
+    pub fn load_extension_from_component(
+        self: &Arc<Self>,
+        component: Component,
+        zed_api_version: semver::Version,
+        manifest: &Arc<ExtensionManifest>,
+        cx: &AsyncApp,
+    ) -> Task<Result<WasmExtension>> {
+        let this = self.clone();
+        let manifest = manifest.clone();
+        let executor = cx.background_executor().clone();
+        let load_extension_task = async move {
+            let mut store = wasmtime::Store::new(
+                &this.engine,
+                WasmState {
+                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    manifest: manifest.clone(),
+                    table: ResourceTable::new(),
+                    host: this.clone(),
+                    capability_granter: CapabilityGranter::new(
+                        this.granted_capabilities.clone(),
+                        manifest.clone(),
+                    ),
+                },
+            );
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_async_yield_and_update(1);
+
+            let mut extension = Extension::instantiate_async(
+                &executor,
+                &mut store,
+                this.release_channel,
+                zed_api_version.clone(),
+                &component,
+            )
+            .await?;
+
+            extension
+                .call_init_extension(&mut store)
+                .await
+                .context("failed to initialize wasm extension")?;
+
+            let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
+            let extension_task = async move {
+                IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
+                while let Some(call) = rx.next().await {
+                    (call)(&mut extension, &mut store).await;
+                }
+            };
+
+            anyhow::Ok((
+                extension_task,
+                manifest.clone(),
+                this.work_dir.join(manifest.id.as_ref()).into(),
+                tx,
+                zed_api_version,
+            ))
+        };
+        cx.spawn(async move |cx| {
+            let (extension_task, manifest, work_dir, tx, zed_api_version) =
+                cx.background_executor().spawn(load_extension_task).await?;
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+
+            Ok(WasmExtension {
+                manifest,
+                work_dir,
+                tx,
+                zed_api_version,
+                _task: task,
+            })
+        })
+    }
+
+    /// Load and compile a WASM extension, caching the compiled result to disk.
+    pub fn load_extension_and_cache(
+        self: &Arc<Self>,
+        wasm_bytes: Vec<u8>,
+        cwasm_path: &Path,
+        manifest: &Arc<ExtensionManifest>,
+        cx: &AsyncApp,
+    ) -> Task<Result<WasmExtension>> {
+        let this = self.clone();
+        let manifest = manifest.clone();
+        let executor = cx.background_executor().clone();
+        let cwasm_path = cwasm_path.to_path_buf();
+        let load_extension_task = async move {
+            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+
+            let component = Component::from_binary(&this.engine, &wasm_bytes)
+                .context("failed to compile wasm component")?;
+
+            // Serialize and cache the compiled component for next time (best effort)
+            if let Ok(serialized) = component.serialize() {
+                if let Err(err) = std::fs::write(&cwasm_path, &serialized) {
+                    log::debug!("Failed to cache compiled WASM extension: {}", err);
+                } else {
+                    log::debug!(
+                        "Cached compiled extension {} to {:?}",
+                        manifest.id,
+                        cwasm_path
+                    );
+                }
+            }
+
+            let mut store = wasmtime::Store::new(
+                &this.engine,
+                WasmState {
+                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    manifest: manifest.clone(),
+                    table: ResourceTable::new(),
+                    host: this.clone(),
+                    capability_granter: CapabilityGranter::new(
+                        this.granted_capabilities.clone(),
+                        manifest.clone(),
+                    ),
+                },
+            );
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_async_yield_and_update(1);
+
+            let mut extension = Extension::instantiate_async(
+                &executor,
+                &mut store,
+                this.release_channel,
+                zed_api_version.clone(),
+                &component,
+            )
+            .await?;
+
+            extension
+                .call_init_extension(&mut store)
+                .await
+                .context("failed to initialize wasm extension")?;
+
+            let (tx, mut rx) = mpsc::unbounded::<ExtensionCall>();
+            let extension_task = async move {
+                IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
+                while let Some(call) = rx.next().await {
+                    (call)(&mut extension, &mut store).await;
+                }
+            };
+
+            anyhow::Ok((
+                extension_task,
+                manifest.clone(),
+                this.work_dir.join(manifest.id.as_ref()).into(),
+                tx,
+                zed_api_version,
+            ))
+        };
+        cx.spawn(async move |cx| {
+            let (extension_task, manifest, work_dir, tx, zed_api_version) =
+                cx.background_executor().spawn(load_extension_task).await?;
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+
+            Ok(WasmExtension {
+                manifest,
+                work_dir,
+                tx,
+                zed_api_version,
+                _task: task,
+            })
+        })
+    }
+
     async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
         self.fs
@@ -759,23 +924,66 @@ impl WasmExtension {
         wasm_host: Arc<WasmHost>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let path = extension_dir.join("extension.wasm");
+        let wasm_path = extension_dir.join("extension.wasm");
+        let cwasm_path = extension_dir.join("extension.cwasm");
 
+        // Always read WASM bytes to parse the zed_api_version
         let mut wasm_file = wasm_host
             .fs
-            .open_sync(&path)
+            .open_sync(&wasm_path)
             .await
-            .context(format!("opening wasm file, path: {path:?}"))?;
+            .context(format!("opening wasm file, path: {:?}", wasm_path))?;
 
         let mut wasm_bytes = Vec::new();
         wasm_file
             .read_to_end(&mut wasm_bytes)
-            .context(format!("reading wasm file, path: {path:?}"))?;
+            .context(format!("reading wasm file, path: {:?}", wasm_path))?;
 
-        wasm_host
-            .load_extension(wasm_bytes, manifest, cx)
+        let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+
+        // Try to load pre-compiled module first
+        if let Ok(metadata) = std::fs::metadata(&cwasm_path) {
+            // Check if .cwasm is newer than .wasm (in case extension was updated)
+            let wasm_modified = std::fs::metadata(&wasm_path)
+                .and_then(|m| m.modified())
+                .ok();
+            let cwasm_modified = metadata.modified().ok();
+
+            let cwasm_is_valid = match (wasm_modified, cwasm_modified) {
+                (Some(wasm_time), Some(cwasm_time)) => cwasm_time >= wasm_time,
+                _ => true, // If we can't check timestamps, assume cwasm is valid
+            };
+
+            if cwasm_is_valid {
+                if let Ok(cwasm_bytes) = std::fs::read(&cwasm_path) {
+                    // Try to deserialize the pre-compiled module
+                    // SAFETY: We compiled this module ourselves with the same engine configuration
+                    if let Ok(component) =
+                        unsafe { Component::deserialize(&wasm_host.engine, &cwasm_bytes) }
+                    {
+                        log::debug!(
+                            "Loading pre-compiled extension {} from {:?}",
+                            manifest.id,
+                            cwasm_path
+                        );
+                        return wasm_host
+                            .load_extension_from_component(component, zed_api_version, manifest, cx)
+                            .await
+                            .with_context(|| {
+                                format!("loading pre-compiled wasm extension: {}", manifest.id)
+                            });
+                    }
+                }
+            }
+        }
+
+        // Compile and persist the module for next time
+        let result = wasm_host
+            .load_extension_and_cache(wasm_bytes, &cwasm_path, manifest, cx)
             .await
-            .with_context(|| format!("loading wasm extension: {}", manifest.id))
+            .with_context(|| format!("loading wasm extension: {}", manifest.id));
+
+        result
     }
 
     pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>
@@ -872,31 +1080,81 @@ impl wasi::WasiView for WasmState {
 /// Since wasm modules have many similar elements, this can save us a lot of work at the
 /// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
 /// a LFU/LRU cache to evict less used cache entries.
+///
+/// This cache also persists entries to disk to survive app restarts, avoiding expensive
+/// recompilation of WASM extensions on every startup.
 #[derive(Debug)]
 struct IncrementalCompilationCache {
-    cache: Cache<Vec<u8>, Vec<u8>>,
+    memory_cache: Cache<Vec<u8>, Vec<u8>>,
+    cache_dir: PathBuf,
 }
 
 impl IncrementalCompilationCache {
     fn new() -> Self {
-        let cache = Cache::builder()
+        let memory_cache = Cache::builder()
             // Cap this at 32 MB for now. Our extensions turn into roughly 512kb in the cache,
             // which means we could store 64 completely novel extensions in the cache, but in
             // practice we will more than that, which is more than enough for our use case.
             .max_capacity(32 * 1024 * 1024)
             .weigher(|k: &Vec<u8>, v: &Vec<u8>| (k.len() + v.len()).try_into().unwrap_or(u32::MAX))
             .build();
-        Self { cache }
+
+        // Include wasmtime version in cache path to invalidate on engine updates.
+        // WASMTIME_VERSION is set by build.rs from Cargo.lock.
+        let cache_dir =
+            paths::wasm_cache_dir().join(format!("wasmtime-{}", env!("WASMTIME_VERSION")));
+
+        // Create cache directory if it doesn't exist
+        if let Err(err) = std::fs::create_dir_all(&cache_dir) {
+            log::warn!("Failed to create WASM cache directory: {}", err);
+        }
+
+        Self {
+            memory_cache,
+            cache_dir,
+        }
+    }
+
+    fn cache_file_path(&self, key: &[u8]) -> PathBuf {
+        use std::fmt::Write;
+        // Use a hash of the key as the filename
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash_slice(key, &mut hasher);
+        let hash = std::hash::Hasher::finish(&hasher);
+        let mut filename = String::with_capacity(16);
+        write!(&mut filename, "{:016x}.cache", hash).unwrap();
+        self.cache_dir.join(filename)
     }
 }
 
 impl CacheStore for IncrementalCompilationCache {
     fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
-        self.cache.get(key).map(|v| v.into())
+        // Check memory cache first
+        if let Some(value) = self.memory_cache.get(key) {
+            return Some(value.into());
+        }
+
+        // Check disk cache
+        let cache_file = self.cache_file_path(key);
+        if let Ok(data) = std::fs::read(&cache_file) {
+            // Populate memory cache for faster subsequent access
+            self.memory_cache.insert(key.to_vec(), data.clone());
+            return Some(data.into());
+        }
+
+        None
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
-        self.cache.insert(key.to_vec(), value);
+        // Insert into memory cache
+        self.memory_cache.insert(key.to_vec(), value.clone());
+
+        // Persist to disk cache (best effort - don't fail if this doesn't work)
+        let cache_file = self.cache_file_path(key);
+        if let Err(err) = std::fs::write(&cache_file, &value) {
+            log::debug!("Failed to persist WASM cache entry to disk: {}", err);
+        }
+
         true
     }
 }
