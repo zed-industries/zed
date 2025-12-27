@@ -295,4 +295,56 @@ mod test {
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "echo oo"]);
     }
+
+    #[test]
+    fn quotes_file_paths_with_parentheses() {
+        // Test that file paths with parentheses (common in Next.js app router) are properly quoted
+        let shell = Shell::Program("bash".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder.build(
+            Some("bun".into()),
+            &[
+                "test".to_string(),
+                "./src/app/(public)/tests/fails.test.ts".to_string(),
+            ],
+        );
+
+        assert_eq!(program, "bash");
+        // The file path with parentheses should be quoted to prevent shell interpretation
+        assert_eq!(
+            args,
+            vec![
+                "-i",
+                "-c",
+                "bun test './src/app/(public)/tests/fails.test.ts'"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_no_quote_does_not_quote_paths_with_parentheses() {
+        // This demonstrates the bug: build_no_quote doesn't quote paths with special characters
+        let shell = Shell::Program("bash".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder.build_no_quote(
+            Some("bun".into()),
+            &[
+                "test".to_string(),
+                "./src/app/(public)/tests/fails.test.ts".to_string(),
+            ],
+        );
+
+        assert_eq!(program, "bash");
+        // Without quoting, the parentheses will be interpreted by the shell as a subshell
+        assert_eq!(
+            args,
+            vec![
+                "-i",
+                "-c",
+                "bun test ./src/app/(public)/tests/fails.test.ts"
+            ]
+        );
+    }
 }

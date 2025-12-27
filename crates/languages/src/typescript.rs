@@ -87,10 +87,7 @@ impl PackageJsonData {
                     "jest".to_owned(),
                     "--runInBand".to_owned(),
                     "--testNamePattern".to_owned(),
-                    format!(
-                        "\"{}\"",
-                        TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
-                    ),
+                    TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value(),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -132,10 +129,7 @@ impl PackageJsonData {
                     "run".to_owned(),
                     "--no-file-parallelism".to_owned(),
                     "--testNamePattern".to_owned(),
-                    format!(
-                        "\"{}\"",
-                        TYPESCRIPT_VITEST_TEST_NAME_VARIABLE.template_value()
-                    ),
+                    TYPESCRIPT_VITEST_TEST_NAME_VARIABLE.template_value(),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -173,7 +167,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "mocha".to_owned(),
                     "--grep".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::Symbol.template_value(),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -237,7 +231,7 @@ impl PackageJsonData {
                 args: vec![
                     "test".to_owned(),
                     "--test-name-pattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::Symbol.template_value(),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -269,7 +263,7 @@ impl PackageJsonData {
                 args: vec![
                     "--test".to_owned(),
                     "--test-name-pattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::Symbol.template_value(),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
