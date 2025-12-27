@@ -365,11 +365,12 @@ impl ExampleContext {
                         let snapshot = buffer.read(cx).snapshot();
 
                         let file = snapshot.file().unwrap();
-                        let diff = diff.read(cx);
-                        let base_text = diff.base_text().text();
+                        let base_text = diff.read(cx).base_text(cx).text();
 
                         let hunks = diff
-                            .hunks(&snapshot, cx)
+                            .read(cx)
+                            .snapshot(cx)
+                            .hunks(&snapshot)
                             .map(|hunk| FileEditHunk {
                                 base_text: base_text[hunk.diff_base_byte_range.clone()].to_string(),
                                 text: snapshot

@@ -525,14 +525,13 @@ impl ProjectDiff {
             .expect("project diff editor should have a conflict addon");
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff_read = diff.read(cx);
+        let diff_snapshot = diff.read(cx).snapshot(cx);
 
         let excerpt_ranges = {
-            let diff_hunk_ranges = diff_read
+            let diff_hunk_ranges = diff_snapshot
                 .hunks_intersecting_range(
-                    Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                    Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
@@ -551,18 +550,21 @@ impl ProjectDiff {
             }
         };
 
-        let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
-            let was_empty = multibuffer.is_empty();
-            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+        let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
+            let was_empty = editor
+                .primary_editor()
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .is_empty();
+            let (_, is_newly_added) = editor.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
                 multibuffer_context_lines(cx),
+                diff,
                 cx,
             );
-            if self.branch_diff.read(cx).diff_base().is_merge_base() {
-                multibuffer.add_diff(diff.clone(), cx);
-            }
             (was_empty, is_newly_added)
         });
 
@@ -639,9 +641,9 @@ impl ProjectDiff {
                 }
             }
 
-            this.multibuffer.update(cx, |multibuffer, cx| {
+            this.editor.update(cx, |editor, cx| {
                 for path in previous_paths {
-                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
+                    if let Some(buffer) = this.multibuffer.read(cx).buffer_for_path(&path, cx) {
                         let skip = match reason {
                             RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
@@ -654,7 +656,7 @@ impl ProjectDiff {
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path.clone(), cx);
+                    editor.remove_excerpts_for_path(path, cx);
                 }
             });
             buffers_to_load
