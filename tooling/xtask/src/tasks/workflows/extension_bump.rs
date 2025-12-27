@@ -107,7 +107,7 @@ fn create_version_label(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && github.ref == 'refs/heads/main' && {} == 'false'",
             needs_bump.expr(),
         )))
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
@@ -190,7 +190,7 @@ fn bump_extension_version(
             force_bump.expr(),
             needs_bump.expr(),
         )))
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
