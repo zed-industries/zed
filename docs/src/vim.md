@@ -41,7 +41,7 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 >
 > ```json [settings]
 > {
->   "vim_mode": true
+>   "modal_editing": "vim"
 > }
 > ```
 

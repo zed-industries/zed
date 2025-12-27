@@ -117,11 +117,11 @@
   // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
   //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
-  // Whether to enable vim modes and key bindings.
-  "vim_mode": false,
-  // Whether to enable helix mode and key bindings.
-  // Enabling this mode will automatically enable vim mode.
-  "helix_mode": false,
+  // Modal editing mode, one of:
+  // - "none": Standard editing mode
+  // - "vim": Enables Vim-style modal editing and key bindings
+  // - "helix": Enables Helix-style modal editing and key bindings
+  "modal_editing": "none",
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,

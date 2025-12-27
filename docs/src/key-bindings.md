@@ -18,7 +18,7 @@ We currently support:
 
 This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
 
-You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
+You can also use `modal_editing` to enable Vim or Helix-style modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## Keymap Editor

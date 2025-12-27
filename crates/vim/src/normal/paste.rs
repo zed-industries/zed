@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp;
-use vim_mode_setting::HelixModeSetting;
+use vim_mode_setting::ModalEditing;
 
 use crate::{
     Vim,
@@ -229,7 +229,7 @@ impl Vim {
             });
         });
 
-        if HelixModeSetting::get_global(cx).0 {
+        if ModalEditing::get_global(cx).is_helix() {
             self.switch_mode(Mode::HelixNormal, true, window, cx);
         } else {
             self.switch_mode(Mode::Normal, true, window, cx);

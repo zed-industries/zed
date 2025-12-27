@@ -4,6 +4,7 @@ use client::TelemetrySettings;
 use fs::Fs;
 use gpui::{Action, App, IntoElement};
 use project::project_settings::ProjectSettings;
+use settings::ModalEditingContent;
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeAppearanceMode, ThemeName, ThemeRegistry, ThemeSelection,
@@ -14,7 +15,7 @@ use ui::{
     ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip,
     prelude::*, rems_from_px,
 };
-use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::ModalEditing;
 
 use crate::{
     ImportCursorSettings, ImportVsCodeSettings, SettingsImportState,
@@ -373,7 +374,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
 }
 
 fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
-    let toggle_state = if VimModeSetting::get_global(cx).0 {
+    let toggle_state = if ModalEditing::get_global(cx).is_vim() {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
@@ -386,20 +387,26 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
         {
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
-                let vim_mode = match selection {
-                    ToggleState::Selected => true,
-                    ToggleState::Unselected => false,
+                let new_mode = match selection {
+                    ToggleState::Selected => ModalEditingContent::Vim,
+                    ToggleState::Unselected => ModalEditingContent::None,
                     ToggleState::Indeterminate => {
                         return;
                     }
                 };
                 update_settings_file(fs.clone(), cx, move |setting, _| {
-                    setting.vim_mode = Some(vim_mode);
+                    setting.modal_editing = Some(new_mode);
+                    setting.vim_mode = None;
+                    setting.helix_mode = None;
                 });
 
                 telemetry::event!(
                     "Welcome Vim Mode Toggled",
-                    options = if vim_mode { "on" } else { "off" },
+                    options = if new_mode == ModalEditingContent::Vim {
+                        "on"
+                    } else {
+                        "off"
+                    },
                 );
             }
         },
