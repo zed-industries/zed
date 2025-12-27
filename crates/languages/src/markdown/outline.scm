@@ -1,5 +1,3 @@
-(atx_heading
-    .
-    (_) @context
-    .
-    (_) @name ) @item
+(section
+    (atx_heading
+        . (_) @context . (_) @name)) @item
