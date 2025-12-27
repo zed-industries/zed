@@ -191,15 +191,23 @@ impl SvgPreviewView {
     }
 
     pub fn is_svg_file(buffer: &Entity<MultiBuffer>, cx: &App) -> bool {
-        buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| {
-                file.path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-            })
+        let Some(singleton) = buffer.read(cx).as_singleton() else {
+            return false;
+        };
+        let Some(file) = singleton.read(cx).file() else {
+            return false;
+        };
+
+        let rel_ext = file.path().extension();
+        let full_path = file.full_path(cx);
+        let full_ext = full_path.extension().and_then(|ext| ext.to_str());
+        let name_ext = std::path::Path::new(file.file_name(cx))
+            .extension()
+            .and_then(|ext| ext.to_str());
+
+        rel_ext.is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+            || full_ext.is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+            || name_ext.is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
     }
 
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
