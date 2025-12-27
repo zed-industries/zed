@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use syntax_diff::{generate_diff, match_trees, DiffTree};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use syntax_diff::{DiffTree, generate_diff, match_trees};
 
 fn parse_rust(code: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
@@ -79,7 +79,7 @@ fn bench_tree_construction(c: &mut Criterion) {
             &(tree, code),
             |b, (tree, code)| {
                 b.iter(|| {
-                    let diff_tree = DiffTree::new(black_box(tree), black_box(code));
+                    let diff_tree = DiffTree::new(black_box(tree.walk()), black_box(code));
                     black_box(diff_tree)
                 });
             },
@@ -95,7 +95,7 @@ fn bench_identical_matching(c: &mut Criterion) {
     for num_functions in [10, 50, 100, 200] {
         let code = generate_rust_code(num_functions);
         let tree = parse_rust(&code);
-        let diff_tree = DiffTree::new(&tree, &code);
+        let diff_tree = DiffTree::new(tree.walk(), &code);
 
         group.throughput(Throughput::Elements(diff_tree.node_count() as u64));
         group.bench_with_input(
@@ -124,20 +124,27 @@ fn bench_modified_matching(c: &mut Criterion) {
             let old_tree = parse_rust(&old_code);
             let new_tree = parse_rust(&new_code);
 
-            let old_diff = DiffTree::new(&old_tree, &old_code);
-            let new_diff = DiffTree::new(&new_tree, &new_code);
+            let old_diff = DiffTree::new(old_tree.walk(), &old_code);
+            let new_diff = DiffTree::new(new_tree.walk(), &new_code);
 
-            let label = format!("{num_functions}_funcs_{:.0}pct_modified", modification_ratio * 100.0);
+            let label = format!(
+                "{num_functions}_funcs_{:.0}pct_modified",
+                modification_ratio * 100.0
+            );
 
             group.throughput(Throughput::Elements(
                 (old_diff.node_count() + new_diff.node_count()) as u64,
             ));
-            group.bench_with_input(BenchmarkId::from_parameter(&label), &(old_diff, new_diff), |b, (old, new)| {
-                b.iter(|| {
-                    let matching = match_trees(black_box(old), black_box(new));
-                    black_box(matching)
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::from_parameter(&label),
+                &(old_diff, new_diff),
+                |b, (old, new)| {
+                    b.iter(|| {
+                        let matching = match_trees(black_box(old), black_box(new));
+                        black_box(matching)
+                    });
+                },
+            );
         }
     }
 
@@ -154,8 +161,8 @@ fn bench_diff_generation(c: &mut Criterion) {
         let old_tree = parse_rust(&old_code);
         let new_tree = parse_rust(&new_code);
 
-        let old_diff = DiffTree::new(&old_tree, &old_code);
-        let new_diff = DiffTree::new(&new_tree, &new_code);
+        let old_diff = DiffTree::new(old_tree.walk(), &old_code);
+        let new_diff = DiffTree::new(new_tree.walk(), &new_code);
         let matching = match_trees(&old_diff, &new_diff);
 
         group.bench_with_input(
@@ -189,8 +196,8 @@ fn bench_full_pipeline(c: &mut Criterion) {
             &(old_tree, old_code, new_tree, new_code),
             |b, (old_tree, old_code, new_tree, new_code)| {
                 b.iter(|| {
-                    let old_diff = DiffTree::new(black_box(old_tree), black_box(old_code));
-                    let new_diff = DiffTree::new(black_box(new_tree), black_box(new_code));
+                    let old_diff = DiffTree::new(black_box(old_tree.walk()), black_box(old_code));
+                    let new_diff = DiffTree::new(black_box(new_tree.walk()), black_box(new_code));
                     let matching = match_trees(&old_diff, &new_diff);
                     let diff = generate_diff(&old_diff, &new_diff, &matching);
                     black_box(diff)
@@ -355,8 +362,8 @@ mod tests {
     group.throughput(Throughput::Bytes((old_code.len() + new_code.len()) as u64));
     group.bench_function("typical_git_diff", |b| {
         b.iter(|| {
-            let old_diff = DiffTree::new(black_box(&old_tree), black_box(old_code));
-            let new_diff = DiffTree::new(black_box(&new_tree), black_box(new_code));
+            let old_diff = DiffTree::new(black_box(old_tree.walk()), black_box(old_code));
+            let new_diff = DiffTree::new(black_box(new_tree.walk()), black_box(new_code));
             let matching = match_trees(&old_diff, &new_diff);
             let diff = generate_diff(&old_diff, &new_diff, &matching);
             black_box(diff)
