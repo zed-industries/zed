@@ -41,7 +41,7 @@ impl NodeId {
 }
 
 /// Compact node representation optimized for diffing.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DiffNode {
     /// Node's own index
     pub id: NodeId,
@@ -75,18 +75,28 @@ impl DiffNode {
 }
 
 /// A preprocessed syntax tree for efficient diffing.
-pub struct DiffTree<'a> {
+#[derive(Debug, Clone, Default)]
+pub struct DiffTree {
     /// Nodes stored in pre-order (parents before children, root at index 0)
     nodes: Vec<DiffNode>,
-    /// Source text
-    text: &'a str,
     /// Nodes grouped by height for efficient iteration
     height_index: Vec<Vec<NodeId>>,
 }
 
+impl PartialEq for DiffTree {
+    fn eq(&self, other: &Self) -> bool {
+        let root = self.node(self.root());
+        let root_other = other.node(other.root());
+
+        root.structural_hash == root_other.structural_hash && root.content_hash == root.content_hash
+    }
+}
+
+impl Eq for DiffTree {}
+
 /// Iterator over a node's children.
 pub struct ChildIter<'a> {
-    tree: &'a DiffTree<'a>,
+    tree: &'a DiffTree,
     current: Option<NodeId>,
 }
 
@@ -100,8 +110,8 @@ impl Iterator for ChildIter<'_> {
     }
 }
 
-impl<'a> DiffTree<'a> {
-    pub fn new(mut tree: tree_sitter::TreeCursor<'_>, text: &'a str) -> Self {
+impl DiffTree {
+    pub fn new(mut tree: tree_sitter::TreeCursor<'_>, text: &str) -> Self {
         let estimated_nodes = tree.node().descendant_count();
         let estimated_height = (estimated_nodes as f64).log2().ceil() as usize + 1;
         let mut nodes = Vec::with_capacity(estimated_nodes);
@@ -111,7 +121,6 @@ impl<'a> DiffTree<'a> {
 
         Self {
             nodes,
-            text,
             height_index,
         }
     }
@@ -130,16 +139,6 @@ impl<'a> DiffTree<'a> {
     #[inline]
     pub fn nodes(&self) -> &[DiffNode] {
         &self.nodes
-    }
-
-    #[inline]
-    pub fn text(&self) -> &str {
-        self.text
-    }
-
-    pub fn node_text(&self, id: NodeId) -> &str {
-        let node = &self.nodes[id.index()];
-        &self.text[node.byte_range.clone()]
     }
 
     #[inline]
