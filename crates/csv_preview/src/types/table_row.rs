@@ -4,7 +4,12 @@
 //! It is especially useful for CSV or tabular data where rectangular invariants must be maintained, but the number of columns is only known at runtime.
 //! By using `TableRow`, we gain stronger guarantees and safer APIs compared to a bare `Vec<T>`, without requiring const generics.
 
-use std::any::type_name;
+use std::{
+    any::type_name,
+    ops::{
+        Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+    },
+};
 
 use crate::types::AnyColumn;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +70,29 @@ impl<T> TableRow<T> {
         self.0
     }
 
-    /// Transforms all elements within the row in length-safe way. Similar to `array_map` from stdlib
+    /// Like [`map`], but borrows the row and clones each element before mapping.
+    ///
+    /// This is useful when you want to map over a borrowed row without consuming it,
+    /// but your mapping function requires ownership of each element.
+    ///
+    /// # Difference
+    /// - `map_cloned` takes `&self`, clones each element, and applies `f(T) -> U`.
+    /// - [`map`] takes `self` by value and applies `f(T) -> U` directly, consuming the row.
+    /// - [`map_ref`] takes `&self` and applies `f(&T) -> U` to references of each element.
+    pub fn map_cloned<F, U>(&self, f: F) -> TableRow<U>
+    where
+        F: FnMut(T) -> U,
+        T: Clone,
+    {
+        self.clone().map(f)
+    }
+
+    /// Consumes the row and transforms all elements within it in a length-safe way.
+    ///
+    /// # Difference
+    /// - `map` takes ownership of the row (`self`) and applies `f(T) -> U` to each element.
+    /// - Use this when you want to transform and consume the row in one step.
+    /// - See also [`map_cloned`] (for mapping over a borrowed row with cloning) and [`map_ref`] (for mapping over references).
     pub fn map<F, U>(self, f: F) -> TableRow<U>
     where
         F: FnMut(T) -> U,
@@ -73,8 +100,25 @@ impl<T> TableRow<T> {
         TableRow(self.0.into_iter().map(f).collect())
     }
 
+    /// Borrows the row and transforms all elements by reference in a length-safe way.
+    ///
+    /// # Difference
+    /// - `map_ref` takes `&self` and applies `f(&T) -> U` to each element by reference.
+    /// - Use this when you want to map over a borrowed row without cloning or consuming it.
+    /// - See also [`map`] (for consuming the row) and [`map_cloned`] (for mapping with cloning).
+    pub fn map_ref<F, U>(&self, f: F) -> TableRow<U>
+    where
+        F: FnMut(&T) -> U,
+    {
+        TableRow(self.0.iter().map(f).collect())
+    }
+
     pub(crate) fn empty() -> TableRow<T> {
         TableRow(Vec::new())
+    }
+
+    pub(crate) fn cols(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -82,9 +126,102 @@ impl<T> TableRow<T> {
 pub trait IntoTableRow<T> {
     fn into_table_row(self, expected_length: usize) -> TableRow<T>;
 }
-
 impl<T> IntoTableRow<T> for Vec<T> {
     fn into_table_row(self, expected_length: usize) -> TableRow<T> {
         TableRow::from_vec(self, expected_length)
+    }
+}
+
+pub trait IntoTableRowForArray<T> {
+    fn into_table_row(self) -> TableRow<T>;
+}
+
+impl<T, const COLS: usize> IntoTableRowForArray<T> for [T; COLS] {
+    fn into_table_row(self) -> TableRow<T> {
+        TableRow::from_vec(self.into(), COLS)
+    }
+}
+
+// Index implementations for convenient access
+impl<T> Index<usize> for TableRow<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T> IndexMut<usize> for TableRow<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl<T> Index<AnyColumn> for TableRow<T> {
+    type Output = T;
+
+    fn index(&self, index: AnyColumn) -> &Self::Output {
+        &self.0[*index]
+    }
+}
+
+impl<T> IndexMut<AnyColumn> for TableRow<T> {
+    fn index_mut(&mut self, index: AnyColumn) -> &mut Self::Output {
+        &mut self.0[*index]
+    }
+}
+
+// Range indexing implementations for slice operations
+impl<T> Index<Range<usize>> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        <Vec<T> as Index<Range<usize>>>::index(&self.0, index)
+    }
+}
+
+impl<T> Index<RangeFrom<usize>> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
+        <Vec<T> as Index<RangeFrom<usize>>>::index(&self.0, index)
+    }
+}
+
+impl<T> Index<RangeTo<usize>> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+        <Vec<T> as Index<RangeTo<usize>>>::index(&self.0, index)
+    }
+}
+
+impl<T> Index<RangeToInclusive<usize>> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: RangeToInclusive<usize>) -> &Self::Output {
+        <Vec<T> as Index<RangeToInclusive<usize>>>::index(&self.0, index)
+    }
+}
+
+impl<T> Index<RangeFull> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: RangeFull) -> &Self::Output {
+        <Vec<T> as Index<RangeFull>>::index(&self.0, index)
+    }
+}
+
+impl<T> Index<RangeInclusive<usize>> for TableRow<T> {
+    type Output = [T];
+
+    fn index(&self, index: RangeInclusive<usize>) -> &Self::Output {
+        <Vec<T> as Index<RangeInclusive<usize>>>::index(&self.0, index)
+    }
+}
+
+impl<T> IndexMut<RangeInclusive<usize>> for TableRow<T> {
+    fn index_mut(&mut self, index: RangeInclusive<usize>) -> &mut Self::Output {
+        <Vec<T> as IndexMut<RangeInclusive<usize>>>::index_mut(&mut self.0, index)
     }
 }
