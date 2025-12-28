@@ -146,12 +146,11 @@ pub fn state_dir() -> &'static PathBuf {
             }
             .join("zed");
         } else {
+            // Windows
             return dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
                 .join("Zed");
         }
-
-        // home_dir().join(".local").join("share").join("zed")
     })
 }
 
