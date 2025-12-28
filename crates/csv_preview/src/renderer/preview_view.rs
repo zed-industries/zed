@@ -78,7 +78,7 @@ impl Render for CsvPreviewView {
                             window,
                             cx,
                         )
-                        .child(self.render_table_with_cols(cx))
+                        .child(self.render_table_with_cols(cx, self.engine.contents.headers.cols()))
                         .into_any_element()
                 }
             });

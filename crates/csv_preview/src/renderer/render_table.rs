@@ -1,7 +1,9 @@
 use crate::data_table::Table;
 use crate::data_table::TableColumnWidths;
 use crate::data_table::TableResizeBehavior;
+use crate::types::IntoTableRow;
 use crate::types::TableCell;
+use crate::types::TableRow;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::{DefiniteLength, div, prelude::*};
@@ -13,24 +15,25 @@ use crate::{
 };
 
 impl CsvPreviewView {
-    pub(crate) fn create_table<const COLS: usize>(
+    /// Creates a new table.
+    /// Column number is derived from the `TableColumnWidths` entity.
+    pub(crate) fn create_table(
         &self,
-        current_widths: &Entity<TableColumnWidths<COLS>>,
+        current_widths: &Entity<TableColumnWidths>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        assert!(COLS > 0, "Expected to have at least 1 column");
-
-        let remaining_col_number = COLS - 1;
+        let cols = current_widths.read(cx).cols();
+        let remaining_col_number = cols - 1;
         let fraction = if remaining_col_number > 0 {
             1. / remaining_col_number as f32
         } else {
             1. // only column with line numbers is present. Put 100%, but it will be overwritten anyways :D
         };
-        let mut widths = [DefiniteLength::Fraction(fraction); COLS];
+        let mut widths = vec![DefiniteLength::Fraction(fraction); cols].into_table_row(cols);
         let line_number_width = self.calculate_row_identifier_column_width();
         widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
 
-        let mut resize_behaviors = [TableResizeBehavior::Resizable; COLS];
+        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols].into_table_row(cols);
         resize_behaviors[0] = TableResizeBehavior::None;
 
         self.create_table_inner(
@@ -42,21 +45,22 @@ impl CsvPreviewView {
         )
     }
 
-    fn create_table_inner<const COLS: usize>(
+    fn create_table_inner(
         &self,
         row_count: usize,
-        widths: [DefiniteLength; COLS],
-        resize_behaviors: [TableResizeBehavior; COLS],
-        current_widths: &Entity<TableColumnWidths<COLS>>,
+        widths: TableRow<DefiniteLength>,
+        resize_behaviors: TableRow<TableResizeBehavior>,
+        current_widths: &Entity<TableColumnWidths>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let cols = widths.cols();
         // Create headers array with interactive elements
-        let mut headers = Vec::with_capacity(COLS);
+        let mut headers = Vec::with_capacity(cols);
 
         headers.push(self.create_row_identitifier_header(cx));
 
         // Add the actual CSV headers with sort buttons
-        for i in 0..(COLS - 1) {
+        for i in 0..(cols - 1) {
             let header_text = self
                 .engine
                 .contents
@@ -72,17 +76,7 @@ impl CsvPreviewView {
             ));
         }
 
-        // Manually construct array to avoid Debug trait requirement
-        let headers_array: [AnyElement; COLS] = {
-            assert_eq!(headers.len(), COLS, "Headers vector has wrong length");
-            let mut iter = headers.into_iter();
-            std::array::from_fn(|_| iter.next().unwrap())
-        };
-
-        // println!("widths: {widths:?}");
-        // let w = current_widths.read(cx);
-        // println!("widths: {w:?}");
-        Table::new()
+        Table::new(cols)
             .interactable(&self.table_interaction_state)
             // .width(Length::Definite(DefiniteLength::Absolute( // Uncomment to apply width bigger than the parent
             //     AbsoluteLength::Pixels(3000u32.into()),
@@ -91,7 +85,7 @@ impl CsvPreviewView {
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
-            .header(headers_array)
+            .header(headers.into_table_row(cols))
             .disable_base_style()
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
@@ -103,8 +97,9 @@ impl CsvPreviewView {
                                 // Record this display index for performance metrics
                                 this.performance_metrics.rendered_indices.push(display_row);
 
-                                Self::render_table_row_for_variable_row_height_list::<COLS>(
+                                Self::render_table_row_for_variable_row_height_list(
                                     this,
+                                    cols,
                                     DisplayRow(display_row),
                                     row_identifier_text_color,
                                     selected_bg,
@@ -121,8 +116,9 @@ impl CsvPreviewView {
                                     .rendered_indices
                                     .extend(range.clone());
 
-                                Self::render_table_rows_for_uniform_list::<COLS>(
+                                Self::render_table_rows_for_uniform_list(
                                     this,
+                                    cols,
                                     range,
                                     row_identifier_text_color,
                                     selected_bg,
@@ -137,18 +133,19 @@ impl CsvPreviewView {
     }
 
     /// Render a single row for variable_row_height_list (supports variable heights)
-    fn render_single_table_row<const COLS: usize>(
+    fn render_single_table_row(
         this: &CsvPreviewView,
+        cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
-    ) -> Option<[AnyElement; COLS]> {
+    ) -> Option<TableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
         let data_row = this.engine.d2d_mapping().get_data_row(display_row)?;
         let row = this.engine.contents.get_row(data_row)?;
 
-        let mut elements = Vec::with_capacity(COLS);
+        let mut elements = Vec::with_capacity(cols);
         elements.push(this.create_row_identifier_cell(
             display_row,
             data_row,
@@ -224,39 +221,42 @@ impl CsvPreviewView {
             );
         }
 
-        let elements_array: [AnyElement; COLS] = elements.try_into().ok()?;
-        Some(elements_array)
+        Some(elements.into_table_row(cols))
     }
 
-    fn render_table_row_for_variable_row_height_list<const COLS: usize>(
+    fn render_table_row_for_variable_row_height_list(
         this: &CsvPreviewView,
+        cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
-    ) -> [AnyElement; COLS] {
+    ) -> TableRow<AnyElement> {
         Self::render_single_table_row(
             this,
+            cols,
             display_row,
             row_identifier_text_color,
             selected_bg,
             cx,
         )
-        .unwrap_or_else(|| std::array::from_fn(|_| div().into_any_element()))
+        .unwrap_or_else(|| panic!("Expected to render a table row"))
     }
 
     /// Render multiple rows for uniform_list (uniform heights only)
-    fn render_table_rows_for_uniform_list<const COLS: usize>(
+    fn render_table_rows_for_uniform_list(
         this: &CsvPreviewView,
+        cols: usize,
         display_indices: Range<usize>,
         row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
-    ) -> Vec<[AnyElement; COLS]> {
+    ) -> Vec<TableRow<AnyElement>> {
         display_indices
             .filter_map(|display_index| {
                 Self::render_single_table_row(
                     this,
+                    cols,
                     DisplayRow(display_index),
                     row_identifier_text_color,
                     selected_bg,

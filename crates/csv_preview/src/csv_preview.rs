@@ -169,7 +169,7 @@ impl CsvPreviewView {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: None,
                 table_interaction_state,
-                column_widths: ColumnWidths::new(cx),
+                column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
