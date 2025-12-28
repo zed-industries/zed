@@ -1,6 +1,6 @@
 // Fork of ui/data_table.rs to reduce compilation times
 #![allow(dead_code)]
-use std::{ops::Range, rc::Rc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
@@ -18,33 +18,35 @@ use ui::{
     px, single_example, v_flex,
 };
 
+use crate::types::{IntoTableRow, IntoTableRowForArray as _, TableRow};
+
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
 #[derive(Debug)]
 struct DraggedColumn(usize);
 
-struct UniformListData<const COLS: usize> {
+struct UniformListData {
     render_list_of_rows_fn:
-        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<TableRow<AnyElement>>>,
     element_id: ElementId,
     row_count: usize,
 }
 
-struct VariableRowHeightListData<const COLS: usize> {
+struct VariableRowHeightListData {
     /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own height
-    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
+    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> TableRow<AnyElement>>,
     list_state: ListState,
     row_count: usize,
 }
 
-enum TableContents<const COLS: usize> {
-    Vec(Vec<[AnyElement; COLS]>),
-    UniformList(UniformListData<COLS>),
-    VariableRowHeightList(VariableRowHeightListData<COLS>),
+enum TableContents {
+    Vec(Vec<TableRow<AnyElement>>),
+    UniformList(UniformListData),
+    VariableRowHeightList(VariableRowHeightListData),
 }
 
-impl<const COLS: usize> TableContents<COLS> {
-    fn rows_mut(&mut self) -> Option<&mut Vec<[AnyElement; COLS]>> {
+impl TableContents {
+    fn rows_mut(&mut self) -> Option<&mut Vec<TableRow<AnyElement>>> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
@@ -105,78 +107,88 @@ impl TableInteractionState {
         }
     }
 
-    fn render_resize_handles<const COLS: usize>(
+    // This method is clone heavy after de-const-generification due to lifetime issues. TODO: remove needless clones
+    fn render_resize_handles(
         &self,
-        column_widths: &[Length; COLS],
-        resizable_columns: &[TableResizeBehavior; COLS],
-        initial_sizes: [DefiniteLength; COLS],
-        columns: Option<Entity<TableColumnWidths<COLS>>>,
+        column_widths: &TableRow<Length>,
+        resizable_columns: &TableRow<TableResizeBehavior>,
+        initial_sizes: &TableRow<DefiniteLength>,
+        columns: Option<Entity<TableColumnWidths>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         let spacers = column_widths
+            .as_slice()
             .iter()
             .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
-        let resizable_columns_slice = *resizable_columns;
-        let mut resizable_columns = resizable_columns.iter();
+        let resizable_columns_owned = Arc::new(resizable_columns.clone());
+        let initial_sizes_owned = Arc::new(initial_sizes.clone());
+        let resizable_columns_slice = resizable_columns.as_slice();
+        let mut resizable_columns_iter = resizable_columns_slice.iter();
 
         let dividers = intersperse_with(spacers, || {
-            window.with_id(column_ix, |window| {
-                let mut resize_divider = div()
-                    // This is required because this is evaluated at a different time than the use_state call above
-                    .id(column_ix)
-                    .relative()
-                    .top_0()
-                    .w_px()
-                    .h_full()
-                    .bg(cx.theme().colors().border.opacity(0.8));
+            let resizable_columns_owned = Arc::clone(&resizable_columns_owned);
+            let initial_sizes_owned = Arc::clone(&initial_sizes_owned);
+            {
+                window.with_id(column_ix, |window| {
+                    let mut resize_divider = div()
+                        // This is required because this is evaluated at a different time than the use_state call above
+                        .id(column_ix)
+                        .relative()
+                        .top_0()
+                        .w_px()
+                        .h_full()
+                        .bg(cx.theme().colors().border.opacity(0.8));
 
-                let mut resize_handle = div()
-                    .id("column-resize-handle")
-                    .absolute()
-                    .left_neg_0p5()
-                    .w(px(RESIZE_COLUMN_WIDTH))
-                    .h_full();
+                    let mut resize_handle = div()
+                        .id("column-resize-handle")
+                        .absolute()
+                        .left_neg_0p5()
+                        .w(px(RESIZE_COLUMN_WIDTH))
+                        .h_full();
 
-                if resizable_columns
-                    .next()
-                    .is_some_and(TableResizeBehavior::is_resizable)
-                {
-                    let hovered = window.use_state(cx, |_window, _cx| false);
+                    if resizable_columns_iter
+                        .next()
+                        .is_some_and(TableResizeBehavior::is_resizable)
+                    {
+                        let hovered = window.use_state(cx, |_window, _cx| false);
 
-                    resize_divider = resize_divider.when(*hovered.read(cx), |div| {
-                        div.bg(cx.theme().colors().border_focused)
-                    });
+                        resize_divider = resize_divider.when(*hovered.read(cx), |div| {
+                            div.bg(cx.theme().colors().border_focused)
+                        });
 
-                    resize_handle = resize_handle
-                        .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
-                        .cursor_col_resize()
-                        .when_some(columns.clone(), |this, columns| {
-                            this.on_click(move |event, window, cx| {
-                                if event.click_count() >= 2 {
-                                    columns.update(cx, |columns, _| {
-                                        columns.on_double_click(
-                                            column_ix,
-                                            &initial_sizes,
-                                            &resizable_columns_slice,
-                                            window,
-                                        );
-                                    })
-                                }
+                        resize_handle = resize_handle
+                            .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                            .cursor_col_resize()
+                            .when_some(columns.clone(), |this, columns| {
+                                this.on_click(move |event, window, cx| {
+                                    if event.click_count() >= 2 {
+                                        let resizable_columns = resizable_columns_owned.clone();
+                                        let initial_sizes = initial_sizes_owned.clone();
+                                        columns.update(cx, |columns, _| {
+                                            columns.on_double_click(
+                                                column_ix,
+                                                &initial_sizes,
+                                                &resizable_columns,
+                                                window,
+                                            );
+                                        })
+                                    }
 
-                                cx.stop_propagation();
+                                    cx.stop_propagation();
+                                })
                             })
-                        })
-                        .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
-                            cx.new(|_cx| gpui::Empty)
-                        })
-                }
+                            .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
+                                cx.new(|_cx| gpui::Empty)
+                            })
+                    }
 
-                column_ix += 1;
-                resize_divider.child(resize_handle).into_any_element()
-            })
+                    column_ix += 1;
+                    resize_divider.child(resize_handle).into_any_element()
+                })
+            }
         });
 
         h_flex()
@@ -211,21 +223,26 @@ impl TableResizeBehavior {
 }
 
 #[derive(Debug)]
-pub struct TableColumnWidths<const COLS: usize> {
-    widths: [DefiniteLength; COLS],
-    visible_widths: [DefiniteLength; COLS],
+pub struct TableColumnWidths {
+    widths: TableRow<DefiniteLength>,
+    visible_widths: TableRow<DefiniteLength>,
     cached_bounds_width: Pixels,
     initialized: bool,
 }
 
-impl<const COLS: usize> TableColumnWidths<COLS> {
-    pub fn new(_: &mut App) -> Self {
+impl TableColumnWidths {
+    pub fn new(_: &mut App, cols: usize) -> Self {
         Self {
-            widths: [DefiniteLength::default(); COLS],
-            visible_widths: [DefiniteLength::default(); COLS],
+            widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
+            visible_widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
             cached_bounds_width: Default::default(),
             initialized: false,
         }
+    }
+
+    /// Returns the number of columns in the table.
+    pub fn cols(&self) -> usize {
+        self.widths.cols()
     }
 
     fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
@@ -241,17 +258,17 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn on_double_click(
         &mut self,
         double_click_position: usize,
-        initial_sizes: &[DefiniteLength; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        initial_sizes: &TableRow<DefiniteLength>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
         window: &mut Window,
     ) {
         let bounds_width = self.cached_bounds_width;
         let rem_size = window.rem_size();
         let initial_sizes =
-            initial_sizes.map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            initial_sizes.map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
         let widths = self
             .widths
-            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
         let updated_widths = Self::reset_to_initial_size(
             double_click_position,
@@ -260,15 +277,15 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
             resize_behavior,
         );
         self.widths = updated_widths.map(DefiniteLength::Fraction);
-        self.visible_widths = self.widths;
+        self.visible_widths = self.widths.clone(); // previously was copy
     }
 
     fn reset_to_initial_size(
         col_idx: usize,
-        mut widths: [f32; COLS],
-        initial_sizes: [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
-    ) -> [f32; COLS] {
+        mut widths: TableRow<f32>,
+        initial_sizes: TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+    ) -> TableRow<f32> {
         // RESET:
         // Part 1:
         // Figure out if we should shrink/grow the selected column
@@ -353,7 +370,7 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
-        resize_behavior: &[TableResizeBehavior; COLS],
+        resize_behavior: &TableRow<TableResizeBehavior>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -373,7 +390,7 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
 
         let mut widths = self
             .widths
-            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
         for length in widths[0..=col_idx].iter() {
             col_position += length + column_handle_width;
@@ -383,7 +400,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
         for length in widths[col_idx + 1..].iter() {
             total_length_ratio += length;
         }
-        total_length_ratio += (COLS - 1 - col_idx) as f32 * column_handle_width;
+        let cols = resize_behavior.cols();
+        total_length_ratio += (cols - 1 - col_idx) as f32 * column_handle_width;
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
@@ -397,8 +415,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn drag_column_handle(
         diff: f32,
         col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
     ) {
         // if diff > 0.0 then go right
         if diff > 0.0 {
@@ -411,8 +429,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn propagate_resize_diff(
         diff: f32,
         col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -434,7 +452,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
         }
         let mut curr_column = col_idx + step_right - step_left;
 
-        while diff_remaining != 0.0 && curr_column < COLS {
+        let cols = widths.cols();
+        while diff_remaining != 0.0 && curr_column < cols {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 if curr_column == 0 {
                     break;
@@ -466,49 +485,52 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     }
 }
 
-pub struct TableWidths<const COLS: usize> {
-    initial: [DefiniteLength; COLS],
-    current: Option<Entity<TableColumnWidths<COLS>>>,
-    resizable: [TableResizeBehavior; COLS],
+pub struct TableWidths {
+    initial: TableRow<DefiniteLength>,
+    current: Option<Entity<TableColumnWidths>>,
+    resizable: TableRow<TableResizeBehavior>,
 }
 
-impl<const COLS: usize> TableWidths<COLS> {
-    pub fn new(widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+impl TableWidths {
+    pub fn new(widths: TableRow<impl Into<DefiniteLength>>) -> Self {
         let widths = widths.map(Into::into);
 
+        let expected_length = widths.cols();
         TableWidths {
             initial: widths,
             current: None,
-            resizable: [TableResizeBehavior::None; COLS],
+            resizable: vec![TableResizeBehavior::None; expected_length]
+                .into_table_row(expected_length),
         }
     }
 
-    fn lengths(&self, cx: &App) -> [Length; COLS] {
+    fn lengths(&self, cx: &App) -> TableRow<Length> {
         self.current
             .as_ref()
-            .map(|entity| entity.read(cx).visible_widths.map(Length::Definite))
-            .unwrap_or(self.initial.map(Length::Definite))
+            .map(|entity| entity.read(cx).visible_widths.map_cloned(Length::Definite))
+            .unwrap_or_else(|| self.initial.map_cloned(Length::Definite))
     }
 }
 
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
-pub struct Table<const COLS: usize = 3> {
+pub struct Table {
     striped: bool,
     width: Option<Length>,
-    headers: Option<[AnyElement; COLS]>,
-    rows: TableContents<COLS>,
+    headers: Option<TableRow<AnyElement>>,
+    rows: TableContents,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    col_widths: Option<TableWidths<COLS>>,
+    col_widths: Option<TableWidths>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     disable_base_cell_style: bool,
 }
 
-impl<const COLS: usize> Table<COLS> {
-    /// number of headers provided.
-    pub fn new() -> Self {
+impl Table {
+    /// Creates a new table with the specified number of columns.
+    // TODO: Use cols to enforce column number in other table configuration hooks instead of providing `TableRow` directly
+    pub fn new(_cols: usize) -> Self {
         Self {
             striped: false,
             width: None,
@@ -538,7 +560,7 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>
+        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<TableRow<AnyElement>>
         + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
@@ -555,7 +577,7 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         row_count: usize,
         list_state: ListState,
-        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
+        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> TableRow<AnyElement> + 'static,
     ) -> Self {
         self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
             render_row_fn: Box::new(render_row_fn),
@@ -591,19 +613,19 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn header(mut self, headers: [impl IntoElement; COLS]) -> Self {
+    pub fn header(mut self, headers: TableRow<impl IntoElement>) -> Self {
         self.headers = Some(headers.map(IntoElement::into_any_element));
         self
     }
 
-    pub fn row(mut self, items: [impl IntoElement; COLS]) -> Self {
+    pub fn row(mut self, items: TableRow<impl IntoElement>) -> Self {
         if let Some(rows) = self.rows.rows_mut() {
             rows.push(items.map(IntoElement::into_any_element));
         }
         self
     }
 
-    pub fn column_widths(mut self, widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+    pub fn column_widths(mut self, widths: TableRow<impl Into<DefiniteLength>>) -> Self {
         if self.col_widths.is_none() {
             self.col_widths = Some(TableWidths::new(widths));
         }
@@ -612,8 +634,8 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn resizable_columns(
         mut self,
-        resizable: [TableResizeBehavior; COLS],
-        column_widths: &Entity<TableColumnWidths<COLS>>,
+        resizable: TableRow<TableResizeBehavior>,
+        column_widths: &Entity<TableColumnWidths>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
@@ -625,8 +647,8 @@ impl<const COLS: usize> Table<COLS> {
             column_widths.update(cx, |widths, _| {
                 if !widths.initialized {
                     widths.initialized = true;
-                    widths.widths = table_widths.initial;
-                    widths.visible_widths = widths.widths;
+                    widths.widths = table_widths.initial.clone();
+                    widths.visible_widths = widths.widths.clone();
                 }
             })
         }
@@ -670,10 +692,10 @@ fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> D
     base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
-pub fn render_table_row<const COLS: usize>(
+pub fn render_table_row(
     row_index: usize,
-    items: [impl IntoElement; COLS],
-    table_context: TableRenderContext<COLS>,
+    items: TableRow<impl IntoElement>,
+    table_context: TableRenderContext,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -684,9 +706,12 @@ pub fn render_table_row<const COLS: usize>(
     } else {
         None
     };
+    let cols = items.cols();
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(Some));
+        .map_or(vec![None; cols].into_table_row(cols), |widths| {
+            widths.map(Some)
+        });
 
     let mut row = h_flex()
         // NOTE: `h_flex()` sneakily applies `items_center()` which is not desired behavior here.
@@ -704,8 +729,9 @@ pub fn render_table_row<const COLS: usize>(
     row = row.children(
         items
             .map(IntoElement::into_any_element)
+            .into_vec()
             .into_iter()
-            .zip(column_widths)
+            .zip(column_widths.into_vec())
             .map(|(cell, width)| {
                 if table_context.disable_base_cell_style {
                     div()
@@ -731,20 +757,23 @@ pub fn render_table_row<const COLS: usize>(
     div().size_full().child(row).into_any_element()
 }
 
-pub fn render_table_header<const COLS: usize>(
-    headers: [impl IntoElement; COLS],
-    table_context: TableRenderContext<COLS>,
+pub fn render_table_header(
+    headers: TableRow<impl IntoElement>,
+    table_context: TableRenderContext,
     columns_widths: Option<(
-        WeakEntity<TableColumnWidths<COLS>>,
-        [TableResizeBehavior; COLS],
-        [DefiniteLength; COLS],
+        WeakEntity<TableColumnWidths>,
+        TableRow<TableResizeBehavior>,
+        TableRow<DefiniteLength>,
     )>,
     entity_id: Option<EntityId>,
     cx: &mut App,
 ) -> impl IntoElement {
+    let cols = headers.cols();
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(Some));
+        .map_or(vec![None; cols].into_table_row(cols), |widths| {
+            widths.map(Some)
+        });
 
     let element_id = entity_id
         .map(|entity| entity.to_string())
@@ -761,53 +790,58 @@ pub fn render_table_header<const COLS: usize>(
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .children(headers.into_iter().enumerate().zip(column_widths).map(
-            |((header_idx, h), width)| {
-                base_cell_style_text(width, table_context.use_ui_font, cx)
-                    .child(h)
-                    .id(ElementId::NamedInteger(
-                        shared_element_id.clone(),
-                        header_idx as u64,
-                    ))
-                    .when_some(
-                        columns_widths.as_ref().cloned(),
-                        |this, (column_widths, resizables, initial_sizes)| {
-                            if resizables[header_idx].is_resizable() {
-                                this.on_click(move |event, window, cx| {
-                                    if event.click_count() > 1 {
-                                        column_widths
-                                            .update(cx, |column, _| {
-                                                column.on_double_click(
-                                                    header_idx,
-                                                    &initial_sizes,
-                                                    &resizables,
-                                                    window,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                })
-                            } else {
-                                this
-                            }
-                        },
-                    )
-            },
-        ))
+        .children(
+            headers
+                .into_vec()
+                .into_iter()
+                .enumerate()
+                .zip(column_widths.into_vec())
+                .map(|((header_idx, h), width)| {
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .child(h)
+                        .id(ElementId::NamedInteger(
+                            shared_element_id.clone(),
+                            header_idx as u64,
+                        ))
+                        .when_some(
+                            columns_widths.as_ref().cloned(),
+                            |this, (column_widths, resizables, initial_sizes)| {
+                                if resizables[header_idx].is_resizable() {
+                                    this.on_click(move |event, window, cx| {
+                                        if event.click_count() > 1 {
+                                            column_widths
+                                                .update(cx, |column, _| {
+                                                    column.on_double_click(
+                                                        header_idx,
+                                                        &initial_sizes,
+                                                        &resizables,
+                                                        window,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    })
+                                } else {
+                                    this
+                                }
+                            },
+                        )
+                }),
+        )
 }
 
 #[derive(Clone)]
-pub struct TableRenderContext<const COLS: usize> {
+pub struct TableRenderContext {
     pub striped: bool,
     pub total_row_count: usize,
-    pub column_widths: Option<[Length; COLS]>,
+    pub column_widths: Option<TableRow<Length>>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     pub use_ui_font: bool,
     pub disable_base_cell_style: bool,
 }
 
-impl<const COLS: usize> TableRenderContext<COLS> {
-    fn new(table: &Table<COLS>, cx: &App) -> Self {
+impl TableRenderContext {
+    fn new(table: &Table, cx: &App) -> Self {
         Self {
             striped: table.striped,
             total_row_count: table.rows.len(),
@@ -819,20 +853,26 @@ impl<const COLS: usize> TableRenderContext<COLS> {
     }
 }
 
-impl<const COLS: usize> RenderOnce for Table<COLS> {
+impl RenderOnce for Table {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
         let current_widths = self
             .col_widths
             .as_ref()
-            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable)))
+            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable.clone())))
             .map(|(curr, resize_behavior)| (curr.downgrade(), resize_behavior));
 
         let current_widths_with_initial_sizes = self
             .col_widths
             .as_ref()
-            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable, widths.initial)))
+            .and_then(|widths| {
+                Some((
+                    widths.current.as_ref()?,
+                    widths.resizable.clone(),
+                    widths.initial.clone(),
+                ))
+            })
             .map(|(curr, resize_behavior, initial)| (curr.downgrade(), resize_behavior, initial));
 
         let width = self.width;
@@ -878,7 +918,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .on_drop::<DraggedColumn>(move |_, _, cx| {
                         widths
                             .update(cx, |widths, _| {
-                                widths.widths = widths.visible_widths;
+                                widths.widths = widths.visible_widths.clone();
                             })
                             .ok();
                         // Finish the resize operation
@@ -967,13 +1007,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         self.col_widths.as_ref().zip(interaction_state.as_ref()),
                         |parent, (table_widths, state)| {
                             parent.child(state.update(cx, |state, cx| {
-                                let resizable_columns = table_widths.resizable;
+                                let resizable_columns = &table_widths.resizable;
                                 let column_widths = table_widths.lengths(cx);
                                 let columns = table_widths.current.clone();
-                                let initial_sizes = table_widths.initial;
+                                let initial_sizes = &table_widths.initial;
                                 state.render_resize_handles(
                                     &column_widths,
-                                    &resizable_columns,
+                                    resizable_columns,
                                     initial_sizes,
                                     columns,
                                     window,
@@ -1027,7 +1067,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
     }
 }
 
-impl Component for Table<3> {
+impl Component for Table {
     fn scope() -> ComponentScope {
         ComponentScope::Layout
     }
@@ -1046,22 +1086,22 @@ impl Component for Table<3> {
                         vec![
                             single_example(
                                 "Simple Table",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
-                                    .header(["Name", "Age", "City"])
-                                    .row(["Alice", "28", "New York"])
-                                    .row(["Bob", "32", "San Francisco"])
-                                    .row(["Charlie", "25", "London"])
+                                    .header(["Name", "Age", "City"].into_table_row())
+                                    .row(["Alice", "28", "New York"].into_table_row())
+                                    .row(["Bob", "32", "San Francisco"].into_table_row())
+                                    .row(["Charlie", "25", "London"].into_table_row())
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Two Column Table",
-                                Table::new()
-                                    .header(["Category", "Value"])
+                                Table::new(3)
+                                    .header(["Category", "Value"].into_table_row())
                                     .width(px(300.))
-                                    .row(["Revenue", "$100,000"])
-                                    .row(["Expenses", "$75,000"])
-                                    .row(["Profit", "$25,000"])
+                                    .row(["Revenue", "$100,000"].into_table_row())
+                                    .row(["Expenses", "$75,000"].into_table_row())
+                                    .row(["Profit", "$25,000"].into_table_row())
                                     .into_any_element(),
                             ),
                         ],
@@ -1071,24 +1111,24 @@ impl Component for Table<3> {
                         vec![
                             single_example(
                                 "Default",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
-                                    .header(["Product", "Price", "Stock"])
-                                    .row(["Laptop", "$999", "In Stock"])
-                                    .row(["Phone", "$599", "Low Stock"])
-                                    .row(["Tablet", "$399", "Out of Stock"])
+                                    .header(["Product", "Price", "Stock"].into_table_row())
+                                    .row(["Laptop", "$999", "In Stock"].into_table_row())
+                                    .row(["Phone", "$599", "Low Stock"].into_table_row())
+                                    .row(["Tablet", "$399", "Out of Stock"].into_table_row())
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Striped",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
                                     .striped()
-                                    .header(["Product", "Price", "Stock"])
-                                    .row(["Laptop", "$999", "In Stock"])
-                                    .row(["Phone", "$599", "Low Stock"])
-                                    .row(["Tablet", "$399", "Out of Stock"])
-                                    .row(["Headphones", "$199", "In Stock"])
+                                    .header(["Product", "Price", "Stock"].into_table_row())
+                                    .row(["Laptop", "$999", "In Stock"].into_table_row())
+                                    .row(["Phone", "$599", "Low Stock"].into_table_row())
+                                    .row(["Tablet", "$399", "Out of Stock"].into_table_row())
+                                    .row(["Headphones", "$199", "In Stock"].into_table_row())
                                     .into_any_element(),
                             ),
                         ],
@@ -1097,39 +1137,51 @@ impl Component for Table<3> {
                         "Mixed Content Table",
                         vec![single_example(
                             "Table with Elements",
-                            Table::new()
+                            Table::new(3)
                                 .width(px(840.))
-                                .header(["Status", "Name", "Priority", "Deadline", "Action"])
-                                .row([
-                                    Indicator::dot().color(Color::Success).into_any_element(),
-                                    "Project A".into_any_element(),
-                                    "High".into_any_element(),
-                                    "2023-12-31".into_any_element(),
-                                    Button::new("view_a", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
-                                .row([
-                                    Indicator::dot().color(Color::Warning).into_any_element(),
-                                    "Project B".into_any_element(),
-                                    "Medium".into_any_element(),
-                                    "2024-03-15".into_any_element(),
-                                    Button::new("view_b", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
-                                .row([
-                                    Indicator::dot().color(Color::Error).into_any_element(),
-                                    "Project C".into_any_element(),
-                                    "Low".into_any_element(),
-                                    "2024-06-30".into_any_element(),
-                                    Button::new("view_c", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
+                                .header(
+                                    ["Status", "Name", "Priority", "Deadline", "Action"]
+                                        .into_table_row(),
+                                )
+                                .row(
+                                    [
+                                        Indicator::dot().color(Color::Success).into_any_element(),
+                                        "Project A".into_any_element(),
+                                        "High".into_any_element(),
+                                        "2023-12-31".into_any_element(),
+                                        Button::new("view_a", "View")
+                                            .style(ButtonStyle::Filled)
+                                            .full_width()
+                                            .into_any_element(),
+                                    ]
+                                    .into_table_row(),
+                                )
+                                .row(
+                                    [
+                                        Indicator::dot().color(Color::Warning).into_any_element(),
+                                        "Project B".into_any_element(),
+                                        "Medium".into_any_element(),
+                                        "2024-03-15".into_any_element(),
+                                        Button::new("view_b", "View")
+                                            .style(ButtonStyle::Filled)
+                                            .full_width()
+                                            .into_any_element(),
+                                    ]
+                                    .into_table_row(),
+                                )
+                                .row(
+                                    [
+                                        Indicator::dot().color(Color::Error).into_any_element(),
+                                        "Project C".into_any_element(),
+                                        "Low".into_any_element(),
+                                        "2024-06-30".into_any_element(),
+                                        Button::new("view_c", "View")
+                                            .style(ButtonStyle::Filled)
+                                            .full_width()
+                                            .into_any_element(),
+                                    ]
+                                    .into_table_row(),
+                                )
                                 .into_any_element(),
                         )],
                     ),
@@ -1139,6 +1191,7 @@ impl Component for Table<3> {
     }
 }
 
+// TODO: Update tests
 #[cfg(test)]
 mod test {
     use super::*;
