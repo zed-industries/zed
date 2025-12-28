@@ -2,12 +2,12 @@ Feature,Status,Description,Implementation,Inspiration,Notes
 CSV Preview,🔄 WIP,"Live-updating, read-only table view for CSV files",Draggable column resizing + real-time parsing,Markdown Preview module,First contribution from external developer (me)
 Live Reload,✅ Completed,Auto-updates when file changes (200ms debounce),Editor subscription system matches markdown approach,Markdown Preview module,No manual refresh needed
 Column Resizing,✅ POC,Drag column borders to adjust widths. Double-click to restore,Reuses Table component from keymap editor,Keymap Editor (settings_ui module),State persists across text updates
-Multi-Column Support,🤮 1-30 columns (stinks),Dirty implementation using existing table and const generics,Const generics bridge (unavoidable duplication),Keymap Editor (settings_ui module),"30 pre-allocated width entities, Falls back to div based ASCII table for >30 cols"
+Multi-Column Support,✅ POC (const generics removed 🎉),Works! But needs API refactoring,Dynamic table (removed const generics),Keymap Editor (settings_ui module),WORKS
 Parsing Engine,✅ CSV only,Handles quotes and escaped characters,Background parsing prevents UI blocking,,Not sure how to handle malformed csv (extra columns in non-header row)
 Integration,🔄 "POC. Need feedback",Workspace action + file type detection,Standard Zed extension pattern,Existing codebase patterns,Seeking team feedback on approach
 Ultimate goal: DB client,Not started,"Eventually want to write generic ""table-data viewer"" to use with database client in the future",,JetBrains IDEs,
 Ordering by column,✅ Completed
-Line numbering,✅ POC
-Filtering,Not started
-Selection & copying values,✅ POC
-Inline editing,🔄 WIP
+Line numbering,✅ Completed,Both src line numbers and row numbers work
+Filtering,✅ POC,Need to add search and fix few bugs
+Selection & copying values,✅ Completed
+Inline editing,✅ POC,Need to figure out how to let editor cell overflow cell bounds
