@@ -892,9 +892,16 @@ impl GitRepository for RealGitRepository {
 
                 // skip loading content for binary
                 if is_binary {
+                    // using old_text to signal if file was deleted (so commit_view can show red/green correctly)
+                    let old_text = if status_code == StatusCode::Deleted {
+                        Some(String::new())
+                    } else {
+                        None
+                    };
+
                     files.push(CommitFile {
                         path: RepoPath(Arc::from(rel_path)),
-                        old_text: None,
+                        old_text,
                         new_text: None,
                         is_binary: true,
                     });

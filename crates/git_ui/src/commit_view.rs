@@ -244,7 +244,7 @@ impl CommitView {
                 let display_name = format!("{short_sha} - {file_name}");
 
                 if file.is_binary {
-                    let is_deleted = file.new_text.is_none();
+                    let is_deleted = file.old_text.is_some();
                     let placeholder_text = format!("Binary file not displayed: {}", file_name);
                     let file = Arc::new(GitBlob {
                         path: file.path.clone(),
