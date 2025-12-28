@@ -91,35 +91,33 @@ impl Watcher for FsWatcher {
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(PathEventKind::Created),
+                        EventKind::Modify(_) => {
+                            #[cfg(unix)]
+                            {
+                                if !is_fifo(event_path.as_path()) {
+                                    Some(PathEventKind::Changed)
+                                } else {
+                                    None
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                Some(PathEventKind::Changed)
+                            }
+                        },
+                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        _ => None,
+                    };
                     let mut path_events = event
                         .paths
                         .iter()
                         .filter_map(|event_path| {
                             let event_path = SanitizedPath::new(event_path);
-                            event_path.starts_with(&root_path).then(|| {
-                                let kind = match event.kind {
-                                    EventKind::Create(_) => Some(PathEventKind::Created),
-                                    EventKind::Modify(_) => {
-                                        #[cfg(unix)]
-                                        {
-                                            if !is_fifo(event_path.as_path()) {
-                                                Some(PathEventKind::Changed)
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        #[cfg(not(unix))]
-                                        {
-                                            Some(PathEventKind::Changed)
-                                        }
-                                    }
-                                    EventKind::Remove(_) => Some(PathEventKind::Removed),
-                                    _ => None,
-                                };
-                                kind.map(|kind| PathEvent {
-                                    path: event_path.as_path().to_path_buf(),
-                                    kind,
-                                })
+                            event_path.starts_with(&root_path).then(|| PathEvent {
+                                path: event_path.as_path().to_path_buf(),
+                                kind,
                             })
                             .flatten()
                         })

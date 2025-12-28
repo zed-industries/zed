@@ -2726,7 +2726,7 @@ fn read_recursive<'a>(
 }
 
 #[cfg(unix)]
-fn is_fifo(path: &Path) -> bool {
+pub fn is_fifo(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .ok()
         .map(|m| m.file_type().is_fifo())
@@ -3241,5 +3241,108 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_fifo_events_suppressed(executor: BackgroundExecutor) {
+        use std::os::unix::fs::FileTypeExt;
+
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor: executor.clone(),
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let fifo_path = temp_dir.path().join("test.fifo");
+
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("Failed to create FIFO");
+        assert!(status.success(), "mkfifo command failed");
+
+        let metadata = std::fs::symlink_metadata(&fifo_path).unwrap();
+        assert!(metadata.file_type().is_fifo(), "File should be a FIFO");
+
+        let (mut events_stream, _watcher) = fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
+
+        std::fs::remove_file(&fifo_path).unwrap();
+
+        executor.run_until_parked();
+
+        if let Some(events) = events_stream.next().await {
+            let removed_events: Vec<_> = events
+                .iter()
+                .filter(|e| e.path == fifo_path && e.kind == Some(PathEventKind::Removed))
+                .collect();
+            assert!(
+                !removed_events.is_empty(),
+                "Should receive Removed event for FIFO"
+            );
+        }
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_fifo_modify_events_filtered(executor: BackgroundExecutor) {
+        use std::os::unix::fs::FileTypeExt;
+
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor: executor.clone(),
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let fifo_path = temp_dir.path().join("test.fifo");
+        let regular_file_path = temp_dir.path().join("regular.txt");
+
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("Failed to create FIFO");
+        assert!(status.success(), "mkfifo command failed");
+
+        std::fs::write(&regular_file_path, "initial").unwrap();
+
+        let metadata = std::fs::symlink_metadata(&fifo_path).unwrap();
+        assert!(metadata.file_type().is_fifo(), "File should be a FIFO");
+
+        let (mut events_stream, _watcher) = fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
+
+        executor.run_until_parked();
+        while events_stream.next().await.is_some() {}
+
+        std::fs::write(&regular_file_path, "modified").unwrap();
+
+        executor.run_until_parked();
+        executor.advance_clock(Duration::from_millis(150));
+
+        let mut received_events = Vec::new();
+        while let Some(events) = events_stream.next().await {
+            received_events.extend(events);
+            if received_events.iter().any(|e| e.path == regular_file_path) {
+                break;
+            }
+        }
+
+        let fifo_modify_events: Vec<_> = received_events
+            .iter()
+            .filter(|e| e.path == fifo_path && e.kind == Some(PathEventKind::Changed))
+            .collect();
+
+        assert!(
+            fifo_modify_events.is_empty(),
+            "Should not receive Changed events for FIFO, but got: {:?}",
+            fifo_modify_events
+        );
+
+        let regular_file_events: Vec<_> = received_events
+            .iter()
+            .filter(|e| e.path == regular_file_path && e.kind == Some(PathEventKind::Changed))
+            .collect();
+
+        assert!(
+            !regular_file_events.is_empty(),
+            "Should still receive Changed events for regular files"
+        );
     }
 }
