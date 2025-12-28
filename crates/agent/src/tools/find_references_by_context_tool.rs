@@ -57,14 +57,14 @@ impl AgentTool for FindReferencesByContextTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let project = self.project.clone();
+
         // Validate early
         if !input.context.contains(&input.token) {
             return Task::ready(Err(anyhow!(
                 "The provided `context` must contain the `token`."
             )));
         }
-
-        let project = self.project.clone();
 
         // Resolve project path and perform WorktreeSettings checks on the foreground thread (cx: &mut App).
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
