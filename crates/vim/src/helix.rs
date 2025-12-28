@@ -965,41 +965,41 @@ mod test {
 
         // Test NextSubwordEnd selects the subword (camelCase)
         cx.set_state("ˇgetUserName", Mode::HelixNormal);
-        cx.dispatch_action(NextSubwordEnd {
+        cx.simulate_keystrokes(NextSubwordEnd {
             ignore_punctuation: false,
         });
         cx.assert_state("«getˇ»UserName", Mode::HelixNormal);
 
-        cx.dispatch_action(NextSubwordEnd {
+        cx.simulate_keystrokes(NextSubwordEnd {
             ignore_punctuation: false,
         });
         cx.assert_state("get«Userˇ»Name", Mode::HelixNormal);
 
         // Test PreviousSubwordStart selects the subword
         cx.set_state("getUserNameˇ", Mode::HelixNormal);
-        cx.dispatch_action(PreviousSubwordStart {
+        cx.simulate_keystrokes(PreviousSubwordStart {
             ignore_punctuation: false,
         });
         cx.assert_state("getUser«ˇName»", Mode::HelixNormal);
 
-        cx.dispatch_action(PreviousSubwordStart {
+        cx.simulate_keystrokes(PreviousSubwordStart {
             ignore_punctuation: false,
         });
         cx.assert_state("get«ˇUser»Name", Mode::HelixNormal);
 
         // Test with snake_case
         cx.set_state("ˇget_user_name", Mode::HelixNormal);
-        cx.dispatch_action(NextSubwordEnd {
+        cx.simulate_keystrokes(NextSubwordEnd {
             ignore_punctuation: false,
         });
         cx.assert_state("«getˇ»_user_name", Mode::HelixNormal);
 
-        cx.dispatch_action(NextSubwordStart {
+        cx.simulate_keystrokes(NextSubwordStart {
             ignore_punctuation: false,
         });
         cx.assert_state("get«_ˇ»user_name", Mode::HelixNormal);
 
-        cx.dispatch_action(NextSubwordStart {
+        cx.simulate_keystrokes(NextSubwordStart {
             ignore_punctuation: false,
         });
         cx.assert_state("get_«user_ˇ»name", Mode::HelixNormal);
