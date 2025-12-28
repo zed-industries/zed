@@ -30,6 +30,10 @@ use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::M
 
 use util_macros::perf;
 
+fn cursor_at(base: &str, target: &str) -> String {
+    base.replacen(&target.replacen("ˇ", "", 1), &target, 1)
+}
+
 #[perf]
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -2500,4 +2504,54 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _window, _cx| {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
     });
+}
+
+#[gpui::test]
+async fn test_repeat_section_motion(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.vim.get_or_insert_default().repeatable_motions = Some(
+                vec!["find", "sneak", "section"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            );
+        });
+    });
+
+    let s = indoc! {"
+        fn one() -> u32 {
+            1
+        }
+
+        fn two() -> u32 {
+            2
+        }
+
+        fn three() -> u32 {
+            3
+        }"
+    };
+
+    macro_rules! assert_cursor_at {
+        ($target:expr) => {
+            cx.assert_state(&cursor_at(&s, $target), Mode::Normal);
+        };
+    }
+
+    cx.set_state(&cursor_at(&s, "ˇfn one"), Mode::Normal);
+    cx.simulate_keystrokes("f o");
+    assert_cursor_at!("fn ˇone");
+    cx.simulate_keystrokes("] ]");
+    assert_cursor_at!("ˇfn two");
+    cx.simulate_keystrokes(";");
+    assert_cursor_at!("ˇfn three");
+    cx.simulate_keystrokes(",");
+    assert_cursor_at!("ˇfn two");
+    cx.simulate_keystrokes("f space ;");
+    assert_cursor_at!("fn two()ˇ");
+    cx.simulate_keystrokes(",");
+    assert_cursor_at!("fnˇ two()");
 }
