@@ -51,14 +51,15 @@
         },
         {
           "id": "1.8",
-          "description": "Write unit test verifying task cancellation when app is dropped",
-          "file": "crates/gpui/tests/task_cancellation.rs",
-          "status": "completed"
+          "description": "Write unit tests verifying task cancellation when app is dropped (moved to executor.rs to access pub(crate) items)",
+          "file": "crates/gpui/src/executor.rs",
+          "status": "completed",
+          "notes": "Tests moved from tests/task_cancellation.rs to executor.rs as #[cfg(test)] module because TestAppContext holds strong Rc<AppCell> preventing proper app-drop testing"
         },
         {
           "id": "1.9",
           "description": "Write unit test for nested tasks both cancelling cleanly",
-          "file": "crates/gpui/tests/task_cancellation.rs",
+          "file": "crates/gpui/src/executor.rs",
           "status": "completed"
         },
         {
