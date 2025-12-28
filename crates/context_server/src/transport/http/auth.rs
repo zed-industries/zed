@@ -1,11 +1,11 @@
 use std::{
     error::Error,
     fmt::{self, Display},
+    sync::Arc,
 };
 
 use anyhow::{Context as _, Result};
-use gpui::App;
-use http_client::{AsyncBody, Uri};
+use http_client::{AsyncBody, HttpClient, Uri};
 use serde::{Deserialize, de::DeserializeOwned};
 use smol::io::AsyncReadExt;
 
@@ -27,23 +27,26 @@ pub struct ProtectedResourceMetadata {
 }
 
 impl ProtectedResourceMetadata {
-    pub async fn fetch(url: &str, cx: &mut App) -> Result<Self> {
-        fetch_json(url, cx)
+    pub async fn fetch(url: &str, http_client: &Arc<dyn HttpClient>) -> Result<Self> {
+        fetch_json(url, http_client)
             .await
             .context("Fetching resource metadata")
     }
 
-    pub async fn fetch_well_known(server_endpoint: &str, cx: &mut App) -> Result<Self> {
+    pub async fn fetch_well_known(
+        server_endpoint: &str,
+        http_client: &Arc<dyn HttpClient>,
+    ) -> Result<Self> {
         let endpoint_uri = server_endpoint.parse::<Uri>()?.try_into()?;
         let well_known_uri = well_known_pre(&endpoint_uri, "oauth-protected-resource");
 
-        return Self::fetch(&well_known_uri, cx)
+        return Self::fetch(&well_known_uri, http_client)
             .await
             .context("From well-known URL");
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct AuthorizationServerMetadata {
     issuer: String,
 
@@ -78,7 +81,7 @@ pub struct AuthorizationServerMetadata {
 impl AuthorizationServerMetadata {
     pub async fn fetch(
         issuer_uri: &AbsUri,
-        cx: &mut App,
+        http_client: Arc<dyn HttpClient>,
     ) -> Result<Self, AuthorizationServerMetadataDiscoveryError> {
         // We must attempt multiple well-known endpoints based on the issuer url
         //
@@ -106,7 +109,7 @@ impl AuthorizationServerMetadata {
                 continue;
             };
 
-            match fetch_json(&url, cx).await {
+            match fetch_json(&url, &http_client).await {
                 Ok(meta) => return Ok(meta),
                 Err(err) => {
                     attempted_urls.push((url, err));
@@ -128,11 +131,13 @@ fn well_known_pre(base_uri: &AbsUri, well_known_segment: &str) -> String {
 }
 
 fn well_known_post(base_uri: &AbsUri, well_known_segment: &str) -> String {
+    let path = base_uri.path();
+    let separator = if path.ends_with('/') { "" } else { "/" };
     format!(
-        "{}://{}{}.well-known/{well_known_segment}",
+        "{}://{}{}{separator}.well-known/{well_known_segment}",
         base_uri.scheme_str(),
         base_uri.authority(),
-        base_uri.path(),
+        path,
     )
 }
 
@@ -158,9 +163,10 @@ impl Display for AuthorizationServerMetadataDiscoveryError {
     }
 }
 
-async fn fetch_json<T: DeserializeOwned>(url: &str, cx: &mut App) -> Result<T> {
-    let http_client = cx.http_client();
-
+async fn fetch_json<T: DeserializeOwned>(
+    url: &str,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<T> {
     let mut response = http_client.get(url, AsyncBody::empty(), true).await?;
     if response.status().is_success() {
         let mut content = Vec::new();
@@ -182,6 +188,7 @@ mod abs_uri {
     use http_client::{Uri, http::uri::Authority};
     use serde::Deserialize;
 
+    #[derive(Debug, Clone)]
     pub struct AbsUri(Uri);
 
     impl AbsUri {
@@ -246,5 +253,195 @@ mod abs_uri {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+    use futures::channel::{mpsc, oneshot};
+    use gpui::{TestAppContext, prelude::*};
+    use http_client::{FakeHttpClient, Request, Response};
+
+    #[gpui::test]
+    async fn fetch_server_metadata_chain(cx: &mut TestAppContext) {
+        expect_fallback_chain(
+            "https://auth.example.com/tenant/123",
+            &[
+                "https://auth.example.com/.well-known/oauth-authorization-server/tenant/123",
+                "https://auth.example.com/.well-known/openid-configuration/tenant/123",
+                "https://auth.example.com/tenant/123/.well-known/openid-configuration",
+            ],
+            cx,
+        )
+        .await;
+
+        expect_fallback_chain(
+            "https://auth.example.com/tenant/123/",
+            &[
+                "https://auth.example.com/.well-known/oauth-authorization-server/tenant/123",
+                "https://auth.example.com/.well-known/openid-configuration/tenant/123",
+                "https://auth.example.com/tenant/123/.well-known/openid-configuration",
+            ],
+            cx,
+        )
+        .await;
+
+        expect_fallback_chain(
+            "https://auth.example.com",
+            &[
+                "https://auth.example.com/.well-known/oauth-authorization-server",
+                "https://auth.example.com/.well-known/openid-configuration",
+            ],
+            cx,
+        )
+        .await;
+    }
+
+    async fn expect_fallback_chain(issuer_uri: &str, urls: &[&str], cx: &mut TestAppContext) {
+        let issuer_uri: AbsUri = issuer_uri.parse::<Uri>().unwrap().try_into().unwrap();
+        let (client, mut request_rx) = fake_client();
+
+        for i in 0..urls.len() {
+            let issuer_uri = issuer_uri.clone();
+            let client = client.clone();
+            let fetch_task = cx.background_spawn(async move {
+                AuthorizationServerMetadata::fetch(&issuer_uri, client).await
+            });
+
+            for request_url in &urls[..i] {
+                let request = request_rx.next().await.unwrap();
+                assert_eq!(request.uri, *request_url);
+                respond(request, not_found());
+            }
+
+            let request = request_rx.next().await.unwrap();
+            assert_eq!(request.uri, *urls[i]);
+            respond(
+                request,
+                Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/json")
+                    .body(AsyncBody::from(valid_metadata_json(
+                        "https://auth.example.com",
+                    )))
+                    .unwrap(),
+            );
+
+            let metadata = fetch_task.await.expect("fetch should succeed");
+            assert_eq!(metadata.issuer, "https://auth.example.com");
+        }
+    }
+
+    #[gpui::test]
+    async fn fetch_server_metadata_openid_root_stops_on_fail(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let fetch_task = cx.background_spawn(async move {
+            let issuer_uri: AbsUri = "https://auth.example.com"
+                .parse::<Uri>()
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+            AuthorizationServerMetadata::fetch(&issuer_uri, http_client).await
+        });
+
+        let request = requests.next().await.expect("Expected first request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/oauth-authorization-server"
+        );
+        respond(request, not_found());
+
+        let request = requests.next().await.expect("Expected second request");
+        assert_eq!(
+            request.uri,
+            "https://auth.example.com/.well-known/openid-configuration"
+        );
+        respond(request, not_found());
+
+        // should not attempt well_known_post since it'd be the same as well_known_pre
+        let error = fetch_task.await.expect_err("fetch should fail");
+        assert_eq!(error.attempted_urls.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn fetch_server_metadata_all_fail(cx: &mut TestAppContext) {
+        let (client, mut requests) = fake_client();
+        let http_client = client.clone();
+
+        let fetch_task = cx.background_spawn(async move {
+            let issuer_uri: AbsUri = "https://auth.example.com/tenant/123"
+                .parse::<Uri>()
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+            AuthorizationServerMetadata::fetch(&issuer_uri, http_client).await
+        });
+
+        for _ in 0..3 {
+            let request = requests.next().await.expect("Expected request");
+            respond(request, not_found());
+        }
+
+        let error = fetch_task.await.expect_err("fetch should fail");
+        assert_eq!(error.attempted_urls.len(), 3);
+    }
+
+    struct FakeRequest {
+        uri: String,
+        respond: oneshot::Sender<Response<AsyncBody>>,
+    }
+
+    fn fake_client() -> (
+        Arc<http_client::HttpClientWithUrl>,
+        mpsc::UnboundedReceiver<FakeRequest>,
+    ) {
+        let (request_sender, request_receiver) = mpsc::unbounded::<FakeRequest>();
+
+        let client = FakeHttpClient::create(move |req: Request<AsyncBody>| {
+            let request_sender = request_sender.clone();
+            async move {
+                let (respond, response_receiver) = oneshot::channel();
+                request_sender
+                    .unbounded_send(FakeRequest {
+                        uri: req.uri().to_string(),
+                        respond,
+                    })
+                    .expect("Test receiver dropped");
+
+                response_receiver
+                    .await
+                    .map_err(|_| anyhow::anyhow!("Test dropped response sender"))
+            }
+        });
+
+        (client, request_receiver)
+    }
+
+    fn not_found() -> Response<AsyncBody> {
+        Response::builder()
+            .status(404)
+            .body(AsyncBody::from("Not found".to_string()))
+            .unwrap()
+    }
+
+    fn valid_metadata_json(issuer: &str) -> String {
+        serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{}/authorize", issuer),
+            "token_endpoint": format!("{}/token", issuer),
+        })
+        .to_string()
+    }
+
+    fn respond(request: FakeRequest, response: Response<AsyncBody>) {
+        request.respond.send(response).ok();
     }
 }
