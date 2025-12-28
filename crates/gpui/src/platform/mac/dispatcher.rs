@@ -251,7 +251,16 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let task =
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
 
-    let location = task.metadata().location;
+    let metadata = task.metadata();
+    let location = metadata.location;
+
+    if let Some(ref app_weak) = metadata.app {
+        // SAFETY: App is only `Some()` when this trampoline is on the main thread.
+        if unsafe { app_weak.upgrade() }.is_none() {
+            drop(task);
+            return;
+        }
+    }
 
     let start = Instant::now();
     let timing = TaskTiming {

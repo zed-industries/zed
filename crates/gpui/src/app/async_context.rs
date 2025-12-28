@@ -185,7 +185,7 @@ impl AsyncApp {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn_with_app(self.app.clone(), async move { f(&mut cx).await })
     }
 
     /// Determine whether global state of the specified type has been assigned.
@@ -334,7 +334,7 @@ impl AsyncWindowContext {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn_with_app(self.app.app.clone(), async move { f(&mut cx).await })
     }
 
     /// Present a platform dialog.

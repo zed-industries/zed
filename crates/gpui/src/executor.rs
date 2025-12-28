@@ -252,7 +252,10 @@ impl BackgroundExecutor {
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -330,7 +333,10 @@ impl BackgroundExecutor {
             );
 
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| {
@@ -340,7 +346,10 @@ impl BackgroundExecutor {
         } else {
             let location = core::panic::Location::caller();
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta {
+                    location,
+                    app: None,
+                })
                 .spawn(
                     move |_| future,
                     move |runnable| {
@@ -566,7 +575,10 @@ impl BackgroundExecutor {
         }
         let location = core::panic::Location::caller();
         let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                app: None,
+            })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
                 move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
@@ -681,13 +693,45 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.spawn_with_priority(Priority::default(), future)
+        self.spawn_with_app_and_priority(None, Priority::default(), future)
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
+        priority: Priority,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        self.spawn_with_app_and_priority(None, priority, future)
+    }
+
+    /// Enqueues the given Task to run on the main thread at some point in the future,
+    /// with a weak reference to the app for cancellation checking.
+    ///
+    /// When the app is dropped, pending tasks spawned with this method will be cancelled
+    /// before they run, rather than panicking when they try to access the dropped app.
+    #[track_caller]
+    pub fn spawn_with_app<R>(
+        &self,
+        app: std::rc::Weak<crate::AppCell>,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        self.spawn_with_app_and_priority(Some(app), Priority::default(), future)
+    }
+
+    /// Enqueues the given Task to run on the main thread at some point in the future,
+    /// with an optional weak reference to the app for cancellation checking and a specific priority.
+    #[track_caller]
+    pub fn spawn_with_app_and_priority<R>(
+        &self,
+        app: Option<std::rc::Weak<crate::AppCell>>,
         priority: Priority,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
@@ -702,19 +746,26 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
+            app: Option<std::rc::Weak<crate::AppCell>>,
             priority: Priority,
         ) -> Task<R> {
+            // SAFETY: We are on the main thread (ForegroundExecutor is !Send), and the
+            // MainThreadWeak will only be accessed on the main thread in the trampoline.
+            let app_weak = app.map(|weak| unsafe { crate::MainThreadWeak::new(weak) });
             let (runnable, task) = spawn_local_with_source_location(
                 future,
                 move |runnable| {
                     dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
                 },
-                RunnableMeta { location },
+                RunnableMeta {
+                    location,
+                    app: app_weak,
+                },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future), location, priority)
+        inner::<R>(dispatcher, Box::pin(future), location, app, priority)
     }
 }
 

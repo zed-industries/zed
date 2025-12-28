@@ -5,67 +5,67 @@
     {
       "id": 1,
       "name": "Add Trampoline Check Infrastructure (macOS First)",
-      "status": "not_started",
+      "status": "completed",
       "tasks": [
         {
           "id": "1.1",
           "description": "Add MainThreadWeak<T> newtype with unsafe Send+Sync impls to platform.rs",
           "file": "crates/gpui/src/platform.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.2",
           "description": "Update RunnableMeta to use Option<MainThreadWeak<AppCell>> for app field",
           "file": "crates/gpui/src/platform.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.3",
           "description": "Update trampoline in Mac dispatcher to check app via unsafe upgrade() before run()",
           "file": "crates/gpui/src/platform/mac/dispatcher.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.4",
           "description": "Update tick() in Test dispatcher to check app via unsafe upgrade() before run()",
           "file": "crates/gpui/src/platform/test/dispatcher.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.5",
           "description": "Add ForegroundExecutor::spawn_with_app that accepts Weak<AppCell>",
           "file": "crates/gpui/src/executor.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.6",
           "description": "Update AsyncApp::spawn to pass self.app wrapped in MainThreadWeak",
           "file": "crates/gpui/src/app/async_context.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.7",
           "description": "Update AsyncWindowContext::spawn to pass app wrapped in MainThreadWeak",
           "file": "crates/gpui/src/app/async_context.rs",
-          "status": "not_started"
+          "status": "completed"
         },
         {
           "id": "1.8",
           "description": "Write unit test verifying task cancellation when app is dropped",
-          "file": "crates/gpui/src/executor.rs",
-          "status": "not_started"
+          "file": "crates/gpui/tests/task_cancellation.rs",
+          "status": "completed"
         },
         {
           "id": "1.9",
           "description": "Write unit test for nested tasks both cancelling cleanly",
-          "file": "crates/gpui/src/executor.rs",
-          "status": "not_started"
+          "file": "crates/gpui/tests/task_cancellation.rs",
+          "status": "completed"
         },
         {
           "id": "1.10",
           "description": "Create async_cancellation.rs example demonstrating behavior",
           "file": "crates/gpui/examples/async_cancellation.rs",
-          "status": "not_started"
+          "status": "completed"
         }
       ]
     },
