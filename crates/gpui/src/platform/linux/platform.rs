@@ -16,6 +16,8 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use oo7::{Error as Oo7Error, dbus::{Error as DbusError, ServiceError}};
 use util::ResultExt as _;
 use util::command::{new_smol_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -549,16 +551,22 @@ impl<P: LinuxClient + 'static> Platform for P {
         let password = password.to_vec();
         self.background_executor().spawn(async move {
             let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-            keyring
-                .create_item(
-                    KEYRING_LABEL,
-                    &vec![("url", &url), ("username", &username)],
-                    password,
-                    true,
-                )
-                .await?;
-            Ok(())
+            let attrs = vec![("url", &url), ("username", &username)];
+
+            match keyring
+                .create_item(KEYRING_LABEL, &attrs, &password, true)
+                .await
+            {
+                Ok(()) => Ok(()),
+                Err(Oo7Error::DBus(DbusError::Service(ServiceError::IsLocked(_)))) => {
+                    keyring.unlock().await?;
+                    keyring
+                        .create_item(KEYRING_LABEL, &attrs, &password, true)
+                        .await?;
+                    Ok(())
+                }
+                Err(e) => Err(e.into()),
+            }
         })
     }
 
@@ -566,17 +574,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         let url = url.to_string();
         self.background_executor().spawn(async move {
             let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
             let items = keyring.search_items(&vec![("url", &url)]).await?;
-
             for item in items.into_iter() {
                 if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    if item.is_locked().await? {
+                        item.unlock().await?;
+                    }
                     let attributes = item.attributes().await?;
                     let username = attributes
                         .get("username")
                         .context("Cannot find username in stored credentials")?;
-                    item.unlock().await?;
                     let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
@@ -594,17 +601,17 @@ impl<P: LinuxClient + 'static> Platform for P {
         let url = url.to_string();
         self.background_executor().spawn(async move {
             let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
             let items = keyring.search_items(&vec![("url", &url)]).await?;
 
             for item in items.into_iter() {
                 if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                    if item.is_locked().await? {
+                        item.unlock().await?;
+                    }
                     item.delete().await?;
                     return Ok(());
                 }
             }
-
             Ok(())
         })
     }
