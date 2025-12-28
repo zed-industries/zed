@@ -80,7 +80,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -1283,7 +1283,11 @@ impl Workspace {
                 project::Event::WorktreeUpdatedEntries(worktree_id, _) => {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
+                            trusted_worktrees.can_trust(
+                                &this.project().read(cx).worktree_store(),
+                                *worktree_id,
+                                cx,
+                            );
                         });
                     }
                 }
@@ -1295,7 +1299,11 @@ impl Workspace {
                 project::Event::WorktreeAdded(worktree_id) => {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(*worktree_id, cx);
+                            trusted_worktrees.can_trust(
+                                &this.project().read(cx).worktree_store(),
+                                *worktree_id,
+                                cx,
+                            );
                         });
                     }
                     this.update_worktree_data(window, cx);
@@ -6620,7 +6628,9 @@ impl Workspace {
                 .unwrap_or(false);
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
-                let remote_host = project.remote_connection_options(cx);
+                let remote_host = project
+                    .remote_connection_options(cx)
+                    .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
                 self.toggle_modal(window, cx, |_, cx| {
                     SecurityModal::new(worktree_store, remote_host, cx)

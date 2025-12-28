@@ -19,7 +19,7 @@ use db::{
 use gpui::{Axis, Bounds, Entity, Task, WindowBounds, WindowId, point, size};
 use project::{
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{PathTrust, RemoteHostLocation, find_worktree_in_store},
+    trusted_worktrees::{DbTrustedPaths, PathTrust, RemoteHostLocation, find_worktree_in_store},
     worktree_store::WorktreeStore,
 };
 
@@ -2034,13 +2034,12 @@ VALUES {placeholders};"#
         worktree_store: Option<Entity<WorktreeStore>>,
         host: Option<RemoteHostLocation>,
         cx: &App,
-    ) -> Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
+    ) -> Result<DbTrustedPaths> {
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
             .filter_map(|(abs_path, user_name, host_name)| {
                 let db_host = match (user_name, host_name) {
-                    (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
                         user_name: None,
                         host_identifier: SharedString::new(host_name),
@@ -2049,6 +2048,7 @@ VALUES {placeholders};"#
                         user_name: Some(SharedString::new(user_name)),
                         host_identifier: SharedString::new(host_name),
                     }),
+                    _ => None,
                 };
 
                 let abs_path = abs_path?;
