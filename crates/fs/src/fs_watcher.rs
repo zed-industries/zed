@@ -7,7 +7,7 @@ use std::{
 };
 use util::{ResultExt, paths::SanitizedPath};
 
-use crate::{is_fifo, PathEvent, PathEventKind, Watcher};
+use crate::{PathEvent, PathEventKind, Watcher, is_fifo};
 
 pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
@@ -96,32 +96,34 @@ impl Watcher for FsWatcher {
                         .iter()
                         .filter_map(|event_path| {
                             let event_path = SanitizedPath::new(event_path);
-                            event_path.starts_with(&root_path).then(|| {
-                                let kind = match event.kind {
-                                    EventKind::Create(_) => Some(PathEventKind::Created),
-                                    EventKind::Modify(_) => {
-                                        #[cfg(unix)]
-                                        {
-                                            if !is_fifo(event_path.as_path()) {
+                            event_path
+                                .starts_with(&root_path)
+                                .then(|| {
+                                    let kind = match event.kind {
+                                        EventKind::Create(_) => Some(PathEventKind::Created),
+                                        EventKind::Modify(_) => {
+                                            #[cfg(unix)]
+                                            {
+                                                if !is_fifo(event_path.as_path()) {
+                                                    Some(PathEventKind::Changed)
+                                                } else {
+                                                    None
+                                                }
+                                            }
+                                            #[cfg(not(unix))]
+                                            {
                                                 Some(PathEventKind::Changed)
-                                            } else {
-                                                None
                                             }
                                         }
-                                        #[cfg(not(unix))]
-                                        {
-                                            Some(PathEventKind::Changed)
-                                        }
-                                    }
-                                    EventKind::Remove(_) => Some(PathEventKind::Removed),
-                                    _ => None,
-                                };
-                                kind.map(|kind| PathEvent {
-                                    path: event_path.as_path().to_path_buf(),
-                                    kind,
+                                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                                        _ => None,
+                                    };
+                                    kind.map(|kind| PathEvent {
+                                        path: event_path.as_path().to_path_buf(),
+                                        kind: Some(kind),
+                                    })
                                 })
-                            })
-                            .flatten()
+                                .flatten()
                         })
                         .collect::<Vec<_>>();
 

@@ -840,7 +840,9 @@ impl Fs for RealFs {
                                     } else {
                                         None
                                     }
-                                } else if event.flags.contains(StreamFlags::ITEM_XATTR_MOD) && is_fifo(&event.path) {
+                                } else if event.flags.contains(StreamFlags::ITEM_XATTR_MOD)
+                                    && is_fifo(&event.path)
+                                {
                                     Some(PathEventKind::Changed)
                                 } else {
                                     None
