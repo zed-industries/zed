@@ -31,7 +31,7 @@ use crate::{
 /// Hash of a cell used in filtering
 pub struct ValueHash(u64);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FilterEntryState {
     Available { is_applied: bool },
     Unavailable { blocked_by: AnyColumn },
@@ -151,6 +151,11 @@ impl TableDataEngine {
                             }
                         },
                     )
+                })
+                .sorted_by(|(a_e, a_s), (b_e, b_s)| {
+                    // Show available for application first, then sort by number of occurances
+                    a_s.cmp(&b_s)
+                        .then_with(|| a_e.rows.len().cmp(&b_e.rows.len()).reverse())
                 })
                 .collect(),
         )
