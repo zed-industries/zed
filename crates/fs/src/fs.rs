@@ -3244,10 +3244,8 @@ mod tests {
     }
 
     #[gpui::test]
-    #[cfg(unix)]
-    async fn test_fifo_events_suppressed(executor: BackgroundExecutor) {
-        use std::os::unix::fs::FileTypeExt;
-
+    #[cfg(target_os = "linux")]
+    async fn test_fifo_remove_events_not_filtered_linux(executor: BackgroundExecutor) {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor: executor.clone(),
@@ -3264,29 +3262,30 @@ mod tests {
         let metadata = std::fs::symlink_metadata(&fifo_path).unwrap();
         assert!(metadata.file_type().is_fifo(), "File should be a FIFO");
 
-        let (mut events_stream, _watcher) = fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
+        let (mut events_stream, _watcher) =
+            fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
 
         std::fs::remove_file(&fifo_path).unwrap();
 
         executor.run_until_parked();
 
-        if let Some(events) = events_stream.next().await {
-            let removed_events: Vec<_> = events
-                .iter()
-                .filter(|e| e.path == fifo_path && e.kind == Some(PathEventKind::Removed))
-                .collect();
-            assert!(
-                !removed_events.is_empty(),
-                "Should receive Removed event for FIFO"
-            );
-        }
+        let events = events_stream
+            .next()
+            .await
+            .expect("Should receive events for FIFO removal");
+        let removed_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.path == fifo_path && e.kind == Some(PathEventKind::Removed))
+            .collect();
+        assert!(
+            !removed_events.is_empty(),
+            "Should receive Removed event for FIFO"
+        );
     }
 
     #[gpui::test]
-    #[cfg(unix)]
-    async fn test_fifo_modify_events_filtered(executor: BackgroundExecutor) {
-        use std::os::unix::fs::FileTypeExt;
-
+    #[cfg(target_os = "linux")]
+    async fn test_fifo_modify_events_filtered_linux(executor: BackgroundExecutor) {
         let fs = RealFs {
             bundled_git_binary_path: None,
             executor: executor.clone(),
@@ -3306,7 +3305,8 @@ mod tests {
         let metadata = std::fs::symlink_metadata(&fifo_path).unwrap();
         assert!(metadata.file_type().is_fifo(), "File should be a FIFO");
 
-        let (mut events_stream, _watcher) = fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
+        let (mut events_stream, _watcher) =
+            fs.watch(temp_dir.path(), Duration::from_millis(100)).await;
 
         executor.run_until_parked();
         while events_stream.next().await.is_some() {}
