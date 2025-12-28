@@ -5483,6 +5483,14 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !cx.has_active_drag() {
+            self.drag_target_entry = None;
+            self.folded_directory_drag_target = None;
+            self.hover_scroll_task.take();
+            self.hover_expand_task.take();
+            self.previous_drag_position = None;
+        }
+
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);

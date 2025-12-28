@@ -350,6 +350,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             dragging_exited as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(draggingEnded:),
+            dragging_ended as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(performDragOperation:),
             perform_drag_operation as extern "C" fn(&Object, Sel, id) -> BOOL,
         );
@@ -2452,6 +2456,15 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 }
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    send_new_event(
+        &window_state,
+        PlatformInput::FileDrop(FileDropEvent::Exited),
+    );
+    window_state.lock().external_files_dragged = false;
+}
+
+extern "C" fn dragging_ended(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_new_event(
         &window_state,
