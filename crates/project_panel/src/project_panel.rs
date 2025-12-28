@@ -3488,9 +3488,14 @@ impl ProjectPanel {
                             hash_map::Entry::Occupied(e) => e.into_mut(),
                             hash_map::Entry::Vacant(e) => {
                                 // The first time a worktree's root entry becomes available,
-                                // mark that root entry as expanded.
+                                // mark that root entry as expanded (unless it's UnloadedDir).
                                 if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
+                                    if entry.kind == project::EntryKind::UnloadedDir {
+                                        // Don't auto-expand UnloadedDir roots - let user click to expand
+                                        e.insert(vec![]).as_slice()
+                                    } else {
+                                        e.insert(vec![entry.id]).as_slice()
+                                    }
                                 } else {
                                     &[]
                                 }

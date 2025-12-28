@@ -139,6 +139,7 @@ pub struct LocalWorktree {
     settings: WorktreeSettings,
     share_private_files: bool,
     scanning_enabled: bool,
+    defer_deep_scan: bool,
 }
 
 pub struct PathPrefixScanRequest {
@@ -364,12 +365,18 @@ pub enum Event {
 impl EventEmitter<Event> for Worktree {}
 
 impl Worktree {
+    /// Creates a new local worktree.
+    ///
+    /// If `defer_initial_scan` is true, the root directory will be marked as `UnloadedDir`
+    /// and its contents won't be scanned until the user explicitly expands it. This is useful
+    /// for large directories like the home directory.
     pub async fn local(
         path: impl Into<Arc<Path>>,
         visible: bool,
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
         scanning_enabled: bool,
+        defer_initial_scan: bool,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -455,6 +462,9 @@ impl Worktree {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                         entry.is_hidden = settings.is_path_hidden(path);
                     }
+                } else if defer_initial_scan {
+                    // Mark the root as UnloadedDir so it won't be scanned until expanded
+                    entry.kind = EntryKind::UnloadedDir;
                 }
                 snapshot.insert_entry(entry, fs.as_ref());
             }
@@ -475,6 +485,7 @@ impl Worktree {
                 visible,
                 settings,
                 scanning_enabled,
+                defer_deep_scan: defer_initial_scan,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1070,6 +1081,7 @@ impl LocalWorktree {
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
         let scanning_enabled = self.scanning_enabled;
+        let defer_deep_scan = self.defer_deep_scan;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_spawn({
@@ -1106,6 +1118,7 @@ impl LocalWorktree {
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
                     scanning_enabled,
+                    defer_deep_scan,
                     settings,
                     watcher,
                 };
@@ -2774,12 +2787,12 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry) -> bool {
-        (!entry.is_external && (!entry.is_ignored || entry.is_always_included))
-            || entry.path.file_name() == Some(DOT_GIT)
+    fn should_scan_directory(&self, entry: &Entry, defer_deep_scan: bool) -> bool {
+        // Common checks that apply regardless of defer_deep_scan
+        let always_scan = entry.path.file_name() == Some(DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_name())
             || entry.path.file_name() == Some(local_vscode_folder_name())
-            || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
+            || self.scanned_dirs.contains(&entry.id)
             || self
                 .paths_to_scan
                 .iter()
@@ -2787,7 +2800,19 @@ impl BackgroundScannerState {
             || self
                 .path_prefixes_to_scan
                 .iter()
-                .any(|p| entry.path.starts_with(p))
+                .any(|p| entry.path.starts_with(p));
+
+        if always_scan {
+            return true;
+        }
+
+        // When defer_deep_scan is true, only scan directories that match the above checks
+        if defer_deep_scan {
+            return false;
+        }
+
+        // Normal case: also scan non-external, non-ignored directories
+        !entry.is_external && (!entry.is_ignored || entry.is_always_included)
     }
 
     async fn enqueue_scan_dir(
@@ -3725,6 +3750,7 @@ struct BackgroundScanner {
     settings: WorktreeSettings,
     share_private_files: bool,
     scanning_enabled: bool,
+    defer_deep_scan: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -3833,7 +3859,7 @@ impl BackgroundScanner {
                         .insert_entry(root_entry, self.fs.as_ref(), self.watcher.as_ref())
                         .await;
                 }
-                if root_entry.is_dir() && self.scanning_enabled {
+                if root_entry.is_dir() && self.scanning_enabled && !self.defer_deep_scan {
                     state
                         .enqueue_scan_dir(
                             root_abs_path.as_path().into(),
@@ -4560,7 +4586,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(entry) {
+                if state.should_scan_directory(entry, self.defer_deep_scan) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -4678,7 +4704,7 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if state.should_scan_directory(&fs_entry)
+                        if state.should_scan_directory(&fs_entry, self.defer_deep_scan)
                             || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
@@ -4945,7 +4971,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
-                    if state.should_scan_directory(&entry) {
+                    if state.should_scan_directory(&entry, self.defer_deep_scan) {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),

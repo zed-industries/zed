@@ -27,6 +27,44 @@ use worktree::{
 
 use crate::ProjectPath;
 
+/// Returns `true` if background scanning should be deferred for the given path.
+///
+/// Large directories like the home directory or root directory contain hundreds of
+/// thousands of files, and scanning them causes extreme CPU usage. For these paths,
+/// we disable background scanning entirely.
+fn should_defer_scanning(abs_path: &Path) -> bool {
+    let home_dir = util::paths::home_dir();
+
+    // Root directory
+    if abs_path.parent().is_none() {
+        return true;
+    }
+
+    // Home directory
+    if abs_path == home_dir.as_path() {
+        return true;
+    }
+
+    // macOS system directories that are known to be large
+    #[cfg(target_os = "macos")]
+    {
+        let problematic_children = ["Library", "Applications", ".Trash"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+struct MatchingEntry {
+    worktree_root: Arc<Path>,
+    path: ProjectPath,
+    respond: oneshot::Sender<ProjectPath>,
+}
+
 enum WorktreeStoreState {
     Local {
         fs: Arc<dyn Fs>,
@@ -579,6 +617,7 @@ impl WorktreeStore {
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
         let scanning_enabled = self.scanning_enabled;
+        let defer_initial_scan = should_defer_scanning(abs_path.as_path());
 
         cx.spawn(async move |this, cx| {
             let worktree = Worktree::local(
@@ -587,6 +626,7 @@ impl WorktreeStore {
                 fs,
                 next_entry_id,
                 scanning_enabled,
+                defer_initial_scan,
                 cx,
             )
             .await;

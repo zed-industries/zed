@@ -47,6 +47,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -112,6 +113,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -212,6 +214,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -363,6 +366,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -441,6 +445,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -606,6 +611,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -707,6 +713,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -805,6 +812,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -871,6 +879,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -930,6 +939,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1016,6 +1026,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1098,6 +1109,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1209,6 +1221,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1321,6 +1334,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1360,6 +1374,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1429,6 +1444,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_fake,
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1471,6 +1487,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_real,
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1580,6 +1597,7 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1676,6 +1694,7 @@ async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAp
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1754,6 +1773,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1845,6 +1865,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -1918,6 +1939,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             fs.clone(),
             Default::default(),
             true,
+            false,
             &mut cx.to_async(),
         )
         .await
@@ -2238,6 +2260,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2271,6 +2294,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         fs.clone(),
         Arc::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2349,6 +2373,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         fs.clone(),
         Arc::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2455,6 +2480,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2671,6 +2697,7 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2734,6 +2761,7 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        false,
         &mut cx.to_async(),
     )
     .await
@@ -2842,4 +2870,150 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
             case.name, case.expected_bytes, bytes
         );
     }
+}
+
+#[gpui::test]
+async fn test_defer_initial_scan(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "a1.txt": "a1",
+                "a2": {
+                    "nested.txt": "nested"
+                }
+            },
+            "b": {
+                "b1.txt": "b1"
+            },
+            "c.txt": "c"
+        }),
+    )
+    .await;
+
+    // Create worktree with defer_initial_scan=true
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        true, // defer_initial_scan = true
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
+
+    // Initially, root should be UnloadedDir (not scanned)
+    tree.read_with(cx, |tree, _| {
+        let root = tree.entry_for_path(rel_path("")).unwrap();
+        assert_eq!(
+            root.kind,
+            EntryKind::UnloadedDir,
+            "Root should start as UnloadedDir when defer_initial_scan=true"
+        );
+
+        // No child entries should exist yet
+        assert_eq!(
+            tree.entries(true, 0).count(),
+            1,
+            "Only root entry should exist initially"
+        );
+    });
+
+    // Expand the root directory
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("").into()])
+    })
+    .recv()
+    .await;
+
+    // After expanding root, immediate children should be visible
+    // but subdirectories should still be UnloadedDir
+    tree.read_with(cx, |tree, _| {
+        let entries: Vec<_> = tree.entries(true, 0).collect();
+
+        // Should have root + a + b + c.txt
+        assert!(entries.len() >= 4, "Should have root and its children");
+
+        // Check that root is now Dir (not UnloadedDir)
+        let root = tree.entry_for_path(rel_path("")).unwrap();
+        assert_eq!(
+            root.kind,
+            EntryKind::Dir,
+            "Root should be Dir after expansion"
+        );
+
+        // Check that child directories are UnloadedDir (not recursively scanned)
+        if let Some(dir_a) = tree.entry_for_path(rel_path("a")) {
+            assert_eq!(
+                dir_a.kind,
+                EntryKind::UnloadedDir,
+                "Child directory 'a' should be UnloadedDir (not recursively scanned)"
+            );
+        }
+
+        if let Some(dir_b) = tree.entry_for_path(rel_path("b")) {
+            assert_eq!(
+                dir_b.kind,
+                EntryKind::UnloadedDir,
+                "Child directory 'b' should be UnloadedDir (not recursively scanned)"
+            );
+        }
+
+        // File should be present
+        assert!(
+            tree.entry_for_path(rel_path("c.txt")).is_some(),
+            "File c.txt should be visible"
+        );
+    });
+
+    // Expand directory 'a'
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("a").into()])
+    })
+    .recv()
+    .await;
+
+    // After expanding 'a', its contents should be visible
+    tree.read_with(cx, |tree, _| {
+        // 'a' should now be Dir
+        let dir_a = tree.entry_for_path(rel_path("a")).unwrap();
+        assert_eq!(
+            dir_a.kind,
+            EntryKind::Dir,
+            "'a' should be Dir after expansion"
+        );
+
+        // 'a/a1.txt' should be visible
+        assert!(
+            tree.entry_for_path(rel_path("a/a1.txt")).is_some(),
+            "a/a1.txt should be visible after expanding 'a'"
+        );
+
+        // 'a/a2' should still be UnloadedDir
+        if let Some(dir_a2) = tree.entry_for_path(rel_path("a/a2")) {
+            assert_eq!(
+                dir_a2.kind,
+                EntryKind::UnloadedDir,
+                "Nested directory 'a/a2' should still be UnloadedDir"
+            );
+        }
+
+        // 'b' should still be UnloadedDir (we didn't expand it)
+        let dir_b = tree.entry_for_path(rel_path("b")).unwrap();
+        assert_eq!(
+            dir_b.kind,
+            EntryKind::UnloadedDir,
+            "'b' should still be UnloadedDir"
+        );
+    });
 }

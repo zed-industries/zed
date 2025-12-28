@@ -474,6 +474,7 @@ impl HeadlessProject {
                     this.fs.clone(),
                     this.next_entry_id.clone(),
                     true,
+                    false,
                     &mut cx,
                 )
             })?
