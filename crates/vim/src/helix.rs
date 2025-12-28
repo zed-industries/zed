@@ -335,6 +335,21 @@ impl Vim {
             (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
         }
     }
+    fn is_subword_boundary_right(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            let is_word_start = left_kind != right_kind && right_kind != CharKind::Whitespace;
+            let is_subword_start =
+                (left == '_' && right != '_') || (left.is_lowercase() && right.is_uppercase());
+
+            is_word_start || (is_subword_start && !right.is_whitespace()) || at_newline
+        }
+    }
 
     fn is_subword_boundary_left(
         ignore_punctuation: bool,
