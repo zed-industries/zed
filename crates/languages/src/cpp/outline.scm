@@ -37,7 +37,9 @@
     (type_qualifier)? @context
     type: (_) @context
     declarator: (init_declarator
-      declarator: (_) @name)) @item
+      ; The declaration may define multiple variables, using @item on the
+      ; declarator so that they get distinct ranges.
+      declarator: (_) @item @name))
 
 (function_definition
     (type_qualifier)? @context
