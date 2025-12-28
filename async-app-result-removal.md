@@ -164,8 +164,8 @@ Start with macOS and Test dispatcher to validate the approach.
 4. Update Test dispatcher `tick()` to check `unsafe { app.upgrade() }` before `run()`:
    - `crates/gpui/src/platform/test/dispatcher.rs`
 5. Add `ForegroundExecutor::spawn_with_app` that wraps `Weak<AppCell>` in `MainThreadWeak`
-6. Update `AsyncApp::spawn` and `AsyncWindowContext::spawn` to use `spawn_with_app`
-7. Write tests to validate cancellation behavior
+6. Update `AsyncApp::spawn` and `AsyncWindowContext::spawn` to use `spawn4. Modify spawn paths in `AsyncApp` to populate the app weak pointer in metadata
+5. Write tests to validate cancellation behavior on macOS
 
 ### Phase 2: Extend to Other Platforms
 
@@ -264,11 +264,11 @@ Entity operations via AsyncApp still work.
 
 ### Validation Checklist
 
-1. `cargo test -p gpui` passes
+1. `cargo test -p gpui --features test-support` passes
 2. `cargo run -p gpui --example async_cancellation` works correctly
-3. `./script/clippy` passes
-4. Full test suite `cargo test` passes (at least on macOS initially)
-5. Manual test: close windows with pending tasks, verify no panics
+3. `cargo clippy -p gpui` passes (ignore pre-existing warnings)
+4. Manual test: close windows with pending tasks, verify no panics
+
 
 ## Future Work (Separate Brief)
 
