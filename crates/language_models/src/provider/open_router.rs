@@ -4,11 +4,12 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
@@ -17,13 +18,9 @@ use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsSto
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
-
-use crate::ui::ConfiguredApiCard;
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -62,12 +59,9 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        let task = self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        );
+        let task = self
+            .api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -135,7 +129,7 @@ impl OpenRouterLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -186,8 +180,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenRouter
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -376,8 +370,8 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let request = self.stream_completion(request, cx);
+        let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
+        let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))
@@ -391,15 +385,31 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> open_router::Request {
+    // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
+    // in requests - it's an output-only field for them. However, Gemini models require
+    // the thought signatures to be echoed back for proper reasoning chain continuity.
+    // Note: OpenRouter's model API provides an `architecture.tokenizer` field (e.g. "Claude",
+    // "Gemini") which could replace this ID prefix check, but since this is the only place
+    // we need this distinction, we're just using this less invasive check instead.
+    // If we ever have a more formal distionction between the models in the future,
+    // we should revise this to use that instead.
+    let is_anthropic_model = model.id().starts_with("anthropic/");
+
     let mut messages = Vec::new();
     for message in request.messages {
-        let reasoning_details = message.reasoning_details.clone();
+        let reasoning_details_for_message = if is_anthropic_model {
+            None
+        } else {
+            message.reasoning_details.clone()
+        };
+
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
                     open_router::MessagePart::Text { text },
                     message.role,
                     &mut messages,
+                    reasoning_details_for_message.clone(),
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
@@ -410,6 +420,7 @@ pub fn into_open_router(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details_for_message.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -425,21 +436,15 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant {
-                        tool_calls,
-                        reasoning_details: existing_reasoning,
-                        ..
-                    }) = messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
                     {
                         tool_calls.push(tool_call);
-                        if existing_reasoning.is_none() && reasoning_details.is_some() {
-                            *existing_reasoning = reasoning_details.clone();
-                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
-                            reasoning_details: reasoning_details.clone(),
+                            reasoning_details: reasoning_details_for_message.clone(),
                         });
                     }
                 }
@@ -515,6 +520,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
+    reasoning_details: Option<serde_json::Value>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))
@@ -538,7 +544,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
-                    reasoning_details: None,
+                    reasoning_details,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
@@ -830,17 +836,15 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create an API key by visiting",
-                            Some("OpenRouter's console"),
-                            Some("https://openrouter.ai/keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenRouter account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create an API key by visiting"))
+                                .child(ButtonLink::new("OpenRouter's console", "https://openrouter.ai/keys"))
+                        )
+                        .child(ListBulletItem::new("Ensure your OpenRouter account has credits")
+                        )
+                        .child(ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

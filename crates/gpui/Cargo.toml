@@ -21,7 +21,6 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
-    "rand",
     "util/test-support",
     "http_client/test-support",
     "wayland",
@@ -109,7 +108,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-rand = { optional = true, workspace = true }
+rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
@@ -158,8 +157,10 @@ media.workspace = true
 objc.workspace = true
 objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
+mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
+flume = "0.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -197,14 +198,14 @@ wayland-backend = { version = "0.3.3", features = [
     "client_system",
     "dlopen",
 ], optional = true }
-wayland-client = { version = "0.31.2", optional = true }
-wayland-cursor = { version = "0.31.1", optional = true }
-wayland-protocols = { version = "0.31.2", features = [
+wayland-client = { version = "0.31.11", optional = true }
+wayland-cursor = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = [
     "client",
     "staging",
     "unstable",
 ], optional = true }
-wayland-protocols-plasma = { version = "0.2.0", features = [
+wayland-protocols-plasma = { version = "0.3.9", features = [
     "client",
 ], optional = true }
 wayland-protocols-wlr = { version = "0.3.9", features = [
@@ -329,3 +330,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "mouse_pressure"
+path = "examples/mouse_pressure.rs"

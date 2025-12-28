@@ -2,18 +2,28 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
+use language::{
+    LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, PromptResponseContext, Toolchain,
+};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use regex::Regex;
+use semver::Version;
 use serde_json::Value;
+use serde_json::json;
+use settings::update_settings_file;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 use util::{ResultExt, maybe, merge_json_value_into};
+
+const ACTION_ALWAYS: &str = "Always";
+const ACTION_NEVER: &str = "Never";
+const UPDATE_IMPORTS_MESSAGE_PATTERN: &str = "Update imports for";
+const VTSLS_SERVER_NAME: &str = "vtsls";
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -74,8 +84,8 @@ impl VtslsLspAdapter {
 }
 
 pub struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
+    typescript_version: Version,
+    server_version: Version,
 }
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
@@ -88,7 +98,7 @@ impl LspInstaller for VtslsLspAdapter {
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<TypeScriptVersions> {
+    ) -> Result<Self::BinaryVersion> {
         Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
@@ -115,11 +125,14 @@ impl LspInstaller for VtslsLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: TypeScriptVersions,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(Self::SERVER_PATH);
+
+        let typescript_version = latest_version.typescript_version.to_string();
+        let server_version = latest_version.server_version.to_string();
 
         let mut packages_to_install = Vec::new();
 
@@ -133,7 +146,7 @@ impl LspInstaller for VtslsLspAdapter {
             )
             .await
         {
-            packages_to_install.push((Self::PACKAGE_NAME, latest_version.server_version.as_str()));
+            packages_to_install.push((Self::PACKAGE_NAME, server_version.as_str()));
         }
 
         if self
@@ -146,10 +159,7 @@ impl LspInstaller for VtslsLspAdapter {
             )
             .await
         {
-            packages_to_install.push((
-                Self::TYPESCRIPT_PACKAGE_NAME,
-                latest_version.typescript_version.as_str(),
-            ));
+            packages_to_install.push((Self::TYPESCRIPT_PACKAGE_NAME, typescript_version.as_str()));
         }
 
         self.node
@@ -296,10 +306,57 @@ impl LspAdapter for VtslsLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("TypeScript"), "typescript".into()),
-            (LanguageName::new("JavaScript"), "javascript".into()),
-            (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new_static("TypeScript"), "typescript".into()),
+            (LanguageName::new_static("JavaScript"), "javascript".into()),
+            (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
+    }
+
+    fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
+        let selected_title = context.selected_action.title.as_str();
+        let is_preference_response =
+            selected_title == ACTION_ALWAYS || selected_title == ACTION_NEVER;
+        if !is_preference_response {
+            return;
+        }
+
+        if context.message.contains(UPDATE_IMPORTS_MESSAGE_PATTERN) {
+            let setting_value = match selected_title {
+                ACTION_ALWAYS => "always",
+                ACTION_NEVER => "never",
+                _ => return,
+            };
+
+            let settings = json!({
+                "typescript": {
+                    "updateImportsOnFileMove": {
+                        "enabled": setting_value
+                    }
+                },
+                "javascript": {
+                    "updateImportsOnFileMove": {
+                        "enabled": setting_value
+                    }
+                }
+            });
+
+            let _ = cx.update(|cx| {
+                update_settings_file(self.fs.clone(), cx, move |content, _| {
+                    let lsp_settings = content
+                        .project
+                        .lsp
+                        .0
+                        .entry(VTSLS_SERVER_NAME.into())
+                        .or_default();
+
+                    if let Some(existing) = &mut lsp_settings.settings {
+                        merge_json_value_into(settings, existing);
+                    } else {
+                        lsp_settings.settings = Some(settings);
+                    }
+                });
+            });
+        }
     }
 }
 

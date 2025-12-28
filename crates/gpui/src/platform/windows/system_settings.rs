@@ -1,4 +1,7 @@
-use std::ffi::{c_uint, c_void};
+use std::{
+    cell::Cell,
+    ffi::{c_uint, c_void},
+};
 
 use ::util::ResultExt;
 use windows::Win32::UI::{
@@ -15,18 +18,18 @@ use super::WindowsDisplay;
 
 /// Windows settings pulled from SystemParametersInfo
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct WindowsSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
-    pub(crate) auto_hide_taskbar_position: Option<AutoHideTaskbarPosition>,
+    pub(crate) auto_hide_taskbar_position: Cell<Option<AutoHideTaskbarPosition>>,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct MouseWheelSettings {
     /// SEE: SPI_GETWHEELSCROLLCHARS
-    pub(crate) wheel_scroll_chars: u32,
+    pub(crate) wheel_scroll_chars: Cell<u32>,
     /// SEE: SPI_GETWHEELSCROLLLINES
-    pub(crate) wheel_scroll_lines: u32,
+    pub(crate) wheel_scroll_lines: Cell<u32>,
 }
 
 impl WindowsSystemSettings {
@@ -36,12 +39,13 @@ impl WindowsSystemSettings {
         settings
     }
 
-    fn init(&mut self, display: WindowsDisplay) {
+    fn init(&self, display: WindowsDisplay) {
         self.mouse_wheel_settings.update();
-        self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
+        self.auto_hide_taskbar_position
+            .set(AutoHideTaskbarPosition::new(display).log_err().flatten());
     }
 
-    pub(crate) fn update(&mut self, display: WindowsDisplay, wparam: usize) {
+    pub(crate) fn update(&self, display: WindowsDisplay, wparam: usize) {
         match wparam {
             // SPI_SETWORKAREA
             47 => self.update_taskbar_position(display),
@@ -51,22 +55,23 @@ impl WindowsSystemSettings {
         }
     }
 
-    fn update_mouse_wheel_settings(&mut self) {
+    fn update_mouse_wheel_settings(&self) {
         self.mouse_wheel_settings.update();
     }
 
-    fn update_taskbar_position(&mut self, display: WindowsDisplay) {
-        self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
+    fn update_taskbar_position(&self, display: WindowsDisplay) {
+        self.auto_hide_taskbar_position
+            .set(AutoHideTaskbarPosition::new(display).log_err().flatten());
     }
 }
 
 impl MouseWheelSettings {
-    fn update(&mut self) {
+    fn update(&self) {
         self.update_wheel_scroll_chars();
         self.update_wheel_scroll_lines();
     }
 
-    fn update_wheel_scroll_chars(&mut self) {
+    fn update_wheel_scroll_chars(&self) {
         let mut value = c_uint::default();
         let result = unsafe {
             SystemParametersInfoW(
@@ -77,12 +82,12 @@ impl MouseWheelSettings {
             )
         };
 
-        if result.log_err() != None && self.wheel_scroll_chars != value {
-            self.wheel_scroll_chars = value;
+        if result.log_err() != None && self.wheel_scroll_chars.get() != value {
+            self.wheel_scroll_chars.set(value);
         }
     }
 
-    fn update_wheel_scroll_lines(&mut self) {
+    fn update_wheel_scroll_lines(&self) {
         let mut value = c_uint::default();
         let result = unsafe {
             SystemParametersInfoW(
@@ -93,8 +98,8 @@ impl MouseWheelSettings {
             )
         };
 
-        if result.log_err() != None && self.wheel_scroll_lines != value {
-            self.wheel_scroll_lines = value;
+        if result.log_err() != None && self.wheel_scroll_lines.get() != value {
+            self.wheel_scroll_lines.set(value);
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
+
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
@@ -13,6 +14,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
+use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
@@ -24,6 +26,72 @@ pub enum PanelEvent {
 }
 
 pub use proto::PanelId;
+
+pub struct MinimizePane;
+pub struct ClosePane;
+
+pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    /// The icon to render in the adjacent pane's tab bar for toggling this utility pane
+    fn toggle_icon(&self, cx: &App) -> IconName;
+    fn expanded(&self, cx: &App) -> bool;
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>);
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
+}
+
+pub trait UtilityPaneHandle: 'static + Send + Sync {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    fn toggle_icon(&self, cx: &App) -> IconName;
+    fn expanded(&self, cx: &App) -> bool;
+    fn set_expanded(&self, expanded: bool, cx: &mut App);
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn to_any(&self) -> AnyView;
+    fn box_clone(&self) -> Box<dyn UtilityPaneHandle>;
+}
+
+impl<T> UtilityPaneHandle for Entity<T>
+where
+    T: UtilityPane,
+{
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition {
+        self.read(cx).position(window, cx)
+    }
+
+    fn toggle_icon(&self, cx: &App) -> IconName {
+        self.read(cx).toggle_icon(cx)
+    }
+
+    fn expanded(&self, cx: &App) -> bool {
+        self.read(cx).expanded(cx)
+    }
+
+    fn set_expanded(&self, expanded: bool, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_expanded(expanded, cx))
+    }
+
+    fn width(&self, cx: &App) -> Pixels {
+        self.read(cx).width(cx)
+    }
+
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn to_any(&self) -> AnyView {
+        self.clone().into()
+    }
+
+    fn box_clone(&self) -> Box<dyn UtilityPaneHandle> {
+        Box::new(self.clone())
+    }
+}
+
+pub enum UtilityPanePosition {
+    Left,
+    Right,
+}
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -281,7 +349,7 @@ impl Dock {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
                     if let Some(active_entry) = dock.active_panel_entry() {
-                        active_entry.panel.panel_focus_handle(cx).focus(window)
+                        active_entry.panel.panel_focus_handle(cx).focus(window, cx)
                     }
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
@@ -382,6 +450,13 @@ impl Dock {
         self.panel_entries
             .iter()
             .position(|entry| entry.panel.remote_id() == Some(panel_id))
+    }
+
+    pub fn panel_for_id(&self, panel_id: EntityId) -> Option<&Arc<dyn PanelHandle>> {
+        self.panel_entries
+            .iter()
+            .find(|entry| entry.panel.panel_id() == panel_id)
+            .map(|entry| &entry.panel)
     }
 
     pub fn first_enabled_panel_idx(&mut self, cx: &mut Context<Self>) -> anyhow::Result<usize> {
@@ -491,6 +566,9 @@ impl Dock {
 
                     new_dock.update(cx, |new_dock, cx| {
                         new_dock.remove_panel(&panel, window, cx);
+                    });
+
+                    new_dock.update(cx, |new_dock, cx| {
                         let index =
                             new_dock.add_panel(panel.clone(), workspace.clone(), window, cx);
                         if was_visible {
@@ -498,6 +576,12 @@ impl Dock {
                             new_dock.activate_panel(index, window, cx);
                         }
                     });
+
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.serialize_workspace(window, cx);
+                        })
+                        .ok();
                 }
             }),
             cx.subscribe_in(
@@ -508,7 +592,7 @@ impl Dock {
                         this.set_panel_zoomed(&panel.to_any(), true, window, cx);
                         if !PanelHandle::panel_focus_handle(panel, cx).contains_focused(window, cx)
                         {
-                            window.focus(&panel.focus_handle(cx));
+                            window.focus(&panel.focus_handle(cx), cx);
                         }
                         workspace
                             .update(cx, |workspace, cx| {
@@ -540,7 +624,7 @@ impl Dock {
                         {
                             this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
-                            window.focus(&panel.read(cx).focus_handle(cx));
+                            window.focus(&panel.read(cx).focus_handle(cx), cx);
                         }
                     }
                     PanelEvent::Close => {
@@ -586,6 +670,7 @@ impl Dock {
         );
 
         self.restore_state(window, cx);
+
         if panel.read(cx).starts_open(window, cx) {
             self.activate_panel(index, window, cx);
             self.set_open(true, window, cx);
@@ -619,7 +704,7 @@ impl Dock {
         panel: &Entity<T>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if let Some(panel_ix) = self
             .panel_entries
             .iter()
@@ -637,8 +722,13 @@ impl Dock {
                     std::cmp::Ordering::Greater => {}
                 }
             }
+
             self.panel_entries.remove(panel_ix);
             cx.notify();
+
+            true
+        } else {
+            false
         }
     }
 
@@ -891,7 +981,13 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry.panel.icon_tooltip(window, cx)?;
+                let icon_tooltip = entry
+                    .panel
+                    .icon_tooltip(window, cx)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
+                    })
+                    .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
@@ -941,7 +1037,9 @@ impl Render for PanelButtons {
                         .anchor(menu_anchor)
                         .attach(menu_attach)
                         .trigger(move |is_active, _window, _cx| {
-                            IconButton::new(name, icon)
+                            // Include active state in element ID to invalidate the cached
+                            // tooltip when panel state changes (e.g., via keyboard shortcut)
+                            IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -952,7 +1050,7 @@ impl Render for PanelButtons {
                                             name = name,
                                             toggle_state = !is_open
                                         );
-                                        window.focus(&focus_handle);
+                                        window.focus(&focus_handle, cx);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })

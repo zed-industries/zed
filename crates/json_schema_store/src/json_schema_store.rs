@@ -2,9 +2,12 @@
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
-use language::LanguageRegistry;
-use project::LspStore;
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
+use language::{LanguageRegistry, language_settings::all_language_settings};
+use lsp::LanguageServerBinaryOptions;
+use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
+use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
+use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
@@ -74,23 +77,28 @@ fn handle_schema_request(
     lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
-) -> Result<String> {
-    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone())?;
-    let schema = resolve_schema_request(&languages, uri, cx)?;
-    serde_json::to_string(&schema).context("Failed to serialize schema")
+) -> Task<Result<String>> {
+    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
+    cx.spawn(async move |cx| {
+        let languages = languages?;
+        let schema = resolve_schema_request(&languages, lsp_store, uri, cx).await?;
+        serde_json::to_string(&schema).context("Failed to serialize schema")
+    })
 }
 
-pub fn resolve_schema_request(
+pub async fn resolve_schema_request(
     languages: &Arc<LanguageRegistry>,
+    lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
     let path = uri.strip_prefix("zed://schemas/").context("Invalid URI")?;
-    resolve_schema_request_inner(languages, path, cx)
+    resolve_schema_request_inner(languages, lsp_store, path, cx).await
 }
 
-pub fn resolve_schema_request_inner(
+pub async fn resolve_schema_request_inner(
     languages: &Arc<LanguageRegistry>,
+    lsp_store: Entity<LspStore>,
     path: &str,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
@@ -98,37 +106,121 @@ pub fn resolve_schema_request_inner(
     let schema_name = schema_name.unwrap_or(path);
 
     let schema = match schema_name {
-        "settings" => cx.update(|cx| {
-            let font_names = &cx.text_system().all_font_names();
-            let language_names = &languages
-                .language_names()
+        "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
+            let lsp_name = rest
+                .and_then(|r| {
+                    r.strip_prefix(
+                        LSP_SETTINGS_SCHEMA_URL_PREFIX
+                            .strip_prefix("zed://schemas/settings/")
+                            .unwrap(),
+                    )
+                })
+                .context("Invalid LSP schema path")?;
+
+            let adapter = languages
+                .all_lsp_adapters()
                 .into_iter()
-                .map(|name| name.to_string())
+                .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
+                .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
+
+            let delegate = cx
+                .update(|inner_cx| {
+                    lsp_store.update(inner_cx, |lsp_store, inner_cx| {
+                        let Some(local) = lsp_store.as_local() else {
+                            return None;
+                        };
+                        let Some(worktree) = local.worktree_store.read(inner_cx).worktrees().next()
+                        else {
+                            return None;
+                        };
+                        Some(LocalLspAdapterDelegate::from_local_lsp(
+                            local, &worktree, inner_cx,
+                        ))
+                    })
+                })?
+                .context(concat!(
+                    "Failed to create adapter delegate - ",
+                    "either LSP store is not in local mode or no worktree is available"
+                ))?;
+
+            let adapter_for_schema = adapter.clone();
+
+            let binary = adapter
+                .get_language_server_command(
+                    delegate,
+                    None,
+                    LanguageServerBinaryOptions {
+                        allow_path_lookup: true,
+                        allow_binary_download: false,
+                        pre_release: false,
+                    },
+                    cx,
+                )
+                .await
+                .await
+                .0
+                .with_context(|| {
+                    format!(
+                        concat!(
+                            "Failed to find language server {} ",
+                            "to generate initialization params schema"
+                        ),
+                        lsp_name
+                    )
+                })?;
+
+            adapter_for_schema
+                .adapter
+                .clone()
+                .initialization_options_schema(&binary)
+                .await
+                .unwrap_or_else(|| {
+                    serde_json::json!({
+                        "type": "object",
+                        "additionalProperties": true
+                    })
+                })
+        }
+        "settings" => {
+            let lsp_adapter_names = languages
+                .all_lsp_adapters()
+                .into_iter()
+                .map(|adapter| adapter.name().to_string())
                 .collect::<Vec<_>>();
 
-            let mut icon_theme_names = vec![];
-            let mut theme_names = vec![];
-            if let Some(registry) = theme::ThemeRegistry::try_global(cx) {
-                icon_theme_names.extend(
-                    registry
-                        .list_icon_themes()
-                        .into_iter()
-                        .map(|icon_theme| icon_theme.name),
-                );
-                theme_names.extend(registry.list_names());
-            }
-            let icon_theme_names = icon_theme_names.as_slice();
-            let theme_names = theme_names.as_slice();
+            cx.update(|cx| {
+                let font_names = &cx.text_system().all_font_names();
+                let language_names = &languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>();
 
-            cx.global::<settings::SettingsStore>().json_schema(
-                &settings::SettingsJsonSchemaParams {
-                    language_names,
-                    font_names,
-                    theme_names,
-                    icon_theme_names,
-                },
-            )
-        })?,
+                let mut icon_theme_names = vec![];
+                let mut theme_names = vec![];
+                if let Some(registry) = theme::ThemeRegistry::try_global(cx) {
+                    icon_theme_names.extend(
+                        registry
+                            .list_icon_themes()
+                            .into_iter()
+                            .map(|icon_theme| icon_theme.name),
+                    );
+                    theme_names.extend(registry.list_names());
+                }
+                let icon_theme_names = icon_theme_names.as_slice();
+                let theme_names = theme_names.as_slice();
+
+                cx.global::<settings::SettingsStore>().json_schema(
+                    &settings::SettingsJsonSchemaParams {
+                        language_names,
+                        font_names,
+                        theme_names,
+                        icon_theme_names,
+                        lsp_adapter_names: &lsp_adapter_names,
+                    },
+                )
+            })?
+        }
         "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions)?,
         "action" => {
             let normalized_action_name = rest.context("No Action name provided")?;
@@ -159,14 +251,35 @@ pub fn resolve_schema_request_inner(
             }
         }
         "snippets" => snippet_provider::format::VsSnippetsFile::generate_json_schema(),
+        "jsonc" => jsonc_schema(),
         _ => {
-            anyhow::bail!("Unrecognized builtin JSON schema: {}", schema_name);
+            anyhow::bail!("Unrecognized builtin JSON schema: {schema_name}");
         }
     };
     Ok(schema)
 }
 
-pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
+const JSONC_LANGUAGE_NAME: &str = "JSONC";
+
+pub fn all_schema_file_associations(
+    languages: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> serde_json::Value {
+    let extension_globs = languages
+        .available_language_for_name(JSONC_LANGUAGE_NAME)
+        .map(|language| language.matcher().path_suffixes.clone())
+        .into_iter()
+        .flatten()
+        // Path suffixes can be entire file names or just their extensions.
+        .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
+    let override_globs = all_language_settings(None, cx)
+        .file_types
+        .get(JSONC_LANGUAGE_NAME)
+        .into_iter()
+        .flat_map(|(_, glob_strings)| glob_strings)
+        .cloned();
+    let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
+
     let mut file_associations = serde_json::json!([
         {
             "fileMatch": [
@@ -211,6 +324,10 @@ pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
             "fileMatch": ["package.json"],
             "url": "zed://schemas/package_json"
         },
+        {
+            "fileMatch": &jsonc_globs,
+            "url": "zed://schemas/jsonc"
+        },
     ]);
 
     #[cfg(debug_assertions)]
@@ -233,7 +350,7 @@ pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("zed://schemas/action/{}", normalized_name)
+                "url": format!("zed://schemas/action/{normalized_name}")
             })
         }),
     );
@@ -247,6 +364,26 @@ fn tsconfig_schema() -> serde_json::Value {
 
 fn package_json_schema() -> serde_json::Value {
     serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap()
+}
+
+fn jsonc_schema() -> serde_json::Value {
+    let generator = schemars::generate::SchemaSettings::draft2019_09()
+        .with_transform(DefaultDenyUnknownFields)
+        .with_transform(AllowTrailingCommas)
+        .into_generator();
+    let meta_schema = generator
+        .settings()
+        .meta_schema
+        .as_ref()
+        .expect("meta_schema should be present in schemars settings")
+        .to_string();
+    let defs = generator.definitions();
+    let schema = schemars::json_schema!({
+        "$schema": meta_schema,
+        "allowTrailingCommas": true,
+        "$defs": defs,
+    });
+    serde_json::to_value(schema).unwrap()
 }
 
 fn generate_inspector_style_schema() -> serde_json::Value {

@@ -76,7 +76,7 @@ impl EventStream {
                     cf::CFRelease(cf_path);
                     cf::CFRelease(cf_url);
                 } else {
-                    log::error!("Failed to create CFURL for path: {}", path.display());
+                    log::error!("Failed to create CFURL for path: {path:?}");
                 }
             }
 

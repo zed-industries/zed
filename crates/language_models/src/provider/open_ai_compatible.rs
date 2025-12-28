@@ -4,10 +4,10 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -16,9 +16,7 @@ use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::EnvVar;
 
-use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
@@ -38,7 +36,6 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 
 pub struct State {
     id: Arc<str>,
-    api_key_env_var: EnvVar,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
 }
@@ -56,12 +53,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state.load_if_needed(
-            api_url,
-            &self.api_key_env_var,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -83,7 +76,6 @@ impl OpenAiCompatibleLanguageModelProvider {
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
-                        &this.api_key_env_var,
                         |this| &mut this.api_key_state,
                         cx,
                     );
@@ -95,8 +87,10 @@ impl OpenAiCompatibleLanguageModelProvider {
             let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
             State {
                 id: id.clone(),
-                api_key_env_var: EnvVar::new(api_key_env_var_name),
-                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                api_key_state: ApiKeyState::new(
+                    SharedString::new(settings.api_url.as_str()),
+                    EnvVar::new(api_key_env_var_name),
+                ),
                 settings,
             }
         });
@@ -139,8 +133,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.name.clone()
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenAiCompat
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenAiCompat)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -437,7 +431,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
-        let env_var_name = &state.api_key_env_var.name;
+        let env_var_name = state.api_key_state.env_var_name();
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()

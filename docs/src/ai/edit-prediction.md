@@ -58,7 +58,8 @@ In these cases, `alt-tab` is used instead to accept the prediction. When the lan
 
 On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is provided as the default binding for accepting predictions. `tab` and `alt-tab` also work, but aren't displayed by default.
 
-{#action editor::AcceptPartialEditPrediction} ({#kb editor::AcceptPartialEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
+{#action editor::AcceptNextWordEditPrediction} ({#kb editor::AcceptNextWordEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
+{#action editor::AcceptNextLineEditPrediction} ({#kb editor::AcceptNextLineEditPrediction}) can be used to accept the current edit prediction up to the new line boundary.
 
 ## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
@@ -304,7 +305,7 @@ To use GitHub Copilot as your provider, set this within `settings.json`:
 }
 ```
 
-You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
+To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A popup window appears displaying a device code. Click the copy button to copy the code, then click "Connect to GitHub" to open the GitHub verification page in your browser. Paste the code when prompted. The popup window closes automatically after successful authorization.
 
 #### Using GitHub Copilot Enterprise
 
@@ -347,10 +348,17 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ### Codestral {#codestral}
 
-To use Mistral's Codestral as your provider, start by going to the Agent Panel settings view by running the {#action agent::OpenSettings} action.
-Look for the Mistral item and add a Codestral API key in the corresponding text input.
+To use Mistral's Codestral as your provider:
 
-After that, you should be able to switch your provider to it in your `settings.json` file:
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Codestral section and enter your API key from the
+   [Codestral dashboard](https://console.mistral.ai/codestral)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, set Codestral as your provider in `settings.json`:
 
 ```json [settings]
 {
