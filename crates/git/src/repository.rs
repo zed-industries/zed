@@ -242,6 +242,7 @@ pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
+    pub is_binary: bool,
 }
 
 impl CommitDetails {
@@ -865,6 +866,41 @@ impl GitRepository for RealGitRepository {
                     continue;
                 };
 
+                // hardcoded for now but could also check the same way as worktree.rs
+                let path_lower = path.to_lowercase();
+                let is_binary = path_lower.ends_with(".png")
+                    || path_lower.ends_with(".jpg")
+                    || path_lower.ends_with(".jpeg")
+                    || path_lower.ends_with(".gif")
+                    || path_lower.ends_with(".webp")
+                    || path_lower.ends_with(".svg")
+                    || path_lower.ends_with(".ico")
+                    || path_lower.ends_with(".bmp")
+                    || path_lower.ends_with(".tiff")
+                    || path_lower.ends_with(".pdf")
+                    || path_lower.ends_with(".zip")
+                    || path_lower.ends_with(".tar")
+                    || path_lower.ends_with(".gz")
+                    || path_lower.ends_with(".7z")
+                    || path_lower.ends_with(".rar")
+                    || path_lower.ends_with(".exe")
+                    || path_lower.ends_with(".dll")
+                    || path_lower.ends_with(".so")
+                    || path_lower.ends_with(".dylib")
+                    || path_lower.ends_with(".bin")
+                    || path_lower.ends_with(".dat");
+
+                // skip loading content for binary
+                if is_binary {
+                    files.push(CommitFile {
+                        path: RepoPath(Arc::from(rel_path)),
+                        old_text: None,
+                        new_text: None,
+                        is_binary: true,
+                    });
+                    continue;
+                }
+
                 match status_code {
                     StatusCode::Modified => {
                         stdin.write_all(commit.as_bytes()).await?;
@@ -927,6 +963,7 @@ impl GitRepository for RealGitRepository {
                     path: RepoPath(Arc::from(rel_path)),
                     old_text,
                     new_text,
+                    is_binary: false,
                 })
             }
 

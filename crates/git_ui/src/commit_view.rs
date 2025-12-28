@@ -227,9 +227,6 @@ impl CommitView {
 
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
-                let is_deleted = file.new_text.is_none();
-                let new_text = file.new_text.unwrap_or_default();
-                let old_text = file.old_text;
                 let worktree_id = repository_clone
                     .update(cx, |repository, cx| {
                         repository
@@ -245,6 +242,69 @@ impl CommitView {
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
                 let display_name = format!("{short_sha} - {file_name}");
+
+                if file.is_binary {
+                    let is_deleted = file.new_text.is_none();
+                    let placeholder_text = format!("Binary file not displayed: {}", file_name);
+                    let file = Arc::new(GitBlob {
+                        path: file.path.clone(),
+                        is_deleted,
+                        worktree_id,
+                        display_name,
+                    }) as Arc<dyn language::File>;
+
+                    // For deleted files: buffer is EMPTY, diff compares placeholder (old) -> empty (new) = RED
+                    // For added/modified: buffer has placeholder, diff compares empty (old) -> placeholder (new) = GREEN
+                    let buffer_content = if is_deleted {
+                        String::new()
+                    } else {
+                        placeholder_text.clone()
+                    };
+
+                    let buffer = build_buffer(buffer_content, file, &language_registry, cx).await?;
+
+                    let old_text_for_diff = if is_deleted {
+                        Some(placeholder_text)
+                    } else {
+                        Some(String::new())
+                    };
+
+                    let buffer_diff =
+                        build_buffer_diff(old_text_for_diff, &buffer, &language_registry, cx)
+                            .await?;
+
+                    this.update(cx, |this, cx| {
+                        this.multibuffer.update(cx, |multibuffer, cx| {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let path = snapshot.file().unwrap().path().clone();
+                            let excerpt_ranges = {
+                                let mut hunks =
+                                    buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                                if hunks.peek().is_none() {
+                                    vec![language::Point::zero()..snapshot.max_point()]
+                                } else {
+                                    hunks
+                                        .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                        .collect::<Vec<_>>()
+                                }
+                            };
+
+                            multibuffer.set_excerpts_for_path(
+                                PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
+                                buffer,
+                                excerpt_ranges,
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                            multibuffer.add_diff(buffer_diff, cx);
+                        });
+                    })?;
+                    continue;
+                }
+
+                let is_deleted = file.new_text.is_none();
+                let new_text = file.new_text.unwrap_or_default();
+                let old_text = file.old_text;
 
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
