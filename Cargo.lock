@@ -8979,6 +8979,7 @@ dependencies = [
  "lmstudio",
  "log",
  "menu",
+ "minimax",
  "mistral",
  "ollama",
  "open_ai",
@@ -10062,6 +10063,18 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "minimax"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "miniprofiler_ui"

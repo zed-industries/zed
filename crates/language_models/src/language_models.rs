@@ -19,6 +19,7 @@ use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
+use crate::provider::minimax::MiniMaxLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
@@ -183,6 +184,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         Arc::new(DeepSeekLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(MiniMaxLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
     registry.register_provider(

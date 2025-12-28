@@ -6,9 +6,9 @@ use settings::RegisterSetting;
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    minimax::MiniMaxSettings, mistral::MistralSettings, ollama::OllamaSettings,
+    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -19,6 +19,7 @@ pub struct AllLanguageModelSettings {
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
     pub mistral: MistralSettings,
+    pub minimax: MiniMaxSettings,
     pub ollama: OllamaSettings,
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
@@ -39,6 +40,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let google = language_models.google.unwrap();
         let lmstudio = language_models.lmstudio.unwrap();
         let mistral = language_models.mistral.unwrap();
+        let minimax = language_models.minimax.unwrap();
         let ollama = language_models.ollama.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
@@ -75,6 +77,10 @@ impl settings::Settings for AllLanguageModelSettings {
             mistral: MistralSettings {
                 api_url: mistral.api_url.unwrap(),
                 available_models: mistral.available_models.unwrap_or_default(),
+            },
+            minimax: MiniMaxSettings {
+                api_url: minimax.api_url.unwrap(),
+                available_models: minimax.available_models.unwrap_or_default(),
             },
             ollama: OllamaSettings {
                 api_url: ollama.api_url.unwrap(),

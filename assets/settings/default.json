@@ -2063,6 +2063,9 @@
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
     },
+    "minimax": {
+      "api_url": "https://api.minimaxi.com/v1",
+    },
     "vercel": {
       "api_url": "https://api.v0.dev/v1",
     },
