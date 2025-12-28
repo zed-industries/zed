@@ -127,6 +127,34 @@ pub fn data_dir() -> &'static PathBuf {
     })
 }
 
+pub fn state_dir() -> &'static PathBuf {
+    static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    STATE_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return dirs::home_dir()
+                .expect("failed to determine LocalData directory")
+                .join(".local")
+                .join("state")
+                .join("Zed");
+        }
+
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
+                flatpak_xdg_data.into()
+            } else {
+                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
+            }
+            .join("zed");
+        } else {
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
+        }
+
+        // home_dir().join(".local").join("share").join("zed")
+    })
+}
+
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -292,10 +320,9 @@ pub fn snippets_dir() -> &'static PathBuf {
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
-/// Returns the path to the contexts directory.
-///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
+// Returns old path to contexts directory.
+// Fallback
+fn text_threads_dir_fallback() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -304,6 +331,17 @@ pub fn text_threads_dir() -> &'static PathBuf {
             data_dir().join("conversations")
         }
     })
+}
+/// Returns the path to the contexts directory.
+///
+/// This is where the saved contexts from the Assistant are stored.
+pub fn text_threads_dir() -> &'static PathBuf {
+    let fallback_dir = text_threads_dir_fallback();
+    if fallback_dir.exists() {
+        return fallback_dir;
+    }
+    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXTS_DIR.get_or_init(|| state_dir().join("conversations"))
 }
 
 /// Returns the path to the contexts directory.
