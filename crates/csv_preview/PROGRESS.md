@@ -119,7 +119,9 @@ This document outlines the current state of the POC feature. It might not be the
 
 **Features:**
 - [x] feat: Implement initial filtering by column
-  - [ ] fix: Hide filtered out rows from filterables in adjacent columns
+  - [x] fix: Hide filtered out rows from filterables in adjacent columns (stacked filtering)
+    - [ ] fix: Sometimes stacked filtering implementation is too restrictive (especially with nulls). Investigate and fix
+  - [ ] feat: Update the filter popover to be persistent and with better ui
 - [ ] feat: Add search bar for filtering popover
 
 **Fixes:**

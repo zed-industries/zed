@@ -112,7 +112,7 @@ impl CsvPreviewView {
             .trigger_with_tooltip(
                 Button::new(
                     ElementId::NamedInteger("filter-button".into(), col.get() as u64),
-                    "⚏",
+                    if has_active_filters { "⛊" } else { "⛉" },
                 )
                 .size(ButtonSize::Compact)
                 .style(if has_active_filters {
