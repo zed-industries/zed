@@ -164,7 +164,9 @@ impl RenderOnce for Callout {
             .child(
                 v_flex()
                     .min_w_0()
+                    .min_h_0()
                     .w_full()
+                    .overflow_hidden()
                     .child(
                         h_flex()
                             .min_h(line_height)
@@ -192,16 +194,20 @@ impl RenderOnce for Callout {
                         if let Some(description_slot) = self.description_slot {
                             this.child(
                                 div()
+                                    .id("callout-description-slot")
                                     .w_full()
-                                    .flex_1()
+                                    .max_h_48()
+                                    .overflow_y_scroll()
                                     .text_ui_sm(cx)
                                     .child(description_slot),
                             )
                         } else if let Some(description) = self.description {
                             this.child(
                                 div()
+                                    .id("callout-description")
                                     .w_full()
-                                    .flex_1()
+                                    .max_h_48()
+                                    .overflow_y_scroll()
                                     .text_ui_sm(cx)
                                     .text_color(cx.theme().colors().text_muted)
                                     .child(description),
@@ -273,6 +279,39 @@ impl Component for Callout {
                     .title("Upgrade to Pro")
                     .description("• Unlimited threads\n• Priority support\n• Advanced analytics")
                     .actions_slot(multiple_actions())
+                    .into_any_element(),
+            )
+            .width(px(580.)),
+            single_example(
+                "Scrollable Long Description",
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title("API Error")
+                    .description_slot(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("You exceeded your current quota.").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("For more information, visit the docs.").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("").size(LabelSize::Small))
+                            .child(Label::new("Error details:").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("• Quota exceeded for metric").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("• Limit: 0").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("• Model: gemini-3-pro").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("").size(LabelSize::Small))
+                            .child(Label::new("Please retry in 26.33s.").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("").size(LabelSize::Small))
+                            .child(Label::new("Additional details:").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Request ID: abc123def456").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Timestamp: 2024-01-15T10:30:00Z").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Region: us-central1").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Service: generativelanguage.googleapis.com").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Error Code: RESOURCE_EXHAUSTED").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("- Retry After: 26s").size(LabelSize::Small).color(Color::Muted))
+                            .child(Label::new("").size(LabelSize::Small))
+                            .child(Label::new("This error occurs when you have exceeded your API quota.").size(LabelSize::Small).color(Color::Muted)),
+                    )
+                    .actions_slot(single_action())
                     .into_any_element(),
             )
             .width(px(580.)),
