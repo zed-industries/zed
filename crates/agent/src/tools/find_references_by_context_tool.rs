@@ -68,7 +68,7 @@ impl AgentTool for FindReferencesByContextTool {
 
         // Resolve project path and perform WorktreeSettings checks on the foreground thread (cx: &mut App).
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
-            Some(p) => p.clone(),
+            Some(p) => p,
             None => return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))),
         };
 
@@ -274,7 +274,7 @@ impl AgentTool for FindReferencesByContextTool {
                         let erow = e_pt.row;
                         if let Some(last) = merged.last_mut() {
                             // if this start row intersects or touches previous range, merge it
-                            if srow <= last.1 + 0 {
+                            if srow <= last.1 {
                                 if erow > last.1 {
                                     last.1 = erow;
                                     last.3 = *e_pt;

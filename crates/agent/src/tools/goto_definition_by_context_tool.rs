@@ -90,7 +90,7 @@ impl AgentTool for GotoDefinitionByContextTool {
         // Resolve project path and perform WorktreeSettings checks on the foreground thread (cx: &mut App).
         // This avoids calling `WorktreeSettings::get_global` and similar from within the async closure.
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
-            Some(p) => p.clone(),
+            Some(p) => p,
             None => return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))),
         };
 
@@ -249,9 +249,7 @@ impl AgentTool for GotoDefinitionByContextTool {
                         let token_point_end =
                             Point::new(pt.row, pt.column + input.token.len() as u32);
                         let token_range = token_point..token_point_end;
-                        let preview = if let Some(node) =
-                            snapshot.syntax_ancestor(token_range.clone())
-                        {
+                        let preview = if let Some(node) = snapshot.syntax_ancestor(token_range) {
                             let full_range = node.byte_range().to_point(&snapshot);
                             let span_lines =
                                 full_range.end.row.saturating_sub(full_range.start.row);
