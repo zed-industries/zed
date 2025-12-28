@@ -49,9 +49,7 @@ impl CsvPreviewView {
     ///
     /// Takes number of headers (+1 for line numbers col) and dispatches to `create_table<COLS>()`
     /// with the matching `TableColumnWidths<COLS>` entity.
-    pub(crate) fn render_table_with_cols(&self, cx: &mut Context<Self>, cols: usize) -> AnyElement {
-        // Add 1 for the line number column
-        self.column_widths.replace(cx, cols + 1);
+    pub(crate) fn render_table_with_cols(&self, cx: &mut Context<Self>) -> AnyElement {
         self.create_table(&self.column_widths.widths, cx)
     }
 }
