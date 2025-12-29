@@ -1339,4 +1339,3 @@ mod tests {
         assert!(!should_defer_scanning(&home.join("AppData").join("Local")));
     }
 }
-
