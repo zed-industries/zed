@@ -1184,4 +1184,26 @@ mod test {
         let result = background_executor.block(task);
         assert_eq!(result, None, "Cancelled task should return None");
     }
+
+    #[test]
+    fn test_app_liveness_token_can_be_dropped_on_background_thread() {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor, foreground_executor);
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
+
+        // Drop the token on a real background thread.
+        std::thread::spawn(move || {
+            drop(liveness_token);
+        })
+        .join()
+        .expect("Dropping AppLivenessToken on background thread should not panic");
+    }
 }
