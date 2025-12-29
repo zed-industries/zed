@@ -16,7 +16,6 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
-#[cfg(any(feature = "wayland", feature = "x11"))]
 use oo7::{Error as Oo7Error, dbus::{Error as DbusError, ServiceError}};
 use util::ResultExt as _;
 use util::command::{new_smol_command, new_std_command};
