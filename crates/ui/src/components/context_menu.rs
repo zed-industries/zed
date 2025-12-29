@@ -1142,10 +1142,8 @@ impl ContextMenu {
 
         // If we're switching from one submenu item to another, throw away any previously-captured
         // offset so we don't reuse a stale position.
-        if matches!(reason, SubmenuOpenTrigger::Keyboard) {
-            self.submenu_observed_bounds.set(None);
-            self.submenu_trigger_bounds.set(None);
-        }
+        self.submenu_observed_bounds.set(None);
+        self.submenu_trigger_bounds.set(None);
 
         self.submenu_safety_threshold_x = None;
         self.hover_target = HoverTarget::MainMenu;
