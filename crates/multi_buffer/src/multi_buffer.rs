@@ -4029,6 +4029,27 @@ impl MultiBufferSnapshot {
                         })
                         .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
                         .collect()
+                    // TODO: push rhs ranges as well
+                    syntax_diff
+                        .lhs_ranges
+                        .iter()
+                        .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
+                        .collect()
+                    let buffer = &excerpt.buffer;
+                    let buffer_hunk_start = hunk.buffer_range.start.to_offset(buffer);
+
+                    let lhs = syntax_diff.lhs_ranges.iter().map(|diff| {
+                        hunk_start_offset + diff.start..hunk_start_offset + diff.end
+                    });
+
+                    let rhs = syntax_diff.rhs_ranges.iter().map(|diff| {
+                        let start_anchor = buffer.anchor_before(buffer_hunk_start + diff.start);
+                        let end_anchor = buffer.anchor_after(buffer_hunk_start + diff.end);
+                        Anchor::in_buffer(excerpt.id, start_anchor).to_offset(self)
+                            ..Anchor::in_buffer(excerpt.id, end_anchor).to_offset(self)
+                    });
+
+                    lhs.chain(rhs).collect()
                 })
                     .unwrap_or_default();
 
