@@ -4384,6 +4384,56 @@ async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_drag_parent_folder_with_explicitly_selected_child(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "folder1": {
+                    "mod.rs": "// folder1 mod",
+                    "helper.rs": "// helper",
+                },
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/folder1", cx);
+
+    // Select both folder1 (parent) and folder1/mod.rs (child)
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder1", cx);
+    select_path_with_mark(&panel, "root/src/folder1/mod.rs", cx);
+
+    // Drag to root
+    drag_selection_to(&panel, "root", false, cx);
+
+    // Only folder1 should move (mod.rs should NOT be moved separately)
+    assert!(
+        find_project_entry(&panel, "root/folder1", cx).is_some(),
+        "folder1 should be at root after drag"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still be inside folder1"
+    );
+    assert!(
+        find_project_entry(&panel, "root/mod.rs", cx).is_none(),
+        "mod.rs should NOT exist at root level (not moved separately)"
+    );
+}
+
+#[gpui::test]
 async fn test_drag_name_collision(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -4425,9 +4475,18 @@ async fn test_drag_name_collision(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     // Prompt blocks the move; original files should remain intact.
-    assert!(find_project_entry(&panel, "root/src/folder1/mod.rs", cx).is_some(), "folder1/mod.rs should still exist");
-    assert!(find_project_entry(&panel, "root/src/folder2/mod.rs", cx).is_some(), "folder2/mod.rs should still exist");
-    assert!(find_project_entry(&panel, "root/dest/mod.rs", cx).is_none(), "dest/mod.rs should not exist (move blocked)");
+    assert!(
+        find_project_entry(&panel, "root/src/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/src/folder2/mod.rs", cx).is_some(),
+        "folder2/mod.rs should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/dest/mod.rs", cx).is_none(),
+        "dest/mod.rs should not exist (move blocked)"
+    );
 }
 
 #[gpui::test]
