@@ -20,11 +20,15 @@ impl SyntaxId {
 }
 
 /// A syntax tree stored as a Vec of nodes in preorder.
+#[derive(Debug)]
 pub struct SyntaxTree {
     nodes: Vec<SyntaxNode>,
 }
 
+// TODO: Can this just wrap tree sitter's node?
+// TODO: Can we compute the infos without traversing the tree?
 /// A single node in a syntax tree.
+#[derive(Debug)]
 pub struct SyntaxNode {
     id: SyntaxId,
     /// A hash of this node's structure (kind + children's hashes).
@@ -186,10 +190,10 @@ impl SyntaxTree {
     pub fn descendants(&self, id: SyntaxId) -> DescendantsIter {
         let node = self.get(id);
         let start = id.index() + 1;
-        let end = start + node.descendant_count;
+
         DescendantsIter {
             current: start,
-            end,
+            end: start + node.descendant_count,
         }
     }
 }
@@ -264,7 +268,7 @@ impl ExactSizeIterator for DescendantsIter {}
 /// Cursors are cheap to clone (just a reference and an index) and provide
 /// convenient navigation methods. They're designed to be stored in graph
 /// vertices for diff computation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SyntaxTreeCursor<'a> {
     tree: &'a SyntaxTree,
     current: Option<SyntaxId>,
@@ -474,4 +478,251 @@ fn build_tree_recursive(
     }
 
     this_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_json(source: &str) -> SyntaxTree {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_json::LANGUAGE.into())
+            .expect("failed to set language");
+        let tree = parser.parse(source, None).expect("failed to parse");
+        build_tree(tree.walk(), source.as_bytes())
+    }
+
+    fn parse_rust(source: &str) -> SyntaxTree {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("failed to set language");
+        let tree = parser.parse(source, None).expect("failed to parse");
+        build_tree(tree.walk(), source.as_bytes())
+    }
+
+    #[test]
+    fn empty_tree() {
+        let tree = SyntaxTree::new();
+        assert!(tree.is_empty());
+        assert_eq!(tree.len(), 0);
+        assert!(tree.root().is_none());
+
+        let mut cursor = SyntaxTreeCursor::new(&tree);
+        assert!(cursor.is_end());
+        assert!(!cursor.goto_first_child());
+        assert!(!cursor.goto_next_sibling());
+        assert!(!cursor.goto_parent());
+    }
+
+    #[test]
+    fn tree_structure_and_navigation() {
+        let tree = parse_json(r#"{"a": [1, 2], "b": 3}"#);
+
+        assert!(!tree.is_empty());
+        let root_id = tree.root().unwrap();
+        let root = tree.get(root_id);
+
+        assert!(root.is_list());
+        assert!(!root.is_atom());
+        assert!(root.descendant_count() > 0);
+        assert!(tree.parent(root_id).is_none());
+
+        let preorder: Vec<_> = tree.preorder().collect();
+        assert_eq!(preorder.len(), tree.len());
+        for (i, id) in preorder.iter().enumerate() {
+            assert_eq!(id.index(), i);
+        }
+    }
+
+    #[test]
+    fn node_ranges_and_containment() {
+        let source = r#"{"key": "value"}"#;
+        let tree = parse_json(source);
+
+        for id in tree.preorder() {
+            let node = tree.get(id);
+            let range = node.byte_range();
+            let content_range = node.content_range();
+
+            assert!(range.start <= range.end);
+            assert!(range.end <= source.len());
+            assert!(range.start <= content_range.start);
+            assert!(content_range.end <= range.end);
+
+            if node.is_atom() {
+                assert_eq!(range, content_range);
+            }
+
+            if let Some(parent_id) = tree.parent(id) {
+                let parent = tree.get(parent_id);
+                assert!(parent.byte_range().start <= range.start);
+                assert!(parent.byte_range().end >= range.end);
+            }
+        }
+    }
+
+    #[test]
+    fn structural_hash() {
+        let tree1 = parse_json("[1, 2]");
+        let tree2 = parse_json("[1, 2]");
+        let tree3 = parse_json("[1, 3]");
+
+        let hash1 = tree1.get(tree1.root().unwrap()).structural_hash();
+        let hash2 = tree2.get(tree2.root().unwrap()).structural_hash();
+        let hash3 = tree3.get(tree3.root().unwrap()).structural_hash();
+
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn children_and_siblings() {
+        let tree = parse_json("[1, 2, 3]");
+        let root_id = tree.root().unwrap();
+
+        if let Some(array_id) = tree.first_child(root_id) {
+            let children: Vec<_> = tree.children(array_id).collect();
+
+            for (i, child_id) in children.iter().enumerate() {
+                assert_eq!(tree.parent(*child_id), Some(array_id));
+
+                if i + 1 < children.len() {
+                    assert_eq!(tree.next_sibling(*child_id), Some(children[i + 1]));
+                } else {
+                    assert!(tree.next_sibling(*child_id).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ancestors_and_descendants() {
+        let tree = parse_json(r#"{"a": {"b": 1}}"#);
+        let root_id = tree.root().unwrap();
+
+        assert_eq!(tree.ancestors(root_id).count(), 0);
+
+        for id in tree.preorder() {
+            let node = tree.get(id);
+            let descendants: Vec<_> = tree.descendants(id).collect();
+            assert_eq!(descendants.len(), node.descendant_count());
+
+            if node.is_atom() {
+                assert!(tree.first_child(id).is_none());
+                assert_eq!(tree.children(id).count(), 0);
+            }
+        }
+
+        let descendants = tree.descendants(root_id);
+        let (lower, upper) = descendants.size_hint();
+        assert_eq!(Some(lower), upper);
+    }
+
+    #[test]
+    fn cursor_navigation() {
+        let tree = parse_json(r#"{"a": 1}"#);
+        let mut cursor = SyntaxTreeCursor::new(&tree);
+        let root_id = cursor.id();
+
+        assert!(!cursor.is_end());
+        assert_eq!(cursor.id(), tree.root());
+        assert_eq!(cursor.depth(), 0);
+
+        cursor.goto_first_child();
+        cursor.goto_first_child();
+        assert!(cursor.depth() > 0);
+
+        while cursor.goto_parent() {}
+        assert_eq!(cursor.id(), root_id);
+    }
+
+    #[test]
+    fn cursor_immutable_methods() {
+        let tree = parse_json("[1, 2]");
+        let cursor = SyntaxTreeCursor::new(&tree);
+        let original_id = cursor.id();
+
+        let _ = cursor.first_child();
+        let _ = cursor.next_sibling();
+        let _ = cursor.parent();
+
+        assert_eq!(cursor.id(), original_id);
+    }
+
+    #[test]
+    fn cursor_equality_and_hash() {
+        use std::collections::HashSet;
+
+        let tree = parse_json("[1, 2]");
+        let cursor1 = SyntaxTreeCursor::new(&tree);
+        let cursor2 = SyntaxTreeCursor::new(&tree);
+
+        assert_eq!(cursor1, cursor2);
+
+        let mut set = HashSet::new();
+        set.insert(cursor1);
+        set.insert(cursor2);
+        assert_eq!(set.len(), 1);
+
+        let tree2 = parse_json("[1, 2]");
+        let cursor3 = SyntaxTreeCursor::new(&tree2);
+        assert_ne!(cursor1, cursor3);
+    }
+
+    #[test]
+    fn rust_parsing() {
+        let tree = parse_rust(
+            r#"
+            use std::collections::HashMap;
+
+            pub struct Cache<K, V> {
+                data: HashMap<K, V>,
+            }
+
+            impl<K, V> Cache<K, V> {
+                pub fn new() -> Self {
+                    Self { data: HashMap::new() }
+                }
+            }
+        "#,
+        );
+
+        assert!(!tree.is_empty());
+
+        let mut max_depth = 0;
+        for id in tree.preorder() {
+            max_depth = max_depth.max(tree.ancestors(id).count());
+        }
+        assert!(max_depth >= 3);
+
+        let tree1 = parse_rust("fn foo() {}");
+        let tree2 = parse_rust("fn bar() {}");
+        assert_ne!(
+            tree1.get(tree1.root().unwrap()).structural_hash(),
+            tree2.get(tree2.root().unwrap()).structural_hash()
+        );
+    }
+
+    #[test]
+    fn edge_cases() {
+        let tree = parse_json(r#"{"emoji": "🦀", "text": "你好"}"#);
+        assert!(!tree.is_empty());
+        for id in tree.preorder() {
+            let node = tree.get(id);
+            assert!(node.byte_range().start <= node.byte_range().end);
+        }
+
+        let mut json = "1".to_string();
+        for _ in 0..20 {
+            json = format!("[{}]", json);
+        }
+        let tree = parse_json(&json);
+        let mut max_depth = 0;
+        for id in tree.preorder() {
+            max_depth = max_depth.max(tree.ancestors(id).count());
+        }
+        assert!(max_depth >= 20);
+    }
 }
