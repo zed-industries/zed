@@ -1,8 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, AppLivenessToken, BackgroundExecutor,
-    BorrowAppContext, Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton,
-    PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext, Window,
-    WindowHandle,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
+    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
+    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -17,7 +16,7 @@ use super::{Context, WeakEntity};
 #[derive(Clone)]
 pub struct AsyncApp {
     pub(crate) app: Weak<AppCell>,
-    pub(crate) liveness_token: AppLivenessToken,
+    pub(crate) liveness_token: std::sync::Weak<()>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
 }

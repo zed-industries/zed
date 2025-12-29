@@ -254,11 +254,9 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let metadata = task.metadata();
     let location = metadata.location;
 
-    if let Some(ref app_token) = metadata.app {
-        if !app_token.is_alive() {
-            drop(task);
-            return;
-        }
+    if !metadata.is_app_alive() {
+        drop(task);
+        return;
     }
 
     let start = Instant::now();

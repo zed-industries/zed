@@ -178,12 +178,10 @@ impl TestDispatcher {
         // todo(localcc): add timings to tests
         match runnable {
             RunnableVariant::Meta(runnable) => {
-                if let Some(ref app_token) = runnable.metadata().app {
-                    if !app_token.is_alive() {
-                        drop(runnable);
-                        self.state.lock().is_main_thread = was_main_thread;
-                        return true;
-                    }
+                if !runnable.metadata().is_app_alive() {
+                    drop(runnable);
+                    self.state.lock().is_main_thread = was_main_thread;
+                    return true;
                 }
                 runnable.run()
             }

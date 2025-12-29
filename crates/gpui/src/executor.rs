@@ -1,6 +1,4 @@
-use crate::{
-    App, AppLivenessToken, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler,
-};
+use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use parking_lot::{Condvar, Mutex};
@@ -787,7 +785,7 @@ impl ForegroundExecutor {
     #[track_caller]
     pub(crate) fn spawn_context<R>(
         &self,
-        app: AppLivenessToken,
+        app: std::sync::Weak<()>,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
     where
@@ -799,7 +797,7 @@ impl ForegroundExecutor {
     #[track_caller]
     pub(crate) fn inner_spawn<R>(
         &self,
-        app: Option<AppLivenessToken>,
+        app: Option<std::sync::Weak<()>>,
         priority: Priority,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
@@ -814,7 +812,7 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
-            app: Option<AppLivenessToken>,
+            app: Option<std::sync::Weak<()>>,
             priority: Priority,
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
@@ -980,7 +978,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
 
         let task_ran = Rc::new(RefCell::new(false));
 
@@ -1015,7 +1013,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
         let app_weak = Rc::downgrade(&app);
 
         let task_ran = Rc::new(RefCell::new(false));
@@ -1052,7 +1050,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
         let app_weak = Rc::downgrade(&app);
 
         let outer_completed = Rc::new(RefCell::new(false));
@@ -1070,25 +1068,20 @@ mod test {
         let inner_executor = foreground_executor.clone();
         let inner_liveness_token = liveness_token.clone();
 
-        // Spawn outer task that will spawn and await an inner task
         foreground_executor
             .spawn_context(liveness_token, async move {
-                let inner_flag_clone = Rc::clone(&inner_flag);
-
-                // Spawn inner task that blocks on a channel
-                let inner_task = inner_executor.spawn_context(inner_liveness_token, async move {
-                    // Wait for signal (which will never come - we'll drop the app instead)
-                    rx.await.ok();
-                    *inner_flag_clone.borrow_mut() = true;
+                let inner_task = inner_executor.spawn_context(inner_liveness_token, {
+                    let inner_flag = Rc::clone(&inner_flag);
+                    async move {
+                        rx.await.ok();
+                        *inner_flag.borrow_mut() = true;
+                    }
                 });
 
-                // Mark that we've reached the await point
                 *await_flag.borrow_mut() = true;
 
-                // Await inner task - this should not panic when both are cancelled
                 inner_task.await;
 
-                // Mark outer as complete (should never reach here)
                 *outer_flag.borrow_mut() = true;
             })
             .detach();
@@ -1178,7 +1171,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
         let app_weak = Rc::downgrade(&app);
 
         let task = foreground_executor.spawn_context(liveness_token, async move { 42 });
@@ -1204,7 +1197,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
         let app_weak = Rc::downgrade(&app);
 
         let task = foreground_executor
@@ -1223,23 +1216,22 @@ mod test {
 
     #[test]
     fn test_app_liveness_token_can_be_dropped_on_background_thread() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let dispatcher = Arc::new(TestDispatcher::new(StdRng::seed_from_u64(0)));
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
 
         let platform = TestPlatform::new(background_executor, foreground_executor);
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
 
-        // Drop the token on a real background thread.
+        // Dispatcher is single threaded when testing, so we need to spawn a real thread
         std::thread::spawn(move || {
             drop(liveness_token);
         })
         .join()
-        .expect("Dropping AppLivenessToken on background thread should not panic");
+        .expect("Dropping Weak<()> on background thread should not panic");
     }
 }
