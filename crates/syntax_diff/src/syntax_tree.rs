@@ -377,11 +377,15 @@ impl Hash for SyntaxTreeCursor<'_> {
 ///
 /// The source text is used to compute structural hashes that include
 /// the actual content of leaf nodes, not just their types.
+///
+/// Byte ranges in the resulting tree are made relative to the root node's
+/// start position, so they can be used as offsets within a text slice.
 pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &[u8]) -> SyntaxTree {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
+    let base_offset = cursor.node().start_byte();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
-        build_tree_recursive(&mut cursor, &mut nodes, None, source);
+        build_tree_recursive(&mut cursor, &mut nodes, None, source, base_offset);
     }
 
     SyntaxTree { nodes }
@@ -392,15 +396,17 @@ fn build_tree_recursive(
     nodes: &mut Vec<SyntaxNode>,
     parent: Option<SyntaxId>,
     source: &[u8],
+    base_offset: usize,
 ) -> SyntaxId {
     let ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
+    let byte_range = ts_node.start_byte() - base_offset..ts_node.end_byte() - base_offset;
 
     nodes.push(SyntaxNode {
         id: this_id,
         structural_hash: 0,
-        byte_range: ts_node.byte_range(),
-        content_range: ts_node.byte_range(),
+        byte_range: byte_range.clone(),
+        content_range: byte_range,
         descendant_count: ts_node.descendant_count() - 1,
         depth: parent
             .map(|parent| nodes[parent.index()].depth + 1)
@@ -412,13 +418,13 @@ fn build_tree_recursive(
     ts_node.kind_id().hash(&mut hasher);
 
     let mut first_child_start = None;
-    let mut last_child_end = ts_node.end_byte();
+    let mut last_child_end = ts_node.end_byte() - base_offset;
 
     if cursor.goto_first_child() {
-        first_child_start = Some(cursor.node().start_byte());
+        first_child_start = Some(cursor.node().start_byte() - base_offset);
 
         loop {
-            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
+            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source, base_offset);
             let child_node = &nodes[child_id.index()];
 
             last_child_end = child_node.byte_range.end;
