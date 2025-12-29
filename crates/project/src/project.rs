@@ -1292,15 +1292,6 @@ impl Project {
 
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
-            if init_worktree_trust {
-                trusted_worktrees::track_worktree_trust(
-                    worktree_store.clone(),
-                    Some(RemoteHostLocation::from(connection_options)),
-                    None,
-                    Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
-                    cx,
-                );
-            }
 
             let weak_self = cx.weak_entity();
             let context_server_store =
@@ -1497,6 +1488,18 @@ impl Project {
             DapStore::init(&remote_proto, cx);
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
+
+            // Initialize worktree trust *after* handlers are registered to prevent
+            // race conditions where the server sends messages before the client is ready.
+            if init_worktree_trust {
+                trusted_worktrees::track_worktree_trust(
+                    this.worktree_store.clone(),
+                    Some(RemoteHostLocation::from(connection_options)),
+                    None,
+                    Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                    cx,
+                );
+            }
 
             this
         })

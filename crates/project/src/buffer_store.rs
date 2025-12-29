@@ -1545,6 +1545,9 @@ impl BufferStore {
             if client.send(initial_state).log_err().is_some() {
                 let client = client.clone();
                 cx.background_spawn(async move {
+                    // Yield to allow State message to be written to transport first
+                    smol::future::yield_now().await;
+
                     let mut chunks = split_operations(operations).peekable();
                     while let Some(chunk) = chunks.next() {
                         let is_last = chunks.peek().is_none();
@@ -1562,8 +1565,7 @@ impl BufferStore {
                     }
                     anyhow::Ok(())
                 })
-                .await
-                .log_err();
+                .detach();
             }
             Ok(())
         })

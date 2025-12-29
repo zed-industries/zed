@@ -218,105 +218,119 @@ async fn build_remote_server_from_source(
             RemoteOs::Windows => "pc-windows-gnu",
         }
     );
-    let mut rust_flags = match std::env::var("RUSTFLAGS") {
-        Ok(val) => val,
-        Err(VarError::NotPresent) => String::new(),
-        Err(e) => {
-            log::error!("Failed to get env var `RUSTFLAGS` value: {e}");
-            String::new()
-        }
-    };
-    if platform.os == RemoteOs::Linux && use_musl {
-        rust_flags.push_str(" -C target-feature=+crt-static");
 
-        if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
-            rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
-        }
-    }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
-    if platform.arch.as_str() == std::env::consts::ARCH
-        && platform.os.as_str() == std::env::consts::OS
-    {
-        delegate.set_status(Some("Building remote server binary from source"), cx);
-        log::info!("building remote server binary from source");
-        run_cmd(
-            new_smol_command("cargo")
-                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env("RUSTFLAGS", &rust_flags),
-        )
-        .await?;
-    } else {
-        if which("zig", cx).await?.is_none() {
-            anyhow::bail!(if cfg!(not(windows)) {
-                "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
-            } else {
-                "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
-            });
-        }
-
-        let rustup = which("rustup", cx)
-            .await?
-            .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
-        delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-        log::info!("adding rustup target");
-        run_cmd(
-            new_smol_command(rustup)
-                .args(["target", "add"])
-                .arg(&triple),
-        )
-        .await?;
-
-        if which("cargo-zigbuild", cx).await?.is_none() {
-            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-            log::info!("installing cargo-zigbuild");
-            run_cmd(new_smol_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
-                .await?;
-        }
-
-        delegate.set_status(
-            Some(&format!(
-                "Building remote binary from source for {triple} with Zig"
-            )),
-            cx,
-        );
-        log::info!("building remote binary from source for {triple} with Zig");
-        run_cmd(
-            new_smol_command("cargo")
-                .args([
-                    "zigbuild",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env("RUSTFLAGS", &rust_flags),
-        )
-        .await?;
-    };
-    let bin_path = Path::new("target")
+    let workspace_root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let bin_path_buf = workspace_root
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")
         .join("remote_server")
         .with_extension(if platform.os.is_windows() { "exe" } else { "" });
+    let bin_path = bin_path_buf.as_path();
+
+    // Check if binary already exists. Use ZED_BUILD_REMOTE_SERVER=force to always rebuild.
+    let force_rebuild = build_remote_server.contains("force");
+    if bin_path.exists() && !force_rebuild {
+        log::info!(
+            "found existing remote server binary at {:?}, skipping build (set ZED_BUILD_REMOTE_SERVER=force to rebuild)",
+            bin_path
+        );
+    } else {
+        let mut rust_flags = match std::env::var("RUSTFLAGS") {
+            Ok(val) => val,
+            Err(VarError::NotPresent) => String::new(),
+            Err(e) => {
+                log::error!("Failed to get env var `RUSTFLAGS` value: {e}");
+                String::new()
+            }
+        };
+        if platform.os == RemoteOs::Linux && use_musl {
+            rust_flags.push_str(" -C target-feature=+crt-static");
+
+            if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
+                rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
+            }
+        }
+        if build_remote_server.contains("mold") {
+            rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
+        }
+
+        if platform.arch.as_str() == std::env::consts::ARCH
+            && platform.os.as_str() == std::env::consts::OS
+        {
+            delegate.set_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(
+                new_smol_command("cargo")
+                    .current_dir(workspace_root)
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
+        } else {
+            if which("zig", cx).await?.is_none() {
+                anyhow::bail!(if cfg!(not(windows)) {
+                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
+                } else {
+                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
+                });
+            }
+
+            let rustup = which("rustup", cx)
+                .await?
+                .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
+            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+            log::info!("adding rustup target");
+            run_cmd(
+                new_smol_command(rustup)
+                    .args(["target", "add"])
+                    .arg(&triple),
+            )
+            .await?;
+
+            if which("cargo-zigbuild", cx).await?.is_none() {
+                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+                log::info!("installing cargo-zigbuild");
+                run_cmd(new_smol_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
+                    .await?;
+            }
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(
+                new_smol_command("cargo")
+                    .args([
+                        "zigbuild",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
+            .await?;
+        };
+    }
 
     let path = if !build_remote_server.contains("nocompress") {
         delegate.set_status(Some("Compressing binary"), cx);
@@ -330,7 +344,7 @@ async fn build_remote_server_from_source(
         {
             // On Windows, we use 7z to compress the binary
 
-            let seven_zip = which("7z.exe",cx)
+            let seven_zip = which("7z.exe", cx)
                 .await?
                 .context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
             let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
@@ -346,11 +360,11 @@ async fn build_remote_server_from_source(
             .await?;
         }
 
-        let mut archive_path = bin_path;
+        let mut archive_path = bin_path.to_path_buf();
         archive_path.set_extension("gz");
-        std::env::current_dir()?.join(archive_path)
+        archive_path
     } else {
-        bin_path
+        bin_path.to_path_buf()
     };
 
     Ok(Some(path))
