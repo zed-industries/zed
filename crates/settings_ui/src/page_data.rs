@@ -27,7 +27,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: PROJECT,
-            indent_level: 0,
                     title: "Project Name",
                     description: "The displayed name of this project. If left empty, the root directory name will be displayed.",
                     field: Box::new(
@@ -60,7 +59,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Last Window Closed",
@@ -76,7 +74,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
@@ -92,7 +89,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
@@ -108,7 +104,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Redact Private Values",
@@ -124,7 +119,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Private Files",
@@ -143,7 +137,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Security"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -166,7 +159,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Workspace Restoration"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -189,7 +181,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
@@ -205,12 +196,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Preview Channel",
                     description: "Which settings should be activated only in Preview build of Zed.",
                     field: Box::new(
@@ -229,7 +218,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Settings Profiles",
                     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
                     field: Box::new(
@@ -266,7 +254,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Metrics",
@@ -285,7 +272,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Auto Update"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -300,7 +286,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -311,7 +296,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER,
-            indent_level: 0,
                         title: "Theme Mode",
                         description: "Choose a static, fixed theme or dynamically select themes based on appearance and light/dark modes.",
                         field: Box::new(SettingField {
@@ -371,7 +355,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ThemeSelectionDiscriminants::Static => vec![
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Theme Name",
                                     description: "The name of your selected theme.",
                                     field: Box::new(SettingField {
@@ -400,7 +383,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ThemeSelectionDiscriminants::Dynamic => vec![
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Mode",
                                     description: "Choose whether to use the selected light or dark theme or to follow your OS appearance configuration.",
                                     field: Box::new(SettingField {
@@ -427,7 +409,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Light Theme",
                                     description: "The theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
                                     field: Box::new(SettingField {
@@ -454,7 +435,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Dark Theme",
                                     description: "The theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
                                     field: Box::new(SettingField {
@@ -486,7 +466,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER,
-            indent_level: 0,
                         title: "Icon Theme",
                         description: "The custom set of icons Zed will associate with files and directories.",
                         field: Box::new(SettingField {
@@ -546,7 +525,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::IconThemeSelectionDiscriminants::Static => vec![
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Icon Theme Name",
                                     description: "The name of your selected icon theme.",
                                     field: Box::new(SettingField {
@@ -575,7 +553,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::IconThemeSelectionDiscriminants::Dynamic => vec![
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Mode",
                                     description: "Choose whether to use the selected light or dark icon theme or to follow your OS appearance configuration.",
                                     field: Box::new(SettingField {
@@ -602,7 +579,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Light Icon Theme",
                                     description: "The icon theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
                                     field: Box::new(SettingField {
@@ -629,7 +605,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Dark Icon Theme",
                                     description: "The icon theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
                                     field: Box::new(SettingField {
@@ -669,7 +644,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Size",
@@ -681,7 +655,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Weight",
@@ -693,12 +666,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER,
-            indent_level: 0,
                         title: "Line Height",
                         description: "Line height for editor text.",
                         field: Box::new(SettingField {
@@ -745,7 +716,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::BufferLineHeightDiscriminants::Custom => vec![
                                 SettingItem {
                                     files: USER,
-            indent_level: 0,
                                     title: "Custom Line Height",
                                     description: "Custom line height value (must be at least 1.0).",
                                     field: Box::new(SettingField {
@@ -776,7 +746,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Font Features",
                     description: "The OpenType features to enable for rendering in text buffers.",
                     field: Box::new(
@@ -796,7 +765,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in text buffers.",
                     field: Box::new(
@@ -825,7 +793,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Size",
@@ -837,7 +804,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Weight",
@@ -849,11 +815,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Font Features",
                     description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
@@ -873,7 +837,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in the UI.",
                     field: Box::new(
@@ -908,7 +871,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Size",
@@ -929,7 +891,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -947,7 +908,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Blink",
@@ -959,7 +919,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
@@ -971,7 +930,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Mouse",
@@ -983,7 +941,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1001,7 +958,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
@@ -1018,7 +974,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selection Highlight",
@@ -1035,7 +990,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Rounded Selection",
@@ -1047,7 +1001,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Minimum Contrast For Highlights",
@@ -1067,7 +1020,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1094,7 +1046,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER | PROJECT,
-            indent_level: 0,
                 }),
                 // todo(settings_ui): This needs a custom component
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1119,7 +1070,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER | PROJECT,
-            indent_level: 0,
                 }),
             ],
         },
@@ -1161,7 +1111,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         ..Default::default()
                     })),
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Modal Editing"),
                 // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
@@ -1178,7 +1127,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Helix Mode",
@@ -1192,7 +1140,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -1204,7 +1151,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     SettingsPageItem::DynamicItem(DynamicItem {
                         discriminant: SettingItem {
                             files: USER,
-            indent_level: 0,
                             title: "Auto Save Mode",
                             description: "When to auto save buffer changes.",
                             field: Box::new(SettingField {
@@ -1256,7 +1202,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings::AutosaveSettingDiscriminants::AfterDelay => vec![
                                     SettingItem {
                                         files: USER,
-            indent_level: 0,
                                         title: "Delay (milliseconds)",
                                         description: "Save after inactivity period (in milliseconds).",
                                         field: Box::new(SettingField {
@@ -1309,7 +1254,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Menu Delay",
@@ -1331,7 +1275,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1348,7 +1291,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Expand Excerpt Lines",
@@ -1364,7 +1306,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Excerpt Context Lines",
@@ -1380,7 +1321,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Expand Outlines With Depth",
@@ -1404,7 +1344,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Scrolling"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1421,7 +1360,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Vertical Scroll Margin",
@@ -1437,7 +1375,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Horizontal Scroll Margin",
@@ -1453,7 +1390,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Scroll Sensitivity",
@@ -1469,7 +1405,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Fast Scroll Sensitivity",
@@ -1485,7 +1420,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Autoscroll On Clicks",
@@ -1501,7 +1435,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Sticky Scroll",
@@ -1517,7 +1450,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1534,7 +1466,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Signature Help After Edits",
@@ -1553,7 +1484,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Snippet Sort Order",
@@ -1569,7 +1499,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Hover Popover"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1586,7 +1515,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     // todo(settings ui): add units to this number input
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1603,7 +1531,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Drag And Drop Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1628,7 +1555,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Delay",
@@ -1652,7 +1578,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Gutter"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1677,7 +1602,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
@@ -1693,7 +1617,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Runnables",
@@ -1717,7 +1640,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Breakpoints",
@@ -1741,7 +1663,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Folds",
@@ -1762,7 +1683,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Min Line Number Digits",
@@ -1786,7 +1706,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Inline Code Actions",
@@ -1802,7 +1721,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Scrollbar"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -1823,7 +1741,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Cursors",
@@ -1843,7 +1760,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Git Diff",
@@ -1868,7 +1784,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Search Results",
@@ -1893,7 +1808,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Text",
@@ -1918,7 +1832,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Symbol",
@@ -1943,7 +1856,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Diagnostics",
@@ -1968,7 +1880,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Horizontal Scrollbar",
@@ -1997,7 +1908,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Vertical Scrollbar",
@@ -2026,7 +1936,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Minimap"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2044,7 +1953,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Display In",
@@ -2069,7 +1977,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Thumb",
@@ -2089,7 +1996,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Thumb Border",
@@ -2114,7 +2020,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Current Line Highlight",
@@ -2139,7 +2044,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Max Width Columns",
@@ -2164,7 +2068,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Toolbar"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2190,7 +2093,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Quick Actions",
@@ -2215,7 +2117,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selections Menu",
@@ -2240,7 +2141,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Agent Review",
@@ -2265,7 +2165,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Code Actions",
@@ -2290,7 +2189,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                 ];
                 items.extend(language_settings_data());
@@ -2322,7 +2220,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         ),
                         metadata: None,
                         files: USER | PROJECT,
-            indent_level: 0,
                     }),
                 ]);
 
@@ -2341,7 +2238,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Include Warnings",
@@ -2362,7 +2258,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Inline Diagnostics"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2386,7 +2281,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Update Debounce",
@@ -2409,7 +2303,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Padding",
@@ -2432,7 +2325,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Minimum Column",
@@ -2455,7 +2347,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("LSP Pull Diagnostics"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2479,7 +2370,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     // todo(settings_ui): Needs unit
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2503,7 +2393,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-                        indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("LSP Highlights"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2518,7 +2407,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-                        indent_level: 0,
                     }),
                 ]);
 
@@ -2573,7 +2461,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Case Sensitive",
@@ -2598,7 +2485,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Smartcase Search",
@@ -2614,7 +2500,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored",
@@ -2639,7 +2524,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Regex",
@@ -2655,7 +2539,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Search Wrap",
@@ -2669,7 +2552,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Center on Match",
@@ -2693,7 +2575,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Seed Search Query From Cursor",
@@ -2712,7 +2593,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("File Finder"),
                 // todo: null by default
@@ -2739,7 +2619,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
@@ -2758,7 +2637,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Modal Max Width",
@@ -2781,7 +2659,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Skip Focus For Active In Search",
@@ -2804,7 +2681,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -2823,7 +2699,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("File Scan"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2847,7 +2722,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Scan Inclusions",
@@ -2870,7 +2744,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore File State",
@@ -2886,7 +2759,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Close on File Delete",
@@ -2902,7 +2774,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -2927,7 +2798,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Language Button",
@@ -2950,7 +2820,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Position Button",
@@ -2973,7 +2842,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Button",
@@ -2989,7 +2857,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Diagnostics Button",
@@ -3005,7 +2872,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Search Button",
@@ -3025,7 +2891,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Debugger Button",
@@ -3041,7 +2906,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3065,7 +2929,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Name",
@@ -3088,7 +2951,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Project Items",
@@ -3111,7 +2973,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Onboarding Banner",
@@ -3134,7 +2995,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Sign In",
@@ -3153,7 +3013,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show User Menu",
@@ -3172,7 +3031,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show User Picture",
@@ -3195,7 +3053,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Menus",
@@ -3214,7 +3071,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Tab Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3229,7 +3085,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Git Status In Tabs",
@@ -3245,7 +3100,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show File Icons In Tabs",
@@ -3261,7 +3115,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Close Position",
@@ -3277,11 +3130,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Maximum Tabs",
                     description: "Maximum open tabs in a pane. Will not close an unsaved tab.",
                     // todo(settings_ui): The default for this value is null and it's use in code
@@ -3319,7 +3170,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Tab Bar Buttons",
@@ -3342,7 +3192,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3362,7 +3211,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Show Diagnostics",
@@ -3381,7 +3229,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Close Button",
@@ -3400,7 +3247,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3420,7 +3266,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From Project Panel",
@@ -3443,7 +3288,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From File Finder",
@@ -3466,7 +3310,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From Multibuffer",
@@ -3489,7 +3332,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview Multibuffer From Code Navigation",
@@ -3512,7 +3354,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview File From Code Navigation",
@@ -3535,7 +3376,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Keep Preview On Code Navigation",
@@ -3558,7 +3398,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3575,11 +3414,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Centered Layout Left Padding",
                     description: "Left padding for centered layout.",
                     field: Box::new(SettingField {
@@ -3604,7 +3441,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Centered Layout Right Padding",
                     description: "Right padding for centered layout.",
                     field: Box::new(SettingField {
@@ -3643,7 +3479,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Window Decorations",
@@ -3659,7 +3494,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Pane Modifiers"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3685,7 +3519,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Border Size",
@@ -3710,7 +3543,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Zoomed Padding",
@@ -3724,7 +3556,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Pane Split Direction"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3744,7 +3575,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Horizontal Split Direction",
@@ -3763,7 +3593,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -3785,7 +3614,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Default Width",
@@ -3808,7 +3636,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide .gitignore",
@@ -3831,7 +3658,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Entry Spacing",
@@ -3854,7 +3680,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
@@ -3873,7 +3698,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Folder Icons",
@@ -3896,7 +3720,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -3915,7 +3738,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Indent Size",
@@ -3938,7 +3760,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
@@ -3961,7 +3782,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Starts Open",
@@ -3984,7 +3804,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
@@ -4007,7 +3826,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Scrollbar",
@@ -4036,7 +3854,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Diagnostics",
@@ -4059,7 +3876,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sticky Scroll",
@@ -4082,11 +3898,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Show Indent Guides",
                     description: "Show indent guides in the project panel.",
                     field: Box::new(
@@ -4134,7 +3948,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Root",
@@ -4153,7 +3966,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Hidden",
@@ -4176,7 +3988,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hidden Files",
@@ -4195,7 +4006,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Auto Open Files"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4212,7 +4022,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Paste",
@@ -4228,7 +4037,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Drop",
@@ -4244,7 +4052,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sort Mode",
@@ -4263,7 +4070,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Terminal Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4278,7 +4084,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4298,7 +4103,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Dock",
@@ -4314,7 +4118,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Default Width",
@@ -4337,7 +4140,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
@@ -4356,7 +4158,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Folder Icons",
@@ -4379,7 +4180,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -4398,7 +4198,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Indent Size",
@@ -4421,7 +4220,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
@@ -4444,7 +4242,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
@@ -4467,11 +4264,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-            indent_level: 0,
                     title: "Show Indent Guides",
                     description: "When to show indent guides in the outline panel.",
                     field: Box::new(
@@ -4513,7 +4308,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Panel Dock",
@@ -4527,7 +4321,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Panel Default Width",
@@ -4546,7 +4339,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Panel Status Style",
@@ -4565,7 +4357,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Fallback Branch Name",
@@ -4588,7 +4379,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sort By Path",
@@ -4607,7 +4397,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collapse Untracked Diff",
@@ -4630,7 +4419,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tree View",
@@ -4649,7 +4437,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scroll Bar",
@@ -4678,7 +4465,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Debugger Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4693,7 +4479,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Notification Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4717,7 +4502,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Dock",
@@ -4736,7 +4520,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Default Width",
@@ -4759,7 +4542,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Collaboration Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4783,7 +4565,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Dock",
@@ -4802,7 +4583,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Default Width",
@@ -4825,7 +4605,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Agent Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4840,7 +4619,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Panel Dock",
@@ -4854,7 +4632,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Panel Default Width",
@@ -4870,7 +4647,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Panel Default Height",
@@ -4889,7 +4665,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -4918,7 +4693,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Save Breakpoints",
@@ -4941,7 +4715,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Timeout",
@@ -4957,7 +4730,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Log DAP Communications",
@@ -4980,7 +4752,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Format DAP Log Messages",
@@ -5003,7 +4774,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -5014,7 +4784,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER | PROJECT,
-            indent_level: 0,
                         title: "Shell",
                         description: "What shell to use when opening a terminal.",
                         field: Box::new(SettingField {
@@ -5087,7 +4856,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ShellDiscriminants::Program => vec![
                                 SettingItem {
                                     files: USER | PROJECT,
-            indent_level: 0,
                                     title: "Program",
                                     description: "The shell program to use.",
                                     field: Box::new(SettingField {
@@ -5118,7 +4886,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ShellDiscriminants::WithArguments => vec![
                                 SettingItem {
                                     files: USER | PROJECT,
-            indent_level: 0,
                                     title: "Program",
                                     description: "The shell program to run.",
                                     field: Box::new(SettingField {
@@ -5147,7 +4914,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER | PROJECT,
-            indent_level: 0,
                                     title: "Arguments",
                                     description: "The arguments to pass to the shell program.",
                                     field: Box::new(
@@ -5179,7 +4945,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 },
                                 SettingItem {
                                     files: USER | PROJECT,
-            indent_level: 0,
                                     title: "Title Override",
                                     description: "An optional string to override the title of the terminal tab.",
                                     field: Box::new(SettingField {
@@ -5210,7 +4975,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER | PROJECT,
-            indent_level: 0,
                         title: "Working Directory",
                         description: "What working directory to use when launching the terminal.",
                         field: Box::new(SettingField {
@@ -5271,7 +5035,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::WorkingDirectoryDiscriminants::Always => vec![
                                 SettingItem {
                                     files: USER | PROJECT,
-            indent_level: 0,
                                     title: "Directory",
                                     description: "The directory path to use (will be shell expanded).",
                                     field: Box::new(SettingField {
@@ -5321,7 +5084,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER | PROJECT,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Detect Virtual Environment",
@@ -5349,7 +5111,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER | PROJECT,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Font"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5370,7 +5131,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Family",
@@ -5393,7 +5153,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Fallbacks",
@@ -5419,7 +5178,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Weight",
@@ -5438,7 +5196,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Font Features",
@@ -5464,7 +5221,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Display Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5487,7 +5243,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
@@ -5506,7 +5261,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Blinking",
@@ -5522,7 +5276,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Alternate Scroll",
@@ -5545,7 +5298,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Minimum Contrast",
@@ -5568,7 +5320,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Behavior Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5588,7 +5339,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Copy On Select",
@@ -5607,7 +5357,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Keep Selection On Copy",
@@ -5630,7 +5379,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Layout Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5650,7 +5398,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Default Height",
@@ -5669,7 +5416,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Advanced Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5693,7 +5439,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scroll Multiplier",
@@ -5712,7 +5457,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5740,7 +5484,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Scrollbar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5770,7 +5513,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -5781,7 +5523,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER,
-            indent_level: 0,
                         title: "Disable Git Integration",
                         description: "Disable all Git integration features in Zed.",
                         field: Box::new(SettingField::<bool> {
@@ -5821,7 +5562,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         vec![
                             SettingItem {
                                 files: USER,
-            indent_level: 0,
                                 title: "Enable Git Status",
                                 description: "Show Git status information in the editor.",
                                 field: Box::new(SettingField::<bool> {
@@ -5848,7 +5588,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             },
                             SettingItem {
                                 files: USER,
-            indent_level: 0,
                                 title: "Enable Git Diff",
                                 description: "Show Git diff information in the editor.",
                                 field: Box::new(SettingField::<bool> {
@@ -5889,7 +5628,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 // todo(settings_ui): Figure out the right default for this value in default.json
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5906,7 +5644,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Inline Git Blame"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5934,7 +5671,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Delay",
@@ -5961,7 +5697,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Padding",
@@ -5988,7 +5723,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Minimum Column",
@@ -6015,7 +5749,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
@@ -6042,7 +5775,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Git Blame View"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -6070,7 +5802,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Branch Picker"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -6098,7 +5829,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Git Hunks"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -6113,7 +5843,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Path Style",
@@ -6127,7 +5856,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -6149,7 +5877,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Share On Join",
@@ -6165,7 +5892,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SectionHeader("Experimental"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -6182,7 +5908,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Microphone Volume",
@@ -6205,7 +5930,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Speaker Volume",
@@ -6228,7 +5952,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Denoise",
@@ -6242,7 +5965,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Legacy Audio Compatible",
@@ -6265,7 +5987,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -6286,7 +6007,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SectionHeader("Agent Configuration"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -6310,7 +6030,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Single File Review",
@@ -6329,7 +6048,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Enable Feedback",
@@ -6348,7 +6066,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Notify When Agent Waiting",
@@ -6371,7 +6088,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Play Sound When Agent Done",
@@ -6394,7 +6110,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Expand Edit Card",
@@ -6413,7 +6128,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Expand Terminal Card",
@@ -6436,7 +6150,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Use Modifier To Send",
@@ -6459,7 +6172,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Message Editor Min Lines",
@@ -6482,7 +6194,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }),
                         metadata: None,
                         files: USER,
-            indent_level: 0,
                     }),
                 ];
                 items.extend(edit_prediction_language_settings_section());
@@ -6502,7 +6213,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             }),
                             metadata: None,
                             files: USER,
-            indent_level: 0,
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
                             title: "Display In Text Threads",
@@ -6518,7 +6228,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             }),
                             metadata: None,
                             files: USER,
-            indent_level: 0,
                         }),
                     ]
                 );
@@ -6548,7 +6257,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         ..Default::default()
                     })),
                     files: USER,
-            indent_level: 0,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Server URL",
@@ -6565,7 +6273,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         ..Default::default()
                     })),
                     files: USER,
-            indent_level: 0,
                 }),
             ],
         },
@@ -6634,7 +6341,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Hard Tabs",
@@ -6654,7 +6360,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent",
@@ -6674,7 +6379,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent On Paste",
@@ -6694,7 +6398,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6715,7 +6418,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
@@ -6735,7 +6437,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
@@ -6755,7 +6456,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Wrap Guides",
@@ -6778,7 +6478,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
@@ -6798,7 +6497,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6822,7 +6520,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Line Width",
@@ -6845,7 +6542,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Active Line Width",
@@ -6871,7 +6567,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Coloring",
@@ -6894,7 +6589,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Coloring",
@@ -6920,7 +6614,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6944,7 +6637,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Trailing Whitespace On Save",
@@ -6964,7 +6656,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Whitespace On Empty Lines",
@@ -6984,7 +6675,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 1,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
@@ -7004,7 +6694,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Formatter",
@@ -7027,7 +6716,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use On Type Format",
@@ -7047,7 +6735,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Code Actions On Format",
@@ -7070,7 +6757,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7091,7 +6777,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Auto Surround",
@@ -7111,7 +6796,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
@@ -7131,7 +6815,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "JSX Tag Auto Close",
@@ -7152,7 +6835,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7173,7 +6855,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Space Whitespace Indicator",
@@ -7196,7 +6877,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Whitespace Indicator",
@@ -7219,7 +6899,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7240,7 +6919,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completion Documentation",
@@ -7260,7 +6938,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words",
@@ -7280,7 +6957,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words Min Length",
@@ -7303,7 +6979,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Completion Menu Scrollbar",
@@ -7317,7 +6992,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7338,7 +7012,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Value Hints",
@@ -7361,7 +7034,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Type Hints",
@@ -7381,7 +7053,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Parameter Hints",
@@ -7404,7 +7075,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Other Hints",
@@ -7427,7 +7097,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
@@ -7447,7 +7116,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Debounce Ms",
@@ -7470,7 +7138,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Scroll Debounce Ms",
@@ -7493,7 +7160,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
@@ -7523,7 +7189,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
     ];
     if current_language().is_none() {
@@ -7539,7 +7204,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER,
-            indent_level: 0,
         }))
     }
     items.extend([
@@ -7563,7 +7227,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Variables",
@@ -7587,7 +7250,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prefer LSP",
@@ -7608,7 +7270,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7629,7 +7290,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
@@ -7651,7 +7311,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Middle Click Paste",
@@ -7663,7 +7322,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Extend Comment On Newline",
@@ -7684,7 +7342,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Colorize Brackets",
@@ -7704,7 +7361,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
     ]);
 
@@ -7725,7 +7381,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }),
                 metadata: None,
                 files: USER,
-            indent_level: 0,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Replace Emoji Shortcode",
@@ -7742,7 +7397,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }),
                 metadata: None,
                 files: USER,
-            indent_level: 0,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",
@@ -7759,7 +7413,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }),
                 metadata: None,
                 files: USER,
-            indent_level: 0,
             }),
         ]);
     }
@@ -7789,7 +7442,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
@@ -7812,7 +7464,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
@@ -7832,7 +7483,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Go To Definition Fallback",
@@ -7846,7 +7496,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("LSP Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7867,7 +7516,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Fetch Timeout (milliseconds)",
@@ -7890,7 +7538,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Insert Mode",
@@ -7910,7 +7557,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Debuggers"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7934,7 +7580,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7955,7 +7600,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Parser",
@@ -7975,7 +7619,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Plugins",
@@ -7998,7 +7641,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Options",
@@ -8021,7 +7663,6 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
     ]
 }
@@ -8061,7 +7702,6 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Disable in Language Scopes",
@@ -8084,7 +7724,6 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | PROJECT,
-            indent_level: 0,
         }),
     ]
 }

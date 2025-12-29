@@ -270,7 +270,6 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                 ..Default::default()
             })),
             files: USER,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Max Tokens",
@@ -301,7 +300,6 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             }),
             metadata: None,
             files: USER,
-            indent_level: 0,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Model",
@@ -335,7 +333,6 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                 ..Default::default()
             })),
             files: USER,
-            indent_level: 0,
         }),
     ])
 }
