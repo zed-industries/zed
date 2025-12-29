@@ -6546,7 +6546,8 @@ impl EditorElement {
             |window| {
                 let editor = self.editor.read(cx);
                 if editor.mouse_cursor_hidden {
-                    window.set_window_cursor_style(CursorStyle::None);
+                    window.set_cursor_style(CursorStyle::None, &layout.position_map.text_hitbox);
+                    window.set_cursor_style(CursorStyle::None, &layout.position_map.gutter_hitbox);
                 } else if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
