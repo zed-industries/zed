@@ -149,7 +149,7 @@ impl Hash for SyntaxVertex<'_> {
 }
 
 /// An edge in the diff graph with an associated cost.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SyntaxEdge {
     UnchangedNode {
         depth_difference: u32,
@@ -260,7 +260,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         let rhs_id = v.rhs.id().unwrap();
 
         // Both nodes have same structure - unchanged
-        if lhs_node.structural_hash() == rhs_node.structural_hash() {
+        if lhs_node.structural_hash == rhs_node.structural_hash {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
             // TODO: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
             let probably_punctuation = false;

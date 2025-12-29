@@ -30,45 +30,27 @@ pub struct SyntaxTree {
 /// A single node in a syntax tree.
 #[derive(Debug)]
 pub struct SyntaxNode {
-    id: SyntaxId,
+    pub id: SyntaxId,
     /// A hash of this node's structure (kind + children's hashes).
     /// Used for quickly detecting structurally identical subtrees.
-    structural_hash: u64,
+    pub structural_hash: u64,
     /// The byte range this node spans in the source text.
-    byte_range: Range<usize>,
+    pub byte_range: Range<usize>,
     /// For list nodes: the range of content between delimiters.
     /// For atoms: equals byte_range.
     ///
     /// Open delimiter = byte_range.start..content_range.start
     /// Close delimiter = content_range.end..byte_range.end
-    content_range: Range<usize>,
+    pub content_range: Range<usize>,
     /// Number of descendants (children + their descendants).
-    descendant_count: usize,
+    pub descendant_count: usize,
+    /// Depth (number of ancestors)
+    pub depth: usize,
     /// Parent node, if any.
     parent: Option<SyntaxId>,
 }
 
 impl SyntaxNode {
-    #[inline]
-    pub fn id(&self) -> SyntaxId {
-        self.id
-    }
-
-    #[inline]
-    pub fn structural_hash(&self) -> u64 {
-        self.structural_hash
-    }
-
-    #[inline]
-    pub fn byte_range(&self) -> Range<usize> {
-        self.byte_range.clone()
-    }
-
-    #[inline]
-    pub fn content_range(&self) -> Range<usize> {
-        self.content_range.clone()
-    }
-
     /// Returns the byte range of the opening delimiter (empty for atoms).
     #[inline]
     pub fn open_delimiter(&self) -> Range<usize> {
@@ -91,12 +73,6 @@ impl SyntaxNode {
     #[inline]
     pub fn is_atom(&self) -> bool {
         self.descendant_count == 0
-    }
-
-    /// Returns the number of descendants (not including self).
-    #[inline]
-    pub fn descendant_count(&self) -> usize {
-        self.descendant_count
     }
 }
 
@@ -378,9 +354,7 @@ impl<'a> SyntaxTreeCursor<'a> {
 
     /// Returns the depth (number of ancestors) of the current node.
     pub fn depth(&self) -> usize {
-        self.current
-            .map(|id| self.tree.ancestors(id).count())
-            .unwrap_or(0)
+        self.current.map(|id| self.tree.get(id).depth).unwrap_or(0)
     }
 }
 
@@ -427,6 +401,9 @@ fn build_tree_recursive(
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
         descendant_count: ts_node.descendant_count() - 1,
+        depth: parent
+            .map(|parent| nodes[parent.index()].depth + 1)
+            .unwrap_or(0),
         parent,
     });
 
@@ -454,8 +431,7 @@ fn build_tree_recursive(
         cursor.goto_parent();
     } else {
         // Leaf node - include the actual text content in the hash
-        let range = ts_node.byte_range();
-        if let Some(content) = source.get(range) {
+        if let Some(content) = source.get(ts_node.byte_range()) {
             content.hash(&mut hasher);
         }
     }
@@ -516,7 +492,7 @@ mod tests {
 
         assert!(root.is_list());
         assert!(!root.is_atom());
-        assert!(root.descendant_count() > 0);
+        assert!(root.descendant_count > 0);
         assert!(tree.parent(root_id).is_none());
 
         let preorder: Vec<_> = tree.preorder().collect();
@@ -533,8 +509,8 @@ mod tests {
 
         for id in tree.preorder() {
             let node = tree.get(id);
-            let range = node.byte_range();
-            let content_range = node.content_range();
+            let range = &node.byte_range;
+            let content_range = &node.content_range;
 
             assert!(range.start <= range.end);
             assert!(range.end <= source.len());
@@ -547,8 +523,8 @@ mod tests {
 
             if let Some(parent_id) = tree.parent(id) {
                 let parent = tree.get(parent_id);
-                assert!(parent.byte_range().start <= range.start);
-                assert!(parent.byte_range().end >= range.end);
+                assert!(parent.byte_range.start <= range.start);
+                assert!(parent.byte_range.end >= range.end);
             }
         }
     }
@@ -559,9 +535,9 @@ mod tests {
         let tree2 = parse_json("[1, 2]");
         let tree3 = parse_json("[1, 3]");
 
-        let hash1 = tree1.get(tree1.root().unwrap()).structural_hash();
-        let hash2 = tree2.get(tree2.root().unwrap()).structural_hash();
-        let hash3 = tree3.get(tree3.root().unwrap()).structural_hash();
+        let hash1 = tree1.get(tree1.root().unwrap()).structural_hash;
+        let hash2 = tree2.get(tree2.root().unwrap()).structural_hash;
+        let hash3 = tree3.get(tree3.root().unwrap()).structural_hash;
 
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
@@ -597,7 +573,7 @@ mod tests {
         for id in tree.preorder() {
             let node = tree.get(id);
             let descendants: Vec<_> = tree.descendants(id).collect();
-            assert_eq!(descendants.len(), node.descendant_count());
+            assert_eq!(descendants.len(), node.descendant_count);
 
             if node.is_atom() {
                 assert!(tree.first_child(id).is_none());
@@ -690,8 +666,8 @@ mod tests {
         let tree1 = parse_rust("fn foo() {}");
         let tree2 = parse_rust("fn bar() {}");
         assert_ne!(
-            tree1.get(tree1.root().unwrap()).structural_hash(),
-            tree2.get(tree2.root().unwrap()).structural_hash()
+            tree1.get(tree1.root().unwrap()).structural_hash,
+            tree2.get(tree2.root().unwrap()).structural_hash
         );
     }
 
@@ -701,7 +677,7 @@ mod tests {
         assert!(!tree.is_empty());
         for id in tree.preorder() {
             let node = tree.get(id);
-            assert!(node.byte_range().start <= node.byte_range().end);
+            assert!(node.byte_range.start <= node.byte_range.end);
         }
 
         let mut json = "1".to_string();

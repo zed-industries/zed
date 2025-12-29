@@ -102,7 +102,7 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                 let node = tree.get(id);
 
                 if node.is_atom() {
-                    ranges.push(node.byte_range());
+                    ranges.push(node.byte_range.clone());
                 } else {
                     let open = node.open_delimiter();
                     let close = node.close_delimiter();
@@ -116,7 +116,7 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                 }
             }
             Some(SyntaxChange::Replaced(_, _)) => {
-                ranges.push(tree.get(id).byte_range());
+                ranges.push(tree.get(id).byte_range.clone());
             }
             Some(SyntaxChange::Unchanged(_)) => {
                 // Node is unchanged, but children might have changes
