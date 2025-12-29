@@ -839,6 +839,9 @@ impl BufferSearchBar {
             self.default_options = configured_options;
         }
 
+        // This isn't a normal setting; it's only applicable to vim search.
+        self.search_options.remove(SearchOptions::BACKWARDS);
+
         self.dismissed = false;
         self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);
@@ -1028,6 +1031,10 @@ impl BufferSearchBar {
         active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
         cx.notify();
         Some(self.update_matches(false, false, window, cx))
+    }
+
+    pub fn search_options(&self) -> SearchOptions {
+        self.search_options
     }
 
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
