@@ -1,4 +1,6 @@
-use gh_workflow::{Event, Expression, Job, Run, Step, Strategy, Use, Workflow, WorkflowDispatch};
+use gh_workflow::{
+    Event, Expression, Job, Level, Run, Step, Strategy, Use, Workflow, WorkflowDispatch,
+};
 use indoc::indoc;
 use serde_json::json;
 
@@ -147,10 +149,13 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     let (authenticate, token) = generate_token(
         vars::ZED_ZIPPY_APP_ID,
         vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(RepositoryTarget::new(
-            "zed-extensions",
-            &["${{ matrix.repo }}"],
-        )),
+        Some(
+            RepositoryTarget::new("zed-extensions", &["${{ matrix.repo }}"]).permissions([
+                ("permission-pull-requests".to_owned(), Level::Write),
+                ("permission-contents".to_owned(), Level::Write),
+                ("permission-workflows".to_owned(), Level::Write),
+            ]),
+        ),
     );
     let (calculate_short_sha, short_sha) = get_short_sha();
 
