@@ -1188,6 +1188,7 @@ impl ProjectPanel {
                             .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
+                                    .action("Reload Files", Box::new(ReloadFiles))
                             })
                     }
                 })
