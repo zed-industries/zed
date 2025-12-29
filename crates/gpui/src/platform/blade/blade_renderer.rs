@@ -342,6 +342,15 @@ pub struct BladeRenderer {
     path_intermediate_msaa_texture: Option<gpu::Texture>,
     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
     rendering_parameters: RenderingParameters,
+    // Custom render pass support
+    #[cfg(feature = "custom_render_pass")]
+    custom_passes: Vec<RegisteredPass>,
+    #[cfg(feature = "custom_render_pass")]
+    depth_texture: Option<gpu::Texture>,
+    #[cfg(feature = "custom_render_pass")]
+    depth_texture_view: Option<gpu::TextureView>,
+    #[cfg(feature = "custom_render_pass")]
+    scale_factor: f32,
 }
 
 impl BladeRenderer {
@@ -428,6 +437,14 @@ impl BladeRenderer {
             path_intermediate_msaa_texture,
             path_intermediate_msaa_texture_view,
             rendering_parameters,
+            #[cfg(feature = "custom_render_pass")]
+            custom_passes: Vec::new(),
+            #[cfg(feature = "custom_render_pass")]
+            depth_texture: None,
+            #[cfg(feature = "custom_render_pass")]
+            depth_texture_view: None,
+            #[cfg(feature = "custom_render_pass")]
+            scale_factor: 1.0,
         })
     }
 
@@ -509,6 +526,21 @@ impl BladeRenderer {
                 .unzip();
             self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
             self.path_intermediate_msaa_texture_view = path_intermediate_msaa_texture_view;
+
+            // Destroy depth buffer on resize - it will be recreated on demand
+            #[cfg(feature = "custom_render_pass")]
+            {
+                if let Some(depth_texture) = self.depth_texture.take() {
+                    self.gpu.destroy_texture(depth_texture);
+                }
+                if let Some(depth_view) = self.depth_texture_view.take() {
+                    self.gpu.destroy_texture_view(depth_view);
+                }
+                // Notify custom passes of the resize
+                for registered in &self.custom_passes {
+                    registered.pass.resize(size);
+                }
+            }
         }
     }
 
@@ -549,6 +581,86 @@ impl BladeRenderer {
             driver_name: info.driver_name.clone(),
             driver_info: info.driver_info.clone(),
         }
+    }
+
+    /// Set the display scale factor for custom render passes.
+    #[cfg(feature = "custom_render_pass")]
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = scale_factor;
+    }
+
+    /// Register a custom render pass to execute during frame composition.
+    ///
+    /// Passes registered with `RenderStage::BeforeUi` execute before any UI primitives
+    /// are rendered (for 3D content behind the UI). Passes registered with
+    /// `RenderStage::AfterUi` execute after all UI primitives (for overlays).
+    #[cfg(feature = "custom_render_pass")]
+    pub fn register_render_pass(
+        &mut self,
+        stage: RenderStage,
+        pass: Arc<dyn CustomRenderPass>,
+    ) {
+        log::debug!("Registering custom render pass: {}", pass.name());
+        self.custom_passes.push(RegisteredPass { stage, pass });
+    }
+
+    /// Remove a previously registered render pass by name.
+    ///
+    /// Returns `true` if a pass was found and removed, `false` otherwise.
+    #[cfg(feature = "custom_render_pass")]
+    pub fn unregister_render_pass(&mut self, name: &str) -> bool {
+        let initial_len = self.custom_passes.len();
+        self.custom_passes.retain(|p| p.pass.name() != name);
+        let removed = self.custom_passes.len() < initial_len;
+        if removed {
+            log::debug!("Unregistered custom render pass: {}", name);
+        }
+        removed
+    }
+
+    /// Ensure the depth buffer exists and matches the current surface size.
+    /// Returns the depth texture view.
+    #[cfg(feature = "custom_render_pass")]
+    fn ensure_depth_buffer(&mut self, width: u32, height: u32) -> gpu::TextureView {
+        // Check if we need to create or recreate the depth buffer
+        let needs_create = self.depth_texture.is_none();
+
+        if needs_create {
+            let depth_texture = self.gpu.create_texture(gpu::TextureDesc {
+                name: "custom_pass_depth",
+                format: gpu::TextureFormat::Depth32Float,
+                size: gpu::Extent {
+                    width,
+                    height,
+                    depth: 1,
+                },
+                array_layer_count: 1,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: gpu::TextureDimension::D2,
+                usage: gpu::TextureUsage::TARGET,
+                external: None,
+            });
+            let depth_view = self.gpu.create_texture_view(
+                depth_texture,
+                gpu::TextureViewDesc {
+                    name: "custom_pass_depth_view",
+                    format: gpu::TextureFormat::Depth32Float,
+                    dimension: gpu::ViewDimension::D2,
+                    subresources: &gpu::TextureSubresources::default(),
+                },
+            );
+            self.depth_texture = Some(depth_texture);
+            self.depth_texture_view = Some(depth_view);
+        }
+
+        self.depth_texture_view.expect("depth buffer should exist")
+    }
+
+    /// Check if there are any custom passes registered for a given stage.
+    #[cfg(feature = "custom_render_pass")]
+    fn has_custom_passes(&self, stage: RenderStage) -> bool {
+        self.custom_passes.iter().any(|p| p.stage == stage)
     }
 
     #[cfg(target_os = "macos")]
@@ -639,6 +751,15 @@ impl BladeRenderer {
         if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
             self.gpu.destroy_texture_view(msaa_view);
         }
+        #[cfg(feature = "custom_render_pass")]
+        {
+            if let Some(depth_texture) = self.depth_texture.take() {
+                self.gpu.destroy_texture(depth_texture);
+            }
+            if let Some(depth_view) = self.depth_texture_view.take() {
+                self.gpu.destroy_texture_view(depth_view);
+            }
+        }
     }
 
     pub fn draw(&mut self, scene: &Scene) {
@@ -650,6 +771,36 @@ impl BladeRenderer {
             self.surface.acquire_frame()
         };
         self.command_encoder.init_texture(frame.texture());
+
+        // Execute BeforeUi custom render passes
+        #[cfg(feature = "custom_render_pass")]
+        {
+            if self.has_custom_passes(RenderStage::BeforeUi) {
+                profiling::scope!("custom passes: before_ui");
+                let width = self.surface_config.size.width;
+                let height = self.surface_config.size.height;
+                let depth_view = self.ensure_depth_buffer(width, height);
+                let frame_info = RenderFrameInfo {
+                    viewport_size: Size {
+                        width: DevicePixels(width as i32),
+                        height: DevicePixels(height as i32),
+                    },
+                    scale_factor: self.scale_factor,
+                };
+                for registered in &self.custom_passes {
+                    if registered.stage == RenderStage::BeforeUi {
+                        let mut ctx = BladeRenderPassContext {
+                            gpu: &self.gpu,
+                            encoder: &mut self.command_encoder,
+                            frame: frame.texture_view(),
+                            depth: Some(depth_view),
+                            frame_info,
+                        };
+                        registered.pass.render(&mut ctx);
+                    }
+                }
+            }
+        }
 
         let globals = GlobalParams {
             viewport_size: [
@@ -668,6 +819,14 @@ impl BladeRenderer {
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: frame.texture_view(),
+                    // Load instead of Clear if we rendered BeforeUi passes
+                    #[cfg(feature = "custom_render_pass")]
+                    init_op: if self.has_custom_passes(RenderStage::BeforeUi) {
+                        gpu::InitOp::Load
+                    } else {
+                        gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack)
+                    },
+                    #[cfg(not(feature = "custom_render_pass"))]
                     init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
@@ -907,6 +1066,40 @@ impl BladeRenderer {
         }
         drop(pass);
 
+        // Execute AfterUi custom render passes
+        #[cfg(feature = "custom_render_pass")]
+        {
+            if self.has_custom_passes(RenderStage::AfterUi) {
+                profiling::scope!("custom passes: after_ui");
+                let width = self.surface_config.size.width;
+                let height = self.surface_config.size.height;
+                let depth_view = if self.depth_texture_view.is_some() {
+                    self.depth_texture_view
+                } else {
+                    Some(self.ensure_depth_buffer(width, height))
+                };
+                let frame_info = RenderFrameInfo {
+                    viewport_size: Size {
+                        width: DevicePixels(width as i32),
+                        height: DevicePixels(height as i32),
+                    },
+                    scale_factor: self.scale_factor,
+                };
+                for registered in &self.custom_passes {
+                    if registered.stage == RenderStage::AfterUi {
+                        let mut ctx = BladeRenderPassContext {
+                            gpu: &self.gpu,
+                            encoder: &mut self.command_encoder,
+                            frame: frame.texture_view(),
+                            depth: depth_view,
+                            frame_info,
+                        };
+                        registered.pass.render(&mut ctx);
+                    }
+                }
+            }
+        }
+
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
 
@@ -1036,5 +1229,158 @@ impl RenderingParameters {
             gamma_ratios,
             grayscale_enhanced_contrast,
         }
+    }
+}
+
+// Custom render pass support (feature-gated)
+
+#[cfg(feature = "custom_render_pass")]
+use crate::scene::{RenderFrameInfo, RenderStage};
+
+/// Context passed to custom render passes.
+///
+/// Provides access to GPU resources needed for rendering.
+/// This struct exposes minimal blade_graphics types to keep the API surface small.
+///
+/// # Invariants
+/// - The command encoder is in a valid state for starting new render passes
+/// - The frame texture view is the current frame's render target
+/// - The depth texture view (if present) is a D32Float depth buffer
+#[cfg(feature = "custom_render_pass")]
+pub struct BladeRenderPassContext<'a> {
+    /// The blade GPU context for creating resources.
+    pub gpu: &'a gpu::Context,
+    /// Command encoder for this frame. Use this to create render passes.
+    pub encoder: &'a mut gpu::CommandEncoder,
+    /// Current frame's render target texture view.
+    pub frame: gpu::TextureView,
+    /// Depth buffer texture view (created on demand for 3D content).
+    pub depth: Option<gpu::TextureView>,
+    /// Information about the current frame.
+    pub frame_info: RenderFrameInfo,
+}
+
+/// Custom render pass trait - external code implements this.
+///
+/// # Invariants
+/// - `render` is called once per frame
+/// - `render` is not re-entrant
+/// - Implementations must not block
+/// - Implementations must not present/swap the frame
+///
+/// # Example
+/// ```ignore
+/// struct MyRenderPass {
+///     // Your GPU resources here
+/// }
+///
+/// impl CustomRenderPass for MyRenderPass {
+///     fn render(&self, ctx: &mut BladeRenderPassContext) {
+///         // Create a render pass and draw your content
+///         let pass = ctx.encoder.render("my_pass", gpu::RenderTargetSet {
+///             colors: &[gpu::RenderTarget {
+///                 view: ctx.frame,
+///                 init_op: gpu::InitOp::Load,
+///                 finish_op: gpu::FinishOp::Store,
+///             }],
+///             depth_stencil: ctx.depth.map(|d| gpu::DepthStencilTarget {
+///                 view: d,
+///                 init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
+///                 finish_op: gpu::FinishOp::Discard,
+///             }),
+///         });
+///         // Draw your content...
+///     }
+///
+///     fn name(&self) -> &str {
+///         "my_render_pass"
+///     }
+/// }
+/// ```
+#[cfg(feature = "custom_render_pass")]
+pub trait CustomRenderPass: Send + Sync + 'static {
+    /// Called each frame to render custom content.
+    fn render(&self, ctx: &mut BladeRenderPassContext);
+
+    /// Called when the window is resized. Use this to recreate size-dependent resources.
+    fn resize(&self, _new_size: Size<DevicePixels>) {}
+
+    /// Returns a unique name for this render pass (for debugging/profiling).
+    fn name(&self) -> &str {
+        "custom_render_pass"
+    }
+}
+
+/// Internal storage for a registered render pass.
+#[cfg(feature = "custom_render_pass")]
+struct RegisteredPass {
+    stage: RenderStage,
+    pass: Arc<dyn CustomRenderPass>,
+}
+
+#[cfg(all(test, feature = "custom_render_pass"))]
+mod custom_render_pass_tests {
+    use super::*;
+
+    struct TestRenderPass {
+        name: &'static str,
+    }
+
+    impl CustomRenderPass for TestRenderPass {
+        fn render(&self, _ctx: &mut BladeRenderPassContext) {
+            // Test pass does nothing
+        }
+
+        fn name(&self) -> &str {
+            self.name
+        }
+    }
+
+    #[test]
+    fn render_stage_equality() {
+        assert_eq!(RenderStage::BeforeUi, RenderStage::BeforeUi);
+        assert_eq!(RenderStage::AfterUi, RenderStage::AfterUi);
+        assert_ne!(RenderStage::BeforeUi, RenderStage::AfterUi);
+    }
+
+    #[test]
+    fn render_frame_info_fields() {
+        let info = RenderFrameInfo {
+            viewport_size: Size {
+                width: DevicePixels(1920),
+                height: DevicePixels(1080),
+            },
+            scale_factor: 2.0,
+        };
+        assert_eq!(info.viewport_size.width.0, 1920);
+        assert_eq!(info.viewport_size.height.0, 1080);
+        assert_eq!(info.scale_factor, 2.0);
+    }
+
+    #[test]
+    fn custom_render_pass_trait_default_name() {
+        struct DefaultNamePass;
+        impl CustomRenderPass for DefaultNamePass {
+            fn render(&self, _ctx: &mut BladeRenderPassContext) {}
+        }
+        let pass = DefaultNamePass;
+        assert_eq!(pass.name(), "custom_render_pass");
+    }
+
+    #[test]
+    fn custom_render_pass_trait_custom_name() {
+        let pass = TestRenderPass { name: "my_test_pass" };
+        assert_eq!(pass.name(), "my_test_pass");
+    }
+
+    #[test]
+    fn registered_pass_storage() {
+        let pass = Arc::new(TestRenderPass { name: "test" });
+        let registered = RegisteredPass {
+            stage: RenderStage::BeforeUi,
+            pass: pass.clone(),
+        };
+        assert_eq!(registered.stage, RenderStage::BeforeUi);
+        assert_eq!(registered.pass.name(), "test");
     }
 }

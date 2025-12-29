@@ -831,3 +831,30 @@ impl PathVertex<Pixels> {
         }
     }
 }
+
+// Custom render pass types (feature-gated)
+
+/// Stage at which custom render passes execute relative to UI rendering.
+#[cfg(feature = "custom_render_pass")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderStage {
+    /// Execute before any UI primitives are rendered.
+    /// Custom passes at this stage can draw 3D content that appears behind the UI.
+    BeforeUi,
+    /// Execute after all UI primitives are rendered.
+    /// Custom passes at this stage can draw overlays on top of the UI.
+    AfterUi,
+}
+
+/// Information about the current frame, provided to custom render passes.
+///
+/// This struct is intentionally minimal. Additional fields may be added
+/// in future versions as needed.
+#[cfg(feature = "custom_render_pass")]
+#[derive(Clone, Copy, Debug)]
+pub struct RenderFrameInfo {
+    /// The viewport size in device pixels.
+    pub viewport_size: Size<crate::DevicePixels>,
+    /// The display scale factor (DPI scaling).
+    pub scale_factor: f32,
+}

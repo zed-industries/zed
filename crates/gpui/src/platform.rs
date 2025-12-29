@@ -8,6 +8,11 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
+/// Blade GPU backend module.
+///
+/// This module provides the Blade-based GPU rendering backend, which uses
+/// Metal on macOS and Vulkan on Linux. It is exposed publicly to support
+/// the custom render pass feature.
 #[cfg(any(
     all(
         any(target_os = "linux", target_os = "freebsd"),
@@ -15,7 +20,7 @@ mod mac;
     ),
     all(target_os = "macos", feature = "macos-blade")
 ))]
-mod blade;
+pub mod blade;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -569,6 +574,36 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
+    }
+
+    /// Register a custom render pass. Only available with the `custom_render_pass` feature
+    /// and the Blade rendering backend.
+    #[cfg(all(
+        feature = "custom_render_pass",
+        any(
+            all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+            all(target_os = "macos", feature = "macos-blade")
+        )
+    ))]
+    fn register_render_pass(
+        &mut self,
+        _stage: crate::scene::RenderStage,
+        _pass: std::sync::Arc<dyn crate::platform::blade::CustomRenderPass>,
+    ) {
+        // Default no-op implementation for platforms that don't support custom render passes
+    }
+
+    /// Unregister a custom render pass by name. Only available with the `custom_render_pass` feature
+    /// and the Blade rendering backend.
+    #[cfg(all(
+        feature = "custom_render_pass",
+        any(
+            all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+            all(target_os = "macos", feature = "macos-blade")
+        )
+    ))]
+    fn unregister_render_pass(&mut self, _name: &str) -> bool {
+        false
     }
 }
 

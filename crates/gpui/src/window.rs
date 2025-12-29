@@ -1827,6 +1827,62 @@ impl Window {
         self.platform_window.resize(size);
     }
 
+    /// Register a custom render pass to execute during frame composition.
+    ///
+    /// Custom render passes allow external code to inject GPU rendering commands
+    /// into GPUI's frame composition. Passes registered with `RenderStage::BeforeUi`
+    /// execute before any UI primitives are rendered (for 3D content behind the UI).
+    /// Passes registered with `RenderStage::AfterUi` execute after all UI primitives
+    /// (for overlays on top of the UI).
+    ///
+    /// This is only available when the `custom_render_pass` feature is enabled,
+    /// and currently only works with the Blade rendering backend (Linux, and macOS
+    /// with the `macos-blade` feature).
+    ///
+    /// # Example
+    /// ```ignore
+    /// use gpui::{CustomRenderPass, BladeRenderPassContext, RenderStage};
+    /// use std::sync::Arc;
+    ///
+    /// struct MyRenderPass;
+    /// impl CustomRenderPass for MyRenderPass {
+    ///     fn render(&self, ctx: &mut BladeRenderPassContext) {
+    ///         // Draw custom content using blade_graphics
+    ///     }
+    ///     fn name(&self) -> &str { "my_pass" }
+    /// }
+    ///
+    /// window.register_render_pass(RenderStage::BeforeUi, Arc::new(MyRenderPass));
+    /// ```
+    #[cfg(all(
+        feature = "custom_render_pass",
+        any(
+            all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+            all(target_os = "macos", feature = "macos-blade")
+        )
+    ))]
+    pub fn register_render_pass(
+        &mut self,
+        stage: crate::scene::RenderStage,
+        pass: std::sync::Arc<dyn crate::platform::blade::CustomRenderPass>,
+    ) {
+        self.platform_window.register_render_pass(stage, pass);
+    }
+
+    /// Remove a previously registered render pass by name.
+    ///
+    /// Returns `true` if a pass was found and removed, `false` otherwise.
+    #[cfg(all(
+        feature = "custom_render_pass",
+        any(
+            all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+            all(target_os = "macos", feature = "macos-blade")
+        )
+    ))]
+    pub fn unregister_render_pass(&mut self, name: &str) -> bool {
+        self.platform_window.unregister_render_pass(name)
+    }
+
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()

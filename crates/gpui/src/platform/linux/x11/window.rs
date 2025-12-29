@@ -1167,6 +1167,8 @@ impl X11WindowStatePtr {
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
             if true {
+                #[cfg(feature = "custom_render_pass")]
+                state.renderer.set_scale_factor(state.scale_factor);
                 state.renderer.update_drawable_size(size(
                     DevicePixels(gpu_size.width as i32),
                     DevicePixels(gpu_size.height as i32),
@@ -1741,5 +1743,27 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    #[cfg(feature = "custom_render_pass")]
+    fn register_render_pass(
+        &mut self,
+        stage: crate::scene::RenderStage,
+        pass: std::sync::Arc<dyn crate::platform::blade::CustomRenderPass>,
+    ) {
+        self.0
+            .state
+            .borrow_mut()
+            .renderer
+            .register_render_pass(stage, pass);
+    }
+
+    #[cfg(feature = "custom_render_pass")]
+    fn unregister_render_pass(&mut self, name: &str) -> bool {
+        self.0
+            .state
+            .borrow_mut()
+            .renderer
+            .unregister_render_pass(name)
     }
 }

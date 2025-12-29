@@ -1598,6 +1598,20 @@ impl PlatformWindow for MacWindow {
             let _: () = msg_send![window, performWindowDragWithEvent: event];
         }
     }
+
+    #[cfg(all(feature = "custom_render_pass", feature = "macos-blade"))]
+    fn register_render_pass(
+        &mut self,
+        stage: crate::scene::RenderStage,
+        pass: std::sync::Arc<dyn crate::platform::blade::CustomRenderPass>,
+    ) {
+        self.0.lock().renderer.register_render_pass(stage, pass);
+    }
+
+    #[cfg(all(feature = "custom_render_pass", feature = "macos-blade"))]
+    fn unregister_render_pass(&mut self, name: &str) -> bool {
+        self.0.lock().renderer.unregister_render_pass(name)
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
@@ -2034,6 +2048,9 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
             setContentsScale: scale_factor as f64
         ];
     }
+
+    #[cfg(all(feature = "macos-blade", feature = "custom_render_pass"))]
+    lock.renderer.set_scale_factor(scale_factor);
 
     lock.renderer.update_drawable_size(drawable_size);
 

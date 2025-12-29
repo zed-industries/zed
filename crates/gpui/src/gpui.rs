@@ -95,6 +95,27 @@ pub use profiler::*;
 pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
+
+// Custom render pass types - feature-gated, Blade-specific
+#[cfg(all(
+    feature = "custom_render_pass",
+    any(
+        all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+        all(target_os = "macos", feature = "macos-blade")
+    )
+))]
+pub use platform::blade::{BladeRenderPassContext, CustomRenderPass};
+
+// Re-export blade_graphics for custom render passes
+#[cfg(all(
+    feature = "custom_render_pass",
+    any(
+        all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+        all(target_os = "macos", feature = "macos-blade")
+    )
+))]
+pub use blade_graphics as gpu;
+
 pub use shared_string::*;
 pub use shared_uri::*;
 pub use smol::Timer;

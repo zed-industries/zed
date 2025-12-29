@@ -918,6 +918,8 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
+            #[cfg(feature = "custom_render_pass")]
+            state.renderer.set_scale_factor(state.scale);
             state.renderer.update_drawable_size(device_bounds.size);
             (state.bounds.size, state.scale)
         };
@@ -1387,6 +1389,20 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    #[cfg(feature = "custom_render_pass")]
+    fn register_render_pass(
+        &mut self,
+        stage: crate::scene::RenderStage,
+        pass: std::sync::Arc<dyn crate::platform::blade::CustomRenderPass>,
+    ) {
+        self.borrow_mut().renderer.register_render_pass(stage, pass);
+    }
+
+    #[cfg(feature = "custom_render_pass")]
+    fn unregister_render_pass(&mut self, name: &str) -> bool {
+        self.borrow_mut().renderer.unregister_render_pass(name)
     }
 }
 

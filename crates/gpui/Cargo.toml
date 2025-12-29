@@ -78,6 +78,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
+custom_render_pass = []
 
 [lib]
 path = "src/gpui.rs"
