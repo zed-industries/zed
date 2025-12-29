@@ -30,13 +30,12 @@ pub async fn run_format_prompt(
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                // TODO
                 expected_output: example
                     .spec
                     .expected_patches
                     .first()
-                    .context("no expected patches")?
-                    .clone(),
+                    .cloned()
+                    .unwrap_or_default(),
                 format: prompt_format,
             });
         }
