@@ -41,7 +41,9 @@
 
 use client::ProjectId;
 use collections::{HashMap, HashSet};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, WeakEntity};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
+};
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
@@ -133,6 +135,7 @@ pub struct TrustedWorktreesStore {
     db_trusted_paths: DbTrustedPaths,
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
+    worktree_trust_serialization: Task<()>,
 }
 
 /// An identifier of a host to split the trust questions by.
@@ -252,6 +255,7 @@ impl TrustedWorktreesStore {
             trusted_paths: HashMap::default(),
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
+            worktree_trust_serialization: Task::ready(()),
         }
     }
 
@@ -583,8 +587,15 @@ impl TrustedWorktreesStore {
         }
     }
 
-    /// Returns a normalized representation of the trusted paths to store in the DB.
-    pub fn trusted_paths_for_serialization(
+    pub fn schedule_serialization<S>(&mut self, cx: &mut Context<Self>, serialize: S)
+    where
+        S: FnOnce(HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>, &App) -> Task<()>
+            + 'static,
+    {
+        self.worktree_trust_serialization = serialize(self.trusted_paths_for_serialization(cx), cx);
+    }
+
+    fn trusted_paths_for_serialization(
         &mut self,
         cx: &mut Context<Self>,
     ) -> HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> {

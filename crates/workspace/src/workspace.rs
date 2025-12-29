@@ -1188,7 +1188,6 @@ pub struct Workspace {
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
-    _schedule_serialize_worktree_trust: Task<()>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1236,23 +1235,26 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-            cx.subscribe(&trusted_worktrees, |workspace, worktrees_store, e, cx| {
+            cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
                 if let TrustedWorktreesEvent::Trusted(..) = e {
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                        let new_trusted_worktrees =
-                            worktrees_store.update(cx, |worktrees_store, cx| {
-                                worktrees_store.trusted_paths_for_serialization(cx)
-                            });
-                        let timeout = cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
-                        workspace._schedule_serialize_worktree_trust =
-                            cx.background_spawn(async move {
-                                timeout.await;
-                                persistence::DB
-                                    .save_trusted_worktrees(new_trusted_worktrees)
-                                    .await
-                                    .log_err();
-                            });
+                        worktrees_store.update(cx, |worktrees_store, cx| {
+                            worktrees_store.schedule_serialization(
+                                cx,
+                                |new_trusted_worktrees, cx| {
+                                    let timeout =
+                                        cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
+                                    cx.background_spawn(async move {
+                                        timeout.await;
+                                        persistence::DB
+                                            .save_trusted_worktrees(new_trusted_worktrees)
+                                            .await
+                                            .log_err();
+                                    })
+                                },
+                            )
+                        });
                     }
                 }
             })
@@ -1608,7 +1610,6 @@ impl Workspace {
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
             _schedule_serialize_ssh_paths: None,
-            _schedule_serialize_worktree_trust: Task::ready(()),
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
