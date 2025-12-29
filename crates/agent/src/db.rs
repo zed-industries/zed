@@ -53,11 +53,39 @@ impl AgentIdentity {
         }
     }
 
-    /// Get a human-readable display name for this agent
+    /// Get a human-readable display name for this agent.
+    /// Converts known agent names to human-readable format, and uses a
+    /// title case fallback for unknown agents (e.g., "my-agent" → "My Agent").
     pub fn display_name(&self) -> SharedString {
         match self {
             AgentIdentity::Zed => SharedString::from("Zed"),
-            AgentIdentity::External(name) => name.clone(),
+            AgentIdentity::External(name) => {
+                // Convert known agent names to human-readable format
+                match name.as_ref() {
+                    "claude-code" => SharedString::from("Claude Code"),
+                    "opencode" => SharedString::from("OpenCode"),
+                    "codex" => SharedString::from("Codex"),
+                    "gemini" => SharedString::from("Gemini"),
+                    _ => {
+                        // Fallback: convert to title case with separators as spaces
+                        let title_case = name
+                            .split(|c| c == '-' || c == '_')
+                            .filter(|s| !s.is_empty())
+                            .map(|word| {
+                                let mut chars = word.chars();
+                                match chars.next() {
+                                    Some(first) => {
+                                        first.to_uppercase().to_string() + chars.as_str()
+                                    }
+                                    None => String::new(),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        SharedString::from(title_case)
+                    }
+                }
+            }
         }
     }
 
@@ -607,15 +635,49 @@ mod tests {
         assert_eq!(zed_identity.name(), "zed");
         assert_eq!(zed_identity.display_name(), "Zed");
 
-        // Test external agents
+        // Test external agents with known names
         let claude_identity = AgentIdentity::from_name("claude-code");
         assert!(!claude_identity.is_zed());
         assert_eq!(claude_identity.name(), "claude-code");
-        assert_eq!(claude_identity.display_name(), "claude-code");
+        assert_eq!(
+            claude_identity.display_name(),
+            "Claude Code",
+            "Known agent names should use human-readable display names"
+        );
 
         let codex_identity = AgentIdentity::from_name("codex");
         assert!(!codex_identity.is_zed());
         assert_eq!(codex_identity.name(), "codex");
+        assert_eq!(
+            codex_identity.display_name(),
+            "Codex",
+            "Known agent names should use human-readable display names"
+        );
+    }
+
+    #[test]
+    fn test_agent_identity_display_name_title_case() {
+        // Test unknown agents get title case fallback
+        let custom_agent = AgentIdentity::from_name("my-custom-agent");
+        assert_eq!(
+            custom_agent.display_name(),
+            "My Custom Agent",
+            "Unknown agents should use title case with dashes as spaces"
+        );
+
+        let underscore_agent = AgentIdentity::from_name("another_custom_agent");
+        assert_eq!(
+            underscore_agent.display_name(),
+            "Another Custom Agent",
+            "Unknown agents should use title case with underscores as spaces"
+        );
+
+        let mixed_agent = AgentIdentity::from_name("mixed-agent_name");
+        assert_eq!(
+            mixed_agent.display_name(),
+            "Mixed Agent Name",
+            "Unknown agents should handle mixed separators"
+        );
     }
 
     #[test]

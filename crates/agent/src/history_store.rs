@@ -464,143 +464,20 @@ impl HistoryStore {
         entries: &[acp_thread::AgentThreadEntry],
         cx: &App,
     ) -> Vec<DbMessage> {
-        use acp_thread::{AgentThreadEntry, ToolCallStatus};
-        use language_model::{
-            LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-            LanguageModelToolUseId,
-        };
+        use acp_thread::AgentThreadEntry;
 
         let mut messages: Vec<DbMessage> = Vec::new();
 
         for entry in entries {
             match entry {
                 AgentThreadEntry::UserMessage(acp_user_msg) => {
-                    // Convert ACP UserMessage to Agent UserMessage
-                    let text = acp_user_msg.content.to_markdown(cx);
-                    let content = if !text.is_empty() {
-                        vec![AgentUserMessageContent::Text(text.to_string())]
-                    } else {
-                        vec![]
-                    };
-
-                    messages.push(DbMessage::User(AgentUserMessage {
-                        id: acp_user_msg
-                            .id
-                            .clone()
-                            .unwrap_or_else(|| UserMessageId::new()),
-                        content,
-                    }));
+                    messages.push(convert_user_message(acp_user_msg, cx));
                 }
                 AgentThreadEntry::AssistantMessage(acp_asst_msg) => {
-                    // Convert ACP AssistantMessage to Agent AgentMessage
-                    let mut message_content = Vec::new();
-
-                    for chunk in &acp_asst_msg.chunks {
-                        match chunk {
-                            acp_thread::AssistantMessageChunk::Message { block } => {
-                                let text = block.to_markdown(cx);
-                                if !text.is_empty() {
-                                    message_content
-                                        .push(AgentMessageContent::Text(text.to_string()));
-                                }
-                            }
-                            acp_thread::AssistantMessageChunk::Thought { block } => {
-                                let text = block.to_markdown(cx);
-                                message_content.push(AgentMessageContent::Thinking {
-                                    text: text.to_string(),
-                                    signature: None,
-                                });
-                            }
-                        }
-                    }
-
-                    messages.push(DbMessage::Agent(AgentMessage {
-                        content: message_content,
-                        tool_results: IndexMap::default(),
-                        reasoning_details: None,
-                    }));
+                    messages.push(convert_assistant_message(acp_asst_msg, cx));
                 }
                 AgentThreadEntry::ToolCall(tool_call) => {
-                    // Tool calls follow assistant messages in ACP.
-                    // We append them to the preceding AgentMessage as ToolUse content.
-                    let tool_use_id =
-                        LanguageModelToolUseId::from(tool_call.id.to_string().into_boxed_str());
-                    // Use the tool kind as the name (e.g., "Edit", "Read", etc.)
-                    let tool_name = serde_json::to_string(&tool_call.kind)
-                        .unwrap_or_else(|_| "unknown".to_string())
-                        .trim_matches('"')
-                        .to_string();
-
-                    // Find the last agent message to append to
-                    if let Some(DbMessage::Agent(agent_msg)) = messages.last_mut() {
-                        // Add ToolUse to content
-                        agent_msg.content.push(AgentMessageContent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_use_id.clone(),
-                                name: tool_name.clone().into(),
-                                raw_input: tool_call
-                                    .raw_input
-                                    .as_ref()
-                                    .and_then(|v| serde_json::to_string(v).ok())
-                                    .unwrap_or_default(),
-                                input: tool_call
-                                    .raw_input
-                                    .clone()
-                                    .unwrap_or(serde_json::Value::Null),
-                                is_input_complete: true,
-                                thought_signature: None,
-                            },
-                        ));
-
-                        // Add tool result if the tool call is completed or failed
-                        let is_error = matches!(tool_call.status, ToolCallStatus::Failed);
-                        let is_completed = matches!(
-                            tool_call.status,
-                            ToolCallStatus::Completed
-                                | ToolCallStatus::Failed
-                                | ToolCallStatus::Rejected
-                                | ToolCallStatus::Canceled
-                        );
-
-                        if is_completed {
-                            // Extract content from the tool call for the result
-                            let content_text = tool_call
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    acp_thread::ToolCallContent::ContentBlock(block) => {
-                                        Some(block.to_markdown(cx).to_string())
-                                    }
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-
-                            let result_content = if content_text.is_empty() {
-                                let filler = match tool_call.status {
-                                    ToolCallStatus::Rejected => "<Tool rejected by user>".into(),
-                                    ToolCallStatus::Canceled => "<Tool canceled>".into(),
-                                    _ => "<Tool completed>".into(),
-                                };
-                                LanguageModelToolResultContent::Text(filler)
-                            } else {
-                                LanguageModelToolResultContent::Text(content_text.into())
-                            };
-
-                            agent_msg.tool_results.insert(
-                                tool_use_id.clone(),
-                                LanguageModelToolResult {
-                                    tool_use_id,
-                                    tool_name: tool_name.into(),
-                                    is_error,
-                                    content: result_content,
-                                    output: tool_call.raw_output.clone(),
-                                },
-                            );
-                        }
-                    }
-                    // If there's no preceding agent message, the tool call is orphaned
-                    // This shouldn't happen in normal flow, but we skip silently
+                    append_tool_call_to_agent(&mut messages, tool_call, cx);
                 }
             }
         }
@@ -662,6 +539,159 @@ impl HistoryStore {
             history.update(cx, |history, cx| history.reload(cx)).ok();
         })
         .detach();
+    }
+}
+
+/// Get the human-readable name for a tool kind.
+/// This avoids fragile JSON serialization of the enum.
+fn tool_kind_name(kind: &acp::ToolKind) -> &'static str {
+    match kind {
+        acp::ToolKind::Fetch => "Fetch",
+        acp::ToolKind::Edit => "Edit",
+        acp::ToolKind::Execute => "Execute",
+        acp::ToolKind::Read => "Read",
+        acp::ToolKind::Search => "Search",
+        acp::ToolKind::Delete => "Delete",
+        acp::ToolKind::Move => "Move",
+        acp::ToolKind::Other => "Other",
+        _ => "Unknown",
+    }
+}
+
+/// Convert an ACP UserMessage to a DbMessage::User.
+fn convert_user_message(acp_user_msg: &acp_thread::UserMessage, cx: &App) -> DbMessage {
+    let text = acp_user_msg.content.to_markdown(cx);
+    let content = if !text.is_empty() {
+        vec![AgentUserMessageContent::Text(text.to_string())]
+    } else {
+        vec![]
+    };
+
+    DbMessage::User(AgentUserMessage {
+        id: acp_user_msg
+            .id
+            .clone()
+            .unwrap_or_else(|| UserMessageId::new()),
+        content,
+    })
+}
+
+/// Convert an ACP AssistantMessage to a DbMessage::Agent.
+fn convert_assistant_message(acp_asst_msg: &acp_thread::AssistantMessage, cx: &App) -> DbMessage {
+    let mut message_content = Vec::new();
+
+    for chunk in &acp_asst_msg.chunks {
+        match chunk {
+            acp_thread::AssistantMessageChunk::Message { block } => {
+                let text = block.to_markdown(cx);
+                if !text.is_empty() {
+                    message_content.push(AgentMessageContent::Text(text.to_string()));
+                }
+            }
+            acp_thread::AssistantMessageChunk::Thought { block } => {
+                let text = block.to_markdown(cx);
+                message_content.push(AgentMessageContent::Thinking {
+                    text: text.to_string(),
+                    signature: None,
+                });
+            }
+        }
+    }
+
+    DbMessage::Agent(AgentMessage {
+        content: message_content,
+        tool_results: IndexMap::default(),
+        reasoning_details: None,
+    })
+}
+
+/// Append a tool call to the last agent message in the messages list.
+/// Tool calls in ACP follow assistant messages, so we attach them to the preceding AgentMessage as ToolUse content.
+fn append_tool_call_to_agent(
+    messages: &mut Vec<DbMessage>,
+    tool_call: &acp_thread::ToolCall,
+    cx: &App,
+) {
+    use acp_thread::ToolCallStatus;
+    use language_model::{
+        LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+        LanguageModelToolUseId,
+    };
+
+    let tool_use_id = LanguageModelToolUseId::from(tool_call.id.to_string().into_boxed_str());
+    let tool_name = tool_kind_name(&tool_call.kind);
+
+    // Find the last agent message to append to
+    let Some(DbMessage::Agent(agent_msg)) = messages.last_mut() else {
+        // If there's no preceding agent message, the tool call is orphaned
+        // This shouldn't happen in normal flow, but we skip silently
+        return;
+    };
+
+    // Add ToolUse to content
+    agent_msg
+        .content
+        .push(AgentMessageContent::ToolUse(LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.into(),
+            raw_input: tool_call
+                .raw_input
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok())
+                .unwrap_or_default(),
+            input: tool_call
+                .raw_input
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+            is_input_complete: true,
+            thought_signature: None,
+        }));
+
+    // Add tool result if the tool call is completed or failed
+    let is_error = matches!(tool_call.status, ToolCallStatus::Failed);
+    let is_completed = matches!(
+        tool_call.status,
+        ToolCallStatus::Completed
+            | ToolCallStatus::Failed
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled
+    );
+
+    if is_completed {
+        // Extract content from the tool call for the result
+        let content_text = tool_call
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                acp_thread::ToolCallContent::ContentBlock(block) => {
+                    Some(block.to_markdown(cx).to_string())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let result_content = if content_text.is_empty() {
+            let filler = match tool_call.status {
+                ToolCallStatus::Rejected => "<Tool rejected by user>".into(),
+                ToolCallStatus::Canceled => "<Tool canceled>".into(),
+                _ => "<Tool completed>".into(),
+            };
+            LanguageModelToolResultContent::Text(filler)
+        } else {
+            LanguageModelToolResultContent::Text(content_text.into())
+        };
+
+        agent_msg.tool_results.insert(
+            tool_use_id.clone(),
+            LanguageModelToolResult {
+                tool_use_id,
+                tool_name: tool_name.into(),
+                is_error,
+                content: result_content,
+                output: tool_call.raw_output.clone(),
+            },
+        );
     }
 }
 

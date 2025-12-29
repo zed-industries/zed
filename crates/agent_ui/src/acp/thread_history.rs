@@ -432,9 +432,12 @@ impl AcpThreadHistory {
                             .w_full()
                             .gap_2()
                             .child(
-                                Icon::new(crate::icon_for_agent_name(
-                                    entry.agent_name().as_deref().map(|s| s.as_ref()),
-                                ))
+                                Icon::new(match &entry {
+                                    HistoryEntry::AcpThread(_) => crate::icon_for_agent_name(
+                                        entry.agent_name().as_deref().map(|s| s.as_ref()),
+                                    ),
+                                    HistoryEntry::TextThread(_) => IconName::TextThread,
+                                })
                                 .color(Color::Muted)
                                 .size(IconSize::Small),
                             )
@@ -703,9 +706,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                             .text_color(_cx.theme().colors().icon_muted)
                             .into_any_element()
                     } else {
-                        Icon::new(crate::icon_for_agent_name(
-                            self.entry.agent_name().as_deref().map(|s| s.as_ref()),
-                        ))
+                        Icon::new(match &self.entry {
+                            HistoryEntry::AcpThread(_) => crate::icon_for_agent_name(
+                                self.entry.agent_name().as_deref().map(|s| s.as_ref()),
+                            ),
+                            HistoryEntry::TextThread(_) => IconName::TextThread,
+                        })
                         .color(Color::Muted)
                         .size(IconSize::Small)
                         .into_any_element()
