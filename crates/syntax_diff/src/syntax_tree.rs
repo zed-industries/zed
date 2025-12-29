@@ -285,6 +285,151 @@ impl Iterator for DescendantsIter {
 
 impl ExactSizeIterator for DescendantsIter {}
 
+/// A cursor for navigating a syntax tree.
+///
+/// Cursors are cheap to clone (just a reference and an index) and provide
+/// convenient navigation methods. They're designed to be stored in graph
+/// vertices for diff computation.
+#[derive(Clone, Copy)]
+pub struct SyntaxTreeCursor<'a> {
+    tree: &'a SyntaxTree,
+    current: Option<SyntaxId>,
+}
+
+impl<'a> SyntaxTreeCursor<'a> {
+    /// Creates a cursor pointing to the root of the tree.
+    pub fn new(tree: &'a SyntaxTree) -> Self {
+        Self {
+            tree,
+            current: tree.root(),
+        }
+    }
+
+    /// Creates a cursor pointing to a specific node.
+    pub fn at(tree: &'a SyntaxTree, id: SyntaxId) -> Self {
+        Self {
+            tree,
+            current: Some(id),
+        }
+    }
+
+    /// Creates a cursor that points to nothing (end position).
+    pub fn end(tree: &'a SyntaxTree) -> Self {
+        Self {
+            tree,
+            current: None,
+        }
+    }
+
+    /// Returns the current node ID, if any.
+    #[inline]
+    pub fn id(&self) -> Option<SyntaxId> {
+        self.current
+    }
+
+    /// Returns a reference to the current node, if any.
+    #[inline]
+    pub fn node(&self) -> Option<&'a SyntaxNode> {
+        self.current.map(|id| self.tree.get(id))
+    }
+
+    /// Returns true if the cursor is at the end (no current node).
+    #[inline]
+    pub fn is_end(&self) -> bool {
+        self.current.is_none()
+    }
+
+    /// Returns the underlying tree.
+    #[inline]
+    pub fn tree(&self) -> &'a SyntaxTree {
+        self.tree
+    }
+
+    /// Moves to the first child of the current node.
+    /// Returns true if successful.
+    pub fn goto_first_child(&mut self) -> bool {
+        if let Some(id) = self.current {
+            if let Some(child) = self.tree.first_child(id) {
+                self.current = Some(child);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Moves to the next sibling of the current node.
+    /// Returns true if successful.
+    pub fn goto_next_sibling(&mut self) -> bool {
+        if let Some(id) = self.current {
+            if let Some(sibling) = self.tree.next_sibling(id) {
+                self.current = Some(sibling);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Moves to the parent of the current node.
+    /// Returns true if successful.
+    pub fn goto_parent(&mut self) -> bool {
+        if let Some(id) = self.current {
+            if let Some(parent) = self.tree.parent(id) {
+                self.current = Some(parent);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns a new cursor pointing to the first child.
+    #[inline]
+    pub fn first_child(&self) -> Self {
+        Self {
+            tree: self.tree,
+            current: self.current.and_then(|id| self.tree.first_child(id)),
+        }
+    }
+
+    /// Returns a new cursor pointing to the next sibling.
+    #[inline]
+    pub fn next_sibling(&self) -> Self {
+        Self {
+            tree: self.tree,
+            current: self.current.and_then(|id| self.tree.next_sibling(id)),
+        }
+    }
+
+    /// Returns a new cursor pointing to the parent.
+    #[inline]
+    pub fn parent(&self) -> Self {
+        Self {
+            tree: self.tree,
+            current: self.current.and_then(|id| self.tree.parent(id)),
+        }
+    }
+
+    /// Returns the depth (number of ancestors) of the current node.
+    pub fn depth(&self) -> usize {
+        self.current
+            .map(|id| self.tree.ancestors(id).count())
+            .unwrap_or(0)
+    }
+}
+
+impl PartialEq for SyntaxTreeCursor<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.tree, other.tree) && self.current == other.current
+    }
+}
+
+impl Eq for SyntaxTreeCursor<'_> {}
+
+impl Hash for SyntaxTreeCursor<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.current.hash(state);
+    }
+}
+
 /// Builds a `SyntaxTree` from a tree-sitter parse tree.
 pub fn build_tree(tree: &tree_sitter::Tree) -> SyntaxTree {
     let mut nodes = Vec::new();
