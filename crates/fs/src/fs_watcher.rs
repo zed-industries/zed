@@ -7,7 +7,9 @@ use std::{
 };
 use util::{ResultExt, paths::SanitizedPath};
 
-use crate::{PathEvent, PathEventKind, Watcher, is_fifo};
+#[cfg(unix)]
+use crate::is_fifo;
+use crate::{PathEvent, PathEventKind, Watcher};
 
 pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
