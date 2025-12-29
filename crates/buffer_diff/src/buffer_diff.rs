@@ -13,9 +13,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::{
-    DiffOptions as SyntaxDiffOptions, SyntaxDiff, SyntaxTree, build_tree, diff_trees,
-};
+use syntax_diff::{SyntaxDiff, SyntaxTree};
 
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
@@ -1045,7 +1043,7 @@ fn build_syntax_tree(
         .node()
         .descendant_for_byte_range(byte_range.start, byte_range.end)?;
 
-    Some(build_tree(subtree.walk(), text.as_bytes()))
+    Some(syntax_diff::build_tree(subtree.walk(), text.as_bytes()))
 }
 
 fn build_diff_options(
@@ -1361,7 +1359,7 @@ fn process_patch_hunk(
 
         match (base_tree, buffer_tree) {
             (Some(base_tree), Some(buffer_tree)) => {
-                diff_trees(&base_tree, &buffer_tree, &SyntaxDiffOptions::default()).ok()
+                syntax_diff::diff_trees(&base_tree, &buffer_tree).ok()
             }
             _ => None,
         }

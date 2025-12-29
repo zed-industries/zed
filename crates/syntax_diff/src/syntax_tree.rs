@@ -19,25 +19,7 @@ impl SyntaxId {
     }
 }
 
-/// The kind of an atom node for syntax highlighting purposes.
-#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
-pub enum SyntaxAtomKind {
-    /// A normal token like a variable name or numeric literal.
-    Normal,
-    /// A string literal.
-    String,
-    /// A type name.
-    Type,
-    /// A comment.
-    Comment,
-    /// A language keyword.
-    Keyword,
-}
-
 /// A syntax tree stored as a Vec of nodes in preorder.
-///
-/// This representation allows efficient tree traversal while avoiding
-/// arena allocation and pointer-based node references.
 pub struct SyntaxTree {
     nodes: Vec<SyntaxNode>,
 }
@@ -60,8 +42,6 @@ pub struct SyntaxNode {
     descendant_count: usize,
     /// Parent node, if any.
     parent: Option<SyntaxId>,
-    /// For atoms, the kind of atom. None for list nodes.
-    kind: Option<SyntaxAtomKind>,
 }
 
 impl SyntaxNode {
@@ -107,12 +87,6 @@ impl SyntaxNode {
     #[inline]
     pub fn is_atom(&self) -> bool {
         self.descendant_count == 0
-    }
-
-    /// Returns the atom kind, if this is an atom node.
-    #[inline]
-    pub fn atom_kind(&self) -> Option<SyntaxAtomKind> {
-        self.kind
     }
 
     /// Returns the number of descendants (not including self).
@@ -458,7 +432,6 @@ fn build_tree_recursive(
         structural_hash: 0,
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
-        kind: None,
         descendant_count: ts_node.descendant_count() - 1,
         parent,
     });

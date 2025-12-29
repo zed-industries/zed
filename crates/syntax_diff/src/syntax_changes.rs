@@ -1,12 +1,12 @@
 //! Data types that track the change state for syntax nodes.
 
-use std::collections::HashMap;
+use collections::FxHashMap;
 
 use crate::syntax_tree::{SyntaxId, SyntaxTree};
 
 /// The kind of change for a syntax node.
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum ChangeKind {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SyntaxChange {
     /// This node is unchanged. The associated ID is the corresponding
     /// node in the opposite tree.
     Unchanged(SyntaxId),
@@ -20,21 +20,19 @@ pub enum ChangeKind {
 
 /// A map from syntax node IDs to their change status.
 #[derive(Default)]
-pub struct ChangeMap {
-    changes: HashMap<SyntaxId, ChangeKind>,
-}
+pub struct SyntaxChanges(FxHashMap<SyntaxId, SyntaxChange>);
 
-impl ChangeMap {
-    pub fn insert(&mut self, id: SyntaxId, kind: ChangeKind) {
-        self.changes.insert(id, kind);
+impl SyntaxChanges {
+    pub fn insert(&mut self, id: SyntaxId, kind: SyntaxChange) {
+        self.0.insert(id, kind);
     }
 
-    pub fn get(&self, id: SyntaxId) -> Option<ChangeKind> {
-        self.changes.get(&id).copied()
+    pub fn get(&self, id: SyntaxId) -> Option<SyntaxChange> {
+        self.0.get(&id).copied()
     }
 
     pub fn contains(&self, id: SyntaxId) -> bool {
-        self.changes.contains_key(&id)
+        self.0.contains_key(&id)
     }
 }
 
@@ -44,9 +42,9 @@ pub fn insert_deep_unchanged(
     node_id: SyntaxId,
     opposite_tree: &SyntaxTree,
     opposite_id: SyntaxId,
-    change_map: &mut ChangeMap,
+    change_map: &mut SyntaxChanges,
 ) {
-    change_map.insert(node_id, ChangeKind::Unchanged(opposite_id));
+    change_map.insert(node_id, SyntaxChange::Unchanged(opposite_id));
 
     let node = tree.get(node_id);
     let opposite = opposite_tree.get(opposite_id);
@@ -62,8 +60,8 @@ pub fn insert_deep_unchanged(
 }
 
 /// Mark a node and all its descendants as novel.
-pub fn insert_deep_novel(tree: &SyntaxTree, node_id: SyntaxId, change_map: &mut ChangeMap) {
-    change_map.insert(node_id, ChangeKind::Novel);
+pub fn insert_deep_novel(tree: &SyntaxTree, node_id: SyntaxId, change_map: &mut SyntaxChanges) {
+    change_map.insert(node_id, SyntaxChange::Novel);
 
     for child_id in tree.children(node_id) {
         insert_deep_novel(tree, child_id, change_map);

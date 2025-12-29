@@ -5,7 +5,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
 
 use crate::SyntaxTree;
-use crate::syntax_tree::{SyntaxAtomKind, SyntaxId, SyntaxTreeCursor};
+use crate::syntax_tree::{SyntaxId, SyntaxTreeCursor};
 
 /// Error when the graph search exceeds the configured limit.
 #[derive(Debug)]
@@ -300,36 +300,6 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
                     SyntaxEdge::EnterUnchangedDelimiter { depth_difference },
                     SyntaxVertex { lhs, rhs, parents },
                 ));
-            }
-        }
-
-        // Both are comments or strings - check for replacement
-        if let (Some(lhs_kind), Some(rhs_kind)) = (lhs_node.atom_kind(), rhs_node.atom_kind()) {
-            let is_comment_or_string =
-                |k: SyntaxAtomKind| matches!(k, SyntaxAtomKind::Comment | SyntaxAtomKind::String);
-
-            if is_comment_or_string(lhs_kind)
-                && is_comment_or_string(rhs_kind)
-                && lhs_kind == rhs_kind
-            {
-                if lhs_node.structural_hash() != rhs_node.structural_hash() {
-                    // TODO: compute actual levenshtein when we have content access
-                    let levenshtein_pct = 50;
-
-                    let edge = if lhs_kind == SyntaxAtomKind::Comment {
-                        SyntaxEdge::ReplacedComment { levenshtein_pct }
-                    } else {
-                        SyntaxEdge::ReplacedString { levenshtein_pct }
-                    };
-
-                    let (lhs, rhs, parents) = pop_all_parents(
-                        v.lhs.next_sibling(),
-                        v.rhs.next_sibling(),
-                        v.parents.clone(),
-                    );
-
-                    neighbours.push((edge, SyntaxVertex { lhs, rhs, parents }));
-                }
             }
         }
     }
