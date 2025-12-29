@@ -106,8 +106,12 @@ impl SyntaxTree {
         self.get(id).parent
     }
 
-    pub fn children(&self, id: SyntaxId) -> ChildrenIter<'_> {
-        ChildrenIter {
+    pub fn cursor(&self) -> SyntaxCursor<'_> {
+        SyntaxCursor::at_root(self)
+    }
+
+    pub fn children(&self, id: SyntaxId) -> SyntaxChildrenIter<'_> {
+        SyntaxChildrenIter {
             tree: self,
             current: self.first_child(id),
         }
@@ -118,18 +122,138 @@ impl SyntaxTree {
     }
 }
 
-pub struct ChildrenIter<'tree> {
+pub struct SyntaxChildrenIter<'tree> {
     tree: &'tree SyntaxTree,
     current: Option<SyntaxId>,
 }
 
-impl<'tree> Iterator for ChildrenIter<'tree> {
+impl<'tree> Iterator for SyntaxChildrenIter<'tree> {
     type Item = SyntaxId;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = self.current?;
         self.current = self.tree.next_sibling(current);
         Some(current)
+    }
+}
+
+/// A cursor for navigating a syntax tree during diff traversal.
+///
+/// The cursor tracks the current position and, when inside a list node,
+/// remembers which node was entered so it can properly exit.
+#[derive(Clone, Copy)]
+pub struct SyntaxCursor<'a> {
+    tree: &'a SyntaxTree,
+    /// Current node to process, or None if exhausted at this level.
+    current: Option<SyntaxId>,
+    /// The list node we entered (for proper exit navigation).
+    entered: Option<SyntaxId>,
+}
+
+impl std::fmt::Debug for SyntaxCursor<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyntaxCursor")
+            .field("current", &self.current)
+            .field("entered", &self.entered)
+            .finish()
+    }
+}
+
+impl PartialEq for SyntaxCursor<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.tree, other.tree)
+            && self.current == other.current
+            && self.entered == other.entered
+    }
+}
+
+impl Eq for SyntaxCursor<'_> {}
+
+impl std::hash::Hash for SyntaxCursor<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self.tree, state);
+        self.current.hash(state);
+        self.entered.hash(state);
+    }
+}
+
+impl PartialOrd for SyntaxCursor<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SyntaxCursor<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.tree as *const SyntaxTree)
+            .cmp(&(other.tree as *const SyntaxTree))
+            .then_with(|| self.current.cmp(&other.current))
+            .then_with(|| self.entered.cmp(&other.entered))
+    }
+}
+
+impl<'a> SyntaxCursor<'a> {
+    /// Create a cursor at the root of a tree.
+    pub fn at_root(tree: &'a SyntaxTree) -> Self {
+        Self {
+            tree,
+            current: tree.root(),
+            entered: None,
+        }
+    }
+
+    /// The current node id, if any.
+    pub fn current(&self) -> Option<SyntaxId> {
+        self.current
+    }
+
+    /// Get the node at the cursor's current position.
+    pub fn node(&self) -> Option<&'a SyntaxNode> {
+        self.current.map(|id| self.tree.get(id))
+    }
+
+    /// Returns true if cursor has no more nodes and no parent to exit to.
+    pub fn is_done(&self) -> bool {
+        self.current.is_none() && self.entered.is_none()
+    }
+
+    /// Returns true if cursor can exit (is inside an entered list).
+    pub fn can_exit(&self) -> bool {
+        self.entered.is_some()
+    }
+
+    /// Enter the current node's children (for list nodes).
+    /// Returns a new cursor positioned at the first child.
+    pub fn enter(&self) -> Self {
+        let current = self.current.expect("cannot enter: no current node");
+        Self {
+            tree: self.tree,
+            current: self.tree.first_child(current),
+            entered: Some(current),
+        }
+    }
+
+    /// Advance to the next sibling.
+    /// Returns a new cursor positioned at the next sibling, or None if exhausted.
+    pub fn advance(&self) -> Self {
+        let current = self.current.expect("cannot advance: no current node");
+        Self {
+            tree: self.tree,
+            current: self.tree.next_sibling(current),
+            entered: self.entered,
+        }
+    }
+
+    /// Exit the current list, moving to the entered node's next sibling.
+    /// Returns a new cursor positioned after the list we exited.
+    pub fn exit(&self) -> Self {
+        let entered = self.entered.expect("cannot exit: not inside a list");
+        let grandparent = self.tree.parent(entered);
+        Self {
+            tree: self.tree,
+            current: self.tree.next_sibling(entered),
+            entered: grandparent,
+        }
     }
 }
 
