@@ -48,10 +48,10 @@ pub fn insert_deep_unchanged(
     let opposite = opposite_tree.get(opposite_id);
 
     if node.is_list() && opposite.is_list() {
-        let children: Vec<_> = tree.children(node_id).collect();
-        let opposite_children: Vec<_> = opposite_tree.children(opposite_id).collect();
+        let children = tree.children(node_id);
+        let opposite_children = opposite_tree.children(opposite_id);
 
-        for (child_id, opposite_child_id) in children.into_iter().zip(opposite_children) {
+        for (child_id, opposite_child_id) in children.zip(opposite_children) {
             insert_deep_unchanged(tree, child_id, opposite_tree, opposite_child_id, change_map);
         }
     }
