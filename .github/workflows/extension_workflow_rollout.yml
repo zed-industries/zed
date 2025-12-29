@@ -42,12 +42,14 @@ jobs:
       fail-fast: false
       max-parallel: 5
     steps:
-    - id: get-app-token
-      name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-extensions
+        repositories: ${{ matrix.repo }}
     - name: checkout_zed_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -57,7 +59,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        token: ${{ steps.get-app-token.outputs.token }}
+        token: ${{ steps.generate-token.outputs.token }}
         repository: zed-extensions/${{ matrix.repo }}
         path: extension
     - name: extension_workflow_rollout::rollout_workflows_to_extension::copy_workflow_files
@@ -86,7 +88,7 @@ jobs:
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
-        token: ${{ steps.get-app-token.outputs.token }}
+        token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
     - name: extension_workflow_rollout::rollout_workflows_to_extension::enable_auto_merge
       run: |
@@ -97,5 +99,5 @@ jobs:
         fi
       shell: bash -euxo pipefail {0}
       env:
-        GH_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GH_TOKEN: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 10
