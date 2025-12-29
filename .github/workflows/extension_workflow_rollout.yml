@@ -50,6 +50,9 @@ jobs:
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         owner: zed-extensions
         repositories: ${{ matrix.repo }}
+        permission-pull-requests: write
+        permission-contents: write
+        permission-workflows: write
     - name: checkout_zed_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:

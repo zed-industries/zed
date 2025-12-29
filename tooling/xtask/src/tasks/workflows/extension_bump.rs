@@ -220,8 +220,21 @@ pub(crate) fn generate_token(
                      RepositoryTarget {
                          owner,
                          repositories,
+                         permissions,
                      }| {
-                        input.add("owner", owner).add("repositories", repositories)
+                        input
+                            .add("owner", owner)
+                            .add("repositories", repositories)
+                            .when_some(permissions, |input, permissions| {
+                                permissions
+                                    .into_iter()
+                                    .fold(input, |input, (permission, level)| {
+                                        input.add(
+                                            permission,
+                                            serde_json::to_value(&level).unwrap_or_default(),
+                                        )
+                                    })
+                            })
                     },
                 ),
         );
@@ -297,6 +310,7 @@ fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> 
 pub(crate) struct RepositoryTarget {
     owner: String,
     repositories: String,
+    permissions: Option<Vec<(String, Level)>>,
 }
 
 impl RepositoryTarget {
@@ -304,6 +318,14 @@ impl RepositoryTarget {
         Self {
             owner: owner.to_string(),
             repositories: repositories.join("\n"),
+            permissions: None,
+        }
+    }
+
+    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
         }
     }
 }
