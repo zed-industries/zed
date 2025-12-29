@@ -147,7 +147,7 @@ fn build_tree(
         byte_range: node.byte_range(),
         content_range: node.byte_range(),
         kind_id: node.kind_id(),
-        descendant_count: node.descendant_count(),
+        descendant_count: node.descendant_count() - 1,
         parent,
     });
 
@@ -157,7 +157,7 @@ fn build_tree(
 
     if cursor.goto_first_child() {
         let first_child_start = cursor.node().start_byte();
-        let mut last_child_end = cursor.node().end_byte();
+        let mut last_child_end;
 
         loop {
             let child_id = build_tree(cursor, nodes, Some(this_id));
