@@ -12605,6 +12605,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "language",
+ "log",
  "menu",
  "notifications",
  "pretty_assertions",

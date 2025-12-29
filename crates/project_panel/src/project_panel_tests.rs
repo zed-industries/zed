@@ -4339,7 +4339,7 @@ async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
     // Select folder1 (the parent directory)
     panel.update(cx, |panel, _| panel.marked_entries.clear());
     select_path_with_mark(&panel, "root/src/folder1", cx);
-    // Also select folder2/mod.rs (a child file from another folder)
+    // Also select folder2/mod.rs (a file from a different sibling folder)
     select_path_with_mark(&panel, "root/src/folder2/mod.rs", cx);
 
     // Drag both selections to root
@@ -4486,6 +4486,62 @@ async fn test_drag_name_collision(cx: &mut gpui::TestAppContext) {
     assert!(
         find_project_entry(&panel, "root/dest/mod.rs", cx).is_none(),
         "dest/mod.rs should not exist (move blocked)"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_folder_collision(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "group1": {
+                    "common_folder": { "file1.txt": "" }
+                },
+                "group2": {
+                    "common_folder": { "file2.txt": "" }
+                },
+            },
+            "dest": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/group1", cx);
+    toggle_expand_dir(&panel, "root/src/group2", cx);
+    toggle_expand_dir(&panel, "root/dest", cx);
+    cx.run_until_parked();
+
+    // Select group1/common_folder and group2/common_folder
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/group1/common_folder", cx);
+    select_path_with_mark(&panel, "root/src/group2/common_folder", cx);
+
+    // Drag both to dest
+    drag_selection_to(&panel, "root/dest", false, cx);
+    cx.run_until_parked();
+
+    // Prompt blocks the move; original folders should remain intact.
+    assert!(
+        find_project_entry(&panel, "root/src/group1/common_folder", cx).is_some(),
+        "group1/common_folder should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/src/group2/common_folder", cx).is_some(),
+        "group2/common_folder should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/dest/common_folder", cx).is_none(),
+        "dest/common_folder should not exist (move blocked)"
     );
 }
 

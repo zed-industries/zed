@@ -4120,7 +4120,7 @@ impl ProjectPanel {
                                         }
                                     }
                                     if !errors.is_empty() {
-                                        eprintln!("Errors moving entries: {:?}", errors);
+                                        log::error!("Errors moving entries: {:?}", errors);
                                         cx.notify();
                                     }
                                 })
