@@ -133,7 +133,8 @@ impl PlanParser {
             "in_progress" | "inprogress" | "running" | "current" => {
                 acp::PlanEntryStatus::InProgress
             }
-            "pending" | "todo" | "waiting" | _ => acp::PlanEntryStatus::Pending,
+            "pending" | "todo" | "waiting" => acp::PlanEntryStatus::Pending,
+            _ => acp::PlanEntryStatus::Pending,
         }
     }
 

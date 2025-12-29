@@ -1575,7 +1575,7 @@ impl Thread {
                     // Use our helper to mark the first pending as in-progress
                     PlanParser::start_next_entry(&new_plan)
                 } else {
-                    new_plan.clone()
+                    new_plan
                 };
 
                 self.current_plan = Some(plan_to_send.clone());
