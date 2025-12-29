@@ -211,7 +211,7 @@ fn pop_all_parents<'a>(
             }) = parents.last_mut()
             {
                 if let Some(lhs_parent_id) = lhs_stack.pop() {
-                    lhs = SyntaxTreeCursor::at(lhs.tree(), lhs_parent_id).next_sibling();
+                    lhs = lhs.tree().cursor_at(lhs_parent_id).next_sibling();
                     if lhs_stack.is_empty() && rhs_stack.is_empty() {
                         parents.pop();
                     }
@@ -227,7 +227,7 @@ fn pop_all_parents<'a>(
             }) = parents.last_mut()
             {
                 if let Some(rhs_parent_id) = rhs_stack.pop() {
-                    rhs = SyntaxTreeCursor::at(rhs.tree(), rhs_parent_id).next_sibling();
+                    rhs = rhs.tree().cursor_at(rhs_parent_id).next_sibling();
                     if lhs_stack.is_empty() && rhs_stack.is_empty() {
                         parents.pop();
                     }
@@ -245,8 +245,8 @@ fn pop_all_parents<'a>(
                 let lhs_id = *lhs_id;
                 let rhs_id = *rhs_id;
                 parents.pop();
-                lhs = SyntaxTreeCursor::at(lhs.tree(), lhs_id).next_sibling();
-                rhs = SyntaxTreeCursor::at(rhs.tree(), rhs_id).next_sibling();
+                lhs = lhs.tree().cursor_at(lhs_id).next_sibling();
+                rhs = rhs.tree().cursor_at(rhs_id).next_sibling();
                 continue;
             }
         }
@@ -268,7 +268,8 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         // Both nodes have same structure - unchanged
         if lhs_node.structural_hash() == rhs_node.structural_hash() {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-            let probably_punctuation = lhs_node.is_atom();
+            // TODO: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
+            let probably_punctuation = false;
 
             let (lhs, rhs, parents) = pop_all_parents(
                 v.lhs.next_sibling(),
@@ -353,8 +354,8 @@ pub fn shortest_path<'a>(
     rhs_tree: &'a SyntaxTree,
     graph_limit: usize,
 ) -> Result<SyntaxRoute<'a>, ExceededGraphLimit> {
-    let lhs_cursor = SyntaxTreeCursor::new(lhs_tree);
-    let rhs_cursor = SyntaxTreeCursor::new(rhs_tree);
+    let lhs_cursor = lhs_tree.cursor();
+    let rhs_cursor = rhs_tree.cursor();
     let start = SyntaxVertex::new(lhs_cursor, rhs_cursor);
 
     Ok(SyntaxRoute(find_shortest_path(start, graph_limit)?))

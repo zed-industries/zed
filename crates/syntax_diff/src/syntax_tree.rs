@@ -170,6 +170,20 @@ impl SyntaxTree {
         (0..self.nodes.len()).map(SyntaxId::new)
     }
 
+    pub fn cursor(&self) -> SyntaxTreeCursor<'_> {
+        SyntaxTreeCursor {
+            tree: self,
+            current: self.root(),
+        }
+    }
+
+    pub fn cursor_at(&self, node: SyntaxId) -> SyntaxTreeCursor<'_> {
+        SyntaxTreeCursor {
+            tree: self,
+            current: Some(node),
+        }
+    }
+
     /// Returns an iterator over the children of the given node.
     pub fn children(&self, id: SyntaxId) -> ChildrenIter<'_> {
         ChildrenIter {
@@ -275,30 +289,6 @@ pub struct SyntaxTreeCursor<'a> {
 }
 
 impl<'a> SyntaxTreeCursor<'a> {
-    /// Creates a cursor pointing to the root of the tree.
-    pub fn new(tree: &'a SyntaxTree) -> Self {
-        Self {
-            tree,
-            current: tree.root(),
-        }
-    }
-
-    /// Creates a cursor pointing to a specific node.
-    pub fn at(tree: &'a SyntaxTree, id: SyntaxId) -> Self {
-        Self {
-            tree,
-            current: Some(id),
-        }
-    }
-
-    /// Creates a cursor that points to nothing (end position).
-    pub fn end(tree: &'a SyntaxTree) -> Self {
-        Self {
-            tree,
-            current: None,
-        }
-    }
-
     /// Returns the current node ID, if any.
     #[inline]
     pub fn id(&self) -> Option<SyntaxId> {
@@ -509,7 +499,7 @@ mod tests {
         assert_eq!(tree.len(), 0);
         assert!(tree.root().is_none());
 
-        let mut cursor = SyntaxTreeCursor::new(&tree);
+        let mut cursor = tree.cursor();
         assert!(cursor.is_end());
         assert!(!cursor.goto_first_child());
         assert!(!cursor.goto_next_sibling());
@@ -623,7 +613,7 @@ mod tests {
     #[test]
     fn cursor_navigation() {
         let tree = parse_json(r#"{"a": 1}"#);
-        let mut cursor = SyntaxTreeCursor::new(&tree);
+        let mut cursor = tree.cursor();
         let root_id = cursor.id();
 
         assert!(!cursor.is_end());
@@ -641,7 +631,7 @@ mod tests {
     #[test]
     fn cursor_immutable_methods() {
         let tree = parse_json("[1, 2]");
-        let cursor = SyntaxTreeCursor::new(&tree);
+        let cursor = tree.cursor();
         let original_id = cursor.id();
 
         let _ = cursor.first_child();
@@ -656,8 +646,8 @@ mod tests {
         use std::collections::HashSet;
 
         let tree = parse_json("[1, 2]");
-        let cursor1 = SyntaxTreeCursor::new(&tree);
-        let cursor2 = SyntaxTreeCursor::new(&tree);
+        let cursor1 = tree.cursor();
+        let cursor2 = tree.cursor();
 
         assert_eq!(cursor1, cursor2);
 
@@ -667,7 +657,7 @@ mod tests {
         assert_eq!(set.len(), 1);
 
         let tree2 = parse_json("[1, 2]");
-        let cursor3 = SyntaxTreeCursor::new(&tree2);
+        let cursor3 = tree2.cursor();
         assert_ne!(cursor1, cursor3);
     }
 
