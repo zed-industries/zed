@@ -13,8 +13,9 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::DiffTree;
-pub use syntax_diff::SyntaxDiff;
+use syntax_diff::{DiffChanges, DiffContext, SyntaxTree, compute_diff};
+
+pub use syntax_diff::DiffChanges as SyntaxDiff;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
@@ -102,7 +103,7 @@ pub struct DiffHunk {
     /// Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
     /// Pre-computed syntax diff for this hunk
-    pub syntax_diff: Option<SyntaxDiff>,
+    pub syntax_diff: Option<DiffChanges>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -112,7 +113,7 @@ struct InternalDiffHunk {
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
-    syntax_diff: Option<SyntaxDiff>,
+    syntax_diff: Option<DiffChanges>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1028,21 +1029,20 @@ impl BufferDiffInner<language::BufferSnapshot> {
     }
 }
 
-fn build_diff_tree(
+fn build_syntax_tree(
     snapshot: &language::BufferSnapshot,
     byte_range: Range<usize>,
-) -> Option<DiffTree> {
+) -> Option<SyntaxTree> {
     if byte_range.is_empty() {
         return None;
     }
 
-    let text = snapshot.text();
     let layer = snapshot.syntax_layers().next()?;
     let subtree = layer
         .node()
         .descendant_for_byte_range(byte_range.start, byte_range.end)?;
 
-    Some(DiffTree::new(subtree.walk(), &text))
+    Some(SyntaxTree::new(&mut subtree.walk()))
 }
 
 fn build_diff_options(
@@ -1353,16 +1353,16 @@ fn process_patch_hunk(
             buffer_range.start.to_offset(&buffer.text)..buffer_range.end.to_offset(&buffer.text);
 
         let base_tree = base_snapshot
-            .and_then(|snapshot| build_diff_tree(snapshot, diff_base_byte_range.clone()));
-        let buffer_tree = build_diff_tree(buffer, buffer_byte_range.clone());
+            .and_then(|snapshot| build_syntax_tree(snapshot, diff_base_byte_range.clone()));
+        let buffer_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
 
         match (base_tree, buffer_tree) {
-            (Some(base_tree), Some(buffer_tree)) => Some(SyntaxDiff::compute(
-                &base_tree,
-                &buffer_tree,
-                diff_base_byte_range.start,
-                buffer_byte_range.start,
-            )),
+            (Some(base_tree), Some(buffer_tree)) => {
+                let text = buffer.text();
+                let context = DiffContext::new(&base_tree, &buffer_tree, "", &text);
+
+                compute_diff(&context).map(|result| result.extract_changes(&context))
+            }
             _ => None,
         }
     } else {

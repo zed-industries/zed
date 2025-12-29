@@ -146,10 +146,8 @@ pub struct MultiBufferDiffHunk {
     pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
-    /// Syntax diff ranges in the buffer (as MultiBufferOffsets).
+    /// Syntax diff ranges in the buffer
     pub syntax_diffs: Vec<Range<MultiBufferOffset>>,
-    /// Pre-computed syntax diff ranges for this hunk.
-    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3977,6 +3975,47 @@ impl MultiBufferSnapshot {
                 (!hunk.base_word_diffs.is_empty() || !hunk.buffer_word_diffs.is_empty())
                     .then(|| {
                     hunk.base_word_diffs
+            let word_diffs = (!hunk.base_word_diffs.is_empty()
+                || !hunk.buffer_word_diffs.is_empty())
+            .then(|| {
+                hunk.base_word_diffs
+                    .iter()
+                    .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
+                    .chain(
+                        hunk.buffer_word_diffs
+                            .into_iter()
+                            .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default();
+
+            let syntax_diffs = hunk
+                .syntax_diff
+                .as_ref()
+                .map(|syntax_diff| {
+                    syntax_diff
+                        .buffer_ranges
+            let word_diffs = (!hunk.base_word_diffs.is_empty()
+                || !hunk.buffer_word_diffs.is_empty())
+            .then(|| {
+                hunk.base_word_diffs
+                    .iter()
+                    .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
+                    .chain(
+                        hunk.buffer_word_diffs
+                            .into_iter()
+                            .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default();
+
+            let syntax_diffs = hunk
+                .syntax_diff
+                .map(|syntax_diff| {
+                    syntax_diff
+                        .deleted
                         .iter()
                         .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
                         .chain(
@@ -3984,6 +4023,10 @@ impl MultiBufferSnapshot {
                                 .into_iter()
                                 .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
                         )
+                        .map(|range| {
+                            hunk_start_offset + range.start..hunk_start_offset + range.end
+                        })
+                        .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
                         .collect()
                 })
                     .unwrap_or_default();
@@ -4004,6 +4047,27 @@ impl MultiBufferSnapshot {
             },
             syntax_diff: hunk.syntax_diff.clone(),
         })
+                row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
+                buffer_id: excerpt.buffer_id,
+                excerpt_id: excerpt.id,
+                buffer_range: hunk.buffer_range.clone(),
+                word_diffs,
+                syntax_diffs,
+                diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
+                    ..BufferOffset(hunk.diff_base_byte_range.end),
+                secondary_status: hunk.secondary_status,
+                syntax_diff: hunk.syntax_diff.clone(),
+            })
+                row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
+                buffer_id: excerpt.buffer_id,
+                excerpt_id: excerpt.id,
+                buffer_range: hunk.buffer_range.clone(),
+                word_diffs,
+                syntax_diffs,
+                diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
+                    ..BufferOffset(hunk.diff_base_byte_range.end),
+                secondary_status: hunk.secondary_status,
+            })
         })
     }
 

@@ -19965,7 +19965,7 @@ impl Editor {
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
-                        syntax_diff: hunk.syntax_diff,
+                        syntax_diff: None,
                     })
                     .collect::<Vec<_>>(),
                 &buffer_snapshot,
