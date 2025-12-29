@@ -158,10 +158,7 @@ pub enum SyntaxEdge {
     EnterUnchangedDelimiter {
         depth_difference: u32,
     },
-    ReplacedComment {
-        levenshtein_pct: u8,
-    },
-    ReplacedString {
+    Replaced {
         levenshtein_pct: u8,
     },
     NovelAtomLHS,
@@ -185,10 +182,7 @@ impl SyntaxEdge {
             }
             SyntaxEdge::NovelAtomLHS | SyntaxEdge::NovelAtomRHS => 300,
             SyntaxEdge::EnterNovelDelimiterLHS | SyntaxEdge::EnterNovelDelimiterRHS => 300,
-            SyntaxEdge::ReplacedComment { levenshtein_pct }
-            | SyntaxEdge::ReplacedString { levenshtein_pct } => {
-                500 + u32::from(100 - levenshtein_pct)
-            }
+            SyntaxEdge::Replaced { levenshtein_pct } => 500 + u32::from(100 - levenshtein_pct),
         }
     }
 }

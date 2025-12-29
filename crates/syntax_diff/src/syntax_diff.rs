@@ -68,17 +68,11 @@ fn populate_change_map(
                     map.insert(rhs_id, SyntaxChange::Unchanged(lhs_id));
                 }
             }
-            SyntaxEdge::ReplacedComment { levenshtein_pct }
-            | SyntaxEdge::ReplacedString { levenshtein_pct } => {
+            SyntaxEdge::Replaced { levenshtein_pct } => {
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
                     if *levenshtein_pct > 20 {
-                        let kind = if matches!(edge, SyntaxEdge::ReplacedComment { .. }) {
-                            SyntaxChange::ReplacedComment(lhs_id, rhs_id)
-                        } else {
-                            SyntaxChange::ReplacedString(lhs_id, rhs_id)
-                        };
-                        map.insert(lhs_id, kind);
-                        map.insert(rhs_id, kind);
+                        map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
+                        map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
                     } else {
                         map.insert(lhs_id, SyntaxChange::Novel);
                         map.insert(rhs_id, SyntaxChange::Novel);
@@ -121,8 +115,7 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                     }
                 }
             }
-            Some(SyntaxChange::ReplacedComment(_, _))
-            | Some(SyntaxChange::ReplacedString(_, _)) => {
+            Some(SyntaxChange::Replaced(_, _)) => {
                 ranges.push(tree.get(id).byte_range());
             }
             Some(SyntaxChange::Unchanged(_)) => {

@@ -10,10 +10,8 @@ pub enum SyntaxChange {
     /// This node is unchanged. The associated ID is the corresponding
     /// node in the opposite tree.
     Unchanged(SyntaxId),
-    /// This comment was replaced with a similar comment.
-    ReplacedComment(SyntaxId, SyntaxId),
-    /// This string was replaced with a similar string.
-    ReplacedString(SyntaxId, SyntaxId),
+    /// This node was replaced with another node.
+    Replaced(SyntaxId, SyntaxId),
     /// This node is novel (added or removed).
     Novel,
 }
