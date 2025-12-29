@@ -44,7 +44,8 @@ pub(crate) fn call_bump_version(
             Permissions::default()
                 .contents(Level::Write)
                 .issues(Level::Write)
-                .pull_requests(Level::Write),
+                .pull_requests(Level::Write)
+                .actions(Level::Write),
         )
         .uses(
             "zed-industries",

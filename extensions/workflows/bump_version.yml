@@ -43,6 +43,7 @@ jobs:
     - determine_bump_type
     if: github.event.action != 'labeled' || needs.determine_bump_type.outputs.bump_type != 'patch'
     permissions:
+      actions: write
       contents: write
       issues: write
       pull-requests: write
