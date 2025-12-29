@@ -33,7 +33,7 @@ fn create_release(app_id: &WorkflowSecret, app_secret: &WorkflowSecret) -> Named
 
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_SMALL)
         .add_step(generate_token)
         .add_step(checkout_repo())
         .add_step(get_extension_id)

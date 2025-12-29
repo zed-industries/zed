@@ -13,7 +13,9 @@ on:
   workflow_dispatch: {}
 jobs:
   determine_bump_type:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions: {}
     steps:
     - id: get-bump-type
       name: extensions::bump_version::get_bump_type
@@ -40,6 +42,11 @@ jobs:
     needs:
     - determine_bump_type
     if: github.event.action != 'labeled' || needs.determine_bump_type.outputs.bump_type != 'patch'
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
     uses: zed-industries/zed/.github/workflows/extension_bump.yml@main
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
