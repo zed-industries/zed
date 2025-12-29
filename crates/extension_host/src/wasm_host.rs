@@ -956,7 +956,8 @@ impl WasmExtension {
         let wasm_path = extension_dir.join("extension.wasm");
         // Include wasmtime version to invalidate cache on engine updates.
         // Without this, Component::deserialize could load incompatible components.
-        let cwasm_path = extension_dir.join(format!("extension-{}.cwasm", env!("WASMTIME_VERSION")));
+        let cwasm_path =
+            extension_dir.join(format!("extension-{}.cwasm", env!("WASMTIME_VERSION")));
 
         // Always read WASM bytes to parse the zed_api_version
         let mut wasm_file = wasm_host
@@ -1111,8 +1112,6 @@ impl wasi::WasiView for WasmState {
     }
 }
 
-
-
 /// Wrapper around a mini-moka bounded cache for storing incremental compilation artifacts.
 /// Since wasm modules have many similar elements, this can save us a lot of work at the
 /// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
@@ -1191,4 +1190,3 @@ impl CacheStore for IncrementalCompilationCache {
         true
     }
 }
-
