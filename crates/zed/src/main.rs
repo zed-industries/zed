@@ -413,8 +413,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees(None, None, cx)
-        {
+        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");

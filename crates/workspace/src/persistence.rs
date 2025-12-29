@@ -16,11 +16,10 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Entity, Task, WindowBounds, WindowId, point, size};
+use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{DbTrustedPaths, PathTrust, RemoteHostLocation, find_worktree_in_store},
-    worktree_store::WorktreeStore,
+    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -2029,12 +2028,7 @@ VALUES {placeholders};"#
         Ok(())
     }
 
-    pub fn fetch_trusted_worktrees(
-        &self,
-        worktree_store: Option<Entity<WorktreeStore>>,
-        host: Option<RemoteHostLocation>,
-        cx: &App,
-    ) -> Result<DbTrustedPaths> {
+    pub fn fetch_trusted_worktrees(&self) -> Result<DbTrustedPaths> {
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
@@ -2050,23 +2044,12 @@ VALUES {placeholders};"#
                     }),
                     _ => None,
                 };
-
-                let abs_path = abs_path?;
-                Some(if db_host != host {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                } else if let Some(worktree_store) = &worktree_store {
-                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                        .map(PathTrust::Worktree)
-                        .map(|trusted_worktree| (host.clone(), trusted_worktree))
-                        .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
-                } else {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                })
+                Some((db_host, abs_path?))
             })
-            .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
+            .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
                     .or_insert_with(HashSet::default)
-                    .insert(path_trust);
+                    .insert(abs_path);
                 acc
             }))
     }

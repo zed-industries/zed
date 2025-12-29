@@ -125,6 +125,7 @@ impl TrustedWorktrees {
 ///
 /// Emits an event each time the worktree was checked and found not trusted,
 /// or a certain worktree had been trusted.
+#[derive(Debug)]
 pub struct TrustedWorktreesStore {
     downstream_clients: Vec<(AnyProtoClient, ProjectId)>,
     upstream_clients: Vec<(AnyProtoClient, ProjectId)>,
@@ -215,7 +216,7 @@ pub enum TrustedWorktreesEvent {
 impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStore {}
 
 type TrustedPaths = HashMap<WeakEntity<WorktreeStore>, HashSet<PathTrust>>;
-pub type DbTrustedPaths = HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>;
+pub type DbTrustedPaths = HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>;
 
 impl TrustedWorktreesStore {
     fn new(
@@ -226,7 +227,13 @@ impl TrustedWorktreesStore {
         if let Some((upstream_client, upstream_project_id)) = &upstream_client {
             let trusted_paths = db_trusted_paths
                 .iter()
-                .flat_map(|(_, paths)| paths.iter().map(|trusted_path| trusted_path.to_proto()))
+                .flat_map(|(_, paths)| {
+                    paths
+                        .iter()
+                        .cloned()
+                        .map(PathTrust::AbsPath)
+                        .map(|trusted_path| trusted_path.to_proto())
+                })
                 .collect::<Vec<_>>();
             if !trusted_paths.is_empty() {
                 upstream_client
@@ -304,12 +311,22 @@ impl TrustedWorktreesStore {
                         }
                     }
                 }
-                PathTrust::AbsPath(path) => {
+                PathTrust::AbsPath(abs_path) => {
                     debug_assert!(
-                        path.is_absolute(),
-                        "Cannot trust non-absolute path {path:?}"
+                        abs_path.is_absolute(),
+                        "Cannot trust non-absolute path {abs_path:?}"
                     );
-                    new_trusted_abs_paths.insert(path.clone());
+                    if let Some((worktree_id, is_file)) =
+                        find_worktree_in_store(worktree_store.read(cx), abs_path, cx)
+                    {
+                        if is_file {
+                            new_trusted_single_file_worktrees.insert(worktree_id);
+                        } else {
+                            new_trusted_other_worktrees
+                                .insert((Arc::from(abs_path.as_path()), worktree_id));
+                        }
+                    }
+                    new_trusted_abs_paths.insert(abs_path.clone());
                 }
             }
         }
@@ -427,6 +444,7 @@ impl TrustedWorktreesStore {
     /// Requires Zed's restart to take proper effect.
     pub fn clear_trusted_paths(&mut self) {
         self.trusted_paths.clear();
+        self.db_trusted_paths.clear();
     }
 
     /// Checks whether a certain worktree is trusted (or on a larger trust level).
@@ -570,28 +588,31 @@ impl TrustedWorktreesStore {
         &mut self,
         cx: &mut Context<Self>,
     ) -> HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> {
-        let new_trusted_worktrees = self
-            .trusted_paths
-            .clone()
-            .into_iter()
+        self.trusted_paths
+            .iter()
             .filter_map(|(worktree_store, paths)| {
+                let host = self.worktree_stores.get(&worktree_store)?.clone();
                 let abs_paths = paths
-                    .into_iter()
+                    .iter()
                     .flat_map(|path| match path {
                         PathTrust::Worktree(worktree_id) => worktree_store
                             .upgrade()
                             .and_then(|worktree_store| {
-                                worktree_store.read(cx).worktree_for_id(worktree_id, cx)
+                                worktree_store.read(cx).worktree_for_id(*worktree_id, cx)
                             })
                             .map(|worktree| worktree.read(cx).abs_path().to_path_buf()),
-                        PathTrust::AbsPath(abs_path) => Some(abs_path),
+                        PathTrust::AbsPath(abs_path) => Some(abs_path.clone()),
                     })
-                    .collect();
-                let host = self.worktree_stores.get(&worktree_store)?.clone();
+                    .collect::<HashSet<_>>();
                 Some((host, abs_paths))
             })
-            .collect();
-        new_trusted_worktrees
+            .chain(self.db_trusted_paths.clone())
+            .fold(HashMap::default(), |mut acc, (host, paths)| {
+                acc.entry(host)
+                    .or_insert_with(HashSet::default)
+                    .extend(paths);
+                acc
+            })
     }
 
     fn add_worktree_store(
@@ -605,8 +626,8 @@ impl TrustedWorktreesStore {
             .insert(weak_worktree_store.clone(), remote_host.clone());
 
         let mut new_trusted_paths = HashSet::default();
-        if let Some(db_trusted_paths) = self.db_trusted_paths.remove(&remote_host) {
-            new_trusted_paths.extend(db_trusted_paths);
+        if let Some(db_trusted_paths) = self.db_trusted_paths.get(&remote_host) {
+            new_trusted_paths.extend(db_trusted_paths.clone().into_iter().map(PathTrust::AbsPath));
         }
         if let Some(trusted_paths) = self.trusted_paths.remove(&weak_worktree_store) {
             new_trusted_paths.extend(trusted_paths);
@@ -619,7 +640,7 @@ impl TrustedWorktreesStore {
                     .map(|path_trust| match path_trust {
                         PathTrust::AbsPath(abs_path) => {
                             find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                                .map(PathTrust::Worktree)
+                                .map(|(worktree_id, _)| PathTrust::Worktree(worktree_id))
                                 .unwrap_or_else(|| PathTrust::AbsPath(abs_path))
                         }
                         other => other,
@@ -630,14 +651,14 @@ impl TrustedWorktreesStore {
     }
 }
 
-pub fn find_worktree_in_store(
+fn find_worktree_in_store(
     worktree_store: &WorktreeStore,
     abs_path: &Path,
     cx: &App,
-) -> Option<WorktreeId> {
+) -> Option<(WorktreeId, bool)> {
     let (worktree, path_in_worktree) = worktree_store.find_worktree(&abs_path, cx)?;
     if path_in_worktree.is_empty() {
-        Some(worktree.read(cx).id())
+        Some((worktree.read(cx).id(), worktree.read(cx).is_single_file()))
     } else {
         None
     }
