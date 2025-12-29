@@ -29,13 +29,20 @@ pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
-    let mut change_map = SyntaxChanges::default();
+    let mut lhs_change_map = SyntaxChanges::default();
+    let mut rhs_change_map = SyntaxChanges::default();
     let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, DEFAULT_GRAPH_LIMIT)?;
 
-    populate_change_map(lhs_tree, rhs_tree, &route.0, &mut change_map);
+    populate_change_map(
+        lhs_tree,
+        rhs_tree,
+        &route.0,
+        &mut lhs_change_map,
+        &mut rhs_change_map,
+    );
 
-    let lhs_ranges = collect_novel_ranges(lhs_tree, &change_map);
-    let rhs_ranges = collect_novel_ranges(rhs_tree, &change_map);
+    let lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
+    let rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
 
     Ok(SyntaxDiff {
         lhs_ranges,
@@ -47,7 +54,8 @@ fn populate_change_map(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
     route: &[(SyntaxVertex<'_>, SyntaxEdge)],
-    map: &mut SyntaxChanges,
+    lhs_map: &mut SyntaxChanges,
+    rhs_map: &mut SyntaxChanges,
 ) {
     // Route is now (vertex_before, edge) pairs.
     // vertex_before.lhs and vertex_before.rhs point to the nodes being consumed by edge.
@@ -57,36 +65,40 @@ fn populate_change_map(
             SyntaxEdge::UnchangedNode { .. } => {
                 // Both LHS and RHS nodes are unchanged
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    syntax_changes::insert_deep_unchanged(lhs_tree, lhs_id, rhs_tree, rhs_id, map);
-                    syntax_changes::insert_deep_unchanged(rhs_tree, rhs_id, lhs_tree, lhs_id, map);
+                    syntax_changes::insert_deep_unchanged(
+                        lhs_tree, lhs_id, rhs_tree, rhs_id, lhs_map,
+                    );
+                    syntax_changes::insert_deep_unchanged(
+                        rhs_tree, rhs_id, lhs_tree, lhs_id, rhs_map,
+                    );
                 }
             }
             SyntaxEdge::EnterUnchangedDelimiter { .. } => {
                 // The list nodes have matching delimiters
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    map.insert(lhs_id, SyntaxChange::Unchanged(rhs_id));
-                    map.insert(rhs_id, SyntaxChange::Unchanged(lhs_id));
+                    lhs_map.insert(lhs_id, SyntaxChange::Unchanged(rhs_id));
+                    rhs_map.insert(rhs_id, SyntaxChange::Unchanged(lhs_id));
                 }
             }
             SyntaxEdge::Replaced { levenshtein_pct } => {
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
                     if *levenshtein_pct > 20 {
-                        map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
-                        map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
+                        lhs_map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
+                        rhs_map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
                     } else {
-                        map.insert(lhs_id, SyntaxChange::Novel);
-                        map.insert(rhs_id, SyntaxChange::Novel);
+                        lhs_map.insert(lhs_id, SyntaxChange::Novel);
+                        rhs_map.insert(rhs_id, SyntaxChange::Novel);
                     }
                 }
             }
             SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
                 if let Some(lhs_id) = vertex.lhs.id() {
-                    map.insert(lhs_id, SyntaxChange::Novel);
+                    lhs_map.insert(lhs_id, SyntaxChange::Novel);
                 }
             }
             SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
                 if let Some(rhs_id) = vertex.rhs.id() {
-                    map.insert(rhs_id, SyntaxChange::Novel);
+                    rhs_map.insert(rhs_id, SyntaxChange::Novel);
                 }
             }
         }
@@ -110,6 +122,7 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                     if !open.is_empty() {
                         ranges.push(open);
                     }
+
                     if !close.is_empty() {
                         ranges.push(close);
                     }

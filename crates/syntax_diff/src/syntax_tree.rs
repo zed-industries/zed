@@ -353,6 +353,7 @@ impl<'a> SyntaxTreeCursor<'a> {
     }
 
     /// Returns the depth (number of ancestors) of the current node.
+    #[inline]
     pub fn depth(&self) -> usize {
         self.current.map(|id| self.tree.get(id).depth).unwrap_or(0)
     }
