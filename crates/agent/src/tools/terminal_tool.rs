@@ -1,7 +1,7 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use std::{
 };
 use util::markdown::MarkdownInlineCode;
 
+use super::terminal_job_manager::TerminalJobManager;
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -38,6 +39,17 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// If true, run the command asynchronously and return a job ID immediately for later status checking.
+    /// Default is false (synchronous execution).
+    #[serde(default)]
+    pub r#async: bool,
+    /// Output limit in bytes. Default is 16384 (16KB).
+    #[serde(default = "default_output_limit")]
+    pub output_limit: Option<u64>,
+}
+
+fn default_output_limit() -> Option<u64> {
+    Some(COMMAND_OUTPUT_LIMIT)
 }
 
 pub struct TerminalTool {
@@ -104,17 +116,146 @@ impl AgentTool for TerminalTool {
         };
 
         let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
-        cx.spawn(async move |cx| {
+
+        // Handle async execution
+        if input.r#async {
+            let input_command = input.command.clone();
+            let input_output_limit = input.output_limit;
+            let input_timeout_ms = input.timeout_ms;
+            let self_env = self.environment.clone();
+            let working_dir_clone = working_dir.clone();
+
+            async fn run_async_terminal(
+                authorize: Task<Result<()>>,
+                input_command: String,
+                input_output_limit: Option<u64>,
+                input_timeout_ms: Option<u64>,
+                self_env: Rc<dyn ThreadEnvironment>,
+                working_dir_clone: Option<PathBuf>,
+                event_stream: ToolCallEventStream,
+                cx: &mut gpui::AsyncApp,
+            ) -> Result<String> {
+                authorize.await?;
+
+                let output_limit = input_output_limit.or(Some(COMMAND_OUTPUT_LIMIT));
+                let terminal = self_env
+                    .create_terminal(
+                        input_command.clone(),
+                        working_dir_clone.clone(),
+                        output_limit,
+                        cx,
+                    )
+                    .await?;
+
+                let terminal_id = terminal.id(cx)?;
+                let job_manager = cx.update(|cx| TerminalJobManager::global(cx))?;
+                let job_id = job_manager.new_job_id();
+
+                // Register the job
+                let working_dir_str = working_dir_clone
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| ".".to_string());
+
+                job_manager.register_job(
+                    job_id.clone(),
+                    input_command,
+                    working_dir_str,
+                    terminal_id.clone(),
+                    terminal.clone(),
+                );
+
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
+                ]));
+
+                // Spawn task to monitor completion (not background_spawn because terminal is !Send)
+                let job_id_clone = job_id.clone();
+                let terminal_clone = terminal.clone();
+                let timeout = input_timeout_ms.map(Duration::from_millis);
+                let cx_clone = cx.clone();
+
+                cx.foreground_executor()
+                    .spawn({
+                        async move {
+                            let exit_status = match timeout {
+                                Some(timeout) => {
+                                    let wait_for_exit =
+                                        terminal_clone.wait_for_exit(&cx_clone).ok()?;
+                                    let timeout_task =
+                                        cx_clone.background_executor().spawn(async move {
+                                            smol::Timer::after(timeout).await;
+                                        });
+
+                                    futures::select! {
+                                        status = wait_for_exit.clone().fuse() => status,
+                                        _ = timeout_task.fuse() => {
+                                            terminal_clone.kill(&cx_clone).ok()?;
+                                            wait_for_exit.await
+                                        }
+                                    }
+                                }
+                                None => terminal_clone.wait_for_exit(&cx_clone).ok()?.await,
+                            };
+
+                            // Get final output and update job status when complete
+                            let final_output = terminal_clone
+                                .current_output(&cx_clone)
+                                .map(|resp| resp.output)
+                                .unwrap_or_default();
+
+                            cx_clone
+                                .update(|cx| {
+                                    let job_manager = TerminalJobManager::global(cx);
+                                    job_manager.complete_job(
+                                        &job_id_clone,
+                                        exit_status.exit_code.map(|c| c as i32),
+                                        final_output,
+                                    );
+                                })
+                                .ok();
+
+                            Some(())
+                        }
+                    })
+                    .detach();
+
+                Ok(format!(
+                    "Command started asynchronously. Job ID: `{}`\n\nUse the `terminal_job_status` tool to check status and output.",
+                    job_id
+                ))
+            }
+
+            let cx_async = cx.to_async();
+            return cx.foreground_executor().spawn(async move {
+                run_async_terminal(
+                    authorize,
+                    input_command,
+                    input_output_limit,
+                    input_timeout_ms,
+                    self_env,
+                    working_dir_clone,
+                    event_stream,
+                    &mut cx_async.clone(),
+                )
+                .await
+            });
+        }
+
+        // Synchronous execution (original behavior)
+        async fn run_sync_terminal(
+            authorize: Task<Result<()>>,
+            input: TerminalToolInput,
+            working_dir: Option<PathBuf>,
+            self_env: Rc<dyn ThreadEnvironment>,
+            event_stream: ToolCallEventStream,
+            cx: &mut gpui::AsyncApp,
+        ) -> Result<String> {
             authorize.await?;
 
-            let terminal = self
-                .environment
-                .create_terminal(
-                    input.command.clone(),
-                    working_dir,
-                    Some(COMMAND_OUTPUT_LIMIT),
-                    cx,
-                )
+            let output_limit = input.output_limit.or(Some(COMMAND_OUTPUT_LIMIT));
+            let terminal = self_env
+                .create_terminal(input.command.clone(), working_dir, output_limit, cx)
                 .await?;
 
             let terminal_id = terminal.id(cx)?;
@@ -122,12 +263,11 @@ impl AgentTool for TerminalTool {
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
 
-            let timeout = input.timeout_ms.map(Duration::from_millis);
-
-            let exit_status = match timeout {
-                Some(timeout) => {
+            let exit_status = match input.timeout_ms {
+                Some(timeout_ms) => {
+                    let timeout = Duration::from_millis(timeout_ms);
                     let wait_for_exit = terminal.wait_for_exit(cx)?;
-                    let timeout_task = cx.background_spawn(async move {
+                    let timeout_task = cx.background_executor().spawn(async move {
                         smol::Timer::after(timeout).await;
                     });
 
@@ -145,6 +285,19 @@ impl AgentTool for TerminalTool {
             let output = terminal.current_output(cx)?;
 
             Ok(process_content(output, &input.command, exit_status))
+        }
+
+        let cx_async = cx.to_async();
+        cx.foreground_executor().spawn(async move {
+            run_sync_terminal(
+                authorize,
+                input,
+                working_dir,
+                self.environment.clone(),
+                event_stream,
+                &mut cx_async.clone(),
+            )
+            .await
         })
     }
 }

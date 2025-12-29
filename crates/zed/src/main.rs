@@ -4,6 +4,7 @@
 mod reliability;
 mod zed;
 
+use agent::TerminalJobManager;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::Parser;
@@ -613,6 +614,7 @@ fn main() {
             false,
             cx,
         );
+        TerminalJobManager::init_global(cx);
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
