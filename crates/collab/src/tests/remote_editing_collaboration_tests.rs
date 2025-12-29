@@ -855,8 +855,6 @@ async fn test_slow_adapter_startup_retries(
 
 #[gpui::test]
 async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    use project::trusted_worktrees::RemoteHostLocation;
-
     cx_a.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         project::trusted_worktrees::init(HashMap::default(), None, None, cx);
@@ -991,23 +989,19 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     });
     assert_eq!(worktree_ids.len(), 2);
 
-    let remote_host = project_a.read_with(cx_a, |project, cx| {
-        project
-            .remote_connection_options(cx)
-            .map(RemoteHostLocation::from)
-    });
-
     let trusted_worktrees =
         cx_a.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
+    let worktree_store = project_a.read_with(cx_a, |project, _| project.worktree_store());
 
-    let can_trust_a =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
-    let can_trust_b =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    let can_trust_a = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[0], cx)
+    });
+    let can_trust_b = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[1], cx)
+    });
     assert!(!can_trust_a, "project_a should be restricted initially");
     assert!(!can_trust_b, "project_b should be restricted initially");
 
-    let worktree_store = project_a.read_with(cx_a, |project, _| project.worktree_store());
     let has_restricted = trusted_worktrees.read_with(cx_a, |store, cx| {
         store.has_restricted_worktrees(&worktree_store, cx)
     });
@@ -1054,8 +1048,8 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     trusted_worktrees.update(cx_a, |store, cx| {
         store.trust(
+            &worktree_store,
             HashSet::from_iter([PathTrust::Worktree(worktree_ids[0])]),
-            remote_host.clone(),
             cx,
         );
     });
@@ -1080,25 +1074,29 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         "inlay hints should be queried after trust approval"
     );
 
-    let can_trust_a =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
-    let can_trust_b =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    let can_trust_a = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[0], cx)
+    });
+    let can_trust_b = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[1], cx)
+    });
     assert!(can_trust_a, "project_a should be trusted after trust()");
     assert!(!can_trust_b, "project_b should still be restricted");
 
     trusted_worktrees.update(cx_a, |store, cx| {
         store.trust(
+            &worktree_store,
             HashSet::from_iter([PathTrust::Worktree(worktree_ids[1])]),
-            remote_host.clone(),
             cx,
         );
     });
 
-    let can_trust_a =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
-    let can_trust_b =
-        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    let can_trust_a = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[0], cx)
+    });
+    let can_trust_b = trusted_worktrees.update(cx_a, |store, cx| {
+        store.can_trust(&worktree_store, worktree_ids[1], cx)
+    });
     assert!(can_trust_a, "project_a should remain trusted");
     assert!(can_trust_b, "project_b should now be trusted");
 

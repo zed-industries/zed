@@ -388,7 +388,7 @@ impl LocalLspStore {
         let untrusted_worktree_task =
             TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
                 let can_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust(worktree_id, cx)
+                    trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
                 });
                 if can_trust {
                     self.restricted_worktrees_tasks.remove(&worktree_id);
