@@ -1187,23 +1187,22 @@ mod test {
 
     #[test]
     fn test_app_liveness_token_can_be_dropped_on_background_thread() {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let dispatcher = Arc::new(TestDispatcher::new(StdRng::seed_from_u64(0)));
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
 
         let platform = TestPlatform::new(background_executor, foreground_executor);
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
-        let liveness_token = app.borrow().liveness.token();
+        let liveness_token = std::sync::Arc::downgrade(&app.borrow().liveness);
 
-        // Drop the token on a real background thread.
+        // Dispatcher is single threaded when testing, so we need to spawn a real thread
         std::thread::spawn(move || {
             drop(liveness_token);
         })
         .join()
-        .expect("Dropping AppLivenessToken on background thread should not panic");
+        .expect("Dropping Weak<()> on background thread should not panic");
     }
 }

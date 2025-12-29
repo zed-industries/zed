@@ -586,60 +586,21 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
-/// Tracks whether an App is still alive. This is used to cancel foreground tasks
-/// when the app is dropped.
-///
-#[derive(Clone)]
+/// This type is public so that our test macro can generate and use it, but it should not
+/// be considered part of our public API.
 #[doc(hidden)]
-pub struct AppLiveness {
-    sentinel: std::sync::Arc<()>,
+pub struct RunnableMeta {
+    /// Location of the runnable
+    pub location: &'static core::panic::Location<'static>,
+    /// Weak reference to check if the app is still alive before running this task
+    pub app: Option<std::sync::Weak<()>>,
 }
 
-impl AppLiveness {
-    /// Creates a new AppLiveness, initially alive.
-    pub fn new() -> Self {
-        Self {
-            sentinel: std::sync::Arc::new(()),
-        }
-    }
-
-    /// Returns a token that can be stored in task metadata to check liveness.
-    pub fn token(&self) -> AppLivenessToken {
-        AppLivenessToken {
-            sentinel: std::sync::Arc::downgrade(&self.sentinel),
-        }
-    }
-}
-
-impl Default for AppLiveness {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Debug for AppLiveness {
+impl std::fmt::Debug for RunnableMeta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppLiveness").field("alive", &true).finish()
-    }
-}
-
-/// A token that can be stored in task metadata to check if the app is still alive.
-#[derive(Clone)]
-pub struct AppLivenessToken {
-    sentinel: std::sync::Weak<()>,
-}
-
-impl AppLivenessToken {
-    /// Returns true if the app is still alive.
-    pub fn is_alive(&self) -> bool {
-        self.sentinel.strong_count() > 0
-    }
-}
-
-impl std::fmt::Debug for AppLivenessToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppLivenessToken")
-            .field("alive", &self.is_alive())
+        f.debug_struct("RunnableMeta")
+            .field("location", &self.location)
+            .field("app_alive", &self.is_app_alive())
             .finish()
     }
 }

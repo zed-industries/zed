@@ -1497,10 +1497,9 @@ impl App {
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {
-        let liveness_token = self.liveness.token();
         AsyncApp {
             app: self.this.clone(),
-            liveness_token,
+            liveness_token: std::sync::Arc::downgrade(&self.liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
