@@ -254,9 +254,8 @@ extern "C" fn trampoline(runnable: *mut c_void) {
     let metadata = task.metadata();
     let location = metadata.location;
 
-    if let Some(ref app_weak) = metadata.app {
-        // SAFETY: App is only `Some()` when this trampoline is on the main thread.
-        if unsafe { app_weak.upgrade() }.is_none() {
+    if let Some(ref app_token) = metadata.app {
+        if !app_token.is_alive() {
             drop(task);
             return;
         }

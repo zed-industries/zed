@@ -1,7 +1,8 @@
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
-    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, AppLivenessToken, BackgroundExecutor,
+    BorrowAppContext, Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton,
+    PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext, Window,
+    WindowHandle,
 };
 use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -16,6 +17,7 @@ use super::{Context, WeakEntity};
 #[derive(Clone)]
 pub struct AsyncApp {
     pub(crate) app: Weak<AppCell>,
+    pub(crate) liveness_token: AppLivenessToken,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
 }
@@ -185,7 +187,7 @@ impl AsyncApp {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn_with_app(self.app.clone(), async move { f(&mut cx).await })
+            .spawn_context(self.liveness_token.clone(), async move { f(&mut cx).await })
     }
 
     /// Determine whether global state of the specified type has been assigned.
@@ -334,7 +336,10 @@ impl AsyncWindowContext {
     {
         let mut cx = self.clone();
         self.foreground_executor
-            .spawn_with_app(self.app.app.clone(), async move { f(&mut cx).await })
+            .spawn_context(
+                self.app.liveness_token.clone(),
+                async move { f(&mut cx).await },
+            )
     }
 
     /// Present a platform dialog.

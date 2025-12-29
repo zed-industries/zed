@@ -1,4 +1,6 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
+use crate::{
+    App, AppLivenessToken, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler,
+};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use parking_lot::{Condvar, Mutex};
@@ -766,7 +768,7 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.spawn_with_app_and_priority(None, Priority::default(), future)
+        self.inner_spawn(None, Priority::default(), future)
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
@@ -779,32 +781,25 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.spawn_with_app_and_priority(None, priority, future)
+        self.inner_spawn(None, priority, future)
     }
 
-    /// Enqueues the given Task to run on the main thread at some point in the future,
-    /// with a weak reference to the app for cancellation checking.
-    ///
-    /// When the app is dropped, pending tasks spawned with this method will be cancelled
-    /// before they run, rather than panicking when they try to access the dropped app.
     #[track_caller]
-    pub fn spawn_with_app<R>(
+    pub(crate) fn spawn_context<R>(
         &self,
-        app: std::rc::Weak<crate::AppCell>,
+        app: AppLivenessToken,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
     where
         R: 'static,
     {
-        self.spawn_with_app_and_priority(Some(app), Priority::default(), future)
+        self.inner_spawn(Some(app), Priority::default(), future)
     }
 
-    /// Enqueues the given Task to run on the main thread at some point in the future,
-    /// with an optional weak reference to the app for cancellation checking and a specific priority.
     #[track_caller]
-    pub fn spawn_with_app_and_priority<R>(
+    pub(crate) fn inner_spawn<R>(
         &self,
-        app: Option<std::rc::Weak<crate::AppCell>>,
+        app: Option<AppLivenessToken>,
         priority: Priority,
         future: impl Future<Output = R> + 'static,
     ) -> Task<R>
@@ -819,21 +814,15 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
-            app: Option<std::rc::Weak<crate::AppCell>>,
+            app: Option<AppLivenessToken>,
             priority: Priority,
         ) -> Task<R> {
-            // SAFETY: We are on the main thread (ForegroundExecutor is !Send), and the
-            // MainThreadWeak will only be accessed on the main thread in the trampoline.
-            let app_weak = app.map(|weak| unsafe { crate::MainThreadWeak::new(weak) });
             let (runnable, task) = spawn_local_with_source_location(
                 future,
                 move |runnable| {
                     dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
                 },
-                RunnableMeta {
-                    location,
-                    app: app_weak,
-                },
+                RunnableMeta { location, app },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
@@ -977,7 +966,7 @@ mod test {
     use super::*;
     use crate::{App, TestDispatcher, TestPlatform};
     use rand::SeedableRng;
-    use std::{cell::RefCell, rc::Weak};
+    use std::cell::RefCell;
 
     #[test]
     fn sanity_test_tasks_run() {
@@ -991,11 +980,12 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
 
         let task_ran = Rc::new(RefCell::new(false));
 
         foreground_executor
-            .spawn_with_app(Rc::downgrade(&app), {
+            .spawn_context(liveness_token, {
                 let task_ran = Rc::clone(&task_ran);
                 async move {
                     *task_ran.borrow_mut() = true;
@@ -1025,21 +1015,17 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
         let app_weak = Rc::downgrade(&app);
 
         let task_ran = Rc::new(RefCell::new(false));
         let task_ran_clone = Rc::clone(&task_ran);
 
         foreground_executor
-            .spawn_with_app(Weak::clone(&app_weak), async move {
+            .spawn_context(liveness_token, async move {
                 *task_ran_clone.borrow_mut() = true;
             })
             .detach();
-
-        assert!(
-            Rc::weak_count(&app) > 0,
-            "Task should hold a weak reference"
-        );
 
         drop(app);
 
@@ -1066,6 +1052,7 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
         let app_weak = Rc::downgrade(&app);
 
         let outer_completed = Rc::new(RefCell::new(false));
@@ -1079,17 +1066,17 @@ mod test {
         // Channel to block the inner task until we're ready
         let (tx, rx) = futures::channel::oneshot::channel::<()>();
 
-        // We need clones of executor and app_weak for the inner spawn
+        // We need clones of executor and liveness_token for the inner spawn
         let inner_executor = foreground_executor.clone();
-        let inner_app_weak = app_weak.clone();
+        let inner_liveness_token = liveness_token.clone();
 
         // Spawn outer task that will spawn and await an inner task
         foreground_executor
-            .spawn_with_app(Weak::clone(&app_weak), async move {
+            .spawn_context(liveness_token, async move {
                 let inner_flag_clone = Rc::clone(&inner_flag);
 
                 // Spawn inner task that blocks on a channel
-                let inner_task = inner_executor.spawn_with_app(inner_app_weak, async move {
+                let inner_task = inner_executor.spawn_context(inner_liveness_token, async move {
                     // Wait for signal (which will never come - we'll drop the app instead)
                     rx.await.ok();
                     *inner_flag_clone.borrow_mut() = true;
@@ -1191,9 +1178,10 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
         let app_weak = Rc::downgrade(&app);
 
-        let task = foreground_executor.spawn_with_app(Weak::clone(&app_weak), async move { 42 });
+        let task = foreground_executor.spawn_context(liveness_token, async move { 42 });
 
         drop(app);
 
@@ -1216,10 +1204,11 @@ mod test {
         let http_client = http_client::FakeHttpClient::with_404_response();
 
         let app = App::new_app(platform, asset_source, http_client);
+        let liveness_token = app.borrow().liveness.token();
         let app_weak = Rc::downgrade(&app);
 
         let task = foreground_executor
-            .spawn_with_app(Weak::clone(&app_weak), async move { 42 })
+            .spawn_context(liveness_token, async move { 42 })
             .fallible();
 
         drop(app);

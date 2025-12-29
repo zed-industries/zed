@@ -34,15 +34,15 @@ use util::{ResultExt, debug_panic};
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext,
+    AppLiveness, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -580,6 +580,9 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
+    /// Tracks whether this app is still alive. Used to cancel foreground tasks
+    /// when the app is dropped.
+    pub(crate) liveness: AppLiveness,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -658,6 +661,7 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
+                liveness: AppLiveness::new(),
                 platform: platform.clone(),
                 text_system,
                 mode: GpuiMode::Production,
@@ -1474,8 +1478,10 @@ impl App {
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {
+        let liveness_token = self.liveness.token();
         AsyncApp {
             app: self.this.clone(),
+            liveness_token,
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }

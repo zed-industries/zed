@@ -178,9 +178,8 @@ impl TestDispatcher {
         // todo(localcc): add timings to tests
         match runnable {
             RunnableVariant::Meta(runnable) => {
-                if let Some(ref app_weak) = runnable.metadata().app {
-                    // SAFETY: Test dispatcher should always run on the same thead as it's App
-                    if unsafe { app_weak.upgrade() }.is_none() {
+                if let Some(ref app_token) = runnable.metadata().app {
+                    if !app_token.is_alive() {
                         drop(runnable);
                         self.state.lock().is_main_thread = was_main_thread;
                         return true;
