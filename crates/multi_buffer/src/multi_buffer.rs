@@ -146,6 +146,8 @@ pub struct MultiBufferDiffHunk {
     pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    /// Syntax diff ranges in the buffer (as MultiBufferOffsets).
+    pub syntax_diffs: Vec<Range<MultiBufferOffset>>,
     /// Pre-computed syntax diff ranges for this hunk.
     pub syntax_diff: Option<SyntaxDiff>,
 }
@@ -3960,64 +3962,48 @@ impl MultiBufferSnapshot {
                 range.end.row + 1
             };
 
+            let hunk_start_offset = if is_inverted {
+                Anchor::in_buffer(
+                    excerpt.id,
+                    excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
+                )
+                .to_offset(self)
+            } else {
+                Anchor::in_buffer(excerpt.id, hunk.buffer_range.start)
+                    .to_offset(self)
+            };
+
             let word_diffs =
                 (!hunk.base_word_diffs.is_empty() || !hunk.buffer_word_diffs.is_empty())
                     .then(|| {
-                        let mut word_diffs = Vec::new();
-
-                        if self.show_deleted_hunks || is_inverted {
-                            let hunk_start_offset = if is_inverted {
-                                Anchor::in_buffer(
-                                    excerpt.id,
-                                    excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
-                                )
-                                .to_offset(self)
-                            } else {
-                                Anchor::in_buffer(excerpt.id, hunk.buffer_range.start)
-                                    .to_offset(self)
-                            };
-
-                            word_diffs.extend(hunk.base_word_diffs.iter().map(|diff| {
-                                hunk_start_offset + diff.start..hunk_start_offset + diff.end
-                            }));
-                        }
-
-                        if !is_inverted {
-                            word_diffs.extend(hunk.buffer_word_diffs.into_iter().map(|diff| {
-                                Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)
-                            }));
-                        }
-                        word_diffs
-                    })
+                    hunk.base_word_diffs
+                        .iter()
+                        .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
+                        .chain(
+                            hunk.buffer_word_diffs
+                                .into_iter()
+                                .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
+                        )
+                        .collect()
+                })
                     .unwrap_or_default();
 
-            let buffer_range = if is_inverted {
-                excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start)
-                    ..excerpt.buffer.anchor_before(hunk.diff_base_byte_range.end)
-            } else {
-                hunk.buffer_range.clone()
-            };
-            let status_kind = if hunk.buffer_range.start == hunk.buffer_range.end {
-                DiffHunkStatusKind::Deleted
-            } else if hunk.diff_base_byte_range.is_empty() {
-                DiffHunkStatusKind::Added
-            } else {
-                DiffHunkStatusKind::Modified
-            };
+
             Some(MultiBufferDiffHunk {
-                row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
-                buffer_id: excerpt.buffer_id,
-                excerpt_id: excerpt.id,
-                buffer_range,
-                word_diffs,
-                diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
-                    ..BufferOffset(hunk.diff_base_byte_range.end),
-                status: DiffHunkStatus {
-                    kind: status_kind,
-                    secondary: hunk.secondary_status,
-                },
-                syntax_diff: hunk.syntax_diff.clone(),
-            })
+            row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
+            buffer_id: excerpt.buffer_id,
+            excerpt_id: excerpt.id,
+            buffer_range,
+            word_diffs,
+            syntax_diffs,
+            diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
+                ..BufferOffset(hunk.diff_base_byte_range.end),
+            status: DiffHunkStatus {
+                kind: status_kind,
+                secondary: hunk.secondary_status,
+            },
+            syntax_diff: hunk.syntax_diff.clone(),
+        })
         })
     }
 

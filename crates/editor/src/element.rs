@@ -5636,6 +5636,52 @@ impl EditorElement {
         highlighted_ranges.extend(word_highlights);
     }
 
+    fn layout_syntax_diff_highlights(
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        row_infos: &[RowInfo],
+        start_row: DisplayRow,
+        snapshot: &EditorSnapshot,
+        highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
+        cx: &mut App,
+    ) {
+        let colors = cx.theme().colors();
+
+        let syntax_highlights = display_hunks
+            .into_iter()
+            .filter_map(|(hunk, _)| match hunk {
+                DisplayDiffHunk::Unfolded {
+                    syntax_diffs,
+                    status,
+                    ..
+                } => Some((syntax_diffs, status)),
+                _ => None,
+            })
+            .filter(|(_, status)| status.is_modified())
+            .flat_map(|(syntax_diffs, _)| syntax_diffs)
+            .filter_map(|syntax_diff| {
+                let start_point = syntax_diff.start.to_display_point(&snapshot.display_snapshot);
+                let end_point = syntax_diff.end.to_display_point(&snapshot.display_snapshot);
+                let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+
+                row_infos
+                    .get(start_row_offset)
+                    .and_then(|row_info| row_info.diff_status)
+                    .and_then(|diff_status| {
+                        let background_color = match diff_status.kind {
+                            DiffHunkStatusKind::Added => colors.version_control_word_added,
+                            DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                return None;
+                            }
+                        };
+                        Some((start_point..end_point, background_color))
+                    })
+            });
+
+        highlighted_ranges.extend(syntax_highlights);
+    }
+
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -9529,6 +9575,15 @@ impl Element for EditorElement {
                     );
 
                     Self::layout_word_diff_highlights(
+                        &display_hunks,
+                        &row_infos,
+                        start_row,
+                        &snapshot,
+                        &mut highlighted_ranges,
+                        cx,
+                    );
+
+                    Self::layout_syntax_diff_highlights(
                         &display_hunks,
                         &row_infos,
                         start_row,
