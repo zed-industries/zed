@@ -40,16 +40,29 @@ impl WorkflowFile {
             r#type: WorkflowType::Zed,
         }
     }
+
     fn extension(f: fn() -> Workflow) -> WorkflowFile {
         WorkflowFile {
             source: f,
-            r#type: WorkflowType::Extensions,
+            r#type: WorkflowType::ExtensionCI,
+        }
+    }
+
+    fn extension_shared(f: fn() -> Workflow) -> WorkflowFile {
+        WorkflowFile {
+            source: f,
+            r#type: WorkflowType::ExtensionsShared,
         }
     }
 
     fn generate_file(&self) -> Result<()> {
         let workflow = (self.source)();
         let workflow_folder = self.r#type.folder_path();
+
+        fs::create_dir_all(&workflow_folder).with_context(|| {
+            format!("Failed to create directory: {}", workflow_folder.display())
+        })?;
+
         let workflow_name = workflow
             .name
             .as_ref()
@@ -72,9 +85,16 @@ impl WorkflowFile {
     }
 }
 
+#[derive(PartialEq, Eq)]
 enum WorkflowType {
+    /// Workflows living in the Zed repository
     Zed,
-    Extensions,
+    /// Workflows living in the `zed-extensions/workflows` repository that are
+    /// required workflows for PRs to the extension organization
+    ExtensionCI,
+    /// Workflows living in each of the extensions to perform checks and version
+    /// bumps until a better, more centralized system for that is in place.
+    ExtensionsShared,
 }
 
 impl WorkflowType {
@@ -85,7 +105,7 @@ impl WorkflowType {
                 "# Rebuild with `cargo xtask workflows`.",
             ),
             workflow_name,
-            matches!(self, WorkflowType::Extensions)
+            (*self != WorkflowType::Zed)
                 .then_some(" within the Zed repository.")
                 .unwrap_or_default(),
         )
@@ -94,7 +114,8 @@ impl WorkflowType {
     fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
-            WorkflowType::Extensions => PathBuf::from("extensions/workflows"),
+            WorkflowType::ExtensionCI => PathBuf::from("extensions/workflows"),
+            WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
 }
@@ -103,8 +124,6 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
     if !Path::new("crates/zed/").is_dir() {
         anyhow::bail!("xtask workflows must be ran from the project root");
     }
-    let workflow_dir = Path::new(".github/workflows");
-    let extension_workflow_dir = Path::new("extensions/workflows");
 
     let workflows = [
         WorkflowFile::zed(danger::danger),
@@ -125,14 +144,9 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
-        WorkflowFile::extension(extensions::bump_version::bump_version),
-        WorkflowFile::extension(extensions::release_version::release_version),
+        WorkflowFile::extension_shared(extensions::bump_version::bump_version),
+        WorkflowFile::extension_shared(extensions::release_version::release_version),
     ];
-
-    for directory in [&workflow_dir, &extension_workflow_dir] {
-        fs::create_dir_all(directory)
-            .with_context(|| format!("Failed to create directory: {}", directory.display()))?;
-    }
 
     for workflow_file in workflows {
         workflow_file.generate_file()?;
