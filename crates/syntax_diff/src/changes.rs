@@ -1,69 +1,71 @@
 //! Data types that track the change state for syntax nodes.
 
-use crate::{
-    hash::DftHashMap,
-    parse::syntax::{Syntax, SyntaxId},
-};
+use std::collections::HashMap;
 
+use crate::syntax_tree::{SyntaxId, SyntaxTree};
+
+/// The kind of change for a syntax node.
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum ChangeKind<'a> {
-    /// This node is shallowly unchanged. For lists, this means that
-    /// the delimiters match, but there may still be some differences
-    /// in the children between LHS and RHS.
-    Unchanged(&'a Syntax<'a>),
-    ReplacedComment(&'a Syntax<'a>, &'a Syntax<'a>),
-    ReplacedString(&'a Syntax<'a>, &'a Syntax<'a>),
+pub enum ChangeKind {
+    /// This node is unchanged. The associated ID is the corresponding
+    /// node in the opposite tree.
+    Unchanged(SyntaxId),
+    /// This comment was replaced with a similar comment.
+    ReplacedComment(SyntaxId, SyntaxId),
+    /// This string was replaced with a similar string.
+    ReplacedString(SyntaxId, SyntaxId),
+    /// This node is novel (added or removed).
     Novel,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct ChangeMap<'a> {
-    changes: DftHashMap<SyntaxId, ChangeKind<'a>>,
+/// A map from syntax node IDs to their change status.
+#[derive(Default)]
+pub struct ChangeMap {
+    changes: HashMap<SyntaxId, ChangeKind>,
 }
 
-impl<'a> ChangeMap<'a> {
-    pub(crate) fn insert(&mut self, node: &'a Syntax<'a>, ck: ChangeKind<'a>) {
-        self.changes.insert(node.id(), ck);
+impl ChangeMap {
+    pub fn insert(&mut self, id: SyntaxId, kind: ChangeKind) {
+        self.changes.insert(id, kind);
     }
 
-    pub(crate) fn get(&self, node: &Syntax<'a>) -> Option<ChangeKind<'a>> {
-        self.changes.get(&node.id()).copied()
+    pub fn get(&self, id: SyntaxId) -> Option<ChangeKind> {
+        self.changes.get(&id).copied()
+    }
+
+    pub fn contains(&self, id: SyntaxId) -> bool {
+        self.changes.contains_key(&id)
     }
 }
 
-pub(crate) fn insert_deep_unchanged<'a>(
-    node: &'a Syntax<'a>,
-    opposite_node: &'a Syntax<'a>,
-    change_map: &mut ChangeMap<'a>,
+/// Mark a node and all its descendants as unchanged.
+pub fn insert_deep_unchanged(
+    tree: &SyntaxTree,
+    node_id: SyntaxId,
+    opposite_tree: &SyntaxTree,
+    opposite_id: SyntaxId,
+    change_map: &mut ChangeMap,
 ) {
-    change_map.insert(node, ChangeKind::Unchanged(opposite_node));
+    change_map.insert(node_id, ChangeKind::Unchanged(opposite_id));
 
-    match (node, opposite_node) {
-        (
-            Syntax::List {
-                children: node_children,
-                ..
-            },
-            Syntax::List {
-                children: opposite_children,
-                ..
-            },
-        ) => {
-            for (child, opposite_child) in node_children.iter().zip(opposite_children) {
-                insert_deep_unchanged(child, opposite_child, change_map);
-            }
+    let node = tree.get(node_id);
+    let opposite = opposite_tree.get(opposite_id);
+
+    if node.is_list() && opposite.is_list() {
+        let children: Vec<_> = tree.children(node_id).collect();
+        let opposite_children: Vec<_> = opposite_tree.children(opposite_id).collect();
+
+        for (child_id, opposite_child_id) in children.into_iter().zip(opposite_children) {
+            insert_deep_unchanged(tree, child_id, opposite_tree, opposite_child_id, change_map);
         }
-        (Syntax::Atom { .. }, Syntax::Atom { .. }) => {}
-        _ => unreachable!("Unchanged nodes should be both lists, or both atoms"),
     }
 }
 
-pub(crate) fn insert_deep_novel<'a>(node: &'a Syntax<'a>, change_map: &mut ChangeMap<'a>) {
-    change_map.insert(node, ChangeKind::Novel);
+/// Mark a node and all its descendants as novel.
+pub fn insert_deep_novel(tree: &SyntaxTree, node_id: SyntaxId, change_map: &mut ChangeMap) {
+    change_map.insert(node_id, ChangeKind::Novel);
 
-    if let Syntax::List { children, .. } = node {
-        for child in children.iter() {
-            insert_deep_novel(child, change_map);
-        }
+    for child_id in tree.children(node_id) {
+        insert_deep_novel(tree, child_id, change_map);
     }
 }

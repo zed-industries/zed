@@ -15,7 +15,7 @@ use buffer_diff::{
 };
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
-    DiffHunkStatusKind, SyntaxDiff,
+    DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -4014,8 +4014,9 @@ impl MultiBufferSnapshot {
             let syntax_diffs = hunk
                 .syntax_diff
                 .map(|syntax_diff| {
+                    // TODO: push rhs ranges as well
                     syntax_diff
-                        .deleted
+                        .lhs_ranges
                         .iter()
                         .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
                         .chain(

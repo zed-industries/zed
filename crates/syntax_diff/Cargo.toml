@@ -15,5 +15,6 @@ tree-sitter.workspace = true
 collections.workspace = true
 
 [dev-dependencies]
+tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 criterion.workspace = true

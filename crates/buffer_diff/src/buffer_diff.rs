@@ -13,9 +13,10 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::{DiffChanges, DiffContext, SyntaxTree, compute_diff};
+use syntax_diff::{
+    DiffOptions as SyntaxDiffOptions, SyntaxDiff, SyntaxTree, build_tree, diff_trees,
+};
 
-pub use syntax_diff::DiffChanges as SyntaxDiff;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
@@ -103,7 +104,7 @@ pub struct DiffHunk {
     /// Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
     /// Pre-computed syntax diff for this hunk
-    pub syntax_diff: Option<DiffChanges>,
+    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -113,7 +114,7 @@ struct InternalDiffHunk {
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
-    syntax_diff: Option<DiffChanges>,
+    syntax_diff: Option<SyntaxDiff>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1037,12 +1038,14 @@ fn build_syntax_tree(
         return None;
     }
 
+    let text = snapshot.text();
+
     let layer = snapshot.syntax_layers().next()?;
     let subtree = layer
         .node()
         .descendant_for_byte_range(byte_range.start, byte_range.end)?;
 
-    Some(SyntaxTree::new(&mut subtree.walk()))
+    Some(build_tree(subtree.walk(), text.as_bytes()))
 }
 
 fn build_diff_options(
@@ -1358,10 +1361,7 @@ fn process_patch_hunk(
 
         match (base_tree, buffer_tree) {
             (Some(base_tree), Some(buffer_tree)) => {
-                let text = buffer.text();
-                let context = DiffContext::new(&base_tree, &buffer_tree, "", &text);
-
-                compute_diff(&context).map(|result| result.extract_changes(&context))
+                diff_trees(&base_tree, &buffer_tree, &SyntaxDiffOptions::default()).ok()
             }
             _ => None,
         }

@@ -1,9 +1,49 @@
 //! A graph representation for computing tree diffs.
 
-use std::cmp::min;
+use std::cmp::{Reverse, min};
+use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
 
-use crate::syntax_tree::{AtomKind, SyntaxId, SyntaxTreeCursor};
+use crate::SyntaxTree;
+use crate::syntax_tree::{SyntaxAtomKind, SyntaxId, SyntaxTreeCursor};
+
+/// Error when the graph search exceeds the configured limit.
+#[derive(Debug)]
+pub struct ExceededGraphLimit;
+
+/// Result of running Dijkstra's algorithm on two syntax trees.
+///
+/// The route as (vertex_before, edge) pairs.
+/// Each entry represents: from vertex_before, take edge.
+pub struct SyntaxRoute<'a>(pub Vec<(SyntaxVertex<'a>, SyntaxEdge)>);
+
+#[derive(Clone)]
+// TODO: revisit
+struct VertexState<'a> {
+    vertex: SyntaxVertex<'a>,
+    cost: u32,
+    predecessor: Option<(SyntaxEdge, Box<VertexState<'a>>)>,
+}
+
+impl<'a> PartialEq for VertexState<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cost == other.cost
+    }
+}
+
+impl<'a> Eq for VertexState<'a> {}
+
+impl<'a> PartialOrd for VertexState<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for VertexState<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cost.cmp(&other.cost)
+    }
+}
 
 /// Tracks how we entered list delimiters.
 #[derive(Clone, PartialEq, Eq)]
@@ -266,7 +306,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         // Both are comments or strings - check for replacement
         if let (Some(lhs_kind), Some(rhs_kind)) = (lhs_node.atom_kind(), rhs_node.atom_kind()) {
             let is_comment_or_string =
-                |k: AtomKind| matches!(k, AtomKind::Comment | AtomKind::String);
+                |k: SyntaxAtomKind| matches!(k, SyntaxAtomKind::Comment | SyntaxAtomKind::String);
 
             if is_comment_or_string(lhs_kind)
                 && is_comment_or_string(rhs_kind)
@@ -276,7 +316,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
                     // TODO: compute actual levenshtein when we have content access
                     let levenshtein_pct = 50;
 
-                    let edge = if lhs_kind == AtomKind::Comment {
+                    let edge = if lhs_kind == SyntaxAtomKind::Comment {
                         SyntaxEdge::ReplacedComment { levenshtein_pct }
                     } else {
                         SyntaxEdge::ReplacedString { levenshtein_pct }
@@ -333,4 +373,88 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
     }
 
     neighbours
+}
+
+/// Find the shortest path between two syntax trees.
+///
+/// Returns a sequence of edges representing the optimal diff.
+pub fn shortest_path<'a>(
+    lhs_tree: &'a SyntaxTree,
+    rhs_tree: &'a SyntaxTree,
+    graph_limit: usize,
+) -> Result<SyntaxRoute<'a>, ExceededGraphLimit> {
+    let lhs_cursor = SyntaxTreeCursor::new(lhs_tree);
+    let rhs_cursor = SyntaxTreeCursor::new(rhs_tree);
+    let start = SyntaxVertex::new(lhs_cursor, rhs_cursor);
+
+    Ok(SyntaxRoute(find_shortest_path(start, graph_limit)?))
+}
+
+fn find_shortest_path<'a>(
+    start: SyntaxVertex<'a>,
+    graph_limit: usize,
+) -> Result<Vec<(SyntaxVertex<'a>, SyntaxEdge)>, ExceededGraphLimit> {
+    let mut heap: BinaryHeap<Reverse<VertexState<'a>>> = BinaryHeap::new();
+    let mut best_cost: HashMap<SyntaxVertex<'a>, u32> = HashMap::new();
+
+    heap.push(Reverse(VertexState {
+        vertex: start,
+        cost: 0,
+        predecessor: None,
+    }));
+
+    let end_state = loop {
+        let Reverse(current) = match heap.pop() {
+            Some(state) => state,
+            None => panic!("Ran out of graph nodes before reaching end"),
+        };
+
+        if current.vertex.is_end() {
+            break current;
+        }
+
+        if let Some(&existing_cost) = best_cost.get(&current.vertex) {
+            if current.cost >= existing_cost {
+                continue;
+            }
+        }
+        best_cost.insert(current.vertex.clone(), current.cost);
+
+        if best_cost.len() > graph_limit {
+            return Err(ExceededGraphLimit);
+        }
+
+        let neighbours = compute_neighbours(&current.vertex);
+        for (edge, next_vertex) in neighbours {
+            let next_cost = current.cost + edge.cost();
+
+            let dominated = best_cost.get(&next_vertex).is_some_and(|&c| next_cost >= c);
+
+            if !dominated {
+                heap.push(Reverse(VertexState {
+                    vertex: next_vertex,
+                    cost: next_cost,
+                    predecessor: Some((edge, Box::new(current.clone()))),
+                }));
+            }
+        }
+    };
+
+    Ok(reconstruct_path(end_state))
+}
+
+fn reconstruct_path<'a>(end_state: VertexState<'a>) -> Vec<(SyntaxVertex<'a>, SyntaxEdge)> {
+    let mut path = Vec::new();
+    let mut current = end_state;
+
+    // Walk backwards through predecessors
+    while let Some((edge, predecessor)) = current.predecessor {
+        // predecessor.vertex is the state BEFORE taking edge
+        // current.vertex is the state AFTER taking edge
+        path.push((predecessor.vertex.clone(), edge));
+        current = *predecessor;
+    }
+
+    path.reverse();
+    path
 }

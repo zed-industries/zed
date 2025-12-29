@@ -16166,6 +16166,7 @@ dependencies = [
  "collections",
  "criterion",
  "tree-sitter",
+ "tree-sitter-json",
  "tree-sitter-rust",
 ]
 

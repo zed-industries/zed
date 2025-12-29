@@ -21,7 +21,7 @@ impl SyntaxId {
 
 /// The kind of an atom node for syntax highlighting purposes.
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
-pub enum AtomKind {
+pub enum SyntaxAtomKind {
     /// A normal token like a variable name or numeric literal.
     Normal,
     /// A string literal.
@@ -61,7 +61,7 @@ pub struct SyntaxNode {
     /// Parent node, if any.
     parent: Option<SyntaxId>,
     /// For atoms, the kind of atom. None for list nodes.
-    kind: Option<AtomKind>,
+    kind: Option<SyntaxAtomKind>,
 }
 
 impl SyntaxNode {
@@ -111,7 +111,7 @@ impl SyntaxNode {
 
     /// Returns the atom kind, if this is an atom node.
     #[inline]
-    pub fn atom_kind(&self) -> Option<AtomKind> {
+    pub fn atom_kind(&self) -> Option<SyntaxAtomKind> {
         self.kind
     }
 
@@ -209,7 +209,7 @@ impl SyntaxTree {
     }
 
     /// Returns an iterator over all descendants of the given node in preorder.
-    pub fn descendants(&self, id: SyntaxId) -> DescendantsIter<'_> {
+    pub fn descendants(&self, id: SyntaxId) -> DescendantsIter {
         let node = self.get(id);
         let start = id.index() + 1;
         let end = start + node.descendant_count;
@@ -430,13 +430,15 @@ impl Hash for SyntaxTreeCursor<'_> {
     }
 }
 
-/// Builds a `SyntaxTree` from a tree-sitter parse tree.
-pub fn build_tree(tree: &tree_sitter::Tree) -> SyntaxTree {
+/// Builds a `SyntaxTree` from a tree-sitter parse tree and source text.
+///
+/// The source text is used to compute structural hashes that include
+/// the actual content of leaf nodes, not just their types.
+pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &[u8]) -> SyntaxTree {
     let mut nodes = Vec::new();
-    let mut cursor = tree.walk();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
-        build_tree_recursive(&mut cursor, &mut nodes, None);
+        build_tree_recursive(&mut cursor, &mut nodes, None, source);
     }
 
     SyntaxTree { nodes }
@@ -446,6 +448,7 @@ fn build_tree_recursive(
     cursor: &mut tree_sitter::TreeCursor<'_>,
     nodes: &mut Vec<SyntaxNode>,
     parent: Option<SyntaxId>,
+    source: &[u8],
 ) -> SyntaxId {
     let ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
@@ -470,7 +473,7 @@ fn build_tree_recursive(
         first_child_start = Some(cursor.node().start_byte());
 
         loop {
-            let child_id = build_tree_recursive(cursor, nodes, Some(this_id));
+            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
             let child_node = &nodes[child_id.index()];
 
             last_child_end = child_node.byte_range.end;
@@ -482,6 +485,12 @@ fn build_tree_recursive(
         }
 
         cursor.goto_parent();
+    } else {
+        // Leaf node - include the actual text content in the hash
+        let range = ts_node.byte_range();
+        if let Some(content) = source.get(range) {
+            content.hash(&mut hasher);
+        }
     }
 
     let node = &mut nodes[this_id.index()];
@@ -492,120 +501,4 @@ fn build_tree_recursive(
     }
 
     this_id
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse_json(source: &str) -> tree_sitter::Tree {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_json::LANGUAGE.into())
-            .expect("Error loading JSON grammar");
-        parser.parse(source, None).expect("Failed to parse")
-    }
-
-    #[test]
-    fn test_empty_tree() {
-        let tree = SyntaxTree::new();
-        assert!(tree.is_empty());
-        assert_eq!(tree.len(), 0);
-        assert!(tree.root().is_none());
-    }
-
-    #[test]
-    fn test_build_simple_tree() {
-        let source = r#"{"key": "value"}"#;
-        let ts_tree = parse_json(source);
-        let tree = build_tree(&ts_tree);
-
-        assert!(!tree.is_empty());
-        assert!(tree.root().is_some());
-
-        let root = tree.root().unwrap();
-        let root_node = tree.get(root);
-        assert_eq!(root_node.byte_range(), 0..source.len());
-    }
-
-    #[test]
-    fn test_preorder_traversal() {
-        let source = r#"[1, 2]"#;
-        let ts_tree = parse_json(source);
-        let tree = build_tree(&ts_tree);
-
-        let ids: Vec<_> = tree.preorder().collect();
-        assert_eq!(ids.len(), tree.len());
-
-        for (i, id) in ids.iter().enumerate() {
-            assert_eq!(id.index(), i);
-        }
-    }
-
-    #[test]
-    fn test_children_iterator() {
-        let source = r#"[1, 2, 3]"#;
-        let ts_tree = parse_json(source);
-        let tree = build_tree(&ts_tree);
-
-        let root = tree.root().unwrap();
-        let children: Vec<_> = tree.children(root).collect();
-
-        assert!(!children.is_empty());
-    }
-
-    #[test]
-    fn test_ancestors_iterator() {
-        let source = r#"{"nested": {"deep": 1}}"#;
-        let ts_tree = parse_json(source);
-        let tree = build_tree(&ts_tree);
-
-        let last_id = SyntaxId::new(tree.len() - 1);
-        let ancestors: Vec<_> = tree.ancestors(last_id).collect();
-
-        assert!(!ancestors.is_empty());
-
-        let root = tree.root().unwrap();
-        assert!(ancestors.contains(&root) || last_id == root);
-    }
-
-    #[test]
-    fn test_descendants_iterator() {
-        let source = r#"[1, 2]"#;
-        let ts_tree = parse_json(source);
-        let tree = build_tree(&ts_tree);
-
-        let root = tree.root().unwrap();
-        let root_node = tree.get(root);
-
-        let descendants: Vec<_> = tree.descendants(root).collect();
-        assert_eq!(descendants.len(), root_node.descendant_count());
-    }
-
-    #[test]
-    fn test_structural_hash_differs_for_different_content() {
-        let source1 = r#"{"a": 1}"#;
-        let source2 = r#"{"b": 2}"#;
-
-        let tree1 = build_tree(&parse_json(source1));
-        let tree2 = build_tree(&parse_json(source2));
-
-        let root1 = tree1.get(tree1.root().unwrap());
-        let root2 = tree2.get(tree2.root().unwrap());
-
-        assert_ne!(root1.structural_hash(), root2.structural_hash());
-    }
-
-    #[test]
-    fn test_structural_hash_same_for_same_structure() {
-        let source = r#"[1, 2]"#;
-
-        let tree1 = build_tree(&parse_json(source));
-        let tree2 = build_tree(&parse_json(source));
-
-        let root1 = tree1.get(tree1.root().unwrap());
-        let root2 = tree2.get(tree2.root().unwrap());
-
-        assert_eq!(root1.structural_hash(), root2.structural_hash());
-    }
 }
