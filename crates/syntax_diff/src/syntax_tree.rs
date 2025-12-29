@@ -311,14 +311,13 @@ fn build_tree_recursive(
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
         kind: None,
-        descendant_count: 0,
+        descendant_count: ts_node.descendant_count() - 1,
         parent,
     });
 
     let mut hasher = std::hash::DefaultHasher::new();
     ts_node.kind_id().hash(&mut hasher);
 
-    let mut descendant_count = 0;
     let mut first_child_start = None;
     let mut last_child_end = ts_node.end_byte();
 
@@ -331,7 +330,6 @@ fn build_tree_recursive(
 
             last_child_end = child_node.byte_range.end;
             child_node.structural_hash.hash(&mut hasher);
-            descendant_count += 1 + child_node.descendant_count;
 
             if !cursor.goto_next_sibling() {
                 break;
@@ -343,7 +341,6 @@ fn build_tree_recursive(
 
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
-    node.descendant_count = descendant_count;
 
     if let Some(first_start) = first_child_start {
         node.content_range = first_start..last_child_end;
