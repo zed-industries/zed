@@ -6668,6 +6668,10 @@ impl MultiBufferSnapshot {
         }
         excerpt_edits
     }
+
+    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
+        self.diffs.get(&buffer_id).map(|diff| &diff.diff)
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -6740,10 +6744,6 @@ impl MultiBufferSnapshot {
             }
             prev_transform = Some(item);
         }
-    }
-
-    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
-        self.diffs.get(&buffer_id).map(|diff| &diff.diff)
     }
 }
 
