@@ -4,8 +4,8 @@ use crate::{
 };
 use gpui::{
     Action, AnyElement, App, Bounds, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseDownEvent, MouseMoveEvent, Pixels, Point, Size, Subscription, anchored, canvas,
-    prelude::*, px,
+    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
+    Subscription, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use settings::Settings;
@@ -252,6 +252,7 @@ pub struct ContextMenu {
     submenu_trigger_observed_bounds_by_item: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     is_submenu: bool,
     submenu_hovered: bool,
+    submenu_trigger_mouse_down: bool,
     submenu_generation: u64,
     ignore_blur_cancel_until: Option<Instant>,
     parent_menu: Option<Entity<ContextMenu>>,
@@ -352,6 +353,7 @@ impl ContextMenu {
                 submenu_trigger_observed_bounds_by_item: Rc::new(RefCell::new(HashMap::new())),
                 is_submenu: false,
                 submenu_hovered: false,
+                submenu_trigger_mouse_down: false,
                 submenu_generation: 0,
                 ignore_blur_cancel_until: None,
                 parent_menu: None,
@@ -430,6 +432,7 @@ impl ContextMenu {
                     submenu_trigger_observed_bounds_by_item: Rc::new(RefCell::new(HashMap::new())),
                     is_submenu: false,
                     submenu_hovered: false,
+                    submenu_trigger_mouse_down: false,
                     submenu_generation: 0,
                     ignore_blur_cancel_until: None,
                     parent_menu: None,
@@ -500,6 +503,7 @@ impl ContextMenu {
                 submenu_trigger_observed_bounds_by_item: Rc::new(RefCell::new(HashMap::new())),
                 is_submenu: false,
                 submenu_hovered: false,
+                submenu_trigger_mouse_down: false,
                 submenu_generation: 0,
                 ignore_blur_cancel_until: None,
                 parent_menu: None,
@@ -1135,6 +1139,7 @@ impl ContextMenu {
                 submenu_trigger_observed_bounds_by_item: Rc::new(RefCell::new(HashMap::new())),
                 is_submenu: true,
                 submenu_hovered: false,
+                submenu_trigger_mouse_down: false,
                 submenu_generation: 0,
                 ignore_blur_cancel_until: None,
                 parent_menu: Some(parent_entity),
@@ -1386,6 +1391,17 @@ impl ContextMenu {
 
         div()
             .id(("context-menu-submenu-trigger", ix))
+            .capture_any_mouse_down(cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                // This prevents on_hover(false) from closing the submenu during a click.
+                if event.button == MouseButton::Left {
+                    this.submenu_trigger_mouse_down = true;
+                }
+            }))
+            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, _, _| {
+                if event.button == MouseButton::Left {
+                    this.submenu_trigger_mouse_down = false;
+                }
+            }))
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 this.update_last_mouse_position(event.position);
 
@@ -1445,6 +1461,10 @@ impl ContextMenu {
 
                             cx.notify();
                         } else {
+                            if this.submenu_trigger_mouse_down {
+                                return;
+                            }
+
                             let is_open_for_this_item = matches!(
                                 &this.submenu_state,
                                 SubmenuState::Open(open_submenu) if open_submenu.item_index == ix
@@ -1998,6 +2018,20 @@ impl Render for ContextMenu {
                                 if matches!(&this.submenu_state, SubmenuState::Open(_)) {
                                     if let Some(padded_bounds) = this.padded_submenu_bounds() {
                                         if padded_bounds.contains(&event.position) {
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                if this.is_submenu {
+                                    if let Some(parent) = &this.parent_menu {
+                                        let overriden_by_parent_trigger = parent
+                                            .read(cx)
+                                            .submenu_trigger_observed_bounds_by_item
+                                            .borrow()
+                                            .values()
+                                            .any(|bounds| bounds.contains(&event.position));
+                                        if overriden_by_parent_trigger {
                                             return;
                                         }
                                     }
