@@ -131,7 +131,6 @@ impl Component for CopyButton {
             single_example(
                 "Multiple Icon Sizes",
                 h_flex()
-                    .size_full()
                     .gap_1()
                     .child(Label::new(label_text).size(LabelSize::Small))
                     .child(copy_b().icon_size(IconSize::XSmall))

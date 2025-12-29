@@ -566,7 +566,6 @@ impl Render for AcpToolsToolbarItemView {
         h_flex()
             .gap_2()
             .child({
-                let acp_tools = acp_tools.clone();
                 let message = acp_tools
                     .read(cx)
                     .serialize_observed_messages()
