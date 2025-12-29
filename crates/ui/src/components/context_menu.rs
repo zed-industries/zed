@@ -1544,7 +1544,6 @@ impl ContextMenu {
         let bounds_cell = self.submenu_observed_bounds.clone();
         let canvas = canvas(
             {
-                let bounds_cell = bounds_cell;
                 move |bounds, _window, _cx| {
                     bounds_cell.set(Some(bounds));
                 }
@@ -1969,7 +1968,6 @@ impl Render for ContextMenu {
             let bounds_cell = self.submenu_observed_bounds.clone();
             let menu_bounds_measure = canvas(
                 {
-                    let bounds_cell = bounds_cell;
                     move |bounds, _window, _cx| {
                         bounds_cell.set(Some(bounds));
                     }
