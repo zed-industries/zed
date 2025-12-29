@@ -85,6 +85,7 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_delete_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
+        client.add_entity_request_handler(Self::handle_refresh_worktrees);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -707,6 +708,54 @@ impl WorktreeStore {
         }
     }
 
+    pub fn request_remote_worktrees_refresh(
+        &mut self,
+        worktree_ids: Vec<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some((client, project_id)) = self.upstream_client() else {
+            return Task::ready(Err(anyhow!("invalid project")));
+        };
+
+        let request = proto::RefreshWorktrees {
+            project_id,
+            worktree_ids: worktree_ids
+                .into_iter()
+                .map(|worktree_id| worktree_id.to_proto())
+                .collect(),
+        };
+
+        cx.spawn(async move |_, _| {
+            client.request(request).await?;
+            Ok(())
+        })
+    }
+
+    fn refresh_local_worktrees(
+        &mut self,
+        worktree_ids: HashSet<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if matches!(self.state, WorktreeStoreState::Remote { .. }) {
+            bail!("can't refresh worktrees on a remote store");
+        }
+
+        let refresh_all = worktree_ids.is_empty();
+        for worktree in self.worktrees() {
+            let worktree_id = worktree.read(cx).id();
+            if !refresh_all && !worktree_ids.contains(&worktree_id) {
+                continue;
+            }
+            worktree.update(cx, |worktree, _| {
+                if let Some(local) = worktree.as_local_mut() {
+                    local.refresh_entries_for_paths(vec![RelPath::empty().into()]);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn set_worktrees_from_proto(
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
@@ -1186,6 +1235,24 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_refresh_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RefreshWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_ids = envelope
+                .payload
+                .worktree_ids
+                .iter()
+                .copied()
+                .map(WorktreeId::from_proto)
+                .collect::<HashSet<_>>();
+            this.refresh_local_worktrees(worktree_ids, cx)
+        })??;
+        Ok(proto::Ack {})
     }
 
     pub fn fs(&self) -> Option<Arc<dyn Fs>> {

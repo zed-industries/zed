@@ -274,11 +274,11 @@ struct SelectPrevDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-actions!(
-    project_panel,
-    [
-        /// Expands the selected entry in the project tree.
-        ExpandSelectedEntry,
+    actions!(
+        project_panel,
+        [
+            /// Expands the selected entry in the project tree.
+            ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
@@ -337,12 +337,14 @@ actions!(
         SelectPrevGitEntry,
         /// Selects the next directory.
         SelectNextDirectory,
-        /// Selects the previous directory.
-        SelectPrevDirectory,
-        /// Opens a diff view to compare two marked files.
-        CompareMarkedFiles,
-    ]
-);
+            /// Selects the previous directory.
+            SelectPrevDirectory,
+            /// Opens a diff view to compare two marked files.
+            CompareMarkedFiles,
+            /// Reloads all files in the project panel.
+            ReloadFiles,
+        ]
+    );
 
 #[derive(Clone, Debug, Default)]
 struct FoldedAncestors {
@@ -407,6 +409,30 @@ pub fn init(cx: &mut App) {
                         .unwrap_or(false),
                 );
             })
+        });
+
+        workspace.register_action(|workspace, _: &ReloadFiles, _, cx| {
+            let project = workspace.project();
+            let (worktree_store, worktree_ids, is_remote) = {
+                let project = project.read(cx);
+                (
+                    project.worktree_store(),
+                    project
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect::<Vec<_>>(),
+                    project.is_remote(),
+                )
+            };
+            if !is_remote {
+                return;
+            }
+
+            if let Ok(task) = worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.request_remote_worktrees_refresh(worktree_ids, cx)
+            }) {
+                task.detach_and_log_err(cx);
+            }
         });
 
         workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
@@ -1171,6 +1197,9 @@ impl ProjectPanel {
                             .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
+                                    .when(is_remote, |menu| {
+                                        menu.action("Reload Files", Box::new(ReloadFiles))
+                                    })
                             })
                     }
                 })
