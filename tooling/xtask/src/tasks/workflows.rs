@@ -12,6 +12,7 @@ mod danger;
 mod extension_bump;
 mod extension_release;
 mod extension_tests;
+mod extension_workflow_rollout;
 mod extensions;
 mod nix_build;
 mod release_nightly;
@@ -121,6 +122,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_release::extension_release),
+        WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension(extensions::bump_version::bump_version),
