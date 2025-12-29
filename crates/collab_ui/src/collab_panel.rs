@@ -2527,8 +2527,7 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                CopyButton::new(channel_link_copy.clone())
+                CopyButton::new(channel_link)
                     .visible_on_hover("section-header")
                     .tooltip_label("Copy Channel Link")
                     .into_any_element()
