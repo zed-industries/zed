@@ -337,14 +337,14 @@ struct SelectPrevDiagnostic {
         SelectPrevGitEntry,
         /// Selects the next directory.
         SelectNextDirectory,
-            /// Selects the previous directory.
-            SelectPrevDirectory,
-            /// Opens a diff view to compare two marked files.
-            CompareMarkedFiles,
-            /// Reloads all files in the project panel.
-            ReloadFiles,
-        ]
-    );
+        /// Selects the previous directory.
+        SelectPrevDirectory,
+        /// Opens a diff view to compare two marked files.
+        CompareMarkedFiles,
+        /// Reloads all files in the project panel.
+        ReloadFiles,
+    ]
+);
 
 #[derive(Clone, Debug, Default)]
 struct FoldedAncestors {
@@ -1197,9 +1197,10 @@ impl ProjectPanel {
                             .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
-                                    .when(is_remote, |menu| {
-                                        menu.action("Reload Files", Box::new(ReloadFiles))
-                                    })
+                            })
+                            .when(is_remote, |menu| {
+                                menu.separator()
+                                    .action("Reload Files", Box::new(ReloadFiles))
                             })
                     }
                 })
