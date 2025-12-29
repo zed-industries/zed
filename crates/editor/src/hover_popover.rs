@@ -994,11 +994,13 @@ impl DiagnosticPopover {
                     .border_color(self.border_color)
                     .rounded_lg()
                     .child(
-                        div()
+                        h_flex()
                             .id("diagnostic-content-container")
-                            .overflow_y_scroll()
+                            .gap_1()
+                            .items_start()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
+                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 MarkdownElement::new(
@@ -1022,18 +1024,28 @@ impl DiagnosticPopover {
                                     },
                                 ),
                             )
-                            .child(h_flex().justify_end().pt_1().child({
+                            .child({
                                 let message = self.local_diagnostic.diagnostic.message.clone();
-                                IconButton::new("copy-diagnostic", IconName::Copy)
+                                let copied = cx
+                                    .read_from_clipboard()
+                                    .map(|item| item.text().as_ref() == Some(&message))
+                                    .unwrap_or(false);
+                                let (icon, color) = if copied {
+                                    (IconName::Check, Color::Success)
+                                } else {
+                                    (IconName::Copy, Color::Muted)
+                                };
+
+                                IconButton::new("copy-diagnostic", icon)
+                                    .icon_color(color)
                                     .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
+                                    .tooltip(Tooltip::text("Copy Diagnostic"))
                                     .on_click(move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             message.clone(),
                                         ));
                                     })
-                                    .tooltip(Tooltip::text("Copy Diagnostic"))
-                            })),
+                            }),
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
