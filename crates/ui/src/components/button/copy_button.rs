@@ -108,7 +108,7 @@ impl Component for CopyButton {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let label_text: SharedString = "Here's an example label".into();
+        let label_text = "Here's an example label";
         let mut counter: usize = 0;
 
         let mut copy_b = || {
@@ -124,7 +124,7 @@ impl Component for CopyButton {
                 "Default",
                 h_flex()
                     .gap_1()
-                    .child(Label::new(label_text.clone()).size(LabelSize::Small))
+                    .child(Label::new(label_text).size(LabelSize::Small))
                     .child(copy_b())
                     .into_any_element(),
             ),
@@ -133,7 +133,7 @@ impl Component for CopyButton {
                 h_flex()
                     .size_full()
                     .gap_1()
-                    .child(Label::new(label_text.clone()).size(LabelSize::Small))
+                    .child(Label::new(label_text).size(LabelSize::Small))
                     .child(copy_b().icon_size(IconSize::XSmall))
                     .child(copy_b().icon_size(IconSize::Medium))
                     .child(copy_b().icon_size(IconSize::XLarge))
@@ -143,7 +143,7 @@ impl Component for CopyButton {
                 "Custom Tooltip Label",
                 h_flex()
                     .gap_1()
-                    .child(Label::new(label_text.clone()).size(LabelSize::Small))
+                    .child(Label::new(label_text).size(LabelSize::Small))
                     .child(copy_b().tooltip_label("Custom tooltip label"))
                     .into_any_element(),
             ),
@@ -152,7 +152,7 @@ impl Component for CopyButton {
                 h_flex()
                     .group("container")
                     .gap_1()
-                    .child(Label::new(label_text.clone()).size(LabelSize::Small))
+                    .child(Label::new(label_text).size(LabelSize::Small))
                     .child(copy_b().visible_on_hover("container"))
                     .into_any_element(),
             ),
