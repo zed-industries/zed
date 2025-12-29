@@ -45,6 +45,9 @@ use ui::{
 mod image;
 use image::ImageView;
 
+mod svg;
+use svg::SvgView;
+
 mod markdown;
 use markdown::MarkdownView;
 
@@ -62,6 +65,7 @@ use workspace::Workspace;
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
+        MimeType::Svg(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -112,6 +116,10 @@ pub enum Output {
     },
     Image {
         content: Entity<ImageView>,
+        display_id: Option<String>,
+    },
+    Svg {
+        content: Entity<SvgView>,
         display_id: Option<String>,
     },
     ErrorOutput(ErrorView),
@@ -211,6 +219,7 @@ impl Output {
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
             Self::Image { content, .. } => Some(content.clone().into_any_element()),
+            Self::Svg { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
@@ -234,6 +243,9 @@ impl Output {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Image { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
+                }
+                Self::Svg { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::ErrorOutput(err) => {
@@ -332,6 +344,7 @@ impl Output {
             Output::Plain { display_id, .. } => display_id.clone(),
             Output::Stream { .. } => None,
             Output::Image { display_id, .. } => display_id.clone(),
+            Output::Svg { display_id, .. } => display_id.clone(),
             Output::ErrorOutput(_) => None,
             Output::Message(_) => None,
             Output::Table { display_id, .. } => display_id.clone(),
@@ -364,6 +377,13 @@ impl Output {
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Svg(data)) => match SvgView::from(data, cx) {
+                Ok(view) => Output::Svg {
+                    content: cx.new(|_| view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to load SVG: {}", error)),
             },
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
