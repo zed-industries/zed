@@ -4538,13 +4538,19 @@ impl Project {
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::new(path, path_style)
-                    && let Some(entry) = worktree.entry_for_path(&path)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
-                    });
+                if let Ok(rel_path) = RelPath::new(path, path_style) {
+                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: entry.path.clone(),
+                        });
+                    }
+                    if worktree_store.visible_worktrees(cx).count() == 1 {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: rel_path.into_arc(),
+                        });
+                    }
                 }
             }
         }

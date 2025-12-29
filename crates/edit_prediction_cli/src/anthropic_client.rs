@@ -1,8 +1,10 @@
 use anthropic::{
-    ANTHROPIC_API_URL, Message, Request as AnthropicRequest, RequestContent,
-    Response as AnthropicResponse, Role, non_streaming_completion,
+    ANTHROPIC_API_URL, Event, Message, Request as AnthropicRequest, RequestContent,
+    Response as AnthropicResponse, ResponseContent, Role, Tool, ToolChoice,
+    non_streaming_completion, stream_completion,
 };
 use anyhow::Result;
+use futures::StreamExt as _;
 use http_client::HttpClient;
 use indoc::indoc;
 use reqwest_client::ReqwestClient;
@@ -15,12 +17,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub struct PlainLlmClient {
-    http_client: Arc<dyn HttpClient>,
-    api_key: String,
+    pub http_client: Arc<dyn HttpClient>,
+    pub api_key: String,
 }
 
 impl PlainLlmClient {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
@@ -30,7 +32,7 @@ impl PlainLlmClient {
         })
     }
 
-    async fn generate(
+    pub async fn generate(
         &self,
         model: &str,
         max_tokens: u64,
@@ -60,6 +62,172 @@ impl PlainLlmClient {
         )
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        Ok(response)
+    }
+
+    pub async fn generate_streaming<F>(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: Vec<Message>,
+        mut on_progress: F,
+    ) -> Result<AnthropicResponse>
+    where
+        F: FnMut(usize, &str),
+    {
+        let request = AnthropicRequest {
+            model: model.to_string(),
+            max_tokens,
+            messages,
+            tools: Vec::new(),
+            thinking: None,
+            tool_choice: None,
+            system: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+            top_k: None,
+            top_p: None,
+        };
+
+        let mut stream = stream_completion(
+            self.http_client.as_ref(),
+            ANTHROPIC_API_URL,
+            &self.api_key,
+            request,
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        let mut response: Option<AnthropicResponse> = None;
+        let mut text_content = String::new();
+
+        while let Some(event_result) = stream.next().await {
+            let event = event_result.map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+            match event {
+                Event::MessageStart { message } => {
+                    response = Some(message);
+                }
+                Event::ContentBlockDelta { delta, .. } => {
+                    if let anthropic::ContentDelta::TextDelta { text } = delta {
+                        text_content.push_str(&text);
+                        on_progress(text_content.len(), &text_content);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut response = response.ok_or_else(|| anyhow::anyhow!("No response received"))?;
+
+        if response.content.is_empty() && !text_content.is_empty() {
+            response
+                .content
+                .push(ResponseContent::Text { text: text_content });
+        }
+
+        Ok(response)
+    }
+
+    pub async fn generate_with_tools<F>(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: Vec<Message>,
+        tools: Vec<Tool>,
+        tool_choice: Option<ToolChoice>,
+        mut on_progress: F,
+    ) -> Result<AnthropicResponse>
+    where
+        F: FnMut(usize, &str),
+    {
+        let request = AnthropicRequest {
+            model: model.to_string(),
+            max_tokens,
+            messages,
+            tools,
+            thinking: None,
+            tool_choice,
+            system: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+            top_k: None,
+            top_p: None,
+        };
+
+        let mut stream = stream_completion(
+            self.http_client.as_ref(),
+            ANTHROPIC_API_URL,
+            &self.api_key,
+            request,
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        let mut response: Option<AnthropicResponse> = None;
+        let mut text_content = String::new();
+        let mut tool_use_blocks: Vec<ResponseContent> = Vec::new();
+        let mut current_tool_name = String::new();
+        let mut current_tool_id = String::new();
+        let mut current_tool_input = String::new();
+
+        while let Some(event_result) = stream.next().await {
+            let event = event_result.map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+            match event {
+                Event::MessageStart { message } => {
+                    response = Some(message);
+                }
+                Event::ContentBlockStart { content_block, .. } => {
+                    if let ResponseContent::ToolUse { id, name, .. } = content_block {
+                        current_tool_id = id;
+                        current_tool_name = name;
+                        current_tool_input.clear();
+                    }
+                }
+                Event::ContentBlockDelta { delta, .. } => match delta {
+                    anthropic::ContentDelta::TextDelta { text } => {
+                        text_content.push_str(&text);
+                        on_progress(text_content.len(), &text_content);
+                    }
+                    anthropic::ContentDelta::InputJsonDelta { partial_json } => {
+                        current_tool_input.push_str(&partial_json);
+                        on_progress(current_tool_input.len(), &current_tool_input);
+                    }
+                    _ => {}
+                },
+                Event::ContentBlockStop { .. } => {
+                    if !current_tool_name.is_empty() {
+                        let input: serde_json::Value =
+                            serde_json::from_str(&current_tool_input).unwrap_or_default();
+                        tool_use_blocks.push(ResponseContent::ToolUse {
+                            id: std::mem::take(&mut current_tool_id),
+                            name: std::mem::take(&mut current_tool_name),
+                            input,
+                        });
+                        current_tool_input.clear();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut response = response.ok_or_else(|| anyhow::anyhow!("No response received"))?;
+
+        if !text_content.is_empty() {
+            response
+                .content
+                .push(ResponseContent::Text { text: text_content });
+        }
+
+        for tool_block in tool_use_blocks {
+            response.content.push(tool_block);
+        }
 
         Ok(response)
     }
@@ -403,6 +571,29 @@ impl AnthropicClient {
                 batching_llm_client
                     .generate(model, max_tokens, messages)
                     .await
+            }
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn generate_streaming<F>(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: Vec<Message>,
+        on_progress: F,
+    ) -> Result<Option<AnthropicResponse>>
+    where
+        F: FnMut(usize, &str),
+    {
+        match self {
+            AnthropicClient::Plain(plain_llm_client) => plain_llm_client
+                .generate_streaming(model, max_tokens, messages, on_progress)
+                .await
+                .map(Some),
+            AnthropicClient::Batch(_) => {
+                anyhow::bail!("Streaming not supported with batching client")
             }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }

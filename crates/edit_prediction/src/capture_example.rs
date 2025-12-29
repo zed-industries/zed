@@ -82,6 +82,8 @@ pub fn capture_example(
             name: generate_timestamp_name(),
             repository_url,
             revision,
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff,
             cursor_path: cursor_path.as_std_path().into(),
             cursor_position: String::new(),
@@ -313,6 +315,8 @@ mod tests {
                 name: "test".to_string(),
                 repository_url: "https://github.com/test/repo.git".to_string(),
                 revision: "abc123def456".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
                 uncommitted_diff: indoc! {"
                     --- a/project/src/main.rs
                     +++ b/project/src/main.rs

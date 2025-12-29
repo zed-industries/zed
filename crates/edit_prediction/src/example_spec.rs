@@ -11,6 +11,10 @@ pub struct ExampleSpec {
     pub name: String,
     pub repository_url: String,
     pub revision: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     #[serde(default)]
     pub uncommitted_diff: String,
     pub cursor_path: Arc<Path>,
@@ -19,6 +23,7 @@ pub struct ExampleSpec {
     pub expected_patches: Vec<String>,
 }
 
+const REASONING_HEADING: &str = "Reasoning";
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
@@ -29,9 +34,23 @@ const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
 struct FrontMatter<'a> {
     repository_url: Cow<'a, str>,
     revision: Cow<'a, str>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 impl ExampleSpec {
+    /// Generate a sanitized filename for this example.
+    pub fn filename(&self) -> String {
+        self.name
+            .chars()
+            .map(|c| match c {
+                ' ' | ':' | '~' | '^' | '?' | '*' | '[' | '\\' | '@' | '{' | '/' | '<' | '>'
+                | '|' | '"' => '-',
+                c => c,
+            })
+            .collect()
+    }
+
     /// Format this example spec as markdown.
     pub fn to_markdown(&self) -> String {
         use std::fmt::Write as _;
@@ -39,6 +58,7 @@ impl ExampleSpec {
         let front_matter = FrontMatter {
             repository_url: Cow::Borrowed(&self.repository_url),
             revision: Cow::Borrowed(&self.revision),
+            tags: self.tags.clone(),
         };
         let front_matter_toml =
             toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
@@ -55,6 +75,16 @@ impl ExampleSpec {
 
         _ = writeln!(markdown, "# {}", self.name);
         markdown.push('\n');
+
+        if let Some(reasoning) = &self.reasoning {
+            _ = writeln!(markdown, "## {}", REASONING_HEADING);
+            markdown.push('\n');
+            markdown.push_str(reasoning);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            markdown.push('\n');
+        }
 
         if !self.uncommitted_diff.is_empty() {
             _ = writeln!(markdown, "## {}", UNCOMMITTED_DIFF_HEADING);
@@ -117,6 +147,8 @@ impl ExampleSpec {
             name: String::new(),
             repository_url: String::new(),
             revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff: String::new(),
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
@@ -130,6 +162,7 @@ impl ExampleSpec {
             if let Ok(data) = toml::from_str::<FrontMatter<'_>>(front_matter) {
                 spec.repository_url = data.repository_url.into_owned();
                 spec.revision = data.revision.into_owned();
+                spec.tags = data.tags;
             }
             input = rest.trim_start();
         }
@@ -359,6 +392,8 @@ mod tests {
             name: String::new(),
             repository_url: String::new(),
             revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff: String::new(),
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
@@ -489,6 +524,8 @@ mod tests {
             name: String::new(),
             repository_url: String::new(),
             revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff: String::new(),
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
