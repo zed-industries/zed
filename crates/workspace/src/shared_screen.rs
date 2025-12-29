@@ -89,7 +89,7 @@ impl Item for SharedScreen {
 
     fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
-            nav_history.push::<()>(None, cx);
+            nav_history.push::<()>(None, None, cx);
         }
     }
 
