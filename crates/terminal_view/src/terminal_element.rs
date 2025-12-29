@@ -2342,18 +2342,4 @@ mod tests {
         assert_eq!(negative_filtered.first().unwrap().point.line, Line(-7));
         assert_eq!(negative_filtered.last().unwrap().point.line, Line(-4));
     }
-
-    #[test]
-    fn test_cursor_width_always_uses_cell_width() {
-        use gpui::px;
-
-        // The cursor should always use cell_width, regardless of the shaped text width.
-        // This prevents Tab characters or other wide-rendering characters from stretching the cursor.
-        let cell_width = px(10.0);
-
-        // For any text width, cursor width should always be cell_width
-        // Test this by verifying that we use cell_width directly, ignoring text fragment width
-        let cursor_width = cell_width; // This is what shape_cursor now returns
-        assert_eq!(cursor_width, px(10.0));
-    }
 }
