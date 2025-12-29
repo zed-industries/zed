@@ -33,17 +33,12 @@ pub struct TestAppContext {
 }
 
 impl AppContext for TestAppContext {
-    type Result<T> = T;
-
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
         let mut app = self.app.borrow_mut();
         app.reserve_entity()
     }
@@ -52,7 +47,7 @@ impl AppContext for TestAppContext {
         &mut self,
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.insert_entity(reservation, build_entity)
     }
@@ -61,23 +56,19 @@ impl AppContext for TestAppContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> Self::Result<R> {
+    ) -> R {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> super::GpuiBorrow<'a, T>
     where
         T: 'static,
     {
         panic!("Cannot use as_mut with a test app context. Try calling update() first")
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -112,7 +103,7 @@ impl AppContext for TestAppContext {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -919,16 +910,11 @@ impl VisualTestContext {
 }
 
 impl AppContext for VisualTestContext {
-    type Result<T> = <TestAppContext as AppContext>::Result<T>;
-
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.cx.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
         self.cx.reserve_entity()
     }
 
@@ -936,7 +922,7 @@ impl AppContext for VisualTestContext {
         &mut self,
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.cx.insert_entity(reservation, build_entity)
     }
 
@@ -944,25 +930,21 @@ impl AppContext for VisualTestContext {
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static,
     {
         self.cx.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> super::GpuiBorrow<'a, T>
     where
         T: 'static,
     {
         self.cx.as_mut(handle)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -994,7 +976,7 @@ impl AppContext for VisualTestContext {
         self.cx.background_spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -1011,46 +993,38 @@ impl VisualContext for VisualTestContext {
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                cx.new(|cx| build_entity(window, cx))
-            })
-            .unwrap()
+    ) -> Result<Entity<T>> {
+        self.window.update(&mut self.cx, |_, window, cx| {
+            cx.new(|cx| build_entity(window, cx))
+        })
     }
 
     fn update_window_entity<V: 'static, R>(
         &mut self,
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
-    ) -> Self::Result<R> {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                view.update(cx, |v, cx| update(v, window, cx))
-            })
-            .unwrap()
+    ) -> Result<R> {
+        self.window.update(&mut self.cx, |_, window, cx| {
+            view.update(cx, |v, cx| update(v, window, cx))
+        })
     }
 
     fn replace_root_view<V>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Self::Result<Entity<V>>
+    ) -> Result<Entity<V>>
     where
         V: 'static + Render,
     {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                window.replace_root(cx, build_view)
-            })
-            .unwrap()
+        self.window.update(&mut self.cx, |_, window, cx| {
+            window.replace_root(cx, build_view)
+        })
     }
 
-    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Self::Result<()> {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                view.read(cx).focus_handle(cx).focus(window, cx)
-            })
-            .unwrap()
+    fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Result<()> {
+        self.window.update(&mut self.cx, |_, window, cx| {
+            view.read(cx).focus_handle(cx).focus(window, cx)
+        })
     }
 }
 
