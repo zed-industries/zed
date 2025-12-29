@@ -63,6 +63,7 @@ pub struct AgentsPanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    terminal_jobs_panel: Entity<crate::terminal_jobs_panel::TerminalJobsPanel>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -155,6 +156,8 @@ impl AgentsPanel {
             }),
         ];
 
+        let terminal_jobs_panel = cx.new(|cx| crate::terminal_jobs_panel::TerminalJobsPanel::new(cx));
+
         Self {
             focus_handle,
             workspace,
@@ -166,6 +169,7 @@ impl AgentsPanel {
             fs,
             width: None,
             pending_serialization: Task::ready(None),
+            terminal_jobs_panel,
             _subscriptions: subscriptions,
         }
     }

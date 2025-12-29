@@ -68,17 +68,21 @@ pub struct AgentThreadPane {
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
     workspace: WeakEntity<Workspace>,
+    terminal_jobs_panel: Entity<crate::terminal_jobs_panel::TerminalJobsPanel>,
 }
 
 impl AgentThreadPane {
     pub fn new(workspace: WeakEntity<Workspace>, cx: &mut ui::Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        let terminal_jobs_panel =
+            cx.new(|cx| crate::terminal_jobs_panel::TerminalJobsPanel::new(cx));
         Self {
             focus_handle,
             expanded: false,
             width: None,
             thread_view: None,
             workspace,
+            terminal_jobs_panel,
         }
     }
 
@@ -282,6 +286,7 @@ impl Render for AgentThreadPane {
             .flex()
             .flex_col()
             .child(self.render_header(window, cx))
+            .child(self.terminal_jobs_panel.clone())
             .child(content)
     }
 }
