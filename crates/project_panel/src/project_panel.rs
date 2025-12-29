@@ -274,11 +274,11 @@ struct SelectPrevDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-actions!(
-    project_panel,
-    [
-        /// Expands the selected entry in the project tree.
-        ExpandSelectedEntry,
+    actions!(
+        project_panel,
+        [
+            /// Expands the selected entry in the project tree.
+            ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
@@ -412,17 +412,26 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &ReloadFiles, _, cx| {
-            let worktrees: Vec<_> = workspace
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .collect();
-            for worktree in worktrees {
-                worktree.update(cx, |worktree, _| {
-                    if let Some(local) = worktree.as_local_mut() {
-                        local.refresh_entries_for_paths(vec![RelPath::empty().into()]);
-                    }
-                });
+            let project = workspace.project();
+            let (worktree_store, worktree_ids, is_remote) = {
+                let project = project.read(cx);
+                (
+                    project.worktree_store(),
+                    project
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).id())
+                        .collect::<Vec<_>>(),
+                    project.is_remote(),
+                )
+            };
+            if !is_remote {
+                return;
+            }
+
+            if let Ok(task) = worktree_store.update(cx, |worktree_store, cx| {
+                worktree_store.request_remote_worktrees_refresh(worktree_ids, cx)
+            }) {
+                task.detach_and_log_err(cx);
             }
         });
 
@@ -1188,6 +1197,9 @@ impl ProjectPanel {
                             .when(is_root, |menu| {
                                 menu.separator()
                                     .action("Collapse All", Box::new(CollapseAllEntries))
+                            })
+                            .when(is_remote, |menu| {
+                                menu.separator()
                                     .action("Reload Files", Box::new(ReloadFiles))
                             })
                     }
