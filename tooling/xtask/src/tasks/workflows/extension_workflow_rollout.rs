@@ -89,7 +89,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     fn copy_workflow_files() -> Step<Run> {
         named::bash(indoc! {r#"
             mkdir -p extension/.github/workflows
-            cp zed/extensions/workflows/*.yml extension/.github/workflows/
+            cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
         "#})
     }
 

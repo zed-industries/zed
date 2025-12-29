@@ -68,7 +68,7 @@ jobs:
     - name: extension_workflow_rollout::rollout_workflows_to_extension::copy_workflow_files
       run: |
         mkdir -p extension/.github/workflows
-        cp zed/extensions/workflows/*.yml extension/.github/workflows/
+        cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
       shell: bash -euxo pipefail {0}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
