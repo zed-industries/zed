@@ -291,25 +291,87 @@ impl Component for Callout {
                     .description_slot(
                         v_flex()
                             .gap_1()
-                            .child(Label::new("You exceeded your current quota.").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("For more information, visit the docs.").size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                Label::new("You exceeded your current quota.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("For more information, visit the docs.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new("").size(LabelSize::Small))
-                            .child(Label::new("Error details:").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("• Quota exceeded for metric").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("• Limit: 0").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("• Model: gemini-3-pro").size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                Label::new("Error details:")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("• Quota exceeded for metric")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("• Limit: 0")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("• Model: gemini-3-pro")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new("").size(LabelSize::Small))
-                            .child(Label::new("Please retry in 26.33s.").size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                Label::new("Please retry in 26.33s.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new("").size(LabelSize::Small))
-                            .child(Label::new("Additional details:").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Request ID: abc123def456").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Timestamp: 2024-01-15T10:30:00Z").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Region: us-central1").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Service: generativelanguage.googleapis.com").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Error Code: RESOURCE_EXHAUSTED").size(LabelSize::Small).color(Color::Muted))
-                            .child(Label::new("- Retry After: 26s").size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                Label::new("Additional details:")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Request ID: abc123def456")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Timestamp: 2024-01-15T10:30:00Z")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Region: us-central1")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Service: generativelanguage.googleapis.com")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Error Code: RESOURCE_EXHAUSTED")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("- Retry After: 26s")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .child(Label::new("").size(LabelSize::Small))
-                            .child(Label::new("This error occurs when you have exceeded your API quota.").size(LabelSize::Small).color(Color::Muted)),
+                            .child(
+                                Label::new(
+                                    "This error occurs when you have exceeded your API quota.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
                     )
                     .actions_slot(single_action())
                     .into_any_element(),
