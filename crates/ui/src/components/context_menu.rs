@@ -1491,14 +1491,15 @@ impl ContextMenu {
 
         div()
             .id(("submenu-container", ix))
+            .absolute()
+            .left_full()
+            .ml_neg_0p5()
+            .top(offset)
             .on_hover(cx.listener(|this, hovered, _, _| {
                 if *hovered {
                     this.hover_target = HoverTarget::Submenu;
                 }
             }))
-            .absolute()
-            .left_full()
-            .top(offset)
             .child(
                 anchored()
                     .anchor(Corner::TopLeft)
