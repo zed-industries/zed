@@ -8,8 +8,8 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, AsyncWindowContext, ClipboardItem, Context, Entity, Focusable as _, FontWeight,
-    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
     Window, div, px,
 };
@@ -24,7 +24,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, Tooltip, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -1026,25 +1026,7 @@ impl DiagnosticPopover {
                             )
                             .child({
                                 let message = self.local_diagnostic.diagnostic.message.clone();
-                                let copied = cx
-                                    .read_from_clipboard()
-                                    .map(|item| item.text().as_ref() == Some(&message))
-                                    .unwrap_or(false);
-                                let (icon, color) = if copied {
-                                    (IconName::Check, Color::Success)
-                                } else {
-                                    (IconName::Copy, Color::Muted)
-                                };
-
-                                IconButton::new("copy-diagnostic", icon)
-                                    .icon_color(color)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Copy Diagnostic"))
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            message.clone(),
-                                        ));
-                                    })
+                                CopyButton::new(message).tooltip_label("Copy Diagnostic")
                             }),
                     )
                     .custom_scrollbars(

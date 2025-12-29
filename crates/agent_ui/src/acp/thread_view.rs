@@ -24,11 +24,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, CursorStyle,
+    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
+    ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task, TextStyle,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div, ease_in_out,
+    linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -47,9 +47,9 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider, DividerColor,
-    ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar,
-    prelude::*, right_click_menu,
+    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, Disclosure, Divider,
+    DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
+    WithScrollbar, prelude::*, right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Workspace};
@@ -5921,12 +5921,7 @@ impl AcpThreadView {
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
 
-        IconButton::new("copy", IconName::Copy)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Copy Error Message"))
-            .on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-            })
+        CopyButton::new(message).tooltip_label("Copy Error Message")
     }
 
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
