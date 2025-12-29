@@ -58,12 +58,3 @@ pub fn insert_deep_unchanged(
         }
     }
 }
-
-/// Mark a node and all its descendants as novel.
-pub fn insert_deep_novel(tree: &SyntaxTree, node_id: SyntaxId, change_map: &mut SyntaxChanges) {
-    change_map.insert(node_id, SyntaxChange::Novel);
-
-    for child_id in tree.children(node_id) {
-        insert_deep_novel(tree, child_id, change_map);
-    }
-}

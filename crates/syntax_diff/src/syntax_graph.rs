@@ -389,6 +389,7 @@ fn find_shortest_path<'a>(
                 continue;
             }
         }
+
         best_cost.insert(current.vertex.clone(), current.cost);
 
         if best_cost.len() > graph_limit {

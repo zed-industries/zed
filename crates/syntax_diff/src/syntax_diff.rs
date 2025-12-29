@@ -85,24 +85,14 @@ fn populate_change_map(
                     }
                 }
             }
-            SyntaxEdge::NovelAtomLHS => {
+            SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
                 if let Some(lhs_id) = vertex.lhs.id() {
                     map.insert(lhs_id, SyntaxChange::Novel);
                 }
             }
-            SyntaxEdge::EnterNovelDelimiterLHS => {
-                if let Some(lhs_id) = vertex.lhs.id() {
-                    syntax_changes::insert_deep_novel(lhs_tree, lhs_id, map);
-                }
-            }
-            SyntaxEdge::NovelAtomRHS => {
+            SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
                 if let Some(rhs_id) = vertex.rhs.id() {
                     map.insert(rhs_id, SyntaxChange::Novel);
-                }
-            }
-            SyntaxEdge::EnterNovelDelimiterRHS => {
-                if let Some(rhs_id) = vertex.rhs.id() {
-                    syntax_changes::insert_deep_novel(rhs_tree, rhs_id, map);
                 }
             }
         }
@@ -114,11 +104,26 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
 
     for id in tree.preorder() {
         match change_map.get(id) {
-            Some(SyntaxChange::Novel)
-            | Some(SyntaxChange::ReplacedComment(_, _))
-            | Some(SyntaxChange::ReplacedString(_, _)) => {
+            Some(SyntaxChange::Novel) => {
                 let node = tree.get(id);
-                ranges.push(node.byte_range());
+
+                if node.is_atom() {
+                    ranges.push(node.byte_range());
+                } else {
+                    let open = node.open_delimiter();
+                    let close = node.close_delimiter();
+
+                    if !open.is_empty() {
+                        ranges.push(open);
+                    }
+                    if !close.is_empty() {
+                        ranges.push(close);
+                    }
+                }
+            }
+            Some(SyntaxChange::ReplacedComment(_, _))
+            | Some(SyntaxChange::ReplacedString(_, _)) => {
+                ranges.push(tree.get(id).byte_range());
             }
             Some(SyntaxChange::Unchanged(_)) => {
                 // Node is unchanged, but children might have changes

@@ -403,7 +403,7 @@ impl Hash for SyntaxTreeCursor<'_> {
 /// The source text is used to compute structural hashes that include
 /// the actual content of leaf nodes, not just their types.
 pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &[u8]) -> SyntaxTree {
-    let mut nodes = Vec::new();
+    let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
         build_tree_recursive(&mut cursor, &mut nodes, None, source);
