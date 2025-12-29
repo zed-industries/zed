@@ -274,11 +274,11 @@ struct SelectPrevDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-    actions!(
-        project_panel,
-        [
-            /// Expands the selected entry in the project tree.
-            ExpandSelectedEntry,
+actions!(
+    project_panel,
+    [
+        /// Expands the selected entry in the project tree.
+        ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
