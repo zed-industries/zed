@@ -18,6 +18,3 @@ collections.workspace = true
 tree-sitter-rust.workspace = true
 criterion.workspace = true
 
-[[bench]]
-name = "diff_tree"
-harness = false
