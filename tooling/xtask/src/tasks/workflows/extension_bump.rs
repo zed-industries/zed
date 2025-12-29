@@ -101,7 +101,8 @@ fn create_version_label(
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(app_id, app_secret, None);
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && github.ref == 'refs/heads/main' && {} == 'false'",
@@ -181,7 +182,8 @@ fn bump_extension_version(
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(app_id, app_secret, None);
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let (bump_version, new_version) = bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
@@ -202,16 +204,16 @@ fn bump_extension_version(
 }
 
 pub(crate) fn generate_token(
-    app_id: &WorkflowSecret,
-    app_secret: &WorkflowSecret,
+    app_id_source: &str,
+    app_secret_source: &str,
     repository_target: Option<RepositoryTarget>,
 ) -> (Step<Use>, StepOutput) {
     let step = named::uses("actions", "create-github-app-token", "v2")
         .id("generate-token")
         .add_with(
             Input::default()
-                .add("app-id", app_id.to_string())
-                .add("private-key", app_secret.to_string())
+                .add("app-id", app_id_source)
+                .add("private-key", app_secret_source)
                 .when_some(
                     repository_target,
                     |input,

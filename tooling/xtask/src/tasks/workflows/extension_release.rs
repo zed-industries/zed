@@ -27,8 +27,11 @@ pub(crate) fn extension_release() -> Workflow {
 
 fn create_release(app_id: &WorkflowSecret, app_secret: &WorkflowSecret) -> NamedJob {
     let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
-    let (generate_token, generated_token) =
-        generate_token(&app_id, &app_secret, Some(extension_registry));
+    let (generate_token, generated_token) = generate_token(
+        &app_id.to_string(),
+        &app_secret.to_string(),
+        Some(extension_registry),
+    );
     let (get_extension_id, extension_id) = get_extension_id();
 
     let job = Job::default()

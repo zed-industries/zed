@@ -3,9 +3,10 @@ use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::{
+    extension_bump::{RepositoryTarget, generate_token},
     runners,
     steps::{self, NamedJob, named},
-    vars::StepOutput,
+    vars::{self, StepOutput},
 };
 
 const EXCLUDED_REPOS: &[&str] = &["workflows", "material-icon-theme"];
@@ -143,7 +144,14 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         .add_env(("GH_TOKEN", token.to_string()))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = generate_token(
+        vars::ZED_ZIPPY_APP_ID,
+        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
+        Some(RepositoryTarget::new(
+            "zed-extensions",
+            &["${{ matrix.repo }}"],
+        )),
+    );
     let (calculate_short_sha, short_sha) = get_short_sha();
 
     let job = Job::default()
