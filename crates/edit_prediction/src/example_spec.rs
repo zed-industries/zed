@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -242,6 +243,13 @@ impl ExampleSpec {
     pub fn cursor_excerpt(&self) -> Result<(String, usize)> {
         let input = &self.cursor_position;
 
+        // Check for inline cursor marker first
+        if let Some(inline_offset) = input.find(INLINE_CURSOR_MARKER) {
+            let excerpt = input[..inline_offset].to_string()
+                + &input[inline_offset + INLINE_CURSOR_MARKER.len()..];
+            return Ok((excerpt, inline_offset));
+        }
+
         let marker_offset = input
             .find(CURSOR_POSITION_MARKER)
             .context("missing [CURSOR_POSITION] marker")?;
@@ -472,6 +480,72 @@ mod tests {
         assert_eq!(
             spec.cursor_excerpt().unwrap(),
             (excerpt.to_string(), offset)
+        );
+    }
+
+    #[test]
+    fn test_cursor_excerpt_with_inline_marker() {
+        let mut spec = ExampleSpec {
+            name: String::new(),
+            repository_url: String::new(),
+            revision: String::new(),
+            uncommitted_diff: String::new(),
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patches: Vec::new(),
+        };
+
+        // Cursor before `42` using inline marker
+        spec.cursor_position = indoc! {"
+            fn main() {
+                let x = <|user_cursor|>42;
+                println!(\"{}\", x);
+            }"
+        }
+        .to_string();
+
+        let expected_excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+                println!(\"{}\", x);
+            }"
+        };
+        let expected_offset = expected_excerpt.find("42").unwrap();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
+        );
+
+        // Cursor at beginning of line
+        spec.cursor_position = indoc! {"
+            fn main() {
+            <|user_cursor|>    let x = 42;
+            }"
+        }
+        .to_string();
+
+        let expected_excerpt = indoc! {"
+            fn main() {
+                let x = 42;
+            }"
+        };
+        let expected_offset = expected_excerpt.find("    let").unwrap();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
+        );
+
+        // Cursor at end of file
+        spec.cursor_position = "fn main() {}<|user_cursor|>".to_string();
+        let expected_excerpt = "fn main() {}";
+        let expected_offset = expected_excerpt.len();
+
+        assert_eq!(
+            spec.cursor_excerpt().unwrap(),
+            (expected_excerpt.to_string(), expected_offset)
         );
     }
 }
