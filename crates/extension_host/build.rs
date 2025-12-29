@@ -23,7 +23,7 @@ fn emit_wasmtime_version() {
             // Format: [[package]]\nname = "wasmtime"\nversion = "X.Y.Z"
             let mut in_wasmtime = false;
             for line in content.lines() {
-                if line.starts_with("name = \"wasmtime\"") {
+                if line.trim() == "name = \"wasmtime\"" {
                     in_wasmtime = true;
                 } else if in_wasmtime && line.starts_with("version = ") {
                     if let Some(version) = line

@@ -56,6 +56,28 @@ fn should_defer_scanning(abs_path: &Path) -> bool {
         }
     }
 
+    // Linux directories that are known to be large
+    #[cfg(target_os = "linux")]
+    {
+        let problematic_children = [".local", ".cache", ".config"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
+    // Windows directories that are known to be large
+    #[cfg(target_os = "windows")]
+    {
+        let problematic_children = ["AppData"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
     false
 }
 
@@ -1117,3 +1139,77 @@ impl WorktreeHandle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_should_defer_scanning_root() {
+        // Root directory should always defer (Unix only - "/" is not root on Windows)
+        assert!(should_defer_scanning(Path::new("/")));
+    }
+
+    #[test]
+    fn test_should_defer_scanning_home() {
+        // Home directory should defer
+        let home = util::paths::home_dir();
+        assert!(should_defer_scanning(&home));
+    }
+
+    #[test]
+    fn test_should_defer_scanning_regular_project() {
+        // Regular project directories should not defer
+        let home = util::paths::home_dir();
+        let project_path = home.join("Projects").join("my-project");
+        assert!(!should_defer_scanning(&project_path));
+
+        let code_path = home.join("code").join("rust-app");
+        assert!(!should_defer_scanning(&code_path));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_should_defer_scanning_macos_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // macOS large directories should defer
+        assert!(should_defer_scanning(&home.join("Library")));
+        assert!(should_defer_scanning(&home.join("Applications")));
+        assert!(should_defer_scanning(&home.join(".Trash")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(
+            &home.join("Library").join("Application Support")
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_should_defer_scanning_linux_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // Linux large directories should defer
+        assert!(should_defer_scanning(&home.join(".local")));
+        assert!(should_defer_scanning(&home.join(".cache")));
+        assert!(should_defer_scanning(&home.join(".config")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(&home.join(".local").join("share")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_should_defer_scanning_windows_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // Windows large directories should defer
+        assert!(should_defer_scanning(&home.join("AppData")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(&home.join("AppData").join("Local")));
+    }
+}
+

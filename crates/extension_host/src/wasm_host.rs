@@ -789,8 +789,18 @@ impl WasmHost {
                 .context("failed to compile wasm component")?;
 
             // Serialize and cache the compiled component for next time (best effort)
+            // Use atomic write (temp file + rename) to avoid loading corrupted components
+            // if Zed crashes during the write.
             if let Ok(serialized) = component.serialize() {
-                if let Err(err) = std::fs::write(&cwasm_path, &serialized) {
+                let cache_result = (|| -> std::io::Result<()> {
+                    let mut temp_file = tempfile::NamedTempFile::new_in(
+                        cwasm_path.parent().unwrap_or(std::path::Path::new(".")),
+                    )?;
+                    std::io::Write::write_all(&mut temp_file, &serialized)?;
+                    temp_file.persist(&cwasm_path)?;
+                    Ok(())
+                })();
+                if let Err(err) = cache_result {
                     log::debug!("Failed to cache compiled WASM extension: {}", err);
                 } else {
                     log::debug!(
@@ -944,7 +954,9 @@ impl WasmExtension {
         cx: &AsyncApp,
     ) -> Result<Self> {
         let wasm_path = extension_dir.join("extension.wasm");
-        let cwasm_path = extension_dir.join("extension.cwasm");
+        // Include wasmtime version to invalidate cache on engine updates.
+        // Without this, Component::deserialize could load incompatible components.
+        let cwasm_path = extension_dir.join(format!("extension-{}.cwasm", env!("WASMTIME_VERSION")));
 
         // Always read WASM bytes to parse the zed_api_version
         let mut wasm_file = wasm_host
@@ -961,20 +973,24 @@ impl WasmExtension {
         let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
         // Try to load pre-compiled module first
-        if let Ok(metadata) = std::fs::metadata(&cwasm_path) {
+        if let Ok(Some(cwasm_metadata)) = wasm_host.fs.metadata(&cwasm_path).await {
             // Check if .cwasm is newer than .wasm (in case extension was updated)
-            let wasm_modified = std::fs::metadata(&wasm_path)
-                .and_then(|m| m.modified())
-                .ok();
-            let cwasm_modified = metadata.modified().ok();
+            let wasm_modified = wasm_host
+                .fs
+                .metadata(&wasm_path)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.mtime);
+            let cwasm_modified = Some(cwasm_metadata.mtime);
 
             let cwasm_is_valid = match (wasm_modified, cwasm_modified) {
-                (Some(wasm_time), Some(cwasm_time)) => cwasm_time >= wasm_time,
-                _ => true, // If we can't check timestamps, assume cwasm is valid
+                (Some(wasm_time), Some(cwasm_time)) => !wasm_time.bad_is_greater_than(cwasm_time),
+                _ => false, // If we can't check timestamps, recompile to be safe
             };
 
             if cwasm_is_valid {
-                if let Ok(cwasm_bytes) = std::fs::read(&cwasm_path) {
+                if let Ok(cwasm_bytes) = wasm_host.fs.load_bytes(&cwasm_path).await {
                     // Try to deserialize the pre-compiled module
                     // SAFETY: We compiled this module ourselves with the same engine configuration
                     if let Ok(component) =
@@ -1095,6 +1111,8 @@ impl wasi::WasiView for WasmState {
     }
 }
 
+
+
 /// Wrapper around a mini-moka bounded cache for storing incremental compilation artifacts.
 /// Since wasm modules have many similar elements, this can save us a lot of work at the
 /// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
@@ -1135,13 +1153,9 @@ impl IncrementalCompilationCache {
     }
 
     fn cache_file_path(&self, key: &[u8]) -> PathBuf {
-        use std::fmt::Write;
-        // Use a hash of the key as the filename
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash_slice(key, &mut hasher);
-        let hash = std::hash::Hasher::finish(&hasher);
-        let mut filename = String::with_capacity(16);
-        write!(&mut filename, "{:016x}.cache", hash).unwrap();
+        // Wasmtime keys are typically cryptographic hashes already.
+        // Using hex encoding directly avoids collisions and the need for another hash.
+        let filename = format!("{}.cache", hex::encode(key));
         self.cache_dir.join(filename)
     }
 }
@@ -1177,3 +1191,4 @@ impl CacheStore for IncrementalCompilationCache {
         true
     }
 }
+
