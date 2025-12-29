@@ -407,6 +407,7 @@ impl TestAppContext {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: Rc::downgrade(&self.app),
+            liveness_token: self.app.borrow().liveness.token(),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }

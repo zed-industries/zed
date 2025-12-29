@@ -845,9 +845,6 @@ impl ForegroundExecutor {
             app: std::sync::Weak<()>,
             priority: Priority,
         ) -> Task<R> {
-            // SAFETY: We are on the main thread (ForegroundExecutor is !Send), and the
-            // MainThreadWeak will only be accessed on the main thread in the trampoline.
-            let app_weak = app.map(|weak| unsafe { crate::MainThreadWeak::new(weak) });
             let (runnable, task) = spawn_local_with_source_location(
                 future,
                 move |runnable| {

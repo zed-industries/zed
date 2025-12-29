@@ -586,75 +586,63 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
-/// An rc::Weak<AppCell> that can cross thread boundaries but must only be accessed on the main thread.
+/// Tracks whether an App is still alive. This is used to cancel foreground tasks
+/// when the app is dropped.
 ///
-/// # Safety
-/// This type wraps a `Weak<AppCell>` (which is `!Send` and `!Sync`) and unsafely implements
-/// `Send` and `Sync`. The safety contract is:
-/// - Only create instances of this type on the main thread
-/// - Only access (upgrade) instances on the main thread
-/// - Only drop instances on the main thread
-///
-/// This is used to pass a weak reference to the app through the task scheduler, which
-/// requires `Send + Sync`, but the actual access only ever happens on the main thread
-/// in the trampoline function.
+#[derive(Clone)]
 #[doc(hidden)]
-pub struct MainThreadWeak {
-    weak: std::rc::Weak<crate::AppCell>,
-    #[cfg(debug_assertions)]
-    thread_id: std::thread::ThreadId,
+pub struct AppLiveness {
+    sentinel: std::sync::Arc<()>,
 }
 
-impl std::fmt::Debug for MainThreadWeak {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MainThreadWeak").finish_non_exhaustive()
-    }
-}
-
-impl MainThreadWeak {
-    /// Creates a new `MainThreadWeak` from a `Weak<AppCell>`.
-    ///
-    /// # Safety
-    /// Must only be called on the main thread.
-    pub unsafe fn new(weak: std::rc::Weak<crate::AppCell>) -> Self {
+impl AppLiveness {
+    /// Creates a new AppLiveness, initially alive.
+    pub fn new() -> Self {
         Self {
-            weak,
-            #[cfg(debug_assertions)]
-            thread_id: std::thread::current().id(),
+            sentinel: std::sync::Arc::new(()),
         }
     }
 
-    /// Attempts to upgrade the weak reference to a strong reference.
-    ///
-    /// # Safety
-    /// Must only be called on the main thread.
-    pub unsafe fn upgrade(&self) -> Option<std::rc::Rc<crate::AppCell>> {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            std::thread::current().id(),
-            self.thread_id,
-            "MainThreadWeak::upgrade called from a different thread than it was created on"
-        );
-        self.weak.upgrade()
+    /// Returns a token that can be stored in task metadata to check liveness.
+    pub fn token(&self) -> AppLivenessToken {
+        AppLivenessToken {
+            sentinel: std::sync::Arc::downgrade(&self.sentinel),
+        }
     }
 }
 
-impl Drop for MainThreadWeak {
-    fn drop(&mut self) {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            std::thread::current().id(),
-            self.thread_id,
-            "MainThreadWeak dropped on a different thread than it was created on"
-        );
+impl Default for AppLiveness {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-// SAFETY: MainThreadWeak is only created, accessed, and dropped on the main thread.
-// The Send + Sync impls are needed because RunnableMeta must be Send + Sync for the
-// async-task crate, but we guarantee main-thread-only access.
-unsafe impl Send for MainThreadWeak {}
-unsafe impl Sync for MainThreadWeak {}
+impl std::fmt::Debug for AppLiveness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppLiveness").field("alive", &true).finish()
+    }
+}
+
+/// A token that can be stored in task metadata to check if the app is still alive.
+#[derive(Clone)]
+pub struct AppLivenessToken {
+    sentinel: std::sync::Weak<()>,
+}
+
+impl AppLivenessToken {
+    /// Returns true if the app is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.sentinel.strong_count() > 0
+    }
+}
+
+impl std::fmt::Debug for AppLivenessToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppLivenessToken")
+            .field("alive", &self.is_alive())
+            .finish()
+    }
+}
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
