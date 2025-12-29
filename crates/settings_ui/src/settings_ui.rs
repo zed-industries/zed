@@ -513,6 +513,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::SmoothCaretSetting>(render_smooth_caret_toggle)
+        .add_basic_renderer::<settings::CursorVfxModeContent>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -3653,6 +3655,41 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                     (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
+            }
+        })
+        .into_any_element()
+}
+
+fn render_smooth_caret_toggle(
+    field: SettingField<settings::SmoothCaretSetting>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+
+    let is_enabled = value.map_or(false, |v| match v {
+        settings::SmoothCaretSetting::Bool(b) => *b,
+        settings::SmoothCaretSetting::Config(_) => true,
+    });
+
+    let toggle_state = if is_enabled {
+        ToggleState::Selected
+    } else {
+        ToggleState::Unselected
+    };
+
+    Switch::new("toggle_button", toggle_state)
+        .tab_index(0_isize)
+        .on_click({
+            move |state, _window, cx| {
+                telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
+                let enabled = *state == ui::ToggleState::Selected;
+                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
+                    (field.write)(settings, Some(settings::SmoothCaretSetting::Bool(enabled)));
+                })
+                .log_err();
             }
         })
         .into_any_element()

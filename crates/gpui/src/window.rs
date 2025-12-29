@@ -672,6 +672,23 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
+/// Cached scene data for animation-only frames.
+/// This allows fast re-rendering of animated elements without full layout.
+pub(crate) struct CachedScene {
+    /// Clone of the scene from the last full render
+    scene: Scene,
+    /// Cache validity key - viewport size
+    viewport_size: Size<Pixels>,
+    /// Cache validity key - scale factor
+    scale_factor: f32,
+}
+
+impl CachedScene {
+    fn is_valid(&self, viewport_size: Size<Pixels>, scale_factor: f32) -> bool {
+        self.viewport_size == viewport_size && self.scale_factor == scale_factor
+    }
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -881,6 +898,9 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
+    animation_frame_requested: bool,
+    animation_callbacks: Vec<Box<dyn FnOnce(&mut Window, &mut App) + 'static>>,
+    cached_scene: Option<CachedScene>,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -1348,6 +1368,9 @@ impl Window {
             input_rate_tracker,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
+            animation_frame_requested: false,
+            animation_callbacks: Vec::new(),
+            cached_scene: None,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -1403,6 +1426,9 @@ impl ContentMask<Pixels> {
 
 impl Window {
     fn mark_view_dirty(&mut self, view_id: EntityId) {
+        // Invalidate scene cache when any view becomes dirty
+        self.cached_scene = None;
+
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -1467,6 +1493,8 @@ impl Window {
         if self.invalidator.not_drawing() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
+            // Invalidate scene cache on refresh
+            self.cached_scene = None;
         }
     }
 
@@ -1768,6 +1796,30 @@ impl Window {
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    /// Request an animation-only frame that skips layout and replays cached scene.
+    /// Only animation callbacks will be executed to paint animated elements.
+    /// This is much cheaper than a full frame for continuous animations like cursor movement.
+    ///
+    /// If the cache is invalid or views are dirty, falls back to a full frame.
+    pub fn request_animation_only_frame(&self) {
+        self.on_next_frame(move |window, _cx| {
+            window.animation_frame_requested = true;
+            window.invalidator.set_dirty(true);
+        });
+    }
+
+    /// Register a callback to paint animated content during animation-only frames.
+    /// The callback receives the window and app context for painting.
+    /// Callbacks are executed after the cached scene is replayed.
+    ///
+    /// Note: Callbacks must only paint - they should not modify app state.
+    pub fn on_animation_frame<F>(&mut self, callback: F)
+    where
+        F: FnOnce(&mut Window, &mut App) + 'static,
+    {
+        self.animation_callbacks.push(Box::new(callback));
+    }
+
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
@@ -1809,6 +1861,9 @@ impl Window {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
+
+        // Invalidate scene cache when bounds change
+        self.cached_scene = None;
 
         self.refresh();
 
@@ -2074,9 +2129,37 @@ impl Window {
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
+
+        // Determine if this is an animation-only frame
+        let can_use_animation_frame = self.animation_frame_requested
+            && self.dirty_views.is_empty()
+            && !self.refreshing
+            && !self.rendered_frame.dispatch_tree.is_empty()
+            && self
+                .cached_scene
+                .as_ref()
+                .map(|c| c.is_valid(self.viewport_size, self.scale_factor))
+                .unwrap_or(false);
+
         if !cx.mode.skip_drawing() {
-            self.draw_roots(cx);
+            if can_use_animation_frame {
+                // Animation-only frame: replay cached scene + run animation callbacks
+                self.draw_animation_frame(cx);
+            } else {
+                // Full frame: do normal layout + paint + cache the scene
+                self.draw_roots(cx);
+                self.cache_current_scene();
+
+                // Run animation callbacks AFTER caching so animated elements
+                // are painted on top of the cached scene (not included in cache)
+                self.run_animation_callbacks(cx);
+            }
         }
+
+        // Reset animation frame state for next frame
+        self.animation_frame_requested = false;
+        // Note: animation_callbacks already consumed by run_animation_callbacks or draw_animation_frame
+
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
@@ -2132,6 +2215,43 @@ impl Window {
         self.needs_present.set(true);
 
         ArenaClearNeeded
+    }
+
+    /// Cache the current scene for animation-only frames
+    fn cache_current_scene(&mut self) {
+        self.cached_scene = Some(CachedScene {
+            scene: self.next_frame.scene.clone(),
+            viewport_size: self.viewport_size,
+            scale_factor: self.scale_factor,
+        });
+    }
+
+    /// Draw an animation-only frame by replaying cached scene and running animation callbacks
+    fn draw_animation_frame(&mut self, cx: &mut App) {
+        if let Some(cache) = &self.cached_scene {
+            // Replay the entire cached scene
+            let paint_ops_len = cache.scene.paint_operations.len();
+            self.next_frame.scene.replay(0..paint_ops_len, &cache.scene);
+
+            self.run_animation_callbacks(cx);
+        }
+    }
+
+    /// Execute animation callbacks to paint animated elements.
+    /// Used by both full frames (after caching) and animation-only frames.
+    fn run_animation_callbacks(&mut self, cx: &mut App) {
+        if self.animation_callbacks.is_empty() {
+            return;
+        }
+
+        // Set paint phase for animation callbacks
+        self.invalidator.set_phase(DrawPhase::Paint);
+
+        // Execute animation callbacks to paint animated elements
+        let callbacks = std::mem::take(&mut self.animation_callbacks);
+        for callback in callbacks {
+            callback(self, cx);
+        }
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -3901,6 +4021,11 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
+        // Skip dispatch if the tree hasn't been populated yet (before first frame)
+        if self.rendered_frame.dispatch_tree.is_empty() {
+            return;
+        }
+
         if self.invalidator.is_dirty() {
             self.draw(cx).clear();
         }
