@@ -16,7 +16,10 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
-use oo7::{Error as Oo7Error, dbus::{Error as DbusError, ServiceError}};
+use oo7::{
+    Error as Oo7Error,
+    dbus::{Error as DbusError, ServiceError},
+};
 use util::ResultExt as _;
 use util::command::{new_smol_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
