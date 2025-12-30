@@ -1,10 +1,11 @@
 //! A graph representation for computing tree diffs.
 
 use std::cmp::{Reverse, min};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::hash::{Hash, Hasher};
 
 use arrayvec::ArrayVec;
+use collections::FxHashMap;
 
 use crate::SyntaxTree;
 use crate::syntax_tree::{SyntaxHint, SyntaxId, SyntaxTreeCursor};
@@ -388,7 +389,7 @@ fn find_shortest_path<'a>(
     graph_limit: usize,
 ) -> Result<Vec<SyntaxPath<'a>>, ExceededGraphLimit> {
     let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::new();
-    let mut visited: HashMap<SyntaxVertex<'a>, SyntaxPath<'a>> = HashMap::new();
+    let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> = FxHashMap::default();
 
     heap.push(Reverse(SyntaxPath {
         edge: None,
@@ -445,7 +446,7 @@ fn find_shortest_path<'a>(
 
 fn reconstruct_path<'a>(
     end: SyntaxVertex<'a>,
-    visited: &HashMap<SyntaxVertex<'a>, SyntaxPath<'a>>,
+    visited: &FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>>,
 ) -> Vec<SyntaxPath<'a>> {
     let mut route = Vec::new();
     let mut current = end;
