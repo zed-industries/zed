@@ -793,7 +793,7 @@ impl HeadlessProject {
 
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store

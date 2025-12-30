@@ -48,7 +48,7 @@ pub use git_store::{
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
-pub use project_search::Search;
+pub use project_search::{Search, SearchResults};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -110,7 +110,6 @@ use rpc::{
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
-use smol::channel::Receiver;
 use snippet::Snippet;
 pub use snippet_provider;
 use snippet_provider::SnippetProvider;
@@ -4143,7 +4142,11 @@ impl Project {
         searcher.into_handle(query, cx)
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> SearchResults<SearchResult> {
         self.search_impl(query, cx).results(cx)
     }
 
@@ -5028,7 +5031,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());

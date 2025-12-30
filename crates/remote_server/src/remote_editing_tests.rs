@@ -211,7 +211,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.recv().await.unwrap();
+        let first_response = receiver.rx.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
@@ -222,7 +222,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.recv().await.is_err());
+        assert!(receiver.rx.recv().await.is_err());
         buffer
     }
 
