@@ -509,112 +509,126 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     .child(Label::new((self.format)(&self.value)))
                                     .into_any_element(),
                                 NumberFieldMode::Edit => {
-                                    let editor = window.use_state(cx, {
-                                        move |window, cx| {
-                                            let mut editor = Editor::single_line(window, cx);
+                                    let expected_text = format!("{}", self.value);
 
-                                            editor.set_text_style_refinement(TextStyleRefinement {
-                                                text_align: Some(TextAlign::Center),
-                                                ..Default::default()
-                                            });
+                                    // Scope the editor's use_state with the NumberField's ID
+                                    // so each NumberField instance has its own editor
+                                    let editor = window.with_id(self.id.clone(), |window| {
+                                        window.use_state(cx, {
+                                            let expected_text = expected_text.clone();
+                                            move |window, cx| {
+                                                let mut editor = Editor::single_line(window, cx);
 
-                                            editor.set_text(format!("{}", self.value), window, cx);
+                                                editor.set_text_style_refinement(TextStyleRefinement {
+                                                    text_align: Some(TextAlign::Center),
+                                                    ..Default::default()
+                                                });
 
-                                            let editor_weak = cx.entity().downgrade();
+                                                editor.set_text(expected_text, window, cx);
 
-                                            self.edit_editor.update(cx, |state, _| {
-                                                *state = Some(editor_weak);
-                                            });
+                                                let editor_weak = cx.entity().downgrade();
 
-                                            editor
-                                                .register_action::<MoveUp>({
+                                                self.edit_editor.update(cx, |state, _| {
+                                                    *state = Some(editor_weak);
+                                                });
+
+                                                editor
+                                                    .register_action::<MoveUp>({
+                                                        let on_change = self.on_change.clone();
+                                                        let editor_handle = cx.entity().downgrade();
+                                                        move |_, window, cx| {
+                                                            let Some(editor) = editor_handle.upgrade()
+                                                            else {
+                                                                return;
+                                                            };
+                                                            editor.update(cx, |editor, cx| {
+                                                                if let Ok(current_value) =
+                                                                    editor.text(cx).parse::<T>()
+                                                                {
+                                                                    let step =
+                                                                        get_step(window.modifiers());
+                                                                    let new_value = change_value(
+                                                                        current_value,
+                                                                        step,
+                                                                        ValueChangeDirection::Increment,
+                                                                    );
+                                                                    editor.set_text(
+                                                                        format!("{}", new_value),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                    on_change(&new_value, window, cx);
+                                                                }
+                                                            });
+                                                        }
+                                                    })
+                                                    .detach();
+
+                                                editor
+                                                    .register_action::<MoveDown>({
+                                                        let on_change = self.on_change.clone();
+                                                        let editor_handle = cx.entity().downgrade();
+                                                        move |_, window, cx| {
+                                                            let Some(editor) = editor_handle.upgrade()
+                                                            else {
+                                                                return;
+                                                            };
+                                                            editor.update(cx, |editor, cx| {
+                                                                if let Ok(current_value) =
+                                                                    editor.text(cx).parse::<T>()
+                                                                {
+                                                                    let step =
+                                                                        get_step(window.modifiers());
+                                                                    let new_value = change_value(
+                                                                        current_value,
+                                                                        step,
+                                                                        ValueChangeDirection::Decrement,
+                                                                    );
+                                                                    editor.set_text(
+                                                                        format!("{}", new_value),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                    on_change(&new_value, window, cx);
+                                                                }
+                                                            });
+                                                        }
+                                                    })
+                                                    .detach();
+
+                                                cx.on_focus_out(&editor.focus_handle(cx), window, {
+                                                    let mode = self.mode.clone();
                                                     let on_change = self.on_change.clone();
-                                                    let editor_handle = cx.entity().downgrade();
-                                                    move |_, window, cx| {
-                                                        let Some(editor) = editor_handle.upgrade()
-                                                        else {
-                                                            return;
+                                                    move |this, _, window, cx| {
+                                                        if let Ok(parsed_value) =
+                                                            this.text(cx).parse::<T>()
+                                                        {
+                                                            let new_value = clamp_value(parsed_value);
+                                                            on_change(&new_value, window, cx);
                                                         };
-                                                        editor.update(cx, |editor, cx| {
-                                                            if let Ok(current_value) =
-                                                                editor.text(cx).parse::<T>()
-                                                            {
-                                                                let step =
-                                                                    get_step(window.modifiers());
-                                                                let new_value = change_value(
-                                                                    current_value,
-                                                                    step,
-                                                                    ValueChangeDirection::Increment,
-                                                                );
-                                                                editor.set_text(
-                                                                    format!("{}", new_value),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                on_change(&new_value, window, cx);
-                                                            }
-                                                        });
+                                                        mode.write(cx, NumberFieldMode::Read);
                                                     }
                                                 })
                                                 .detach();
 
-                                            editor
-                                                .register_action::<MoveDown>({
-                                                    let on_change = self.on_change.clone();
-                                                    let editor_handle = cx.entity().downgrade();
-                                                    move |_, window, cx| {
-                                                        let Some(editor) = editor_handle.upgrade()
-                                                        else {
-                                                            return;
-                                                        };
-                                                        editor.update(cx, |editor, cx| {
-                                                            if let Ok(current_value) =
-                                                                editor.text(cx).parse::<T>()
-                                                            {
-                                                                let step =
-                                                                    get_step(window.modifiers());
-                                                                let new_value = change_value(
-                                                                    current_value,
-                                                                    step,
-                                                                    ValueChangeDirection::Decrement,
-                                                                );
-                                                                editor.set_text(
-                                                                    format!("{}", new_value),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                on_change(&new_value, window, cx);
-                                                            }
-                                                        });
-                                                    }
-                                                })
-                                                .detach();
-
-                                            cx.on_focus_out(&editor.focus_handle(cx), window, {
-                                                let mode = self.mode.clone();
-                                                let on_change = self.on_change.clone();
-                                                move |this, _, window, cx| {
-                                                    if let Ok(parsed_value) =
-                                                        this.text(cx).parse::<T>()
-                                                    {
-                                                        let new_value = clamp_value(parsed_value);
-                                                        on_change(&new_value, window, cx);
-                                                    };
-                                                    mode.write(cx, NumberFieldMode::Read);
-                                                }
-                                            })
-                                            .detach();
-
-                                            editor
-                                        }
+                                                editor
+                                            }
+                                        })
                                     });
 
-                                    let focus_handle = editor.focus_handle(cx);
+                                    // Sync editor text if value changed externally (e.g., reset to default)
+                                    let current_text = editor.read(cx).text(cx);
+                                    if current_text != expected_text {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.set_text(expected_text, window, cx);
+                                        });
+                                    }
 
-                                    let configured_handle = if let Some(ti) = editor_tab_index {
-                                        focus_handle.tab_index(ti).tab_stop(true)
+
+                                    let focus_handle = if self.tab_index.is_some() {
+                                        editor.focus_handle(cx).tab_index(0isize).tab_stop(true)
                                     } else {
-                                        focus_handle
+                                        editor.focus_handle(cx)
                                     };
 
                                     h_flex()
