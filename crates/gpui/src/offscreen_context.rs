@@ -133,6 +133,15 @@ impl OffScreenRenderer {
         self.target.supports_shared_textures()
     }
 
+    /// Returns whether double-buffering is enabled for this target.
+    ///
+    /// When double-buffering is enabled, the target uses two staging buffers
+    /// to allow rendering to continue while a previous frame is being read.
+    /// This can improve throughput for continuous rendering scenarios.
+    pub fn is_double_buffered(&self) -> bool {
+        self.target.is_double_buffered()
+    }
+
     /// Acquires exclusive access to the shared texture for rendering.
     ///
     /// When texture sharing is enabled, this should be called before rendering

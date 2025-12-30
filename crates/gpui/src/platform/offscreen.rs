@@ -318,6 +318,15 @@ pub trait OffScreenRenderTarget: Send + Sync {
     fn supports_sync(&self) -> bool {
         false
     }
+
+    /// Returns whether double-buffering is enabled for this target.
+    ///
+    /// When double-buffering is enabled, the target uses two staging buffers
+    /// to allow rendering to continue while a previous frame is being read.
+    /// This can improve throughput for continuous rendering scenarios.
+    fn is_double_buffered(&self) -> bool {
+        false
+    }
 }
 
 /// Internal trait for off-screen targets that can be drawn to.
@@ -351,6 +360,14 @@ pub struct OffScreenTargetConfig {
     /// Preferred pixel format. The implementation may choose a different
     /// format if the preferred one is not supported.
     pub preferred_format: Option<PixelFormat>,
+    /// Whether to enable double-buffering for async readback.
+    ///
+    /// When enabled, the renderer uses two staging buffers to allow
+    /// rendering to continue while a previous frame is being read back.
+    /// This can improve throughput for continuous rendering scenarios.
+    ///
+    /// Default: `false`
+    pub double_buffer: bool,
 }
 
 impl OffScreenTargetConfig {
@@ -360,6 +377,7 @@ impl OffScreenTargetConfig {
             size,
             enable_sharing: false,
             preferred_format: None,
+            double_buffer: false,
         }
     }
 
@@ -372,6 +390,16 @@ impl OffScreenTargetConfig {
     /// Sets the preferred pixel format.
     pub fn with_format(mut self, format: PixelFormat) -> Self {
         self.preferred_format = Some(format);
+        self
+    }
+
+    /// Enables double-buffering for async readback.
+    ///
+    /// This can improve throughput when continuously rendering and
+    /// reading back frames, as it allows rendering to proceed while
+    /// the previous frame is being copied to CPU memory.
+    pub fn with_double_buffer(mut self) -> Self {
+        self.double_buffer = true;
         self
     }
 }

@@ -87,8 +87,12 @@ pub(crate) struct DirectXOffScreenTarget {
     render_texture: ID3D11Texture2D,
     /// Render target view for the main texture
     render_target_view: Option<ID3D11RenderTargetView>,
-    /// Staging texture for CPU readback
-    staging_texture: ID3D11Texture2D,
+    /// Staging textures for CPU readback (double-buffered if enabled)
+    staging_textures: Vec<ID3D11Texture2D>,
+    /// Index of the current staging texture for writing
+    staging_write_index: usize,
+    /// Whether double-buffering is enabled
+    double_buffer_enabled: bool,
 
     // Path intermediate textures (with MSAA)
     path_intermediate_texture: ID3D11Texture2D,
@@ -147,8 +151,15 @@ impl DirectXOffScreenTarget {
         let (render_texture, render_target_view, shared_handle, keyed_mutex) =
             create_render_texture(&devices.device, width, height, config.enable_sharing)?;
 
-        // Create staging texture for CPU readback
-        let staging_texture = create_staging_texture(&devices.device, width, height)?;
+        // Create staging texture(s) for CPU readback
+        let staging_textures = if config.double_buffer {
+            vec![
+                create_staging_texture(&devices.device, width, height)?,
+                create_staging_texture(&devices.device, width, height)?,
+            ]
+        } else {
+            vec![create_staging_texture(&devices.device, width, height)?]
+        };
 
         // Create path intermediate textures
         let (path_intermediate_texture, path_intermediate_srv) =
@@ -188,7 +199,9 @@ impl DirectXOffScreenTarget {
             font_info,
             render_texture,
             render_target_view,
-            staging_texture,
+            staging_textures,
+            staging_write_index: 0,
+            double_buffer_enabled: config.double_buffer,
             path_intermediate_texture,
             path_intermediate_srv,
             path_intermediate_msaa_texture,
@@ -294,10 +307,36 @@ impl DirectXOffScreenTarget {
 
     /// Copies the render texture to the staging texture for CPU readback.
     fn copy_to_staging(&self) {
+        let staging = &self.staging_textures[self.staging_write_index];
         unsafe {
             self.devices
                 .device_context
-                .CopyResource(&self.staging_texture, &self.render_texture);
+                .CopyResource(staging, &self.render_texture);
+        }
+    }
+
+    /// Advances to the next staging buffer (for double-buffering).
+    ///
+    /// This should be called after `copy_to_staging()` to prepare for the
+    /// next frame. When double-buffering is enabled, this allows the previous
+    /// frame to be read while the next frame is being rendered.
+    fn advance_staging_buffer(&mut self) {
+        if self.double_buffer_enabled {
+            self.staging_write_index = (self.staging_write_index + 1) % self.staging_textures.len();
+        }
+    }
+
+    /// Returns the staging texture that should be read from.
+    ///
+    /// For double-buffering, this returns the buffer that was written to
+    /// in the previous frame (not the current write buffer).
+    fn read_staging_index(&self) -> usize {
+        if self.double_buffer_enabled && self.staging_textures.len() > 1 {
+            // Read from the buffer that was written to previously
+            (self.staging_write_index + self.staging_textures.len() - 1)
+                % self.staging_textures.len()
+        } else {
+            0
         }
     }
 }
@@ -328,9 +367,19 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
             self.keyed_mutex = keyed_mutex;
         }
 
-        // Recreate staging texture
-        if let Ok(staging_texture) = create_staging_texture(&self.devices.device, width, height) {
-            self.staging_texture = staging_texture;
+        // Recreate staging texture(s)
+        if self.double_buffer_enabled {
+            if let Ok(staging1) = create_staging_texture(&self.devices.device, width, height) {
+                if let Ok(staging2) = create_staging_texture(&self.devices.device, width, height) {
+                    self.staging_textures = vec![staging1, staging2];
+                    self.staging_write_index = 0;
+                }
+            }
+        } else {
+            if let Ok(staging) = create_staging_texture(&self.devices.device, width, height) {
+                self.staging_textures = vec![staging];
+                self.staging_write_index = 0;
+            }
         }
 
         // Recreate path intermediate textures
@@ -370,18 +419,16 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
         // Copy render texture to staging texture
         self.copy_to_staging();
 
+        // Get the staging texture to read from
+        let read_index = self.read_staging_index();
+        let staging = &self.staging_textures[read_index];
+
         // Map the staging texture
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
             self.devices
                 .device_context
-                .Map(
-                    &self.staging_texture,
-                    0,
-                    D3D11_MAP_READ,
-                    0,
-                    Some(&mut mapped),
-                )
+                .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 .context("Failed to map staging texture")?;
         }
 
@@ -402,7 +449,7 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
                     .copy_from_slice(&src[src_offset..src_offset + row_size]);
             }
 
-            self.devices.device_context.Unmap(&self.staging_texture, 0);
+            self.devices.device_context.Unmap(staging, 0);
         }
 
         Ok(OffScreenImage::new(
@@ -434,6 +481,10 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
 
     fn supports_sync(&self) -> bool {
         self.keyed_mutex.is_some()
+    }
+
+    fn is_double_buffered(&self) -> bool {
+        self.double_buffer_enabled
     }
 }
 
