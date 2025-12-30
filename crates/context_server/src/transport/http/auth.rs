@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     error::Error,
     fmt::{self, Display},
     sync::Arc,
@@ -15,19 +16,26 @@ async fn authenticate(
     www_authenticate: Option<&WwwAuthenticate<'_>>,
     http_client: &Arc<dyn HttpClient>,
 ) -> Result<()> {
-    let resource_meta = match www_authenticate.and_then(|auth| auth.resource_metadata.as_ref()) {
+    // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-discovery
+    // https://modelcontextprotocol.io/specification/draft/basic/authorization#protected-resource-metadata-discovery-requirements
+    let resource_meta = match www_authenticate
+        .and_then(|challenge| challenge.resource_metadata.as_ref())
+    {
         Some(url) => ProtectedResourceMetadata::fetch(url, http_client).await?,
         None => ProtectedResourceMetadata::fetch_well_known(server_endpoint, http_client).await?,
     };
 
-    // todo! try others?
+    // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-metadata-discovery
     let auth_server_url = resource_meta
         .authorization_servers
+        // todo! try others?
         .first()
         .context("Resource metadata specified 0 authorization servers")?;
 
     let server_meta = AuthorizationServerMetadata::fetch(auth_server_url, http_client).await?;
 
+    // https://modelcontextprotocol.io/specification/draft/basic/authorization#client-registration-approaches
+    // TODO: Pre-registration from settings?
     let client_id = if server_meta.client_id_metadata_document_supported {
         todo!("host client id meta doc somewhere");
     } else if let Some(registration_endpoint) = server_meta.registration_endpoint.as_ref() {
@@ -37,6 +45,17 @@ async fn authenticate(
     } else {
         todo!("allow user to specify custom client meta");
     };
+
+    // https://modelcontextprotocol.io/specification/draft/basic/authorization#scope-selection-strategy
+    let scope = www_authenticate
+        .and_then(|challenge| challenge.scope.clone())
+        .or_else(|| {
+            if resource_meta.scopes_supported.is_empty() {
+                None
+            } else {
+                Some(Cow::Owned(resource_meta.scopes_supported.join(" ")))
+            }
+        });
 
     anyhow::Ok(())
 }
@@ -400,7 +419,7 @@ mod tests {
             let issuer_uri = issuer_uri.clone();
             let client = client.clone();
             let fetch_task = cx.background_spawn(async move {
-                AuthorizationServerMetadata::fetch(&issuer_uri, client).await
+                AuthorizationServerMetadata::fetch(&issuer_uri, &client).await
             });
 
             for request_url in &urls[..i] {
@@ -439,7 +458,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-            AuthorizationServerMetadata::fetch(&issuer_uri, http_client).await
+            AuthorizationServerMetadata::fetch(&issuer_uri, &http_client).await
         });
 
         let request = requests.next().await.expect("Expected first request");
@@ -473,7 +492,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-            AuthorizationServerMetadata::fetch(&issuer_uri, http_client).await
+            AuthorizationServerMetadata::fetch(&issuer_uri, &http_client).await
         });
 
         for _ in 0..3 {
