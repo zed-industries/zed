@@ -24,15 +24,17 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use git_ui::branch_picker;
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
     Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
 };
+use recent_projects;
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -44,7 +46,7 @@ use ui::{
 };
 use util::{ResultExt, rel_path::RelPath};
 use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
 
@@ -166,11 +168,11 @@ impl Render for TitleBar {
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
                                         .children(self.render_restricted_mode(cx))
-                                        .children(self.render_project_host(window, cx))
-                                        .child(self.render_project_name(window, cx))
+                                        .children(self.render_project_host(cx))
+                                        .child(self.render_project_name(cx))
                                 })
                                 .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_repo(window, cx))
+                                    title_bar.children(self.render_project_repo(cx))
                                 })
                         })
                 })
@@ -350,13 +352,8 @@ impl TitleBar {
             .next()
     }
 
-    fn render_remote_project_connection(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
-        let is_picker_open = self.is_picker_open(window, cx);
 
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
@@ -401,51 +398,40 @@ impl TitleBar {
 
         let meta = SharedString::from(meta);
 
-        Some(
-            ButtonLike::new("remote_project")
+        let remote_project_button = ButtonLike::new("remote_project").child(
+            h_flex()
+                .gap_2()
+                .max_w_32()
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .max_w_32()
-                        .child(
-                            IconWithIndicator::new(
-                                Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                Some(Indicator::dot().color(indicator_color)),
-                            )
-                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                            .into_any_element(),
-                        )
-                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                    IconWithIndicator::new(
+                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                        Some(Indicator::dot().color(indicator_color)),
+                    )
+                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                    .into_any_element(),
                 )
-                .when(!is_picker_open, |this| {
-                    this.tooltip(move |_window, cx| {
-                        Tooltip::with_meta(
-                            tooltip_title,
-                            Some(&OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }),
-                            meta.clone(),
-                            cx,
-                        )
-                    })
-                })
-                .on_click(move |event, window, cx| {
-                    let position = event.position();
-                    let _ = workspace.update(cx, |this, cx| {
-                        this.set_next_modal_placement(workspace::ModalPlacement::Anchored {
-                            position,
-                        });
+                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+        );
 
-                        window.dispatch_action(
-                            OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    });
+        Some(
+            PopoverMenu::new("remote-project-popover")
+                .menu(move |window, cx| {
+                    Some(recent_projects::remote_servers::popover(
+                        workspace.clone(),
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger_with_tooltip(remote_project_button, move |_window, cx| {
+                    Tooltip::with_meta(
+                        tooltip_title,
+                        Some(&OpenRemote {
+                            from_existing_connection: false,
+                            create_new_window: false,
+                        }),
+                        meta.clone(),
+                        cx,
+                    )
                 })
                 .into_any_element(),
         )
@@ -497,13 +483,9 @@ impl TitleBar {
         }
     }
 
-    pub fn render_project_host(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_remote_server() {
-            return self.render_remote_project_connection(window, cx);
+            return self.render_remote_project_connection(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {
@@ -550,13 +532,8 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.clone();
-        let is_picker_open = self.is_picker_open(window, cx);
 
         let name = self.project_name(cx);
         let is_project_selected = name.is_some();
@@ -566,44 +543,45 @@ impl TitleBar {
             "Open Recent Project".to_string()
         };
 
-        Button::new("project_name_trigger", name)
-            .label_size(LabelSize::Small)
-            .when(!is_project_selected, |s| s.color(Color::Muted))
-            .when(!is_picker_open, |this| {
-                this.tooltip(move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
-                })
-            })
-            .on_click(move |event, window, cx| {
-                let position = event.position();
-                let _ = workspace.update(cx, |this, _cx| {
-                    this.set_next_modal_placement(workspace::ModalPlacement::Anchored { position })
-                });
+        let project_name_button = ButtonLike::new("project_name_trigger").child(
+            h_flex()
+                .gap_1()
+                .child(
+                    Label::new(name)
+                        .size(LabelSize::Small)
+                        .when(!is_project_selected, |label| label.color(Color::Muted)),
+                )
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                ),
+        );
 
-                window.dispatch_action(
-                    OpenRecent {
-                        create_new_window: false,
-                    }
-                    .boxed_clone(),
+        PopoverMenu::new("recent-projects-popover")
+            .menu(move |window, cx| {
+                Some(recent_projects::popover(
+                    workspace.clone(),
+                    false,
+                    window,
                     cx,
-                );
+                ))
             })
+            .trigger_with_tooltip(
+                project_name_button,
+                Tooltip::for_action_title(
+                    "Recent Projects",
+                    &zed_actions::OpenRecent {
+                        create_new_window: false,
+                    },
+                ),
+            )
     }
 
-    pub fn render_project_repo(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    pub fn render_project_repo(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let repository = self.project.read(cx).active_repository(cx)?;
         let repository_count = self.project.read(cx).repositories(cx).len();
-        let workspace = self.workspace.upgrade()?;
+        let workspace = self.workspace.clone();
 
         let (branch_name, icon_info) = {
             let repo = repository.read(cx);
@@ -655,41 +633,41 @@ impl TitleBar {
             (branch_name, icon_info)
         };
 
-        let is_picker_open = self.is_picker_open(window, cx);
         let settings = TitleBarSettings::get_global(cx);
 
-        Some(
-            Button::new("project_branch_trigger", branch_name)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .when(!is_picker_open, |this| {
-                    this.tooltip(move |_window, cx| {
-                        Tooltip::with_meta(
-                            "Recent Branches",
-                            Some(&zed_actions::git::Branch),
-                            "Local branches only",
-                            cx,
-                        )
-                    })
-                })
-                .when(settings.show_branch_icon, |branch_button| {
+        let branch_picker_button = ButtonLike::new("project_branch_trigger").child(
+            h_flex()
+                .gap_1()
+                .when(settings.show_branch_icon, |this| {
                     let (icon, icon_color) = icon_info;
-                    branch_button
-                        .icon(icon)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(icon_color)
-                        .icon_size(IconSize::Indicator)
+                    this.child(Icon::new(icon).color(icon_color).size(IconSize::Indicator))
                 })
-                .on_click(move |event, window, cx| {
-                    let position = event.position();
-                    let _ = workspace.update(cx, |this, cx| {
-                        this.set_next_modal_placement(workspace::ModalPlacement::Anchored {
-                            position,
-                        });
-                        window.focus(&this.active_pane().focus_handle(cx), cx);
-                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                    });
-                }),
+                .child(
+                    Label::new(branch_name)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                ),
+        );
+
+        Some(
+            PopoverMenu::new("branch-selector-popover")
+                .menu(move |window, cx| {
+                    Some(branch_picker::popover(
+                        workspace.clone(),
+                        Some(repository.clone()),
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger_with_tooltip(
+                    branch_picker_button,
+                    Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+                ),
         )
     }
 
@@ -901,11 +879,5 @@ impl TitleBar {
                 }
             })
             .anchor(gpui::Corner::TopRight)
-    }
-
-    fn is_picker_open(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
-            .unwrap_or(false)
     }
 }
