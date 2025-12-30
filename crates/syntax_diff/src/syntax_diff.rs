@@ -33,13 +33,7 @@ pub fn diff_trees(
     let mut rhs_change_map = SyntaxChanges::default();
     let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, DEFAULT_GRAPH_LIMIT)?;
 
-    populate_change_map(
-        lhs_tree,
-        rhs_tree,
-        &route.0,
-        &mut lhs_change_map,
-        &mut rhs_change_map,
-    );
+    populate_change_map(&route.0, &mut lhs_change_map, &mut rhs_change_map);
 
     let lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
     let rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
@@ -51,8 +45,6 @@ pub fn diff_trees(
 }
 
 fn populate_change_map(
-    lhs_tree: &SyntaxTree,
-    rhs_tree: &SyntaxTree,
     route: &[(SyntaxVertex<'_>, SyntaxEdge)],
     lhs_map: &mut SyntaxChanges,
     rhs_map: &mut SyntaxChanges,
@@ -62,24 +54,6 @@ fn populate_change_map(
 
     for (vertex, edge) in route {
         match edge {
-            SyntaxEdge::UnchangedNode { .. } => {
-                // Both LHS and RHS nodes are unchanged
-                if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    syntax_changes::insert_deep_unchanged(
-                        lhs_tree, lhs_id, rhs_tree, rhs_id, lhs_map,
-                    );
-                    syntax_changes::insert_deep_unchanged(
-                        rhs_tree, rhs_id, lhs_tree, lhs_id, rhs_map,
-                    );
-                }
-            }
-            SyntaxEdge::EnterUnchangedDelimiter { .. } => {
-                // The list nodes have matching delimiters
-                if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    lhs_map.insert(lhs_id, SyntaxChange::Unchanged(rhs_id));
-                    rhs_map.insert(rhs_id, SyntaxChange::Unchanged(lhs_id));
-                }
-            }
             SyntaxEdge::Replaced { levenshtein_pct } => {
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
                     if *levenshtein_pct > 20 {
@@ -101,6 +75,7 @@ fn populate_change_map(
                     rhs_map.insert(rhs_id, SyntaxChange::Novel);
                 }
             }
+            _ => {}
         }
     }
 }
@@ -108,10 +83,10 @@ fn populate_change_map(
 fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
 
-    for id in tree.preorder() {
-        match change_map.get(id) {
-            Some(SyntaxChange::Novel) => {
-                let node = tree.get(id);
+    for (id, change) in change_map.iter() {
+        match change {
+            SyntaxChange::Novel => {
+                let node = tree.get(*id);
 
                 if node.is_atom() {
                     ranges.push(node.byte_range.clone());
@@ -128,14 +103,10 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                     }
                 }
             }
-            Some(SyntaxChange::Replaced(_, _)) => {
-                ranges.push(tree.get(id).byte_range.clone());
+            SyntaxChange::Replaced(_, _) => {
+                ranges.push(tree.get(*id).byte_range.clone());
             }
-            Some(SyntaxChange::Unchanged(_)) => {
-                // Node is unchanged, but children might have changes
-                // (for lists with unchanged delimiters)
-            }
-            None => {}
+            _ => {}
         }
     }
 

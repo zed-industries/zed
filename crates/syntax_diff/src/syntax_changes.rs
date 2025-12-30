@@ -2,7 +2,7 @@
 
 use collections::FxHashMap;
 
-use crate::syntax_tree::{SyntaxId, SyntaxTree};
+use crate::syntax_tree::SyntaxId;
 
 /// The kind of change for a syntax node.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -32,27 +32,8 @@ impl SyntaxChanges {
     pub fn contains(&self, id: SyntaxId) -> bool {
         self.0.contains_key(&id)
     }
-}
 
-/// Mark a node and all its descendants as unchanged.
-pub fn insert_deep_unchanged(
-    tree: &SyntaxTree,
-    node_id: SyntaxId,
-    opposite_tree: &SyntaxTree,
-    opposite_id: SyntaxId,
-    change_map: &mut SyntaxChanges,
-) {
-    change_map.insert(node_id, SyntaxChange::Unchanged(opposite_id));
-
-    let node = tree.get(node_id);
-    let opposite = opposite_tree.get(opposite_id);
-
-    if node.is_list() && opposite.is_list() {
-        let children = tree.children(node_id);
-        let opposite_children = opposite_tree.children(opposite_id);
-
-        for (child_id, opposite_child_id) in children.zip(opposite_children) {
-            insert_deep_unchanged(tree, child_id, opposite_tree, opposite_child_id, change_map);
-        }
+    pub fn iter(&self) -> collections::hash_map::Iter<'_, SyntaxId, SyntaxChange> {
+        self.0.iter()
     }
 }
