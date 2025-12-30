@@ -24,11 +24,6 @@ impl SyntaxId {
 /// Used to influence diff behavior for certain node types:
 /// - Comments support replacement detection via Levenshtein similarity
 /// - Punctuation is discouraged from matching over meaningful content
-// TODO: Find a better heuristic for detecting comments and strings.
-// Tree-sitter's `is_extra()` catches most comments, but misses strings.
-// Difftastic uses highlight queries (`@comment`, `@string` captures) for
-// more accurate detection. We should consider leveraging Zed's syntax
-// highlighting infrastructure if available at diff time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxHint {
     /// A string literal (not yet detected, reserved for future use).
