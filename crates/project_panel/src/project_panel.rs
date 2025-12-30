@@ -5101,6 +5101,9 @@ impl ProjectPanel {
                                         ));
                                         let label = div()
                                             .id(id)
+                                            .px_0p5()
+                                            .rounded_sm()
+                                            .hover(|style| style.bg(cx.theme().colors().element_active).cursor_pointer())
                                             .when(!is_sticky,| div| {
                                                 div
                                                 .when(index != components_len - 1, |div|{
