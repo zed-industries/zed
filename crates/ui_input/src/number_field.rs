@@ -11,7 +11,9 @@ use gpui::{
     TextStyleRefinement, WeakEntity,
 };
 
-use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
+use settings::{
+    CenteredPaddingSettings, CodeFade, DelayMs, FontSize, InactiveOpacity, MinimumContrast,
+};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,6 +107,7 @@ macro_rules! impl_newtype_numeric_stepper_int {
 #[rustfmt::skip]
 impl_newtype_numeric_stepper_float!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
 impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
+impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
 impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
