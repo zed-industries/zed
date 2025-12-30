@@ -1540,6 +1540,7 @@ mod preview {
                         subject: "Modify stuff".into(),
                         commit_timestamp: 1710932954,
                         author_name: "John Doe".into(),
+                        author_email: "john@example.com".into(),
                         has_parent: true,
                     }),
                 }

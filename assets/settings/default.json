@@ -883,6 +883,23 @@
       // Default: inherits editor scrollbar settings
       // "show": null
     },
+    // Whether to automatically fetch from remote repositories in the background.
+    //
+    // Default: true
+    "auto_fetch": true,
+    // Interval in seconds between automatic fetches.
+    // Minimum: 60 seconds. Maximum: 3600 seconds (1 hour).
+    //
+    // Default: 300 (5 minutes)
+    "auto_fetch_interval_secs": 300,
+    // Whether to show the commit history section in the git panel.
+    //
+    // Default: true
+    "show_commit_history": true,
+    // Number of commits to show in the commit history section.
+    //
+    // Default: 10
+    "commit_history_count": 10
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

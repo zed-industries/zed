@@ -523,6 +523,27 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to automatically fetch from remote repositories in the background.
+    ///
+    /// Default: true
+    pub auto_fetch: Option<bool>,
+
+    /// Interval in seconds between automatic fetches.
+    /// Minimum: 60 seconds. Maximum: 3600 seconds (1 hour).
+    ///
+    /// Default: 300 (5 minutes)
+    pub auto_fetch_interval_secs: Option<u64>,
+
+    /// Whether to show the commit history section in the git panel.
+    ///
+    /// Default: true
+    pub show_commit_history: Option<bool>,
+
+    /// Number of commits to show in the commit history section.
+    ///
+    /// Default: 10
+    pub commit_history_count: Option<usize>,
 }
 
 #[derive(

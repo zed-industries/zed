@@ -1085,6 +1085,18 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn branch_history(
+        &self,
+        repo: &Entity<Repository>,
+        skip: usize,
+        limit: Option<usize>,
+        cx: &mut App,
+    ) -> Task<Result<Vec<git::repository::CommitSummary>>> {
+        let rx = repo.update(cx, |repo, _| repo.branch_history(skip, limit));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -4169,6 +4181,24 @@ impl Repository {
         })
     }
 
+    pub fn branch_history(
+        &mut self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<Vec<git::repository::CommitSummary>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.branch_history(skip, limit).await
+                }
+                RepositoryState::Remote(_) => {
+                    // Remote branch history not yet supported
+                    Ok(Vec::new())
+                }
+            }
+        })
+    }
+
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
         Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
@@ -6102,6 +6132,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                 subject: commit.subject.to_string(),
                 commit_timestamp: commit.commit_timestamp,
                 author_name: commit.author_name.to_string(),
+                author_email: commit.author_email.to_string(),
             }),
     }
 }
@@ -6148,6 +6179,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
                 author_name: commit.author_name.to_string().into(),
+                author_email: commit.author_email.to_string().into(),
                 has_parent: true,
             }
         }),
