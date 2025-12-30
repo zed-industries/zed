@@ -348,7 +348,6 @@ enum ValueChangeDirection {
 
 impl<T: NumberFieldType> RenderOnce for NumberField<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut tab_index = self.tab_index;
         let is_edit_mode = matches!(*self.mode.read(cx), NumberFieldMode::Edit);
 
         let get_step = {
