@@ -33,7 +33,7 @@ impl WindowsWindowControls {
 }
 
 impl RenderOnce for WindowsWindowControls {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         div()
             .id("windows-window-controls")
             .font_family(Self::get_font())
@@ -45,11 +45,11 @@ impl RenderOnce for WindowsWindowControls {
             .min_h(self.button_height)
             .child(WindowsCaptionButton::Minimize)
             .map(|this| {
-                if window.is_maximized() {
+                this.child(if window.is_maximized() {
                     WindowsCaptionButton::Restore
                 } else {
                     WindowsCaptionButton::Maximize
-                }
+                })
             })
             .child(WindowsCaptionButton::Close)
     }
@@ -83,10 +83,19 @@ impl WindowsCaptionButton {
             Self::Close => "\u{e8bb}",
         }
     }
+
+    #[inline]
+    fn control_area(&self) -> WindowControlArea {
+        match self {
+            Self::Close => WindowControlArea::Close,
+            Self::Maximize | Self::Restore => WindowControlArea::Max,
+            Self::Minimize => WindowControlArea::Min,
+        }
+    }
 }
 
 impl RenderOnce for WindowsCaptionButton {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let (hover_bg, hover_fg, active_bg, active_fg) = match self {
             Self::Close => {
                 let color: Hsla = Rgba {
@@ -122,17 +131,7 @@ impl RenderOnce for WindowsCaptionButton {
             .text_size(px(10.0))
             .hover(|style| style.bg(hover_bg).text_color(hover_fg))
             .active(|style| style.bg(active_bg).text_color(active_fg))
-            .map(|this| match self.icon {
-                WindowsCaptionButtonIcon::Close => {
-                    this.window_control_area(WindowControlArea::Close)
-                }
-                WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore => {
-                    this.window_control_area(WindowControlArea::Max)
-                }
-                WindowsCaptionButtonIcon::Minimize => {
-                    this.window_control_area(WindowControlArea::Min)
-                }
-            })
+            .window_control_area(self.control_area())
             .child(self.icon())
     }
 }
