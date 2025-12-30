@@ -13,6 +13,7 @@
 # Configuration
 
 - [Configuring Zed](./configuring-zed.md)
+  - [Modelines](./modelines.md)
 - [Configuring Languages](./configuring-languages.md)
   - [Toolchains](./toolchains.md)
 - [Key bindings](./key-bindings.md)

@@ -38,7 +38,11 @@ pub fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    language_settings(cx)
+        .language(language)
+        .file(file)
+        .get()
+        .inlay_hints
 }
 
 #[derive(Debug)]

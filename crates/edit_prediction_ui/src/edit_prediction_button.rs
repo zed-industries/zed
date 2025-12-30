@@ -658,7 +658,9 @@ impl EditPredictionButton {
         let language_state = self.language.as_ref().map(|language| {
             (
                 language.clone(),
-                language_settings::language_settings(Some(language.name()), None, cx)
+                language_settings::language_settings(cx)
+                    .language(Some(language.name()))
+                    .get()
                     .show_edit_predictions,
             )
         });
