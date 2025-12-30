@@ -4750,18 +4750,16 @@ impl GitPanel {
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip(Tooltip::text(discard_tooltip))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    match section {
-                                        Section::New => {
-                                            this.clean_all(&TrashUntrackedFiles, window, cx);
-                                        }
-                                        _ => {
-                                            this.restore_tracked_files(
-                                                &RestoreTrackedFiles,
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                .on_click(cx.listener(move |this, _, window, cx| match section {
+                                    Section::New => {
+                                        this.clean_all(&TrashUntrackedFiles, window, cx);
+                                    }
+                                    _ => {
+                                        this.restore_tracked_files(
+                                            &RestoreTrackedFiles,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 })),
                         ),
