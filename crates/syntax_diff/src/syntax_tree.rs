@@ -19,6 +19,28 @@ impl SyntaxId {
     }
 }
 
+/// Classification of special atom nodes for diff purposes.
+///
+/// Used to influence diff behavior for certain node types:
+/// - Comments support replacement detection via Levenshtein similarity
+/// - Punctuation is discouraged from matching over meaningful content
+// TODO: Find a better heuristic for detecting comments and strings.
+// Tree-sitter's `is_extra()` catches most comments, but misses strings.
+// Difftastic uses highlight queries (`@comment`, `@string` captures) for
+// more accurate detection. Consider leveraging Zed's syntax highlighting
+// infrastructure if available at diff time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyntaxHint {
+    /// A string literal (not yet detected, reserved for future use).
+    String,
+    /// A comment node. Stores the comment text for Levenshtein similarity
+    /// computation when detecting replaced comments.
+    Comment(String),
+    /// Punctuation tokens (`,`, `;`, `.`). These are discouraged from
+    /// matching over more meaningful content in the diff algorithm.
+    Punctuation,
+}
+
 /// A syntax tree stored as a Vec of nodes in preorder.
 #[derive(Debug)]
 pub struct SyntaxTree {
@@ -42,11 +64,13 @@ pub struct SyntaxNode {
     /// Open delimiter = byte_range.start..content_range.start
     /// Close delimiter = content_range.end..byte_range.end
     pub content_range: Range<usize>,
+    /// The classification of this atom node, if it has special diff behavior.
+    ///
+    /// `Some` for atoms that need special handling (comments, punctuation).
+    /// `None` for regular atoms and list nodes.
+    pub hint: Option<SyntaxHint>,
     /// Content of delimiters
     pub delimiters: [Option<String>; 2],
-    /// Whether this node is punctuation (e.g., `,`, `;`, `.`).
-    /// Used to discourage matching punctuation over more meaningful content.
-    pub punctuation: bool,
     /// Number of descendants (children + their descendants).
     pub descendant_count: usize,
     /// Depth (number of ancestors)
@@ -351,7 +375,7 @@ fn build_tree_recursive(
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
         delimiters: [None, None],
-        punctuation: false,
+        hint: None,
         descendant_count: 0,
         depth: parent
             .map(|parent| nodes[parent.index()].depth + 1)
@@ -365,7 +389,7 @@ fn build_tree_recursive(
     let mut first_child_start = None;
     let mut last_child_end = ts_node.end_byte();
     let mut descendant_count = 0;
-    let mut punctuation = false;
+    let mut kind = None;
 
     if cursor.goto_first_child() {
         first_child_start = Some(cursor.node().start_byte());
@@ -386,15 +410,19 @@ fn build_tree_recursive(
         cursor.goto_parent();
     } else {
         // Leaf node - include the actual text content in the hash
-        if let Some(content) = source.get(ts_node.byte_range()) {
-            content.hash(&mut hasher);
+        if let Some(source) = source.get(ts_node.byte_range()) {
+            source.hash(&mut hasher);
 
             // Does this node look like punctuation?
             //
             // This check is deliberately conservative, because it's hard to
             // accurately recognise punctuation in a language-agnostic way.
             // https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
-            punctuation = content == "," || content == ";" || content == ".";
+            if source == "," || source == ";" || source == "." {
+                kind = Some(SyntaxHint::Punctuation);
+            } else if ts_node.is_extra() {
+                kind = Some(SyntaxHint::Comment(source.to_string()));
+            }
         }
     }
 
@@ -406,7 +434,7 @@ fn build_tree_recursive(
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
     node.descendant_count = descendant_count;
-    node.punctuation = punctuation;
+    node.hint = kind;
 
     if let Some(first_start) = first_child_start {
         node.content_range = first_start..last_child_end;

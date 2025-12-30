@@ -5,7 +5,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
 
 use crate::SyntaxTree;
-use crate::syntax_tree::{SyntaxId, SyntaxTreeCursor};
+use crate::syntax_tree::{SyntaxHint, SyntaxId, SyntaxTreeCursor};
 
 /// Error when the graph search exceeds the configured limit.
 #[derive(Debug)]
@@ -265,7 +265,10 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         // Both nodes have same structure - unchanged
         if lhs_node.structural_hash == rhs_node.structural_hash {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-            let probably_punctuation = v.lhs.node().is_some_and(|node| node.punctuation);
+            let probably_punctuation = v
+                .lhs
+                .node()
+                .is_some_and(|node| node.hint == Some(SyntaxHint::Punctuation));
 
             let (lhs, rhs, parents) = pop_all_parents(
                 v.lhs.next_sibling(),
@@ -280,6 +283,27 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
                 },
                 SyntaxVertex { lhs, rhs, parents },
             ));
+        } else {
+            if let (
+                Some(SyntaxHint::Comment(lhs_comment)),
+                Some(SyntaxHint::Comment(rhs_comment)),
+            ) = (lhs_node.hint.as_ref(), rhs_node.hint.as_ref())
+            {
+                let levenshtein_pct = (strsim::normalized_levenshtein(lhs_comment, rhs_comment)
+                    * 100.0)
+                    .round() as u8;
+
+                let (lhs, rhs, parents) = pop_all_parents(
+                    v.lhs.next_sibling(),
+                    v.rhs.next_sibling(),
+                    v.parents.clone(),
+                );
+
+                neighbours.push((
+                    SyntaxEdge::Replaced { levenshtein_pct },
+                    SyntaxVertex { lhs, rhs, parents },
+                ));
+            }
         }
 
         // Both are lists with matching delimiters - enter them together
