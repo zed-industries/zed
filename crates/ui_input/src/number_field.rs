@@ -650,7 +650,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                                     if !is_focused {
                                         let current_text = editor.read(cx).text(cx);
-                                        let last_synced = self.last_synced_value.read(cx).clone();
+                                        let last_synced = *self.last_synced_value.read(cx);
 
                                         // Detect if the value changed externally (e.g., reset button)
                                         let value_changed_externally = last_synced
