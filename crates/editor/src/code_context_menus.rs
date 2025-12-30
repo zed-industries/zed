@@ -943,11 +943,12 @@ impl CompletionsMenu {
 
                         let detail_label = detail_info.map(|(text, highlights)| {
                             div()
-                                .ml_4()
+                                .ml_6()
                                 .flex_shrink()
                                 .min_w_0()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
+                                .when(!is_deprecated, |this| this.opacity(0.85))
                                 .text_sm()
                                 .text_color(if is_deprecated {
                                     cx.theme().colors().text_muted
