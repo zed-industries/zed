@@ -417,7 +417,7 @@ fn build_tree_recursive(
     parent: Option<SyntaxId>,
     source: &str,
 ) -> SyntaxId {
-    let mut ts_node = cursor.node();
+    let ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
 
     nodes.push(SyntaxNode {
@@ -469,8 +469,12 @@ fn build_tree_recursive(
         node.content_range = first_start..last_child_end;
 
         node.delimiters = [
-            Some(source[node.open_delimiter_range()].to_string()),
-            Some(source[node.close_delimiter_range()].to_string()),
+            source
+                .get(node.open_delimiter_range())
+                .map(ToString::to_string),
+            source
+                .get(node.close_delimiter_range())
+                .map(ToString::to_string),
         ];
     }
 
