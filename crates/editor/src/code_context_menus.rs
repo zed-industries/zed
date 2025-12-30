@@ -832,13 +832,133 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let completion = &completions_guard[mat.candidate_id];
-                        let documentation = if show_completion_documentation {
-                            &completion.documentation
-                        } else {
-                            &None
-                        };
+
+                        let is_deprecated = completion
+                            .source
+                            .lsp_completion(false)
+                            .and_then(|lsp_completion| {
+                                match (lsp_completion.deprecated, &lsp_completion.tags) {
+                                    (Some(true), _) => Some(true),
+                                    (_, Some(tags)) => {
+                                        Some(tags.contains(&CompletionItemTag::DEPRECATED))
+                                    }
+                                    _ => None,
+                                }
+                            })
+                            .unwrap_or(false);
 
                         let filter_start = completion.label.filter_range.start;
+                        let label_text_full = completion.label.text.as_str();
+                        let filter_end = completion.label.filter_range.end;
+                        let label_text = label_text_full
+                            .get(..filter_end)
+                            .unwrap_or(label_text_full);
+                        let label_suffix = label_text_full.get(filter_end..).unwrap_or("");
+                        let detail_text_full = completion
+                            .source
+                            .lsp_completion(false)
+                            .and_then(|lsp_completion| lsp_completion.detail.clone())
+                            .filter(|detail| !detail.trim().is_empty());
+
+                        let detail_info = if let Some(detail) = &detail_text_full {
+                            let detail_text = detail.trim();
+                            let label_suffix_trimmed = label_suffix.trim();
+                            if label_suffix_trimmed.is_empty() {
+                                Some((detail_text.to_string(), Vec::new()))
+                            } else {
+                                let trim_offset = label_suffix
+                                    .find(label_suffix_trimmed)
+                                    .unwrap_or_default();
+                                let detail_range_in_label = (filter_end + trim_offset)
+                                    ..(filter_end + trim_offset + label_suffix_trimmed.len());
+                                let detail_highlights: Vec<_> = styled_runs_for_code_label(
+                                    &completion.label,
+                                    &style.syntax,
+                                    &style.local_player,
+                                )
+                                .filter_map(|(range, mut highlight)| {
+                                    let clamped_start =
+                                        range.start.max(detail_range_in_label.start);
+                                    let clamped_end = range.end.min(detail_range_in_label.end);
+                                    if clamped_start >= clamped_end {
+                                        return None;
+                                    }
+                                    let adjusted_range = (clamped_start
+                                        - detail_range_in_label.start)
+                                        ..(clamped_end - detail_range_in_label.start);
+                                    highlight.font_weight = None;
+                                    if is_deprecated {
+                                        highlight.strikethrough = Some(StrikethroughStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
+                                    }
+                                    Some((adjusted_range, highlight))
+                                })
+                                .collect();
+
+                                Some((label_suffix_trimmed.to_string(), detail_highlights))
+                            }
+                        } else {
+                            let label_suffix_trimmed = label_suffix.trim();
+                            if label_suffix_trimmed.is_empty() {
+                                None
+                            } else {
+                                let trim_offset = label_suffix
+                                    .find(label_suffix_trimmed)
+                                    .unwrap_or_default();
+                                let detail_range_in_label = (filter_end + trim_offset)
+                                    ..(filter_end + trim_offset + label_suffix_trimmed.len());
+                                let detail_highlights: Vec<_> = styled_runs_for_code_label(
+                                    &completion.label,
+                                    &style.syntax,
+                                    &style.local_player,
+                                )
+                                .filter_map(|(range, mut highlight)| {
+                                    let clamped_start =
+                                        range.start.max(detail_range_in_label.start);
+                                    let clamped_end = range.end.min(detail_range_in_label.end);
+                                    if clamped_start >= clamped_end {
+                                        return None;
+                                    }
+                                    let adjusted_range = (clamped_start
+                                        - detail_range_in_label.start)
+                                        ..(clamped_end - detail_range_in_label.start);
+                                    highlight.font_weight = None;
+                                    if is_deprecated {
+                                        highlight.strikethrough = Some(StrikethroughStyle {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        });
+                                        highlight.color = Some(cx.theme().colors().text_muted);
+                                    }
+                                    Some((adjusted_range, highlight))
+                                })
+                                .collect();
+
+                                Some((label_suffix_trimmed.to_string(), detail_highlights))
+                            }
+                        };
+
+                        let name_highlights = styled_runs_for_code_label(
+                            &completion.label,
+                            &style.syntax,
+                            &style.local_player,
+                        )
+                        .filter(|(range, _)| range.end <= filter_end)
+                        .map(|(range, mut highlight)| {
+                            highlight.font_weight = None;
+                            if is_deprecated {
+                                highlight.strikethrough = Some(StrikethroughStyle {
+                                    thickness: 1.0.into(),
+                                    ..Default::default()
+                                });
+                                highlight.color = Some(cx.theme().colors().text_muted);
+                            }
+                            (range, highlight)
+                        });
+
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| {
                                 (
@@ -846,62 +966,30 @@ impl CompletionsMenu {
                                     FontWeight::BOLD.into(),
                                 )
                             }),
-                            styled_runs_for_code_label(
-                                &completion.label,
-                                &style.syntax,
-                                &style.local_player,
-                            )
-                            .map(|(range, mut highlight)| {
-                                // Ignore font weight for syntax highlighting, as we'll use it
-                                // for fuzzy matches.
-                                highlight.font_weight = None;
-                                if completion
-                                    .source
-                                    .lsp_completion(false)
-                                    .and_then(|lsp_completion| {
-                                        match (lsp_completion.deprecated, &lsp_completion.tags) {
-                                            (Some(true), _) => Some(true),
-                                            (_, Some(tags)) => {
-                                                Some(tags.contains(&CompletionItemTag::DEPRECATED))
-                                            }
-                                            _ => None,
-                                        }
-                                    })
-                                    .unwrap_or(false)
-                                {
-                                    highlight.strikethrough = Some(StrikethroughStyle {
-                                        thickness: 1.0.into(),
-                                        ..Default::default()
-                                    });
-                                    highlight.color = Some(cx.theme().colors().text_muted);
-                                }
-
-                                (range, highlight)
-                            }),
+                            name_highlights,
                         );
 
-                        let completion_label = StyledText::new(completion.label.text.clone())
+                        let completion_label = StyledText::new(label_text.to_string())
                             .with_default_highlights(&style.text, highlights);
 
-                        let documentation_label = match documentation {
-                            Some(CompletionDocumentation::SingleLine(text))
-                            | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                                single_line: text,
-                                ..
-                            }) => {
-                                if text.trim().is_empty() {
-                                    None
+                        let detail_label = detail_info.map(|(text, highlights)| {
+                            div()
+                                .ml_4()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(if is_deprecated {
+                                    cx.theme().colors().text_muted
                                 } else {
-                                    Some(
-                                        Label::new(text.trim().to_string())
-                                            .ml_4()
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                }
-                            }
-                            _ => None,
-                        };
+                                    cx.theme().colors().text
+                                })
+                                .child(
+                                    StyledText::new(text).with_default_highlights(
+                                        &style.text,
+                                        gpui::combine_highlights(highlights, std::iter::empty()),
+                                    ),
+                                )
+                                .into_any_element()
+                        });
 
                         let start_slot = completion
                             .color()
@@ -943,7 +1031,7 @@ impl CompletionsMenu {
                                     }))
                                     .start_slot::<AnyElement>(start_slot)
                                     .child(h_flex().overflow_hidden().child(completion_label))
-                                    .end_slot::<Label>(documentation_label),
+                                    .end_slot::<AnyElement>(detail_label),
                             )
                     })
                     .collect()
