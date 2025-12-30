@@ -1,9 +1,9 @@
 use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
-    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
-    uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, HighlightStyle, ListSizingBehavior, ScrollHandle,
+    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, Task,
+    UniformListScrollHandle, div, px, uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -860,85 +860,61 @@ impl CompletionsMenu {
                             .and_then(|lsp_completion| lsp_completion.detail.clone())
                             .filter(|detail| !detail.trim().is_empty());
 
-                        let detail_info = if let Some(detail) = &detail_text_full {
-                            let detail_text = detail.trim();
-                            let label_suffix_trimmed = label_suffix.trim();
-                            if label_suffix_trimmed.is_empty() {
-                                Some((detail_text.to_string(), Vec::new()))
-                            } else {
-                                let trim_offset = label_suffix
-                                    .find(label_suffix_trimmed)
-                                    .unwrap_or_default();
-                                let detail_range_in_label = (filter_end + trim_offset)
-                                    ..(filter_end + trim_offset + label_suffix_trimmed.len());
-                                let detail_highlights: Vec<_> = styled_runs_for_code_label(
-                                    &completion.label,
-                                    &style.syntax,
-                                    &style.local_player,
-                                )
-                                .filter_map(|(range, mut highlight)| {
-                                    let clamped_start =
-                                        range.start.max(detail_range_in_label.start);
-                                    let clamped_end = range.end.min(detail_range_in_label.end);
-                                    if clamped_start >= clamped_end {
-                                        return None;
-                                    }
-                                    let adjusted_range = (clamped_start
-                                        - detail_range_in_label.start)
-                                        ..(clamped_end - detail_range_in_label.start);
-                                    highlight.font_weight = None;
-                                    if is_deprecated {
-                                        highlight.strikethrough = Some(StrikethroughStyle {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        });
-                                        highlight.color = Some(cx.theme().colors().text_muted);
-                                    }
-                                    Some((adjusted_range, highlight))
-                                })
-                                .collect();
-
-                                Some((label_suffix_trimmed.to_string(), detail_highlights))
+                        let apply_deprecated_style = |highlight: &mut HighlightStyle| {
+                            highlight.font_weight = None;
+                            if is_deprecated {
+                                highlight.strikethrough = Some(StrikethroughStyle {
+                                    thickness: 1.0.into(),
+                                    ..Default::default()
+                                });
+                                highlight.color = Some(cx.theme().colors().text_muted);
                             }
+                        };
+
+                        let label_suffix_trimmed = label_suffix.trim();
+                        let label_suffix_info = if label_suffix_trimmed.is_empty() {
+                            None
                         } else {
-                            let label_suffix_trimmed = label_suffix.trim();
-                            if label_suffix_trimmed.is_empty() {
-                                None
-                            } else {
-                                let trim_offset = label_suffix
-                                    .find(label_suffix_trimmed)
-                                    .unwrap_or_default();
-                                let detail_range_in_label = (filter_end + trim_offset)
-                                    ..(filter_end + trim_offset + label_suffix_trimmed.len());
-                                let detail_highlights: Vec<_> = styled_runs_for_code_label(
-                                    &completion.label,
-                                    &style.syntax,
-                                    &style.local_player,
-                                )
-                                .filter_map(|(range, mut highlight)| {
-                                    let clamped_start =
-                                        range.start.max(detail_range_in_label.start);
-                                    let clamped_end = range.end.min(detail_range_in_label.end);
-                                    if clamped_start >= clamped_end {
-                                        return None;
-                                    }
-                                    let adjusted_range = (clamped_start
-                                        - detail_range_in_label.start)
-                                        ..(clamped_end - detail_range_in_label.start);
-                                    highlight.font_weight = None;
-                                    if is_deprecated {
-                                        highlight.strikethrough = Some(StrikethroughStyle {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        });
-                                        highlight.color = Some(cx.theme().colors().text_muted);
-                                    }
-                                    Some((adjusted_range, highlight))
-                                })
-                                .collect();
+                            let trim_offset = label_suffix
+                                .find(label_suffix_trimmed)
+                                .unwrap_or_default();
+                            let detail_range_in_label = (filter_end + trim_offset)
+                                ..(filter_end + trim_offset + label_suffix_trimmed.len());
+                            Some((label_suffix_trimmed, detail_range_in_label))
+                        };
 
+                        let detail_highlights_for_range = |detail_range_in_label: &Range<usize>| {
+                            styled_runs_for_code_label(
+                                &completion.label,
+                                &style.syntax,
+                                &style.local_player,
+                            )
+                            .filter_map(|(range, mut highlight)| {
+                                let clamped_start =
+                                    range.start.max(detail_range_in_label.start);
+                                let clamped_end = range.end.min(detail_range_in_label.end);
+                                if clamped_start >= clamped_end {
+                                    return None;
+                                }
+                                let adjusted_range = (clamped_start
+                                    - detail_range_in_label.start)
+                                    ..(clamped_end - detail_range_in_label.start);
+                                apply_deprecated_style(&mut highlight);
+                                Some((adjusted_range, highlight))
+                            })
+                            .collect()
+                        };
+
+                        let detail_info = match (detail_text_full.as_deref(), label_suffix_info) {
+                            (Some(detail_text), None) => {
+                                Some((detail_text.trim().to_string(), Vec::new()))
+                            }
+                            (_, Some((label_suffix_trimmed, detail_range_in_label))) => {
+                                let detail_highlights =
+                                    detail_highlights_for_range(&detail_range_in_label);
                                 Some((label_suffix_trimmed.to_string(), detail_highlights))
                             }
+                            _ => None,
                         };
 
                         let name_highlights = styled_runs_for_code_label(
@@ -948,14 +924,7 @@ impl CompletionsMenu {
                         )
                         .filter(|(range, _)| range.end <= filter_end)
                         .map(|(range, mut highlight)| {
-                            highlight.font_weight = None;
-                            if is_deprecated {
-                                highlight.strikethrough = Some(StrikethroughStyle {
-                                    thickness: 1.0.into(),
-                                    ..Default::default()
-                                });
-                                highlight.color = Some(cx.theme().colors().text_muted);
-                            }
+                            apply_deprecated_style(&mut highlight);
                             (range, highlight)
                         });
 
@@ -994,6 +963,7 @@ impl CompletionsMenu {
                                 .into_any_element()
                         });
 
+                        // Keep the left label intact; the right column yields space first.
                         let completion_row = h_flex()
                             .flex_grow()
                             .min_w_0()
