@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY;
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
 use windows::Win32::Graphics::{Direct3D11::*, Dxgi::Common::*, Dxgi::*};
 use windows::core::Interface;
 
@@ -107,6 +108,8 @@ pub(crate) struct DirectXOffScreenTarget {
     sharing_enabled: bool,
     /// DXGI shared handle (if sharing is enabled)
     shared_handle: Option<windows::Win32::Foundation::HANDLE>,
+    /// Keyed mutex for synchronizing access to the shared texture
+    keyed_mutex: Option<IDXGIKeyedMutex>,
 }
 
 /// Render pipeline states for off-screen rendering.
@@ -141,7 +144,7 @@ impl DirectXOffScreenTarget {
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         // Create render texture
-        let (render_texture, render_target_view, shared_handle) =
+        let (render_texture, render_target_view, shared_handle, keyed_mutex) =
             create_render_texture(&devices.device, width, height, config.enable_sharing)?;
 
         // Create staging texture for CPU readback
@@ -195,7 +198,54 @@ impl DirectXOffScreenTarget {
             height,
             sharing_enabled: config.enable_sharing,
             shared_handle,
+            keyed_mutex,
         })
+    }
+
+    /// Acquires the keyed mutex for exclusive access to the shared texture.
+    ///
+    /// This should be called before rendering to the texture when sharing is enabled.
+    /// The mutex ensures proper synchronization between the producer (this renderer)
+    /// and any consumers (other processes/APIs using the shared handle).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key value to acquire (typically 0)
+    /// * `timeout_ms` - Timeout in milliseconds (use u32::MAX for infinite)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if the mutex was acquired, `Ok(false)` if it timed out,
+    /// or an error if the acquisition failed.
+    pub fn acquire_keyed_mutex(&self, key: u64, timeout_ms: u32) -> Result<bool> {
+        if let Some(ref mutex) = self.keyed_mutex {
+            let result = unsafe { mutex.AcquireSync(key, timeout_ms) };
+            match result {
+                Ok(()) => Ok(true),
+                Err(e) if e.code() == windows::core::HRESULT(0x80070102u32 as i32) => {
+                    // WAIT_TIMEOUT = 0x00000102, as HRESULT = 0x80070102
+                    Ok(false)
+                }
+                Err(e) => Err(e).context("Failed to acquire keyed mutex"),
+            }
+        } else {
+            Ok(true)
+        }
+    }
+
+    /// Releases the keyed mutex after rendering is complete.
+    ///
+    /// This should be called after rendering to signal that the texture is ready
+    /// for consumers to access.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key value to release to (typically 0 or 1 for double-buffering)
+    pub fn release_keyed_mutex(&self, key: u64) -> Result<()> {
+        if let Some(ref mutex) = self.keyed_mutex {
+            unsafe { mutex.ReleaseSync(key) }.context("Failed to release keyed mutex")?;
+        }
+        Ok(())
     }
 
     /// Returns the sprite atlas for this renderer.
@@ -269,12 +319,13 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
         }
 
         // Recreate render texture
-        if let Ok((render_texture, render_target_view, shared_handle)) =
+        if let Ok((render_texture, render_target_view, shared_handle, keyed_mutex)) =
             create_render_texture(&self.devices.device, width, height, self.sharing_enabled)
         {
             self.render_texture = render_texture;
             self.render_target_view = render_target_view;
             self.shared_handle = shared_handle;
+            self.keyed_mutex = keyed_mutex;
         }
 
         // Recreate staging texture
@@ -371,6 +422,18 @@ impl OffScreenRenderTarget for DirectXOffScreenTarget {
                 format: RENDER_TARGET_FORMAT.0 as u32,
             })
         })
+    }
+
+    fn acquire_sync(&self, key: u64, timeout_ms: u32) -> anyhow::Result<bool> {
+        self.acquire_keyed_mutex(key, timeout_ms)
+    }
+
+    fn release_sync(&self, key: u64) -> anyhow::Result<()> {
+        self.release_keyed_mutex(key)
+    }
+
+    fn supports_sync(&self) -> bool {
+        self.keyed_mutex.is_some()
     }
 }
 
@@ -857,10 +920,12 @@ fn create_render_texture(
     ID3D11Texture2D,
     Option<ID3D11RenderTargetView>,
     Option<windows::Win32::Foundation::HANDLE>,
+    Option<IDXGIKeyedMutex>,
 )> {
     let mut misc_flags = 0u32;
     if enable_sharing {
-        misc_flags |= D3D11_RESOURCE_MISC_SHARED.0 as u32;
+        // Use SHARED_KEYEDMUTEX for proper synchronization between processes
+        misc_flags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 as u32;
     }
 
     let desc = D3D11_TEXTURE2D_DESC {
@@ -889,17 +954,23 @@ fn create_render_texture(
     unsafe { device.CreateRenderTargetView(&texture, None, Some(&mut rtv)) }
         .context("Failed to create render target view")?;
 
-    // Get shared handle if sharing is enabled
-    let shared_handle = if enable_sharing {
+    // Get shared handle and keyed mutex if sharing is enabled
+    let (shared_handle, keyed_mutex) = if enable_sharing {
         let resource: IDXGIResource = texture.cast().context("Failed to cast to IDXGIResource")?;
         let handle =
             unsafe { resource.GetSharedHandle() }.context("Failed to get shared handle")?;
-        Some(handle)
+
+        // Get the keyed mutex interface for synchronization
+        let mutex: IDXGIKeyedMutex = texture
+            .cast()
+            .context("Failed to cast texture to IDXGIKeyedMutex")?;
+
+        (Some(handle), Some(mutex))
     } else {
-        None
+        (None, None)
     };
 
-    Ok((texture, rtv, shared_handle))
+    Ok((texture, rtv, shared_handle, keyed_mutex))
 }
 
 fn create_staging_texture(

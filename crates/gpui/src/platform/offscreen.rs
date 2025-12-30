@@ -269,6 +269,55 @@ pub trait OffScreenRenderTarget: Send + Sync {
     fn supports_shared_textures(&self) -> bool {
         self.shared_texture_handle().is_some()
     }
+
+    /// Acquires exclusive access to the shared texture for rendering.
+    ///
+    /// When texture sharing is enabled, this method should be called before
+    /// rendering to ensure proper synchronization with consumers. The key
+    /// is a synchronization value that both producer and consumer agree upon.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The synchronization key (typically 0 for the producer)
+    /// * `timeout_ms` - Timeout in milliseconds, or `u32::MAX` for infinite
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Mutex acquired successfully
+    /// * `Ok(false)` - Timeout occurred
+    /// * `Err(_)` - Acquisition failed
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns `Ok(true)` immediately if synchronization is not supported.
+    fn acquire_sync(&self, _key: u64, _timeout_ms: u32) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
+    /// Releases exclusive access to the shared texture.
+    ///
+    /// This should be called after rendering is complete to signal that
+    /// consumers can now access the texture. The key should be the value
+    /// that consumers will use to acquire the mutex.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The synchronization key for consumers (typically 0 or 1)
+    ///
+    /// # Default Implementation
+    ///
+    /// Does nothing if synchronization is not supported.
+    fn release_sync(&self, _key: u64) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Returns whether this target supports synchronization primitives.
+    ///
+    /// When true, `acquire_sync` and `release_sync` can be used to
+    /// coordinate access to the shared texture between processes.
+    fn supports_sync(&self) -> bool {
+        false
+    }
 }
 
 /// Internal trait for off-screen targets that can be drawn to.

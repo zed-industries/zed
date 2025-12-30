@@ -132,6 +132,45 @@ impl OffScreenRenderer {
     pub fn supports_shared_textures(&self) -> bool {
         self.target.supports_shared_textures()
     }
+
+    /// Acquires exclusive access to the shared texture for rendering.
+    ///
+    /// When texture sharing is enabled, this should be called before rendering
+    /// to ensure proper synchronization with consumers.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The synchronization key (typically 0 for the producer)
+    /// * `timeout_ms` - Timeout in milliseconds, or `u32::MAX` for infinite
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Sync acquired successfully
+    /// * `Ok(false)` - Timeout occurred
+    /// * `Err(_)` - Acquisition failed
+    pub fn acquire_sync(&self, key: u64, timeout_ms: u32) -> anyhow::Result<bool> {
+        self.target.acquire_sync(key, timeout_ms)
+    }
+
+    /// Releases exclusive access to the shared texture.
+    ///
+    /// This should be called after rendering is complete to signal that
+    /// consumers can now access the texture.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The synchronization key for consumers (typically 0 or 1)
+    pub fn release_sync(&self, key: u64) -> anyhow::Result<()> {
+        self.target.release_sync(key)
+    }
+
+    /// Returns whether this target supports synchronization primitives.
+    ///
+    /// When true, `acquire_sync` and `release_sync` can be used to
+    /// coordinate access to the shared texture between processes.
+    pub fn supports_sync(&self) -> bool {
+        self.target.supports_sync()
+    }
 }
 
 #[cfg(test)]
