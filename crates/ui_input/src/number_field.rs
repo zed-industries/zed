@@ -633,7 +633,10 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                                     h_flex()
                                         .flex_1()
-                                        .track_focus(&configured_handle)
+                                        .track_focus(&focus_handle)
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border_transparent)
+                                        .when(focus_handle.is_focused(window), |this| this.border_color(cx.theme().colors().border_focused))
                                         .child(editor)
                                         .on_action::<menu::Confirm>({
                                             move |_, window, _| {
