@@ -5,9 +5,43 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use http_client::{AsyncBody, HttpClient, Uri};
-use serde::{Deserialize, de::DeserializeOwned};
+use http_client::{AsyncBody, HttpClient, Response, Uri};
+use serde::{Deserialize, Serialize, de::DeserializeOwned, ser};
+use serde_json::json;
 use smol::io::AsyncReadExt;
+
+async fn authenticate(
+    server_endpoint: &str,
+    www_authenticate: Option<&WwwAuthenticate<'_>>,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<()> {
+    let resource_meta = match www_authenticate.and_then(|auth| auth.resource_metadata.as_ref()) {
+        Some(url) => ProtectedResourceMetadata::fetch(url, http_client).await?,
+        None => ProtectedResourceMetadata::fetch_well_known(server_endpoint, http_client).await?,
+    };
+
+    // todo! try others?
+    let auth_server_url = resource_meta
+        .authorization_servers
+        .first()
+        .context("Resource metadata specified 0 authorization servers")?;
+
+    let server_meta = AuthorizationServerMetadata::fetch(auth_server_url, http_client).await?;
+
+    let client_id = if server_meta.client_id_metadata_document_supported {
+        todo!("host client id meta doc somewhere");
+    } else if let Some(registration_endpoint) = server_meta.registration_endpoint.as_ref() {
+        register_client(registration_endpoint, http_client)
+            .await?
+            .client_id;
+    } else {
+        todo!("allow user to specify custom client meta");
+    };
+
+    anyhow::Ok(())
+}
+
+// Resource Metadata
 
 #[derive(Deserialize)]
 pub struct ProtectedResourceMetadata {
@@ -28,7 +62,7 @@ pub struct ProtectedResourceMetadata {
 
 impl ProtectedResourceMetadata {
     pub async fn fetch(url: &str, http_client: &Arc<dyn HttpClient>) -> Result<Self> {
-        fetch_json(url, http_client)
+        get_json(url, http_client)
             .await
             .context("Fetching resource metadata")
     }
@@ -45,6 +79,8 @@ impl ProtectedResourceMetadata {
             .context("From well-known URL");
     }
 }
+
+// Server Metadata
 
 #[derive(Debug, Deserialize)]
 pub struct AuthorizationServerMetadata {
@@ -76,12 +112,15 @@ pub struct AuthorizationServerMetadata {
 
     #[serde(default)]
     code_challenge_methods_supported: Vec<String>,
+
+    #[serde(default)]
+    client_id_metadata_document_supported: bool,
 }
 
 impl AuthorizationServerMetadata {
     pub async fn fetch(
         issuer_uri: &AbsUri,
-        http_client: Arc<dyn HttpClient>,
+        http_client: &Arc<dyn HttpClient>,
     ) -> Result<Self, AuthorizationServerMetadataDiscoveryError> {
         // We must attempt multiple well-known endpoints based on the issuer url
         //
@@ -109,7 +148,7 @@ impl AuthorizationServerMetadata {
                 continue;
             };
 
-            match fetch_json(&url, &http_client).await {
+            match get_json(&url, &http_client).await {
                 Ok(meta) => return Ok(meta),
                 Err(err) => {
                     attempted_urls.push((url, err));
@@ -163,21 +202,73 @@ impl Display for AuthorizationServerMetadataDiscoveryError {
     }
 }
 
-async fn fetch_json<T: DeserializeOwned>(
+// Registration
+
+pub const CALLBACK_URI: &str = "zed://mcp/auth/callback";
+
+#[derive(Deserialize)]
+struct DynamicRegistrationResponse {
+    client_id: String,
+    client_secret: Option<String>,
+    client_id_issued_at: Option<u64>,
+    client_secret_expires_at: Option<u64>,
+}
+
+async fn register_client(
+    registration_endpoint: &AbsUri,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<DynamicRegistrationResponse> {
+    let metadata = json!({
+        "redirect_uris": [CALLBACK_URI],
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "client_name": "Zed",
+        "client_uri": "https://zed.dev",
+        "logo_uri": "https://zed.dev/_next/static/media/stable-app-logo.9b5f959f.png"
+    });
+
+    post_json(&registration_endpoint.to_string(), metadata, http_client).await
+}
+
+async fn get_json<Out: DeserializeOwned>(
     url: &str,
     http_client: &Arc<dyn HttpClient>,
-) -> Result<T> {
+) -> Result<Out> {
     let mut response = http_client.get(url, AsyncBody::empty(), true).await?;
+    decode_response_json(&mut response).await
+}
+
+async fn post_json<In: Serialize, Out: DeserializeOwned>(
+    url: &str,
+    payload: In,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<Out> {
+    let mut response = http_client
+        .post_json(url, serde_json::to_string(&payload)?.into())
+        .await?;
+    decode_response_json(&mut response).await
+}
+
+async fn decode_response_json<T: DeserializeOwned>(
+    response: &mut Response<AsyncBody>,
+) -> Result<T> {
+    let mut content = Vec::new();
+    response.body_mut().read_to_end(&mut content).await?;
     if response.status().is_success() {
-        let mut content = Vec::new();
-        response.body_mut().read_to_end(&mut content).await?;
         Ok(serde_json::from_slice(&content)?)
     } else {
-        anyhow::bail!("HTTP: {}", response.status());
+        anyhow::bail!(
+            "Status: {}.\nBody: {}",
+            response.status(),
+            String::from_utf8_lossy(&content)
+        );
     }
 }
 
 use abs_uri::AbsUri;
+
+use crate::transport::http::www_authenticate::WwwAuthenticate;
 mod abs_uri {
     use std::{
         error::Error,
