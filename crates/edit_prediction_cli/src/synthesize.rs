@@ -202,7 +202,6 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
                         }
                     };
 
-                // Get file-specific diff
                 let file_diff = match extract_file_diff(&commit.diff, &pattern.file_path) {
                     Ok(diff) => diff,
                     Err(e) => {
@@ -242,21 +241,13 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
             let count = valid_examples.len();
             step_progress.set_info(format!("{} valid", count), InfoStyle::Normal);
 
-            // Write valid examples
             for (i, example) in valid_examples.into_iter().enumerate() {
                 if examples_generated >= config.count {
                     break;
                 }
 
-                let spec = build_example_spec(
-                    &config.repo_url,
-                    &commit.sha,
-                    &commit.parent_sha,
-                    i,
-                    example,
-                );
-
-                let path = config.output_dir.join(spec.filename() + ".md");
+                let spec = build_example_spec(&config.repo_url, &commit.parent_sha, i, example);
+                let path = config.output_dir.join(format!("{}.md", spec.filename()));
                 std::fs::write(&path, spec.to_markdown())?;
                 examples_generated += 1;
             }
@@ -867,15 +858,14 @@ fn line_comment_prefix(file_path: &str) -> &'static str {
 
 fn build_example_spec(
     repo_url: &str,
-    commit_sha: &str,
     parent_sha: &str,
     index: usize,
     example: FormulatedExample,
 ) -> ExampleSpec {
     let name = format!(
-        "draft-{}-{}-{}",
-        chrono::Local::now().format("%Y%m%d-%H%M%S"),
-        &commit_sha[..8.min(commit_sha.len())],
+        "{}.draft-{}-{}.md",
+        chrono::Local::now().format("%Y-%m-%d--%H-%M-%S"),
+        &parent_sha[..8.min(parent_sha.len())],
         index
     );
 
