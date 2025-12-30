@@ -408,7 +408,7 @@ impl LspLogView {
         Some(rows)
     }
 
-    fn show_logs_for_server(
+    pub(crate) fn show_logs_for_server(
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,

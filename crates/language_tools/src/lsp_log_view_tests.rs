@@ -165,6 +165,99 @@ async fn test_lsp_log_view_batches_log_entries(cx: &mut TestAppContext) {
     });
 }
 
+/// Tests that calling `clear_pending_log_append` while a pending log task is running
+/// properly cancels the pending append and prevents stale data from being written.
+/// This happens when switching between servers before the log flush timer fires.
+#[gpui::test]
+async fn test_clear_pending_log_append_while_task_pending(cx: &mut TestAppContext) {
+    zlog::init_test();
+
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "test.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |store, cx| {
+        store.add_project(&project, cx);
+        // Add two language servers so we can switch between them
+        store.add_language_server(
+            LanguageServerKind::Local {
+                project: project.downgrade(),
+            },
+            LanguageServerId(1),
+            Some(LanguageServerName::new_static("server-one")),
+            None,
+            None,
+            cx,
+        );
+        store.add_language_server(
+            LanguageServerKind::Local {
+                project: project.downgrade(),
+            },
+            LanguageServerId(2),
+            Some(LanguageServerName::new_static("server-two")),
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store.clone(), window, cx));
+    let log_view = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    // First show server 1's logs so the view is subscribed to it
+    log_view.update_in(&mut cx, |view, window, cx| {
+        view.show_logs_for_server(LanguageServerId(1), window, cx);
+    });
+
+    // Queue a log entry for server 1. This starts a 50ms timer before flush.
+    log_store.update(&mut cx, |store, cx| {
+        store.add_language_server_log(
+            LanguageServerId(1),
+            lsp::MessageType::INFO,
+            "message for server one",
+            cx,
+        );
+    });
+
+    // Verify the message is NOT yet written to editor (still pending)
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(view.editor.read(cx).text(cx), "");
+    });
+
+    // Before the timer fires, switch to server 2's logs. This calls clear_pending_log_append
+    // internally, which should clear the pending message for server 1.
+    log_view.update_in(&mut cx, |view, window, cx| {
+        view.show_logs_for_server(LanguageServerId(2), window, cx);
+    });
+
+    // Verify editor is empty since server 2 has no logs
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(view.editor.read(cx).text(cx), "");
+    });
+
+    // Now let the original timer fire (advance past the 50ms log batching delay)
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.executor().run_until_parked();
+
+    // Verify that no stale data from server 1 appeared in the editor.
+    // If clear_pending_log_append didn't work correctly, we'd see "message for server one" here.
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(view.editor.read(cx).text(cx), "");
+    });
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
