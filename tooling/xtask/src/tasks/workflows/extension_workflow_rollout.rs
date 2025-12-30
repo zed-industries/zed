@@ -106,7 +106,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn create_pull_request(token: &StepOutput, short_sha: StepOutput) -> Step<Use> {
-        let title = format!("Update CI workflows to zed@{}", short_sha);
+        let title = format!("Update CI workflows to `zed@{}`", short_sha);
 
         named::uses("peter-evans", "create-pull-request", "v7")
             .add_with(("path", "extension"))
