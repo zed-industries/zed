@@ -87,7 +87,7 @@ pub fn diff_trees(
             }
             SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
                 if let Some(rhs_id) = vertex.rhs.id() {
-                    lhs_change_map.insert(rhs_id, SyntaxChange::Novel);
+                    rhs_change_map.insert(rhs_id, SyntaxChange::Novel);
                 }
             }
             _ => {}
