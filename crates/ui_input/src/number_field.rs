@@ -506,7 +506,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     .px_1()
                                     .flex_1()
                                     .justify_center()
-                                    .child(Label::new((self.format)(&self.value)))
+                                    .child(Label::new((self.format)(&self.value)).color(Color::Muted))
                                     .into_any_element(),
                                 NumberFieldMode::Edit => {
                                     let expected_text = format!("{}", self.value);
@@ -520,6 +520,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                 let mut editor = Editor::single_line(window, cx);
 
                                                 editor.set_text_style_refinement(TextStyleRefinement {
+                                                    color: Some(cx.theme().colors().text),
                                                     text_align: Some(TextAlign::Center),
                                                     ..Default::default()
                                                 });
