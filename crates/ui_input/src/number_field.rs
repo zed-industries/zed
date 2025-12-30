@@ -456,10 +456,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 this.child(
                     IconButton::new("reset", IconName::RotateCcw)
                         .icon_size(IconSize::Small)
-                        .when_some(tab_index.as_mut(), |this, tab_index| {
-                            *tab_index += 1;
-                            this.tab_index(*tab_index - 1)
-                        })
+                        .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                         .on_click(on_reset),
                 )
             })
@@ -489,27 +486,14 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                         decrement.child(
                             base_button(IconName::Dash)
-                                .id("decrement_button")
+                                .id((self.id.clone(), "decrement_button"))
                                 .rounded_tl_sm()
                                 .rounded_bl_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .unwrap_or(0),
-                                )
+                                .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                                 .on_click(decrement_handler),
                         )
                     })
                     .child({
-                        let editor_tab_index = tab_index.as_mut().map(|ti| {
-                            *ti += 1;
-                            *ti - 1
-                        });
-
                         h_flex()
                             .min_w_16()
                             .size_full()
@@ -668,18 +652,10 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                         increment.child(
                             base_button(IconName::Plus)
-                                .id("increment_button")
+                                .id((self.id.clone(), "increment_button"))
                                 .rounded_tr_sm()
                                 .rounded_br_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .unwrap_or(0),
-                                )
+                                .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                                 .on_click(increment_handler),
                         )
                     })
