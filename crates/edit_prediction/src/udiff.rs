@@ -14,7 +14,7 @@ use anyhow::anyhow;
 use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
-use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot};
+use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_diff};
 use project::Project;
 
 #[derive(Clone, Debug)]
@@ -178,6 +178,51 @@ pub fn apply_diff_to_string(original: &str, diff_str: &str) -> Result<String> {
     }
 
     Ok(text)
+}
+
+/// Returns the individual edits that would be applied by a diff to the given content.
+/// Each edit is a tuple of (byte_range_in_content, replacement_text).
+/// Uses sub-line diffing to find the precise character positions of changes.
+/// Returns an empty vec if the hunk context is not found or is ambiguous.
+pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>, String)>> {
+    let mut diff = DiffParser::new(diff_str);
+    let mut result = Vec::new();
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk { hunk, .. } => {
+                if hunk.context.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                // Find the context in the content
+                let first_match = content.find(&hunk.context);
+                let Some(context_offset) = first_match else {
+                    return Ok(Vec::new());
+                };
+
+                // Check for ambiguity - if context appears more than once, reject
+                if content[context_offset + 1..].contains(&hunk.context) {
+                    return Ok(Vec::new());
+                }
+
+                // Use sub-line diffing to find precise edit positions
+                for edit in &hunk.edits {
+                    let old_text = &content
+                        [context_offset + edit.range.start..context_offset + edit.range.end];
+                    let edits_within_hunk = text_diff(old_text, &edit.text);
+                    for (inner_range, inner_text) in edits_within_hunk {
+                        let absolute_start = context_offset + edit.range.start + inner_range.start;
+                        let absolute_end = context_offset + edit.range.start + inner_range.end;
+                        result.push((absolute_start..absolute_end, inner_text.to_string()));
+                    }
+                }
+            }
+            DiffEvent::FileEnd { .. } => {}
+        }
+    }
+
+    Ok(result)
 }
 
 struct PatchFile<'a> {
@@ -958,6 +1003,50 @@ mod tests {
 
         let result = extract_file_diff(multi_file_diff, "nonexistent.txt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_edits_for_diff() {
+        let content = indoc! {"
+            fn main() {
+                let x = 1;
+                let y = 2;
+                println!(\"{} {}\", x, y);
+            }
+        "};
+
+        let diff = indoc! {"
+            --- a/file.rs
+            +++ b/file.rs
+            @@ -1,5 +1,5 @@
+             fn main() {
+            -    let x = 1;
+            +    let x = 42;
+                 let y = 2;
+                 println!(\"{} {}\", x, y);
+             }
+        "};
+
+        let edits = edits_for_diff(content, diff).unwrap();
+        assert_eq!(edits.len(), 1);
+
+        let (range, replacement) = &edits[0];
+        // With sub-line diffing, the edit should start at "1" (the actual changed character)
+        let expected_start = content.find("let x = 1;").unwrap() + "let x = ".len();
+        assert_eq!(range.start, expected_start);
+        // The deleted text is just "1"
+        assert_eq!(range.end, expected_start + "1".len());
+        // The replacement text
+        assert_eq!(replacement, "42");
+
+        // Verify the cursor would be positioned at the column of "1"
+        let line_start = content[..range.start]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let cursor_column = range.start - line_start;
+        // "    let x = " is 12 characters, so column 12
+        assert_eq!(cursor_column, "    let x = ".len());
     }
 
     #[test]
