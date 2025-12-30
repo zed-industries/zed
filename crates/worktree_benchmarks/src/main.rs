@@ -27,6 +27,7 @@ fn main() {
                 fs,
                 Arc::new(AtomicUsize::new(0)),
                 true,
+                false,
                 cx,
             )
             .await

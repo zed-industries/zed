@@ -12,6 +12,10 @@ use libsqlite3_sys::sqlite3_exec;
 
 use crate::connection::Connection;
 
+fn normalize_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 impl Connection {
     fn eager_exec(&self, sql: &str) -> anyhow::Result<()> {
         let sql_str = CString::new(sql).context("Error creating cstr")?;
@@ -61,21 +65,12 @@ impl Connection {
 
             let mut did_migrate = false;
             for (index, migration) in migrations.iter().enumerate() {
-                let migration =
-                    sqlformat::format(migration, &sqlformat::QueryParams::None, Default::default());
                 if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
-                    // Reformat completed migrations with the current `sqlformat` version, so that past migrations stored
-                    // conform to the new formatting rules.
-                    let completed_migration = sqlformat::format(
-                        completed_migration,
-                        &sqlformat::QueryParams::None,
-                        Default::default(),
-                    );
-                    if completed_migration == migration {
+                    if normalize_whitespace(completed_migration) == normalize_whitespace(migration)
+                    {
                         // Migration already run. Continue
                         continue;
-                    } else if should_allow_migration_change(index, &completed_migration, &migration)
-                    {
+                    } else if should_allow_migration_change(index, completed_migration, migration) {
                         continue;
                     } else {
                         anyhow::bail!(formatdoc! {"
@@ -89,9 +84,9 @@ impl Connection {
                     }
                 }
 
-                self.eager_exec(&migration)?;
+                self.eager_exec(migration)?;
                 did_migrate = true;
-                store_completed_migration((domain, index, migration))?;
+                store_completed_migration((domain, index, (*migration).to_string()))?;
             }
 
             if did_migrate {
@@ -167,13 +162,17 @@ mod test {
             )
             .unwrap();
 
-        // Verify it got added to the migrations table
+        // Verify it got added to the migrations table (stored as-is, not formatted)
         assert_eq!(
             &connection
                 .select::<String>("SELECT (migration) FROM migrations")
                 .unwrap()()
             .unwrap()[..],
-            &[indoc! {"CREATE TABLE test1 (a TEXT, b TEXT)"}],
+            &[indoc! {"
+                CREATE TABLE test1 (
+                    a TEXT,
+                    b TEXT
+                )"}],
         );
 
         // Add another step to the migration and run it again
@@ -196,15 +195,23 @@ mod test {
             )
             .unwrap();
 
-        // Verify it is also added to the migrations table
+        // Verify it is also added to the migrations table (stored as-is)
         assert_eq!(
             &connection
                 .select::<String>("SELECT (migration) FROM migrations")
                 .unwrap()()
             .unwrap()[..],
             &[
-                indoc! {"CREATE TABLE test1 (a TEXT, b TEXT)"},
-                indoc! {"CREATE TABLE test2 (c TEXT, d TEXT)"},
+                indoc! {"
+                    CREATE TABLE test1 (
+                        a TEXT,
+                        b TEXT
+                    )"},
+                indoc! {"
+                    CREATE TABLE test2 (
+                        c TEXT,
+                        d TEXT
+                    )"},
             ],
         );
     }
@@ -335,7 +342,7 @@ mod test {
             ],
             |_, old, new| {
                 assert_eq!(old, "CREATE TABLE test (col INTEGER)");
-                assert_eq!(new, "CREATE TABLE test (color INTEGER)");
+                assert_eq!(new, "CREATE TABLE test (color INTEGER )");
                 migration_changed = true;
                 false
             },

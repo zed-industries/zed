@@ -34,6 +34,60 @@ use worktree::{
 
 use crate::{ProjectPath, search::SearchQuery};
 
+/// Returns `true` if background scanning should be deferred for the given path.
+///
+/// Large directories like the home directory or root directory contain hundreds of
+/// thousands of files, and scanning them causes extreme CPU usage. For these paths,
+/// we disable background scanning entirely.
+fn should_defer_scanning(abs_path: &Path) -> bool {
+    let home_dir = util::paths::home_dir();
+
+    // Root directory
+    if abs_path.parent().is_none() {
+        return true;
+    }
+
+    // Home directory
+    if abs_path == home_dir.as_path() {
+        return true;
+    }
+
+    // macOS system directories that are known to be large
+    #[cfg(target_os = "macos")]
+    {
+        let problematic_children = ["Library", "Applications", ".Trash"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
+    // Linux directories that are known to be large
+    #[cfg(target_os = "linux")]
+    {
+        let problematic_children = [".local", ".cache", ".config"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
+    // Windows directories that are known to be large
+    #[cfg(target_os = "windows")]
+    {
+        let problematic_children = ["AppData"];
+        for child in problematic_children {
+            if abs_path == home_dir.join(child) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
@@ -584,6 +638,7 @@ impl WorktreeStore {
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
         let scanning_enabled = self.scanning_enabled;
+        let defer_initial_scan = should_defer_scanning(abs_path.as_path());
 
         cx.spawn(async move |this, cx| {
             let worktree = Worktree::local(
@@ -592,6 +647,7 @@ impl WorktreeStore {
                 fs,
                 next_entry_id,
                 scanning_enabled,
+                defer_initial_scan,
                 cx,
             )
             .await;
@@ -1208,5 +1264,78 @@ impl WorktreeHandle {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_should_defer_scanning_root() {
+        // Root directory should always defer (Unix only - "/" is not root on Windows)
+        assert!(should_defer_scanning(Path::new("/")));
+    }
+
+    #[test]
+    fn test_should_defer_scanning_home() {
+        // Home directory should defer
+        let home = util::paths::home_dir();
+        assert!(should_defer_scanning(&home));
+    }
+
+    #[test]
+    fn test_should_defer_scanning_regular_project() {
+        // Regular project directories should not defer
+        let home = util::paths::home_dir();
+        let project_path = home.join("Projects").join("my-project");
+        assert!(!should_defer_scanning(&project_path));
+
+        let code_path = home.join("code").join("rust-app");
+        assert!(!should_defer_scanning(&code_path));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_should_defer_scanning_macos_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // macOS large directories should defer
+        assert!(should_defer_scanning(&home.join("Library")));
+        assert!(should_defer_scanning(&home.join("Applications")));
+        assert!(should_defer_scanning(&home.join(".Trash")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(
+            &home.join("Library").join("Application Support")
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_should_defer_scanning_linux_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // Linux large directories should defer
+        assert!(should_defer_scanning(&home.join(".local")));
+        assert!(should_defer_scanning(&home.join(".cache")));
+        assert!(should_defer_scanning(&home.join(".config")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(&home.join(".local").join("share")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_should_defer_scanning_windows_system_dirs() {
+        let home = util::paths::home_dir();
+
+        // Windows large directories should defer
+        assert!(should_defer_scanning(&home.join("AppData")));
+
+        // But subdirectories should not
+        assert!(!should_defer_scanning(&home.join("AppData").join("Local")));
     }
 }

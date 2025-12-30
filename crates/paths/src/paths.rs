@@ -155,6 +155,14 @@ pub fn temp_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the WASM compilation cache directory.
+///
+/// This is where compiled WASM modules are cached to avoid recompilation on startup.
+pub fn wasm_cache_dir() -> &'static PathBuf {
+    static WASM_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    WASM_CACHE_DIR.get_or_init(|| temp_dir().join("wasm-cache"))
+}
+
 /// Returns the path to the hang traces directory.
 pub fn hang_traces_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
