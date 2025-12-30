@@ -4,12 +4,13 @@ mod syntax_graph;
 mod syntax_tree;
 
 use collections::FxHashMap;
+use language::DiffOptions;
 pub use syntax_graph::{SyntaxEdge, SyntaxPath, SyntaxVertex};
 pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_tree};
 
 use std::ops::Range;
 
-use crate::syntax_graph::ExceededGraphLimit;
+use crate::{syntax_graph::ExceededGraphLimit, syntax_tree::SyntaxHint};
 
 /// Default graph limit (10 million vertices).
 pub const DEFAULT_GRAPH_LIMIT: usize = 10_000_000;
@@ -107,12 +108,17 @@ pub fn diff_trees(
         }
     }
 
-    let lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
-    let rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
+    let mut lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
+    let mut rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
+
+    let (lhs_replace_ranges, rhs_replace_ranges) =
+        collect_replace_ranges(lhs_tree, rhs_tree, &lhs_change_map);
+    lhs_ranges.extend(lhs_replace_ranges);
+    rhs_ranges.extend(rhs_replace_ranges);
 
     Ok(SyntaxDiff {
-        lhs_ranges,
-        rhs_ranges,
+        lhs_ranges: merge_ranges(lhs_ranges),
+        rhs_ranges: merge_ranges(rhs_ranges),
     })
 }
 
@@ -123,37 +129,76 @@ fn collect_novel_ranges(
     let mut ranges = Vec::new();
 
     for (id, change) in change_map.iter() {
-        match change {
-            SyntaxChange::Novel => {
-                let node = tree.get(*id);
+        if let SyntaxChange::Novel = change {
+            let node = tree.get(*id);
 
-                if node.is_atom() {
-                    ranges.push(node.byte_range.clone());
-                } else {
-                    let open = node.open_delimiter_range();
-                    let close = node.close_delimiter_range();
+            if node.is_atom() {
+                ranges.push(node.byte_range.clone());
+            } else {
+                let open = node.open_delimiter_range();
+                let close = node.close_delimiter_range();
 
-                    if !open.is_empty() {
-                        ranges.push(open);
-                    }
+                if !open.is_empty() {
+                    ranges.push(open);
+                }
 
-                    if !close.is_empty() {
-                        ranges.push(close);
-                    }
+                if !close.is_empty() {
+                    ranges.push(close);
                 }
             }
-            SyntaxChange::Replaced(_, _) => {
-                ranges.push(tree.get(*id).byte_range.clone());
-            }
-            _ => {}
         }
     }
 
+    ranges
+}
+
+fn collect_replace_ranges(
+    lhs_tree: &SyntaxTree,
+    rhs_tree: &SyntaxTree,
+    lhs_change_map: &FxHashMap<SyntaxId, SyntaxChange>,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let mut lhs_ranges = Vec::new();
+    let mut rhs_ranges = Vec::new();
+
+    for (lhs_id, change) in lhs_change_map.iter() {
+        if let SyntaxChange::Replaced(_, rhs_id) = change {
+            let lhs_node = lhs_tree.get(*lhs_id);
+            let rhs_node = rhs_tree.get(*rhs_id);
+
+            if let (
+                Some(SyntaxHint::Comment(lhs_comment)),
+                Some(SyntaxHint::Comment(rhs_comment)),
+            ) = (lhs_node.hint.as_ref(), rhs_node.hint.as_ref())
+            {
+                let (lhs_word_ranges, rhs_word_ranges) =
+                    language::word_diff_ranges(lhs_comment, rhs_comment, DiffOptions::default());
+
+                // Convert relative ranges to absolute byte positions
+                let lhs_offset = lhs_node.byte_range.start;
+                let rhs_offset = rhs_node.byte_range.start;
+
+                lhs_ranges.extend(
+                    lhs_word_ranges
+                        .into_iter()
+                        .map(|r| (r.start + lhs_offset)..(r.end + lhs_offset)),
+                );
+                rhs_ranges.extend(
+                    rhs_word_ranges
+                        .into_iter()
+                        .map(|r| (r.start + rhs_offset)..(r.end + rhs_offset)),
+                );
+            }
+        }
+    }
+
+    (lhs_ranges, rhs_ranges)
+}
+
+fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     if ranges.is_empty() {
         return ranges;
     }
 
-    // Merge overlapping/adjacent ranges
     ranges.sort_by_key(|r| r.start);
     let mut merged = vec![ranges[0].clone()];
 

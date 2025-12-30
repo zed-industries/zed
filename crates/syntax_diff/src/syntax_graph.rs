@@ -260,8 +260,6 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         let lhs_id = v.lhs.id().unwrap();
         let rhs_id = v.rhs.id().unwrap();
 
-        // TODO: We never create edges of type replaced
-
         // Both nodes have same structure - unchanged
         if lhs_node.structural_hash == rhs_node.structural_hash {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();

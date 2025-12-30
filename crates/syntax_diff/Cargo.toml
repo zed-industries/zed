@@ -14,6 +14,7 @@ path = "src/syntax_diff.rs"
 tree-sitter.workspace = true
 collections.workspace = true
 strsim.workspace = true
+language.workspace = true
 
 [dev-dependencies]
 tree-sitter-json.workspace = true
