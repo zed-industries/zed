@@ -975,7 +975,10 @@ impl CompletionsMenu {
                         let detail_label = detail_info.map(|(text, highlights)| {
                             div()
                                 .ml_4()
-                                .flex_shrink_0()
+                                .flex_shrink()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
                                 .text_sm()
                                 .text_color(if is_deprecated {
                                     cx.theme().colors().text_muted
@@ -990,6 +993,22 @@ impl CompletionsMenu {
                                 )
                                 .into_any_element()
                         });
+
+                        let completion_row = h_flex()
+                            .flex_grow()
+                            .min_w_0()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .flex_shrink_0()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(completion_label),
+                            )
+                            .when_some(detail_label, |this, detail_label| {
+                                this.child(detail_label)
+                            });
 
                         let start_slot = completion
                             .color()
@@ -1030,8 +1049,7 @@ impl CompletionsMenu {
                                         }
                                     }))
                                     .start_slot::<AnyElement>(start_slot)
-                                    .child(h_flex().overflow_hidden().child(completion_label))
-                                    .end_slot::<AnyElement>(detail_label),
+                                    .child(completion_row),
                             )
                     })
                     .collect()
