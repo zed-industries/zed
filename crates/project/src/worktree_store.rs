@@ -1,25 +1,18 @@
 use std::{
-    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    pin::pin,
     sync::{Arc, atomic::AtomicUsize},
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use fs::{Fs, copy_recursive};
-use futures::{FutureExt, SinkExt, future::Shared};
+use futures::{FutureExt, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
-use postage::oneshot;
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
-};
-use smol::{
-    channel::{Receiver, Sender},
-    stream::StreamExt,
 };
 use text::ReplicaId;
 use util::{
@@ -29,16 +22,10 @@ use util::{
 };
 use worktree::{
     CreatedEntry, Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
-    WorktreeId, WorktreeSettings,
+    WorktreeId,
 };
 
-use crate::{ProjectPath, search::SearchQuery};
-
-struct MatchingEntry {
-    worktree_root: Arc<Path>,
-    path: ProjectPath,
-    respond: oneshot::Sender<ProjectPath>,
-}
+use crate::ProjectPath;
 
 enum WorktreeStoreState {
     Local {
