@@ -11,7 +11,9 @@ use gpui::{
     TextStyleRefinement, WeakEntity,
 };
 
-use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
+use settings::{
+    CenteredPaddingSettings, CodeFade, DelayMs, FontSize, InactiveOpacity, MinimumContrast,
+};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,6 +107,7 @@ macro_rules! impl_newtype_numeric_stepper_int {
 #[rustfmt::skip]
 impl_newtype_numeric_stepper_float!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
 impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
+impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
 impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
@@ -463,7 +466,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                         .on_click(on_reset),
                 )
             })
-            .child(
+            .child({
+                let on_change_for_increment = self.on_change.clone();
+
                 h_flex()
                     .map(|decrement| {
                         let decrement_handler = {
@@ -502,7 +507,12 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 .on_click(decrement_handler),
                         )
                     })
-                    .child(
+                    .child({
+                        let editor_tab_index = tab_index.as_mut().map(|ti| {
+                            *ti += 1;
+                            *ti - 1
+                        });
+
                         h_flex()
                             .min_w_16()
                             .size_full()
@@ -517,10 +527,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     .justify_center()
                                     .child(Label::new((self.format)(&self.value)))
                                     .into_any_element(),
-                                NumberFieldMode::Edit => h_flex()
-                                    .flex_1()
-                                    .child(window.use_state(cx, {
-                                        |window, cx| {
+                                NumberFieldMode::Edit => {
+                                    let editor = window.use_state(cx, {
+                                        move |window, cx| {
                                             let mut editor = Editor::single_line(window, cx);
 
                                             editor.set_text_style_refinement(TextStyleRefinement {
@@ -615,22 +624,34 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                             })
                                             .detach();
 
-                                            window.focus(&editor.focus_handle(cx), cx);
-
                                             editor
                                         }
-                                    }))
-                                    .on_action::<menu::Confirm>({
-                                        move |_, window, _| {
-                                            window.blur();
-                                        }
-                                    })
-                                    .into_any_element(),
-                            }),
-                    )
+                                    });
+
+                                    let focus_handle = editor.focus_handle(cx);
+
+                                    let configured_handle = if let Some(ti) = editor_tab_index {
+                                        focus_handle.tab_index(ti).tab_stop(true)
+                                    } else {
+                                        focus_handle
+                                    };
+
+                                    h_flex()
+                                        .flex_1()
+                                        .track_focus(&configured_handle)
+                                        .child(editor)
+                                        .on_action::<menu::Confirm>({
+                                            move |_, window, _| {
+                                                window.blur();
+                                            }
+                                        })
+                                        .into_any_element()
+                                }
+                            })
+                    })
                     .map(|increment| {
                         let increment_handler = {
-                            let on_change = self.on_change.clone();
+                            let on_change = on_change_for_increment.clone();
                             let get_current_value = get_current_value.clone();
                             let update_editor_text = update_editor_text.clone();
 
@@ -664,8 +685,8 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 )
                                 .on_click(increment_handler),
                         )
-                    }),
-            )
+                    })
+            })
     }
 }
 
