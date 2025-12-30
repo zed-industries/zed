@@ -1874,14 +1874,15 @@ pub(crate) fn next_subword_end(
         let new_point = next_char(map, point, allow_cross_newline);
 
         let mut crossed_newline = false;
-        let mut need_backtrack = false;
+        let mut need_next_char = false;
         let new_point =
-            movement::find_boundary(map, new_point, FindRange::MultiLine, |left, right| {
+            movement::find_boundary_exclusive(map, new_point, FindRange::MultiLine, |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
+                    need_next_char = true;
                     return true;
                 }
 
@@ -1889,19 +1890,16 @@ pub(crate) fn next_subword_end(
                 let is_subword_end =
                     left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
 
-                let found = !left.is_whitespace() && !at_newline && (is_word_end || is_subword_end);
-
-                if found && (is_word_end || is_subword_end) {
-                    need_backtrack = true;
-                }
+                let found = !left.is_whitespace() && (is_word_end || is_subword_end);
 
                 crossed_newline |= at_newline;
                 found
             });
-        let mut new_point = map.clip_point(new_point, Bias::Left);
-        if need_backtrack {
-            *new_point.column_mut() -= 1;
-        }
+        let new_point = if need_next_char {
+            next_char(map, new_point, true)
+        } else {
+            new_point
+        };
         let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
