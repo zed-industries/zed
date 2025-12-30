@@ -179,33 +179,6 @@ impl SyntaxTree {
             current: Some(node),
         }
     }
-
-    /// Returns an iterator over the children of the given node.
-    pub fn children(&self, id: SyntaxId) -> ChildrenIter<'_> {
-        ChildrenIter {
-            tree: self,
-            current: self.first_child(id),
-        }
-    }
-
-    /// Returns an iterator over the ancestors of the given node (parent, grandparent, etc.).
-    pub fn ancestors(&self, id: SyntaxId) -> AncestorsIter<'_> {
-        AncestorsIter {
-            tree: self,
-            current: self.parent(id),
-        }
-    }
-
-    /// Returns an iterator over all descendants of the given node in preorder.
-    pub fn descendants(&self, id: SyntaxId) -> DescendantsIter {
-        let node = self.get(id);
-        let start = id.index() + 1;
-
-        DescendantsIter {
-            current: start,
-            end: start + node.descendant_count,
-        }
-    }
 }
 
 impl Default for SyntaxTree {
@@ -213,65 +186,6 @@ impl Default for SyntaxTree {
         Self::new()
     }
 }
-
-/// Iterator over the children of a node.
-pub struct ChildrenIter<'a> {
-    tree: &'a SyntaxTree,
-    current: Option<SyntaxId>,
-}
-
-impl Iterator for ChildrenIter<'_> {
-    type Item = SyntaxId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let id = self.current?;
-        self.current = self.tree.next_sibling(id);
-        Some(id)
-    }
-}
-
-/// Iterator over the ancestors of a node.
-pub struct AncestorsIter<'a> {
-    tree: &'a SyntaxTree,
-    current: Option<SyntaxId>,
-}
-
-impl Iterator for AncestorsIter<'_> {
-    type Item = SyntaxId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let id = self.current?;
-        self.current = self.tree.parent(id);
-        Some(id)
-    }
-}
-
-/// Iterator over descendants in preorder.
-pub struct DescendantsIter {
-    current: usize,
-    end: usize,
-}
-
-impl Iterator for DescendantsIter {
-    type Item = SyntaxId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current < self.end {
-            let id = SyntaxId::new(self.current);
-            self.current += 1;
-            Some(id)
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.end - self.current;
-        (remaining, Some(remaining))
-    }
-}
-
-impl ExactSizeIterator for DescendantsIter {}
 
 /// A cursor for navigating a syntax tree.
 ///
@@ -608,49 +522,6 @@ mod tests {
     }
 
     #[test]
-    fn children_and_siblings() {
-        let tree = parse_json("[1, 2, 3]");
-        let root_id = tree.root().unwrap();
-
-        if let Some(array_id) = tree.first_child(root_id) {
-            let children: Vec<_> = tree.children(array_id).collect();
-
-            for (i, child_id) in children.iter().enumerate() {
-                assert_eq!(tree.parent(*child_id), Some(array_id));
-
-                if i + 1 < children.len() {
-                    assert_eq!(tree.next_sibling(*child_id), Some(children[i + 1]));
-                } else {
-                    assert!(tree.next_sibling(*child_id).is_none());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn ancestors_and_descendants() {
-        let tree = parse_json(r#"{"a": {"b": 1}}"#);
-        let root_id = tree.root().unwrap();
-
-        assert_eq!(tree.ancestors(root_id).count(), 0);
-
-        for id in tree.preorder() {
-            let node = tree.get(id);
-            let descendants: Vec<_> = tree.descendants(id).collect();
-            assert_eq!(descendants.len(), node.descendant_count);
-
-            if node.is_atom() {
-                assert!(tree.first_child(id).is_none());
-                assert_eq!(tree.children(id).count(), 0);
-            }
-        }
-
-        let descendants = tree.descendants(root_id);
-        let (lower, upper) = descendants.size_hint();
-        assert_eq!(Some(lower), upper);
-    }
-
-    #[test]
     fn cursor_navigation() {
         let tree = parse_json(r#"{"a": 1}"#);
         let mut cursor = tree.cursor();
@@ -723,7 +594,7 @@ mod tests {
 
         let mut max_depth = 0;
         for id in tree.preorder() {
-            max_depth = max_depth.max(tree.ancestors(id).count());
+            max_depth = max_depth.max(tree.get(id).depth);
         }
         assert!(max_depth >= 3);
 
@@ -751,7 +622,7 @@ mod tests {
         let tree = parse_json(&json);
         let mut max_depth = 0;
         for id in tree.preorder() {
-            max_depth = max_depth.max(tree.ancestors(id).count());
+            max_depth = max_depth.max(tree.get(id).depth);
         }
         assert!(max_depth >= 20);
     }
