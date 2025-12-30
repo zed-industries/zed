@@ -176,7 +176,7 @@ struct SynthesizeArgs {
     max_commits: usize,
 
     /// Output directory for draft examples
-    #[clap(long, default_value = "staging")]
+    #[clap(short = 'o', long)]
     output_dir: PathBuf,
 
     /// Only generate examples that require retrieved context to make a correct prediction
