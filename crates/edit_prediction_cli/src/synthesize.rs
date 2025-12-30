@@ -1,11 +1,12 @@
 use crate::{
     anthropic_client::PlainLlmClient,
     git::{ensure_repo_cloned, run_git},
-    paths::SYNTHESIZE_STATE_FILE,
-    progress::{InfoStyle, Progress, Step},
+    paths::{FAILED_EXAMPLES_DIR, SYNTHESIZE_STATE_FILE},
+    progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anthropic::{Message, RequestContent, ResponseContent, Role, Tool, ToolChoice};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use chrono::Local;
 use collections::{HashMap, HashSet};
 use edit_prediction::{
     example_spec::{ExampleSpec, INLINE_CURSOR_MARKER},
@@ -79,25 +80,16 @@ struct CommitInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PatternCandidate {
-    file_path: String,
+struct ExampleCandidate {
+    name: String,
+    cursor_file: String,
+    edit_history_files: Vec<String>,
     edit_history_description: String,
     expected_patch_description: String,
     cursor_location_hint: String,
     reasoning: String,
     #[serde(default)]
     requires_context: bool,
-}
-
-#[derive(Debug)]
-struct FormulatedExample {
-    reasoning: String,
-    edit_history: String,
-    cursor_path: String,
-    cursor_excerpt: String,
-    cursor_offset: usize,
-    expected_patch: String,
-    tags: Vec<String>,
 }
 
 pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
@@ -152,9 +144,9 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
             );
             let step_progress = Arc::new(progress.start(Step::Synthesize, &commit_label));
 
-            // Turn 1: Identify patterns using tool calls
-            step_progress.set_substatus("identifying patterns...");
-            let patterns = match identify_patterns(
+            // Turn 1: Identify edit predication example candidates
+            step_progress.set_substatus("identifying candidates...");
+            let example_candidates = match identify_example_candidates(
                 &client,
                 &config,
                 &commit,
@@ -163,7 +155,7 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
             )
             .await
             {
-                Ok(patterns) => patterns,
+                Ok(candidates) => candidates,
                 Err(e) => {
                     step_progress.set_info(format!("error: {:?}", e), InfoStyle::Warning);
                     state.mark_processed(&config.repo_url, &commit.sha, 0);
@@ -172,61 +164,88 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
                 }
             };
 
-            if patterns.is_empty() {
-                step_progress.set_info("no patterns", InfoStyle::Normal);
+            if example_candidates.is_empty() {
+                step_progress.set_info("no candidates", InfoStyle::Normal);
                 state.mark_processed(&config.repo_url, &commit.sha, 0);
                 state.save()?;
                 continue;
             }
 
-            // Turn 2: Formulate each pattern into a precise example
+            // Turn 2: Formulate each candidate into a precise example
             let mut valid_examples = Vec::new();
-            for (i, pattern) in patterns.iter().enumerate() {
+            for (i, pattern) in example_candidates.iter().enumerate() {
                 if examples_generated + valid_examples.len() >= config.count {
                     break;
                 }
 
-                step_progress.set_substatus(format!("formulating {}/{}...", i + 1, patterns.len()));
+                step_progress.set_substatus(format!(
+                    "formulating {}/{}...",
+                    i + 1,
+                    example_candidates.len()
+                ));
 
-                // Fetch file contents for this pattern
-                let file_context =
-                    match get_file_context(&repo_path, &commit.sha, &pattern.file_path).await {
-                        Ok(ctx) => ctx,
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to get file context for {}: {:?}",
-                                pattern.file_path,
-                                e
-                            );
-                            continue;
+                // Collect all unique files (edit history files + cursor file)
+                let mut all_files: Vec<String> = pattern.edit_history_files.clone();
+                if !all_files.contains(&pattern.cursor_file) {
+                    all_files.push(pattern.cursor_file.clone());
+                }
+
+                // Fetch file contents for all files uniformly
+                let mut file_contexts = Vec::new();
+                let mut skip_pattern = false;
+                for file_path in &all_files {
+                    match get_file_context(&repo_path, &commit.sha, file_path).await {
+                        Ok(ctx) => {
+                            let file_diff = extract_file_diff(&commit.diff, file_path).ok();
+                            file_contexts.push((file_path.clone(), ctx, file_diff));
                         }
-                    };
-
-                let file_diff = match extract_file_diff(&commit.diff, &pattern.file_path) {
-                    Ok(diff) => diff,
-                    Err(e) => {
-                        log::warn!("Failed to extract diff for {}: {:?}", pattern.file_path, e);
-                        continue;
+                        Err(e) => {
+                            log::warn!("Failed to get file context for {}: {:?}", file_path, e);
+                            skip_pattern = true;
+                            break;
+                        }
                     }
-                };
+                }
+                if skip_pattern {
+                    continue;
+                }
 
-                match formulate_example(
+                let spec = match formulate_example(
                     &client,
                     pattern,
-                    &file_context,
-                    &file_diff,
+                    &file_contexts,
                     step_progress.clone(),
                 )
                 .await
                 {
-                    Ok(Some(example)) => {
-                        valid_examples.push(example);
-                    }
+                    Ok(Some(spec)) => spec,
                     Ok(None) => {
-                        log::debug!("Pattern did not produce a valid example");
+                        log::debug!("Cannot formulate example");
+                        continue;
                     }
                     Err(e) => {
                         log::warn!("Failed to formulate example: {:?}", e);
+                        continue;
+                    }
+                };
+
+                match validate_example(&spec, &file_contexts) {
+                    Ok(()) => {
+                        valid_examples.push(spec);
+                    }
+                    Err(rejection_reason) => {
+                        log::debug!("Example rejected: {}", rejection_reason);
+                        // Write rejected example to failed examples directory
+                        let timestamp = Local::now().format("%Y-%m-%d--%H-%M-%S%.3f");
+                        let filename = format!("{}.md", timestamp);
+                        let path = FAILED_EXAMPLES_DIR.join(&filename);
+                        let content = format_rejected_example(&spec, &rejection_reason);
+                        if let Err(e) = std::fs::write(&path, content) {
+                            log::warn!("Failed to write rejected example: {:?}", e);
+                        } else {
+                            step_progress
+                                .set_info(format!("rejected: {}", filename), InfoStyle::Warning);
+                        }
                     }
                 }
             }
@@ -241,13 +260,16 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
             let count = valid_examples.len();
             step_progress.set_info(format!("{} valid", count), InfoStyle::Normal);
 
-            for (i, example) in valid_examples.into_iter().enumerate() {
+            for mut spec in valid_examples.into_iter() {
                 if examples_generated >= config.count {
                     break;
                 }
 
-                let spec = build_example_spec(&config.repo_url, &commit.parent_sha, i, example);
-                let path = config.output_dir.join(format!("{}.md", spec.filename()));
+                spec.repository_url = config.repo_url.clone();
+                spec.revision = commit.parent_sha.clone();
+
+                let timestamp = Local::now().format("%Y-%m-%d--%H-%M-%S");
+                let path = config.output_dir.join(format!("{}.md", timestamp));
                 std::fs::write(&path, spec.to_markdown())?;
                 examples_generated += 1;
             }
@@ -396,21 +418,30 @@ fn build_tools() -> Vec<Tool> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "file_path": {
+                    "name": {
                         "type": "string",
-                        "description": "Path to the file containing the predictable edit pattern"
+                        "description": "A short, commit-message-like description of the edit pattern (e.g., 'add new field to struct and update constructor', 'rename method and update call sites'). Should be lowercase, concise (under 60 chars), and describe the pattern."
+                    },
+                    "cursor_file": {
+                        "type": "string",
+                        "description": "Path to the file where the cursor will be positioned and where the expected patch will be applied"
+                    },
+                    "edit_history_files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of file paths whose changes form the edit history (the pattern to follow). Can include the cursor file and/or other files. Changes from these files establish the pattern that informs the prediction."
                     },
                     "edit_history_description": {
                         "type": "string",
-                        "description": "Description of which changes in the diff establish the pattern (the changes that come BEFORE the predicted edit). Reference specific hunks, line numbers, or code snippets."
+                        "description": "Description of which changes in the diff establish the pattern (the changes that come BEFORE the predicted edit). Reference specific files, hunks, line numbers, or code snippets."
                     },
                     "expected_patch_description": {
                         "type": "string",
-                        "description": "Description of which change should be predicted (the change that logically follows from the edit history). This should be a small change (1-10 lines)."
+                        "description": "Description of which change should be predicted (the change that logically follows from the edit history). This should be a small change (1-10 lines) in the cursor_file."
                     },
                     "cursor_location_hint": {
                         "type": "string",
-                        "description": "Description of where the cursor should be positioned - this is the location where the expected patch will be applied, described relative to surrounding code."
+                        "description": "Description of where the cursor should be positioned in cursor_file - this is the location where the expected patch will be applied, described relative to surrounding code."
                     },
                     "reasoning": {
                         "type": "string",
@@ -418,10 +449,10 @@ fn build_tools() -> Vec<Tool> {
                     },
                     "requires_context": {
                         "type": "boolean",
-                        "description": "Whether this prediction requires information from outside the immediate edit history (e.g., type definitions, function signatures from elsewhere in the file)"
+                        "description": "Whether this prediction requires information from outside the immediate edit history (e.g., type definitions, function signatures from elsewhere in the codebase)"
                     }
                 },
-                "required": ["file_path", "edit_history_description", "expected_patch_description", "cursor_location_hint", "reasoning"]
+                "required": ["name", "cursor_file", "edit_history_files", "edit_history_description", "expected_patch_description", "cursor_location_hint", "reasoning"]
             }),
         },
         Tool {
@@ -480,6 +511,8 @@ fn build_identification_prompt(
             - Adding a feature flag check in one place, then adding it to similar places
             - Changing an API pattern (e.g., sync to async), then updating other usages
             - Adding error handling to one function call, then adding similar handling to related calls
+            - Modifying a struct/type definition in one file, then updating usages in another file
+            - Adding a new method to a trait/interface, then implementing it in another file
 
             BAD examples (DO NOT identify these):
             - File renames and updating import paths
@@ -510,6 +543,8 @@ fn build_identification_prompt(
             Remember:
             - Focus on code changes, not paths/comments/strings
             - The edit history establishes a pattern; the expected patch follows that pattern
+            - Edit history can span multiple files (e.g., a type definition change in one file informs updates in another)
+            - The cursor_file is where the prediction happens; edit_history_files are where the pattern is established
         "#},
         context_guidance = context_guidance,
         repo_url = config.repo_url,
@@ -520,14 +555,14 @@ fn build_identification_prompt(
     )
 }
 
-async fn identify_patterns(
+async fn identify_example_candidates(
     client: &PlainLlmClient,
     config: &SynthesizeConfig,
     commit: &CommitInfo,
-    max_patterns: usize,
-    step_progress: Arc<crate::progress::StepProgress>,
-) -> Result<Vec<PatternCandidate>> {
-    let prompt = build_identification_prompt(config, commit, max_patterns);
+    max_examples: usize,
+    step_progress: Arc<StepProgress>,
+) -> Result<Vec<ExampleCandidate>> {
+    let prompt = build_identification_prompt(config, commit, max_examples);
     let tools = build_tools();
     let messages = vec![Message {
         role: Role::User,
@@ -554,7 +589,7 @@ async fn identify_patterns(
     for content in &response.content {
         if let ResponseContent::ToolUse { name, input, .. } = content {
             if name == "formulate_example" {
-                if let Ok(candidate) = serde_json::from_value::<PatternCandidate>(input.clone()) {
+                if let Ok(candidate) = serde_json::from_value::<ExampleCandidate>(input.clone()) {
                     patterns.push(candidate);
                 }
             } else if name == "no_predictable_pattern" {
@@ -567,17 +602,53 @@ async fn identify_patterns(
 }
 
 fn build_formulation_prompt(
-    pattern: &PatternCandidate,
-    file_context: &FileContext,
-    file_diff: &str,
+    pattern: &ExampleCandidate,
+    file_contexts: &[(String, FileContext, Option<String>)],
 ) -> String {
+    // Build file contexts section
+    let mut file_contexts_section = String::new();
+    for (file_path, context, diff) in file_contexts {
+        let is_cursor_file = file_path == &pattern.cursor_file;
+        let is_edit_history_file = pattern.edit_history_files.contains(file_path);
+
+        let mut annotations = Vec::new();
+        if is_cursor_file {
+            annotations.push("CURSOR FILE");
+        }
+        if is_edit_history_file {
+            annotations.push("EDIT HISTORY");
+        }
+        let annotation_str = if annotations.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", annotations.join(", "))
+        };
+
+        file_contexts_section.push_str(&format!(
+            "### {}{}\n\n**Before:**\n```\n{}\n```\n\n**After:**\n```\n{}\n```\n\n",
+            file_path, annotation_str, context.before_content, context.after_content
+        ));
+        if let Some(d) = diff {
+            file_contexts_section.push_str(&format!("**Diff:**\n```diff\n{}\n```\n\n", d));
+        }
+    }
+
+    // Get first edit history file for the output format example
+    let first_edit_file: &str = pattern
+        .edit_history_files
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or(&pattern.cursor_file);
+
     format!(
         indoc! {r#"
         You are formulating a precise edit prediction example based on a pattern that was identified in a commit.
 
         ## Pattern Description
 
-        **File:** {file_path}
+        **Cursor File (where prediction happens):** {cursor_file}
+
+        **Edit History Files:** {edit_history_files:?}
 
         **Edit History (changes that establish the pattern):**
         {edit_history_description}
@@ -593,56 +664,48 @@ fn build_formulation_prompt(
 
         **Requires Context:** {requires_context}
 
-        ## File Contents BEFORE the Commit
+        ## File Contents
 
-        ```
-        {before_content}
-        ```
+        Files are annotated with their role:
+        - **CURSOR FILE**: Where the cursor is positioned and where the expected patch will be applied
+        - **EDIT HISTORY**: Files whose changes establish the pattern
 
-        ## File Contents AFTER the Commit
-
-        ```
-        {after_content}
-        ```
-
-        ## Diff for This File
-
-        ```diff
-        {file_diff}
-        ```
+        {file_contexts_section}
 
         ## Your Task
 
         Formulate the precise example in the following format. Be exact with the diff syntax and cursor positioning.
 
         CRITICAL RULES:
-        1. The CURSOR_POSITION excerpt must show the file state AFTER the edit_history changes have been applied, but BEFORE the expected_patch is applied.
-        2. The cursor marker should point to code that WILL BE CHANGED by the expected_patch.
-        3. The expected_patch must be a valid unified diff that applies to the cursor position context.
-        4. Place the cursor marker <|user_cursor|> INLINE at the exact position where the cursor should be. For example: `func(<|user_cursor|>)` or `let x = <|user_cursor|>value`.
+        1. The edit_history can include diffs from multiple files. Include ALL relevant changes that establish the pattern.
+        2. The CURSOR_POSITION excerpt must show the cursor file state AFTER the edit_history changes have been applied, but BEFORE the expected_patch is applied.
+        3. The cursor marker should point to code that WILL BE CHANGED by the expected_patch.
+        4. The expected_patch must be a valid unified diff that applies to the cursor file only.
+        5. Place the cursor marker <|user_cursor|> INLINE at the exact position where the cursor should be. For example: `func(<|user_cursor|>)` or `let x = <|user_cursor|>value`.
 
         Output your response in this EXACT format:
 
         EDIT_HISTORY:
         ```diff
-        --- a/{file_path}
-        +++ b/{file_path}
+        --- a/{first_edit_file}
+        +++ b/{first_edit_file}
         @@ -<line>,<count> +<line>,<count> @@
          <context line>
         -<removed line>
         +<added line>
          <context line>
         ```
+        (Include multiple file diffs if the edit history spans multiple files)
 
         CURSOR_POSITION:
         ```
-        <5-15 lines of code showing the file state AFTER edit_history is applied, with the cursor marker>
+        <5-15 lines of code from {cursor_file} showing the state AFTER edit_history is applied, with the cursor marker>
         ```
 
         EXPECTED_PATCH:
         ```diff
-        --- a/{file_path}
-        +++ b/{file_path}
+        --- a/{cursor_file}
+        +++ b/{cursor_file}
         @@ -<line>,<count> +<line>,<count> @@
          <context line>
         -<removed line>
@@ -653,26 +716,97 @@ fn build_formulation_prompt(
         If you cannot formulate a valid example (e.g., the pattern doesn't work as described), respond with:
         CANNOT_FORMULATE: <reason>
     "#},
-        file_path = pattern.file_path,
+        cursor_file = pattern.cursor_file,
+        edit_history_files = pattern.edit_history_files,
         edit_history_description = pattern.edit_history_description,
         expected_patch_description = pattern.expected_patch_description,
         cursor_location_hint = pattern.cursor_location_hint,
         reasoning = pattern.reasoning,
         requires_context = pattern.requires_context,
-        before_content = file_context.before_content,
-        after_content = file_context.after_content,
-        file_diff = file_diff,
+        file_contexts_section = file_contexts_section,
+        first_edit_file = first_edit_file,
     )
+}
+
+fn format_rejected_example(spec: &ExampleSpec, rejection_reason: &str) -> String {
+    let mut content = spec.to_markdown();
+    content.push_str("\n## Rejection Reason\n\n");
+    content.push_str(rejection_reason);
+    content.push_str("\n");
+    content
+}
+
+fn validate_example(
+    spec: &ExampleSpec,
+    file_contexts: &[(String, FileContext, Option<String>)],
+) -> Result<(), String> {
+    // Check for cursor marker
+    let (cursor_excerpt, _cursor_offset) = spec.cursor_excerpt().map_err(|e| {
+        format!(
+            "Cursor position missing cursor marker (<|user_cursor|> or [CURSOR_POSITION]): {}",
+            e
+        )
+    })?;
+
+    let cursor_path_str = spec.cursor_path.to_string_lossy();
+
+    let mut cursor_file_intermediate_state: Option<String> = None;
+
+    for (file_path, file_context, _) in file_contexts {
+        let file_edit_history = extract_file_diff(&spec.edit_history, file_path).ok();
+
+        // Compute intermediate state for this file
+        let intermediate_state = match &file_edit_history {
+            None => file_context.before_content.clone(),
+            Some(diff) => match apply_diff_to_string(&file_context.before_content, diff) {
+                Ok(state) => state,
+                Err(e) => {
+                    return Err(format!(
+                        "Edit history failed to apply to {}: {}",
+                        file_path, e
+                    ));
+                }
+            },
+        };
+
+        // Save cursor file's intermediate state for later validation
+        if file_path == cursor_path_str.as_ref() {
+            cursor_file_intermediate_state = Some(intermediate_state);
+        }
+    }
+
+    let cursor_intermediate_state = cursor_file_intermediate_state
+        .ok_or_else(|| format!("Cursor file {} not found in file contexts", cursor_path_str))?;
+
+    // Validate that cursor position text actually exists in the intermediate state
+    if !cursor_intermediate_state.contains(&cursor_excerpt) {
+        return Err(format!(
+            "Cursor position text not found in intermediate state (after applying edit_history). Looking for:\n{}\n",
+            cursor_excerpt
+        ));
+    }
+
+    // Validate that expected_patch applies to the intermediate state
+    for (i, patch) in spec.expected_patches.iter().enumerate() {
+        if let Err(e) = apply_diff_to_string(&cursor_intermediate_state, patch) {
+            return Err(format!(
+                "Expected patch {} failed to apply to intermediate state: {}",
+                i + 1,
+                e
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 async fn formulate_example(
     client: &PlainLlmClient,
-    pattern: &PatternCandidate,
-    file_context: &FileContext,
-    file_diff: &str,
+    pattern: &ExampleCandidate,
+    file_contexts: &[(String, FileContext, Option<String>)],
     step_progress: Arc<crate::progress::StepProgress>,
-) -> Result<Option<FormulatedExample>> {
-    let prompt = build_formulation_prompt(pattern, file_context, file_diff);
+) -> Result<Option<ExampleSpec>> {
+    let prompt = build_formulation_prompt(pattern, file_contexts);
 
     let messages = vec![Message {
         role: Role::User,
@@ -710,16 +844,15 @@ async fn formulate_example(
         return Ok(None);
     }
 
-    parse_formulated_example(&response_text, pattern, file_context)
+    parse_formulated_example(&response_text, pattern)
 }
 
 fn parse_formulated_example(
     response: &str,
-    pattern: &PatternCandidate,
-    file_context: &FileContext,
-) -> Result<Option<FormulatedExample>> {
+    pattern: &ExampleCandidate,
+) -> Result<Option<ExampleSpec>> {
     let mut edit_history = String::new();
-    let mut cursor_position = String::new();
+    let mut cursor_excerpt = String::new();
     let mut expected_patch = String::new();
 
     #[derive(PartialEq)]
@@ -756,7 +889,7 @@ fn parse_formulated_example(
                         edit_history = current_block.trim().to_string();
                     }
                     Section::CursorPosition => {
-                        cursor_position = current_block.trim().to_string();
+                        cursor_excerpt = current_block.trim().to_string();
                     }
                     Section::ExpectedPatch => {
                         expected_patch = current_block.trim().to_string();
@@ -777,71 +910,45 @@ fn parse_formulated_example(
         }
     }
 
-    if cursor_position.is_empty() || expected_patch.is_empty() {
+    if cursor_excerpt.is_empty() || expected_patch.is_empty() {
         return Ok(None);
     }
 
     let edit_history = strip_diff_metadata(&edit_history);
     let expected_patch = strip_diff_metadata(&expected_patch);
 
-    let cursor_offset = match cursor_position.find(INLINE_CURSOR_MARKER) {
-        Some(offset) => offset,
-        None => {
-            log::debug!("Cursor position missing cursor marker");
-            return Ok(None);
-        }
-    };
-    let cursor_excerpt = format!(
-        "{}{}",
-        &cursor_position[..cursor_offset],
-        &cursor_position[cursor_offset + INLINE_CURSOR_MARKER.len()..]
+    // Extract cursor offset from inline marker and format with set_cursor_excerpt
+    let cursor_offset = cursor_excerpt
+        .find(INLINE_CURSOR_MARKER)
+        .context("missing cursor marker")?;
+    cursor_excerpt.replace_range(
+        cursor_offset..cursor_offset + INLINE_CURSOR_MARKER.len(),
+        "",
     );
-
-    // Compute the intermediate state by applying edit_history to before_content
-    let intermediate_state = if edit_history.is_empty() {
-        file_context.before_content.clone()
-    } else {
-        match apply_diff_to_string(&file_context.before_content, &edit_history) {
-            Ok(state) => state,
-            Err(e) => {
-                log::debug!("Edit history failed to apply: {}", e);
-                return Ok(None);
-            }
-        }
-    };
-
-    // Validate that cursor position text actually exists in the intermediate state
-    if !intermediate_state.contains(&cursor_excerpt) {
-        log::debug!("Cursor position text not found in intermediate state");
-        return Ok(None);
-    }
-
-    // Validate that expected_patch applies to the intermediate state
-    if let Err(e) = apply_diff_to_string(&intermediate_state, &expected_patch) {
-        log::debug!(
-            "Expected patch failed to apply to intermediate state: {}",
-            e
-        );
-        return Ok(None);
-    }
 
     let mut tags = Vec::new();
     if pattern.requires_context {
         tags.push("requires-context".to_string());
     }
 
-    Ok(Some(FormulatedExample {
-        reasoning: pattern.reasoning.clone(),
-        edit_history,
-        cursor_path: pattern.file_path.clone(),
-        cursor_excerpt,
-        cursor_offset,
-        expected_patch,
+    let comment_prefix = line_comment_prefix(&pattern.cursor_file);
+
+    let mut spec = ExampleSpec {
+        name: pattern.name.clone(),
+        repository_url: String::new(),
+        revision: String::new(),
         tags,
-    }))
+        reasoning: Some(pattern.reasoning.clone()),
+        uncommitted_diff: String::new(),
+        cursor_path: Arc::from(Path::new(&pattern.cursor_file)),
+        cursor_position: String::new(),
+        edit_history,
+        expected_patches: vec![expected_patch],
+    };
+    spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, comment_prefix);
+    Ok(Some(spec))
 }
 
-/// Get line comment prefix based on file extension
 fn line_comment_prefix(file_path: &str) -> &'static str {
     let extension = file_path.rsplit('.').next().unwrap_or("");
     match extension {
@@ -854,41 +961,4 @@ fn line_comment_prefix(file_path: &str) -> &'static str {
         "erl" | "hrl" => "%",
         _ => "//",
     }
-}
-
-fn build_example_spec(
-    repo_url: &str,
-    parent_sha: &str,
-    index: usize,
-    example: FormulatedExample,
-) -> ExampleSpec {
-    let name = format!(
-        "{}.draft-{}-{}.md",
-        chrono::Local::now().format("%Y-%m-%d--%H-%M-%S"),
-        &parent_sha[..8.min(parent_sha.len())],
-        index
-    );
-
-    let comment_prefix = line_comment_prefix(&example.cursor_path);
-
-    let mut spec = ExampleSpec {
-        name,
-        repository_url: repo_url.to_string(),
-        // Use parent revision as the base state - edit_history transforms from here
-        revision: parent_sha.to_string(),
-        tags: example.tags,
-        reasoning: Some(example.reasoning),
-        uncommitted_diff: String::new(),
-        cursor_path: Path::new(&example.cursor_path).into(),
-        cursor_position: String::new(),
-        edit_history: example.edit_history,
-        expected_patches: vec![example.expected_patch],
-    };
-
-    spec.set_cursor_excerpt(
-        &example.cursor_excerpt,
-        example.cursor_offset,
-        comment_prefix,
-    );
-    spec
 }
