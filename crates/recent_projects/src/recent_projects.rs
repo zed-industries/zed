@@ -14,21 +14,25 @@ use remote::RemoteConnectionOptions;
 pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
+use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, Window,
+    Rems, Subscription, Task, WeakEntity, Window, rems,
 };
 use ordered_float::OrderedFloat;
 use picker::{
-    Picker, PickerDelegate,
+    Picker, PickerDelegate, PickerEditorPosition,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 pub use remote_connections::SshSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
 use std::{path::Path, sync::Arc};
-use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
+use ui::{
+    Divider, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip, prelude::*,
+    tooltip_container,
+};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
@@ -288,9 +292,16 @@ pub fn add_wsl_distro(
     });
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ProjectListStyle {
+    Modal,
+    Popover,
+}
+
 pub struct RecentProjects {
+    width: Rems,
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
-    rem_width: f32,
+    picker_focus_handle: FocusHandle,
     _subscription: Subscription,
 }
 
@@ -299,7 +310,8 @@ impl ModalView for RecentProjects {}
 impl RecentProjects {
     fn new(
         delegate: RecentProjectsDelegate,
-        rem_width: f32,
+        _style: ProjectListStyle,
+        width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -311,6 +323,11 @@ impl RecentProjects {
                 Picker::uniform_list(delegate, window, cx)
             }
         });
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
+        });
+
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
@@ -331,7 +348,8 @@ impl RecentProjects {
         .detach();
         Self {
             picker,
-            rem_width,
+            picker_focus_handle,
+            width,
             _subscription,
         }
     }
@@ -345,18 +363,45 @@ impl RecentProjects {
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
+            let delegate = RecentProjectsDelegate::new(
+                weak,
+                create_new_window,
+                true,
+                ProjectListStyle::Modal,
+                focus_handle,
+            );
 
-            Self::new(delegate, 34., window, cx)
+            Self::new(delegate, ProjectListStyle::Modal, rems(34.), window, cx)
         })
     }
+}
+
+pub fn popover(
+    workspace: WeakEntity<Workspace>,
+    create_new_window: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<RecentProjects> {
+    cx.new(|cx| {
+        let focus_handle = cx.focus_handle();
+        let delegate = RecentProjectsDelegate::new(
+            workspace,
+            create_new_window,
+            false,
+            ProjectListStyle::Popover,
+            focus_handle,
+        );
+        let list = RecentProjects::new(delegate, ProjectListStyle::Popover, rems(20.), window, cx);
+        list.focus_handle(cx).focus(window, cx);
+        list
+    })
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
 
 impl Focusable for RecentProjects {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.picker_focus_handle.clone()
     }
 }
 
@@ -364,7 +409,7 @@ impl Render for RecentProjects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("RecentProjects")
-            .w(rems(self.rem_width))
+            .w(self.width)
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.picker.update(cx, |this, cx| {
@@ -381,6 +426,7 @@ pub struct RecentProjectsDelegate {
     matches: Vec<StringMatch>,
     render_paths: bool,
     create_new_window: bool,
+    style: ProjectListStyle,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
     has_any_non_local_projects: bool,
@@ -392,6 +438,7 @@ impl RecentProjectsDelegate {
         workspace: WeakEntity<Workspace>,
         create_new_window: bool,
         render_paths: bool,
+        style: ProjectListStyle,
         focus_handle: FocusHandle,
     ) -> Self {
         Self {
@@ -401,6 +448,7 @@ impl RecentProjectsDelegate {
             matches: Default::default(),
             create_new_window,
             render_paths,
+            style,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
             focus_handle,
@@ -423,20 +471,63 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
-        let (create_window, reuse_window) = if self.create_new_window {
-            (
-                window.keystroke_text_for(&menu::Confirm),
-                window.keystroke_text_for(&menu::SecondaryConfirm),
+        match self.style {
+            ProjectListStyle::Modal => {
+                let (create_window, reuse_window) = if self.create_new_window {
+                    (
+                        window.keystroke_text_for(&menu::Confirm),
+                        window.keystroke_text_for(&menu::SecondaryConfirm),
+                    )
+                } else {
+                    (
+                        window.keystroke_text_for(&menu::SecondaryConfirm),
+                        window.keystroke_text_for(&menu::Confirm),
+                    )
+                };
+                Arc::from(format!(
+                    "{reuse_window} reuses this window, {create_window} opens a new one",
+                ))
+            }
+            ProjectListStyle::Popover => Arc::from("Search recent projects..."),
+        }
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        match self.style {
+            ProjectListStyle::Modal => PickerEditorPosition::Start,
+            ProjectListStyle::Popover => PickerEditorPosition::End,
+        }
+    }
+
+    fn render_editor(
+        &self,
+        editor: &Entity<Editor>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        // Hide editor in popover mode when there are less than 4 matches
+        if self.style == ProjectListStyle::Popover && self.workspaces.len() < 4 {
+            return v_flex();
+        }
+
+        // Default implementation
+        v_flex()
+            .when(
+                self.editor_position() == PickerEditorPosition::End,
+                |this| this.child(Divider::horizontal()),
             )
-        } else {
-            (
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-                window.keystroke_text_for(&menu::Confirm),
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .h_9()
+                    .px_2p5()
+                    .child(editor.clone()),
             )
-        };
-        Arc::from(format!(
-            "{reuse_window} reuses this window, {create_window} opens a new one",
-        ))
+            .when(
+                self.editor_position() == PickerEditorPosition::Start,
+                |this| this.child(Divider::horizontal()),
+            )
     }
 
     fn match_count(&self) -> usize {
@@ -601,12 +692,69 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn dismissed(&mut self, _window: &mut Window, _: &mut Context<Picker<Self>>) {}
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        // In popover mode, hide the "no matches" text when there are no workspaces
+        if self.style == ProjectListStyle::Popover && self.workspaces.is_empty() {
+            return None;
+        }
+
         let text = if self.workspaces.is_empty() {
             "Recently opened projects will show up here".into()
         } else {
-            "No matches".into()
+            match self.style {
+                ProjectListStyle::Modal => "No matches".into(),
+                ProjectListStyle::Popover => "No matching projects".into(),
+            }
         };
         Some(text)
+    }
+
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        match self.style {
+            ProjectListStyle::Modal => None,
+            ProjectListStyle::Popover => Some(
+                v_flex()
+                    .w_full()
+                    .child(ListHeader::new("Projects").inset(true))
+                    .child(
+                        ListItem::new("open-local-folder")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::FolderOpen).color(Color::Muted))
+                            .child(Label::new("Open Local Folder"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(workspace::Open.boxed_clone(), cx);
+                                cx.stop_propagation();
+                            }),
+                    )
+                    .child(
+                        ListItem::new("open-remote-folder")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Server).color(Color::Muted))
+                            .child(Label::new("Open Remote Folder"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    OpenRemote {
+                                        from_existing_connection: false,
+                                        create_new_window: false,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            }),
+                    )
+                    .when(!self.workspaces.is_empty(), |this| {
+                        this.child(Divider::horizontal())
+                            .child(ListHeader::new("Recent").inset(true))
+                    })
+                    .into_any_element(),
+            ),
+        }
     }
 
     fn render_match(
@@ -693,22 +841,28 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .id("projecy_info_container")
                         .gap_3()
                         .flex_grow()
-                        .when(self.has_any_non_local_projects, |this| {
-                            this.child(match location {
-                                SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                                SerializedWorkspaceLocation::Remote(options) => {
-                                    Icon::new(match options {
-                                        RemoteConnectionOptions::Ssh { .. } => IconName::Server,
-                                        RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
-                                        RemoteConnectionOptions::Docker(_) => IconName::Box,
-                                    })
-                                    .color(Color::Muted)
-                                    .into_any_element()
-                                }
-                            })
-                        })
+                        .when(
+                            self.style == ProjectListStyle::Popover
+                                || self.has_any_non_local_projects,
+                            |this| {
+                                this.child(match location {
+                                    SerializedWorkspaceLocation::Local => {
+                                        Icon::new(IconName::Screen)
+                                            .color(Color::Muted)
+                                            .into_any_element()
+                                    }
+                                    SerializedWorkspaceLocation::Remote(options) => {
+                                        Icon::new(match options {
+                                            RemoteConnectionOptions::Ssh { .. } => IconName::Server,
+                                            RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                            RemoteConnectionOptions::Docker(_) => IconName::Box,
+                                        })
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                    }
+                                })
+                            },
+                        )
                         .child({
                             let mut highlighted = highlighted_match.clone();
                             if !self.render_paths {
@@ -735,43 +889,46 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        Some(
-            h_flex()
-                .w_full()
-                .p_2()
-                .gap_2()
-                .justify_end()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(
-                            &OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            },
-                            cx,
-                        ))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                OpenRemote {
+        match self.style {
+            ProjectListStyle::Modal => Some(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .gap_2()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Button::new("remote", "Open Remote Folder")
+                            .key_binding(KeyBinding::for_action(
+                                &OpenRemote {
                                     from_existing_connection: false,
                                     create_new_window: false,
-                                }
-                                .boxed_clone(),
+                                },
                                 cx,
-                            )
-                        }),
-                )
-                .child(
-                    Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(workspace::Open.boxed_clone(), cx)
-                        }),
-                )
-                .into_any(),
-        )
+                            ))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    OpenRemote {
+                                        from_existing_connection: false,
+                                        create_new_window: false,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                )
+                            }),
+                    )
+                    .child(
+                        Button::new("local", "Open Local Folder")
+                            .key_binding(KeyBinding::for_action(&workspace::Open, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(workspace::Open.boxed_clone(), cx)
+                            }),
+                    )
+                    .into_any(),
+            ),
+            ProjectListStyle::Popover => None,
+        }
     }
 }
 
