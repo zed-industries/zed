@@ -175,10 +175,6 @@ struct SynthesizeArgs {
     #[clap(long, default_value_t = 100)]
     max_commits: usize,
 
-    /// Output directory for draft examples
-    #[clap(short = 'o', long)]
-    output_dir: PathBuf,
-
     /// Only generate examples that require retrieved context to make a correct prediction
     #[clap(long)]
     require_context: bool,
@@ -225,11 +221,14 @@ fn main() {
             return;
         }
         Command::Synthesize(synth_args) => {
+            let Some(output_dir) = args.output else {
+                panic!("output dir is required");
+            };
             let config = SynthesizeConfig {
                 repo_url: synth_args.repo.clone(),
                 count: synth_args.count,
                 max_commits: synth_args.max_commits,
-                output_dir: synth_args.output_dir.clone(),
+                output_dir,
                 require_context: synth_args.require_context,
                 fresh: synth_args.fresh,
             };
