@@ -45,6 +45,7 @@ use crate::{
     WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
+    offscreen_context::OffScreenRenderer,
 };
 
 mod async_context;
@@ -1093,6 +1094,35 @@ impl App {
         self.platform
             .create_offscreen_target(config)
             .map(|target| target as Box<dyn OffScreenRenderTarget>)
+    }
+
+    /// Creates an off-screen renderer for headless rendering.
+    ///
+    /// This is the recommended way to do off-screen rendering. The returned
+    /// `OffScreenRenderer` provides methods to render scenes and read back
+    /// the resulting pixels.
+    ///
+    /// Returns `None` if the platform does not support off-screen rendering.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = OffScreenTargetConfig::new(size(DevicePixels(800), DevicePixels(600)));
+    /// if let Some(mut renderer) = cx.create_offscreen_renderer(config) {
+    ///     // Render a scene
+    ///     renderer.render(&scene)?;
+    ///
+    ///     // Read pixels back
+    ///     let image = renderer.read_pixels()?;
+    /// }
+    /// ```
+    pub fn create_offscreen_renderer(
+        &self,
+        config: OffScreenTargetConfig,
+    ) -> Option<OffScreenRenderer> {
+        self.platform
+            .create_offscreen_target(config)
+            .map(OffScreenRenderer::new)
     }
 
     /// Returns whether `screen_capture_sources` may work.
