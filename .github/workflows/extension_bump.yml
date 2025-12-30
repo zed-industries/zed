@@ -79,7 +79,7 @@ jobs:
       with:
         clean: false
     - name: extension_bump::install_bump_2_version
-      run: pip install bump2version
+      run: pip install bump2version --break-system-packages
       shell: bash -euxo pipefail {0}
     - id: bump-version
       name: extension_bump::bump_version
