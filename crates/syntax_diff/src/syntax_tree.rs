@@ -76,6 +76,7 @@ impl SyntaxNode {
         self.content_range.end..self.byte_range.end
     }
 
+    #[inline]
     pub fn has_delimiters(&self) -> bool {
         !self.open_delimiter_range().is_empty() && !self.close_delimiter_range().is_empty()
     }
@@ -417,8 +418,21 @@ fn build_tree_recursive(
     parent: Option<SyntaxId>,
     source: &str,
 ) -> SyntaxId {
-    let ts_node = cursor.node();
+    let mut ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
+
+    // If this node is just a wrapper with same byte range as its only child,
+    // flatten by using the child instead
+    let flattened = ts_node.child_count() == 1
+        && cursor.goto_first_child()
+        && ts_node.byte_range() == cursor.node().byte_range();
+
+    if flattened {
+        ts_node = cursor.node();
+    } else if cursor.node() != ts_node {
+        // We moved to child but didn't flatten, go back
+        cursor.goto_parent();
+    }
 
     nodes.push(SyntaxNode {
         id: this_id,
@@ -426,7 +440,7 @@ fn build_tree_recursive(
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
         delimiters: [None, None],
-        descendant_count: ts_node.descendant_count() - 1,
+        descendant_count: 0,
         depth: parent
             .map(|parent| nodes[parent.index()].depth + 1)
             .unwrap_or(0),
@@ -438,6 +452,7 @@ fn build_tree_recursive(
 
     let mut first_child_start = None;
     let mut last_child_end = ts_node.end_byte();
+    let mut descendant_count = 0;
 
     if cursor.goto_first_child() {
         first_child_start = Some(cursor.node().start_byte());
@@ -447,6 +462,7 @@ fn build_tree_recursive(
             let child_node = &nodes[child_id.index()];
 
             last_child_end = child_node.byte_range.end;
+            descendant_count += child_node.descendant_count + 1;
             child_node.structural_hash.hash(&mut hasher);
 
             if !cursor.goto_next_sibling() {
@@ -462,8 +478,14 @@ fn build_tree_recursive(
         }
     }
 
+    // Restore cursor position if we flattened
+    if flattened {
+        cursor.goto_parent();
+    }
+
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
+    node.descendant_count = descendant_count;
 
     if let Some(first_start) = first_child_start {
         node.content_range = first_start..last_child_end;
