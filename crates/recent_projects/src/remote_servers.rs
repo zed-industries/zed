@@ -607,6 +607,24 @@ impl Mode {
     }
 }
 
+pub fn popover(
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> Entity<RemoteServerProjects> {
+    let fs = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().read(cx).fs().clone()
+        })
+        .expect("workspace should be valid when opening remote servers popover");
+
+    cx.new(|cx| {
+        let remote_servers = RemoteServerProjects::new(false, fs, window, workspace, cx);
+        remote_servers.focus_handle(cx).focus(window, cx);
+        remote_servers
+    })
+}
+
 impl RemoteServerProjects {
     #[cfg(target_os = "windows")]
     pub fn wsl(

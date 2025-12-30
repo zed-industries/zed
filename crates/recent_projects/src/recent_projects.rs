@@ -2,7 +2,7 @@ mod dev_container;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
-mod remote_servers;
+pub mod remote_servers;
 mod ssh_config;
 
 use std::path::PathBuf;
