@@ -1,4 +1,61 @@
 //! Off-Screen Rendering (OSR) support for GPUI.
+//!
+//! This module provides types and traits for rendering GPUI content to off-screen
+//! textures instead of window surfaces. This is useful for:
+//!
+//! - **Embedding**: Render GPUI views into other applications (CEF, Electron, Qt)
+//! - **Headless rendering**: Generate images without displaying a window
+//! - **Video capture**: Record GPUI content without screen capture
+//! - **Testing**: Verify rendering output in automated tests
+//! - **Zero-copy sharing**: Share GPU textures with other processes
+//!
+//! # Platform Support
+//!
+//! | Platform | Backend | Zero-Copy Sharing |
+//! |----------|---------|-------------------|
+//! | Windows  | DirectX 11 | DXGI Shared Handles |
+//! | macOS    | Metal | IOSurface (planned) |
+//! | Linux    | Vulkan/Blade | DMA-BUF (planned) |
+//!
+//! # Quick Start
+//!
+//! ```ignore
+//! use gpui::{App, DevicePixels, OffScreenTargetConfig, size};
+//!
+//! // Check platform support
+//! if cx.supports_offscreen_rendering() {
+//!     // Create a render target
+//!     let config = OffScreenTargetConfig::new(size(DevicePixels(800), DevicePixels(600)));
+//!     let mut renderer = cx.create_offscreen_renderer(config).unwrap();
+//!
+//!     // Read pixels (after rendering)
+//!     let image = renderer.read_pixels()?;
+//!     println!("Image: {}x{}", image.width, image.height);
+//! }
+//! ```
+//!
+//! # Zero-Copy Texture Sharing
+//!
+//! For performance-critical applications, you can share the GPU texture directly
+//! without copying to CPU memory:
+//!
+//! ```ignore
+//! let config = OffScreenTargetConfig::new(size(DevicePixels(1920), DevicePixels(1080)))
+//!     .with_sharing();  // Enable shared texture support
+//!
+//! let renderer = cx.create_offscreen_renderer(config).unwrap();
+//!
+//! if let Some(handle) = renderer.shared_texture_handle() {
+//!     // Pass handle to another process or graphics API
+//!     match handle {
+//!         SharedTextureHandle::DirectX(d3d11) => {
+//!             // Use d3d11.shared_handle with another D3D11 device
+//!         }
+//!         // ... other platforms
+//!     }
+//! }
+//! ```
+
 use crate::{DevicePixels, Scene, Size};
 use std::sync::Arc;
 
