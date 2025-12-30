@@ -5,7 +5,7 @@ mod syntax_graph;
 mod syntax_tree;
 
 pub use syntax_changes::{SyntaxChange, SyntaxChanges};
-pub use syntax_graph::{SyntaxEdge, SyntaxVertex};
+pub use syntax_graph::{SyntaxEdge, SyntaxPath, SyntaxVertex};
 pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_tree};
 
 use std::ops::Range;
@@ -61,18 +61,23 @@ pub fn diff_trees(
 }
 
 fn populate_change_map(
-    route: &[(SyntaxVertex<'_>, SyntaxEdge)],
+    route: &[SyntaxPath<'_>],
     lhs_map: &mut SyntaxChanges,
     rhs_map: &mut SyntaxChanges,
 ) {
-    // Route is now (vertex_before, edge) pairs.
-    // vertex_before.lhs and vertex_before.rhs point to the nodes being consumed by edge.
+    // Route entries have vertices[0] = from (source), vertices[1] = to (destination).
+    // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
 
-    for (vertex, edge) in route {
+    for path in route {
+        let Some(edge) = path.edge else { continue };
+        let Some(vertex) = path.vertices[0].as_ref() else {
+            continue;
+        };
+
         match edge {
             SyntaxEdge::Replaced { levenshtein_pct } => {
                 if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    if *levenshtein_pct > 20 {
+                    if levenshtein_pct > 20 {
                         lhs_map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
                         rhs_map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
                     } else {

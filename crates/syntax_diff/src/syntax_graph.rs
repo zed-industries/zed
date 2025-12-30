@@ -11,35 +11,36 @@ use crate::syntax_tree::{SyntaxId, SyntaxTreeCursor};
 #[derive(Debug)]
 pub struct ExceededGraphLimit;
 
-/// Result of running Dijkstra's algorithm on two syntax trees.
+/// A path segment in the diff graph.
 ///
-/// The route as (vertex_before, edge) pairs.
-/// Each entry represents: from vertex_before, take edge.
-pub struct SyntaxRoute<'a>(pub Vec<(SyntaxVertex<'a>, SyntaxEdge)>);
-
+/// Represents a transition from one vertex to another via an edge.
+/// - `vertices[0]` is the source vertex (from)
+/// - `vertices[1]` is the destination vertex (to)
 #[derive(Clone)]
-// TODO: revisit
-struct VertexState<'a> {
-    vertex: SyntaxVertex<'a>,
-    cost: u32,
-    predecessor: Option<(SyntaxEdge, Box<VertexState<'a>>)>,
+pub struct SyntaxPath<'a> {
+    pub edge: Option<SyntaxEdge>,
+    pub cost: u32,
+    pub vertices: [Option<SyntaxVertex<'a>>; 2],
 }
 
-impl<'a> PartialEq for VertexState<'a> {
+/// Result of running Dijkstra's algorithm on two syntax trees.
+pub struct SyntaxRoute<'a>(pub Vec<SyntaxPath<'a>>);
+
+impl<'a> PartialEq for SyntaxPath<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.cost == other.cost
     }
 }
 
-impl<'a> Eq for VertexState<'a> {}
+impl<'a> Eq for SyntaxPath<'a> {}
 
-impl<'a> PartialOrd for VertexState<'a> {
+impl<'a> PartialOrd for SyntaxPath<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for VertexState<'a> {
+impl<'a> Ord for SyntaxPath<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.cost.cmp(&other.cost)
     }
@@ -362,69 +363,84 @@ pub fn shortest_path<'a>(
 fn find_shortest_path<'a>(
     start: SyntaxVertex<'a>,
     graph_limit: usize,
-) -> Result<Vec<(SyntaxVertex<'a>, SyntaxEdge)>, ExceededGraphLimit> {
-    let mut heap: BinaryHeap<Reverse<VertexState<'a>>> = BinaryHeap::new();
-    let mut best_cost: HashMap<SyntaxVertex<'a>, u32> = HashMap::new();
+) -> Result<Vec<SyntaxPath<'a>>, ExceededGraphLimit> {
+    let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::new();
+    let mut visited: HashMap<SyntaxVertex<'a>, SyntaxPath<'a>> = HashMap::new();
 
-    heap.push(Reverse(VertexState {
-        vertex: start,
+    heap.push(Reverse(SyntaxPath {
+        edge: None,
         cost: 0,
-        predecessor: None,
+        vertices: [None, Some(start)],
     }));
 
-    let end_state = loop {
+    let end_vertex = loop {
         let Reverse(current) = match heap.pop() {
             Some(state) => state,
             None => panic!("Ran out of graph nodes before reaching end"),
         };
 
-        if current.vertex.is_end() {
-            break current;
+        let current_vertex = current.vertices[1]
+            .clone()
+            .expect("current vertex should exist");
+
+        if current_vertex.is_end() {
+            break current_vertex;
         }
 
-        if let Some(&existing_cost) = best_cost.get(&current.vertex) {
-            if current.cost >= existing_cost {
+        if let Some(existing) = visited.get(&current_vertex) {
+            if current.cost >= existing.cost {
                 continue;
             }
         }
 
-        best_cost.insert(current.vertex.clone(), current.cost);
+        visited.insert(current_vertex.clone(), current.clone());
 
-        if best_cost.len() > graph_limit {
+        if visited.len() > graph_limit {
             return Err(ExceededGraphLimit);
         }
 
-        let neighbours = compute_neighbours(&current.vertex);
+        let neighbours = compute_neighbours(&current_vertex);
         for (edge, next_vertex) in neighbours {
             let next_cost = current.cost + edge.cost();
 
-            let dominated = best_cost.get(&next_vertex).is_some_and(|&c| next_cost >= c);
+            let dominated = visited
+                .get(&next_vertex)
+                .is_some_and(|v| next_cost >= v.cost);
 
             if !dominated {
-                heap.push(Reverse(VertexState {
-                    vertex: next_vertex,
+                heap.push(Reverse(SyntaxPath {
+                    edge: Some(edge),
                     cost: next_cost,
-                    predecessor: Some((edge, Box::new(current.clone()))),
+                    vertices: [Some(current_vertex.clone()), Some(next_vertex)],
                 }));
             }
         }
     };
 
-    Ok(reconstruct_path(end_state))
+    Ok(reconstruct_path(end_vertex, &visited))
 }
 
-fn reconstruct_path<'a>(end_state: VertexState<'a>) -> Vec<(SyntaxVertex<'a>, SyntaxEdge)> {
-    let mut path = Vec::new();
-    let mut current = end_state;
+fn reconstruct_path<'a>(
+    end: SyntaxVertex<'a>,
+    visited: &HashMap<SyntaxVertex<'a>, SyntaxPath<'a>>,
+) -> Vec<SyntaxPath<'a>> {
+    let mut route = Vec::new();
+    let mut current = end;
 
-    // Walk backwards through predecessors
-    while let Some((edge, predecessor)) = current.predecessor {
-        // predecessor.vertex is the state BEFORE taking edge
-        // current.vertex is the state AFTER taking edge
-        path.push((predecessor.vertex.clone(), edge));
-        current = *predecessor;
+    while let Some(segment) = visited.get(&current) {
+        let Some(predecessor) = segment.vertices[0].clone() else {
+            break;
+        };
+
+        route.push(SyntaxPath {
+            edge: segment.edge,
+            cost: segment.cost,
+            vertices: [Some(predecessor.clone()), Some(current)],
+        });
+
+        current = predecessor;
     }
 
-    path.reverse();
-    path
+    route.reverse();
+    route
 }
