@@ -2342,7 +2342,7 @@ impl ReferenceMultibuffer {
             .unwrap();
         let excerpt = self.excerpts.remove(ix);
         let buffer = excerpt.buffer.read(cx);
-        let id = buffer.remote_id();
+        let buffer_id = buffer.remote_id();
         log::info!(
             "Removing excerpt {}: {:?}",
             ix,
@@ -2353,10 +2353,10 @@ impl ReferenceMultibuffer {
         if !self
             .excerpts
             .iter()
-            .any(|excerpt| excerpt.buffer.read(cx).remote_id() == id)
+            .any(|excerpt| excerpt.buffer.read(cx).remote_id() == buffer_id)
         {
-            self.diffs.remove(&id);
-            self.inverted_diffs.remove(&id);
+            self.diffs.remove(&buffer_id);
+            self.inverted_diffs.remove(&buffer_id);
         }
     }
 
@@ -2852,7 +2852,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
     let mut needs_diff_calculation = false;
-    // Maps main_buffer_id -> diff for inverted diffs (needed for recalculation when main buffer is edited)
     let mut inverted_diff_main_buffers: HashMap<BufferId, Entity<BufferDiff>> = HashMap::default();
     for _ in 0..operations {
         match rng.random_range(0..100) {
@@ -2983,7 +2982,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         let snapshot = buffer.read(cx).snapshot();
                         let buffer_id = snapshot.remote_id();
 
-                        // Recalculate non-inverted diff if exists
                         if let Some(diff) = multibuffer.diff_for(buffer_id) {
                             diff.update(cx, |diff, cx| {
                                 log::info!("recalculating diff for buffer {:?}", buffer_id,);
@@ -2991,7 +2989,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                             });
                         }
 
-                        // Recalculate inverted diff if this is a main buffer for one
                         if let Some(inverted_diff) = inverted_diff_main_buffers.get(&buffer_id) {
                             inverted_diff.update(cx, |diff, cx| {
                                 log::info!(
@@ -3009,171 +3006,142 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             _ => {
                 // Decide if we're creating a new buffer or reusing an existing one
                 let create_new_buffer = buffers.is_empty() || rng.random_bool(0.4);
-                // Decide if this should be an inverted diff excerpt (only for new buffers, 30% chance)
-                let create_inverted = create_new_buffer && rng.random_bool(0.3);
 
-                if create_inverted {
-                    // Create a new main buffer
-                    let mut main_buffer_text = util::RandomCharIter::new(&mut rng)
-                        .take(256)
-                        .collect::<String>();
-                    let main_buffer = cx.new(|cx| Buffer::local(main_buffer_text.clone(), cx));
-                    text::LineEnding::normalize(&mut main_buffer_text);
-                    let main_buffer_id = main_buffer.read_with(cx, |buffer, _| buffer.remote_id());
-                    base_texts.insert(main_buffer_id, main_buffer_text);
-                    buffers.push(main_buffer.clone());
+                let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
+                let prev_excerpt_id = reference
+                    .excerpts
+                    .get(prev_excerpt_ix)
+                    .map_or(ExcerptId::max(), |e| e.id);
+                let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
 
-                    // Generate different base text for the inverted diff
-                    let inverted_base_text: String =
-                        util::RandomCharIter::new(&mut rng).take(256).collect();
+                let (excerpt_buffer, diff, inverted_main_buffer) = if create_new_buffer {
+                    let create_inverted = rng.random_bool(0.3);
 
-                    let diff = cx.new(|cx| {
-                        BufferDiff::new_with_base_text(
-                            &inverted_base_text,
-                            &main_buffer.read(cx).text_snapshot(),
-                            cx,
-                        )
-                    });
+                    if create_inverted {
+                        let mut main_buffer_text = util::RandomCharIter::new(&mut rng)
+                            .take(256)
+                            .collect::<String>();
+                        let main_buffer = cx.new(|cx| Buffer::local(main_buffer_text.clone(), cx));
+                        text::LineEnding::normalize(&mut main_buffer_text);
+                        let main_buffer_id =
+                            main_buffer.read_with(cx, |buffer, _| buffer.remote_id());
+                        base_texts.insert(main_buffer_id, main_buffer_text.clone());
+                        buffers.push(main_buffer.clone());
 
-                    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
-
-                    // Track for recalculation when main buffer is edited
-                    inverted_diff_main_buffers.insert(main_buffer_id, diff.clone());
-
-                    let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
-                    let prev_excerpt_id = reference
-                        .excerpts
-                        .get(prev_excerpt_ix)
-                        .map_or(ExcerptId::max(), |e| e.id);
-                    let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
-
-                    // Create excerpt from base_text_buffer
-                    let (range, anchor_range) = base_text_buffer.read_with(cx, |buffer, _| {
-                        let end_row = rng.random_range(0..=buffer.max_point().row);
-                        let start_row = rng.random_range(0..=end_row);
-                        let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
-                        let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
-                        let anchor_range =
-                            buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
-
-                        log::info!(
-                            "Inserting inverted excerpt at {} of {} for base_text_buffer {}: {:?}[{:?}] = {:?}",
-                            excerpt_ix,
-                            reference.excerpts.len(),
-                            buffer.remote_id(),
-                            buffer.text(),
-                            start_ix..end_ix,
-                            &buffer.text()[start_ix..end_ix]
-                        );
-
-                        (start_ix..end_ix, anchor_range)
-                    });
-
-                    let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer
-                            .insert_excerpts_after(
-                                prev_excerpt_id,
-                                base_text_buffer.clone(),
-                                [ExcerptRange::new(range.clone())],
+                        let diff = cx.new(|cx| {
+                            BufferDiff::new_with_base_text(
+                                &main_buffer_text,
+                                &main_buffer.read(cx).text_snapshot(),
                                 cx,
                             )
-                            .pop()
-                            .unwrap()
-                    });
+                        });
 
-                    reference.insert_excerpt_after(
-                        prev_excerpt_id,
-                        excerpt_id,
-                        (base_text_buffer.clone(), anchor_range),
-                    );
+                        let base_text_buffer =
+                            diff.read_with(cx, |diff, _| diff.base_text_buffer());
 
-                    multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
-                    });
-                    cx.update(|cx| {
-                        reference.add_inverted_diff(diff, main_buffer.clone(), cx);
-                    });
-                } else {
-                    // Non-inverted: existing logic
-                    let buffer_handle = if create_new_buffer {
+                        // Track for recalculation when main buffer is edited
+                        inverted_diff_main_buffers.insert(main_buffer_id, diff.clone());
+
+                        (base_text_buffer, diff, Some(main_buffer))
+                    } else {
                         let mut base_text = util::RandomCharIter::new(&mut rng)
                             .take(256)
                             .collect::<String>();
 
-                        let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+                        let buffer_handle = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                         text::LineEnding::normalize(&mut base_text);
-                        base_texts.insert(
-                            buffer.read_with(cx, |buffer, _| buffer.remote_id()),
-                            base_text,
-                        );
-                        buffers.push(buffer);
-                        buffers.last().unwrap()
-                    } else {
-                        buffers.choose(&mut rng).unwrap()
-                    };
+                        let buffer_id = buffer_handle.read_with(cx, |buffer, _| buffer.remote_id());
+                        base_texts.insert(buffer_id, base_text.clone());
+                        buffers.push(buffer_handle.clone());
 
-                    let prev_excerpt_ix = rng.random_range(0..=reference.excerpts.len());
-                    let prev_excerpt_id = reference
-                        .excerpts
-                        .get(prev_excerpt_ix)
-                        .map_or(ExcerptId::max(), |e| e.id);
-                    let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
-
-                    let (range, anchor_range) = buffer_handle.read_with(cx, |buffer, _| {
-                        let end_row = rng.random_range(0..=buffer.max_point().row);
-                        let start_row = rng.random_range(0..=end_row);
-                        let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
-                        let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
-                        let anchor_range =
-                            buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
-
-                        log::info!(
-                            "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
-                            excerpt_ix,
-                            reference.excerpts.len(),
-                            buffer.remote_id(),
-                            buffer.text(),
-                            start_ix..end_ix,
-                            &buffer.text()[start_ix..end_ix]
-                        );
-
-                        (start_ix..end_ix, anchor_range)
-                    });
-
-                    let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer
-                            .insert_excerpts_after(
-                                prev_excerpt_id,
-                                buffer_handle.clone(),
-                                [ExcerptRange::new(range.clone())],
+                        let diff = cx.new(|cx| {
+                            BufferDiff::new_with_base_text(
+                                &base_text,
+                                &buffer_handle.read(cx).text_snapshot(),
                                 cx,
                             )
-                            .pop()
-                            .unwrap()
-                    });
+                        });
 
-                    reference.insert_excerpt_after(
-                        prev_excerpt_id,
-                        excerpt_id,
-                        (buffer_handle.clone(), anchor_range),
+                        (buffer_handle, diff, None)
+                    }
+                } else {
+                    // Reuse an existing buffer
+                    let buffer_handle = buffers.choose(&mut rng).unwrap().clone();
+                    let buffer_id = buffer_handle.read_with(cx, |buffer, _| buffer.remote_id());
+
+                    if let Some(diff) = inverted_diff_main_buffers.get(&buffer_id) {
+                        let base_text_buffer =
+                            diff.read_with(cx, |diff, _| diff.base_text_buffer());
+                        (base_text_buffer, diff.clone(), Some(buffer_handle))
+                    } else {
+                        // Get existing diff or create new one for regular buffer
+                        let diff = multibuffer
+                            .read_with(cx, |mb, _| mb.diff_for(buffer_id))
+                            .unwrap_or_else(|| {
+                                let base_text = base_texts.get(&buffer_id).unwrap();
+                                cx.new(|cx| {
+                                    BufferDiff::new_with_base_text(
+                                        base_text,
+                                        &buffer_handle.read(cx).text_snapshot(),
+                                        cx,
+                                    )
+                                })
+                            });
+                        (buffer_handle, diff, None)
+                    }
+                };
+
+                let (range, anchor_range) = excerpt_buffer.read_with(cx, |buffer, _| {
+                    let end_row = rng.random_range(0..=buffer.max_point().row);
+                    let start_row = rng.random_range(0..=end_row);
+                    let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+                    let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+                    let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+
+                    log::info!(
+                        "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
+                        excerpt_ix,
+                        reference.excerpts.len(),
+                        buffer.remote_id(),
+                        buffer.text(),
+                        start_ix..end_ix,
+                        &buffer.text()[start_ix..end_ix]
                     );
 
-                    multibuffer.update(cx, |multibuffer, cx| {
-                        let id = buffer_handle.read(cx).remote_id();
-                        if multibuffer.diff_for(id).is_none() {
-                            let base_text = base_texts.get(&id).unwrap();
-                            let diff = cx.new(|cx| {
-                                BufferDiff::new_with_base_text(
-                                    base_text,
-                                    &buffer_handle.read(cx).text_snapshot(),
-                                    cx,
-                                )
-                            });
+                    (start_ix..end_ix, anchor_range)
+                });
+
+                let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer
+                        .insert_excerpts_after(
+                            prev_excerpt_id,
+                            excerpt_buffer.clone(),
+                            [ExcerptRange::new(range.clone())],
+                            cx,
+                        )
+                        .pop()
+                        .unwrap()
+                });
+
+                reference.insert_excerpt_after(
+                    prev_excerpt_id,
+                    excerpt_id,
+                    (excerpt_buffer.clone(), anchor_range),
+                );
+
+                let excerpt_buffer_id =
+                    excerpt_buffer.read_with(cx, |buffer, _| buffer.remote_id());
+                multibuffer.update(cx, |multibuffer, cx| {
+                    if multibuffer.diff_for(excerpt_buffer_id).is_none() {
+                        if let Some(main_buffer) = inverted_main_buffer {
+                            reference.add_inverted_diff(diff.clone(), main_buffer.clone(), cx);
+                            multibuffer.add_inverted_diff(diff, main_buffer, cx);
+                        } else {
                             reference.add_diff(diff.clone(), cx);
-                            multibuffer.add_diff(diff, cx)
+                            multibuffer.add_diff(diff, cx);
                         }
-                    });
-                }
+                    }
+                });
             }
         }
 

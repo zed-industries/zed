@@ -2917,7 +2917,7 @@ impl MultiBuffer {
         if !changed {
             return;
         }
-        let edits = Self::sync_(
+        let edits = Self::sync_from_buffer_changes(
             &mut self.snapshot.borrow_mut(),
             &self.buffers,
             &self.diffs,
@@ -2933,14 +2933,15 @@ impl MultiBuffer {
         if !changed {
             return;
         }
-        let edits = Self::sync_(self.snapshot.get_mut(), &self.buffers, &self.diffs, cx);
+        let edits =
+            Self::sync_from_buffer_changes(self.snapshot.get_mut(), &self.buffers, &self.diffs, cx);
 
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
     }
 
-    fn sync_(
+    fn sync_from_buffer_changes(
         snapshot: &mut MultiBufferSnapshot,
         buffers: &HashMap<BufferId, BufferState>,
         diffs: &HashMap<BufferId, DiffState>,
@@ -6698,6 +6699,10 @@ impl MultiBufferSnapshot {
         self.show_headers
     }
 
+    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
+        self.diffs.get(&buffer_id).map(|diff| &diff.diff)
+    }
+
     /// Visually annotates a position or range with the `Debug` representation of a value. The
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
@@ -6774,10 +6779,6 @@ impl MultiBufferSnapshot {
             }
         }
         excerpt_edits
-    }
-
-    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
-        self.diffs.get(&buffer_id).map(|diff| &diff.diff)
     }
 }
 
