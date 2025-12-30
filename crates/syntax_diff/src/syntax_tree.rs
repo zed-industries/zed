@@ -44,6 +44,9 @@ pub struct SyntaxNode {
     pub content_range: Range<usize>,
     /// Content of delimiters
     pub delimiters: [Option<String>; 2],
+    /// Whether this node is punctuation (e.g., `,`, `;`, `.`).
+    /// Used to discourage matching punctuation over more meaningful content.
+    pub punctuation: bool,
     /// Number of descendants (children + their descendants).
     pub descendant_count: usize,
     /// Depth (number of ancestors)
@@ -96,9 +99,7 @@ impl SyntaxNode {
 impl SyntaxTree {
     /// Creates an empty syntax tree.
     pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-        }
+        Self { nodes: Vec::new() }
     }
 
     /// Returns the root node's ID, if the tree is not empty.
@@ -436,6 +437,7 @@ fn build_tree_recursive(
         byte_range: ts_node.byte_range(),
         content_range: ts_node.byte_range(),
         delimiters: [None, None],
+        punctuation: false,
         descendant_count: 0,
         depth: parent
             .map(|parent| nodes[parent.index()].depth + 1)
@@ -449,6 +451,7 @@ fn build_tree_recursive(
     let mut first_child_start = None;
     let mut last_child_end = ts_node.end_byte();
     let mut descendant_count = 0;
+    let mut punctuation = false;
 
     if cursor.goto_first_child() {
         first_child_start = Some(cursor.node().start_byte());
@@ -471,6 +474,13 @@ fn build_tree_recursive(
         // Leaf node - include the actual text content in the hash
         if let Some(content) = source.get(ts_node.byte_range()) {
             content.hash(&mut hasher);
+
+            // Does this node look like punctuation?
+            //
+            // This check is deliberately conservative, because it's hard to
+            // accurately recognise punctuation in a language-agnostic way.
+            // https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
+            punctuation = content == "," || content == ";" || content == ".";
         }
     }
 
@@ -482,6 +492,7 @@ fn build_tree_recursive(
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
     node.descendant_count = descendant_count;
+    node.punctuation = punctuation;
 
     if let Some(first_start) = first_child_start {
         node.content_range = first_start..last_child_end;

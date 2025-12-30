@@ -265,8 +265,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
         // Both nodes have same structure - unchanged
         if lhs_node.structural_hash == rhs_node.structural_hash {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-            // TODO: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
-            let probably_punctuation = false;
+            let probably_punctuation = v.lhs.node().is_some_and(|node| node.punctuation);
 
             let (lhs, rhs, parents) = pop_all_parents(
                 v.lhs.next_sibling(),
