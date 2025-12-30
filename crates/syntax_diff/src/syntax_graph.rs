@@ -383,10 +383,6 @@ fn find_shortest_path<'a>(
             .clone()
             .expect("current vertex should exist");
 
-        if current_vertex.is_end() {
-            break current_vertex;
-        }
-
         if let Some(existing) = visited.get(&current_vertex) {
             if current.cost >= existing.cost {
                 continue;
@@ -394,6 +390,10 @@ fn find_shortest_path<'a>(
         }
 
         visited.insert(current_vertex.clone(), current.clone());
+
+        if current_vertex.is_end() {
+            break current_vertex;
+        }
 
         if visited.len() > graph_limit {
             return Err(ExceededGraphLimit);

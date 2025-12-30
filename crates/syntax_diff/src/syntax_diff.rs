@@ -1,10 +1,9 @@
 //! AST-aware diffing for syntax trees.
 
-mod syntax_changes;
 mod syntax_graph;
 mod syntax_tree;
 
-pub use syntax_changes::{SyntaxChange, SyntaxChanges};
+use collections::FxHashMap;
 pub use syntax_graph::{SyntaxEdge, SyntaxPath, SyntaxVertex};
 pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_tree};
 
@@ -14,6 +13,18 @@ use crate::syntax_graph::ExceededGraphLimit;
 
 /// Default graph limit (10 million vertices).
 pub const DEFAULT_GRAPH_LIMIT: usize = 10_000_000;
+
+/// The kind of change for a syntax node.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SyntaxChange {
+    /// This node is unchanged. The associated ID is the corresponding
+    /// node in the opposite tree.
+    Unchanged(SyntaxId),
+    /// This node was replaced with another node.
+    Replaced(SyntaxId, SyntaxId),
+    /// This node is novel (added or removed).
+    Novel,
+}
 
 /// Result of a syntax diff operation.
 ///
@@ -45,11 +56,43 @@ pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
-    let mut lhs_change_map = SyntaxChanges::default();
-    let mut rhs_change_map = SyntaxChanges::default();
+    let mut lhs_change_map = FxHashMap::default();
+    let mut rhs_change_map = FxHashMap::default();
     let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, DEFAULT_GRAPH_LIMIT)?;
 
-    populate_change_map(&route.0, &mut lhs_change_map, &mut rhs_change_map);
+    // Route entries have vertices[0] = from (source), vertices[1] = to (destination).
+    // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
+    for path in route.0 {
+        let Some(edge) = path.edge else { continue };
+        let Some(vertex) = path.vertices[0].as_ref() else {
+            continue;
+        };
+
+        match edge {
+            SyntaxEdge::Replaced { levenshtein_pct } => {
+                if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
+                    if levenshtein_pct > 20 {
+                        lhs_change_map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
+                        rhs_change_map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
+                    } else {
+                        lhs_change_map.insert(lhs_id, SyntaxChange::Novel);
+                        rhs_change_map.insert(rhs_id, SyntaxChange::Novel);
+                    }
+                }
+            }
+            SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
+                if let Some(lhs_id) = vertex.lhs.id() {
+                    lhs_change_map.insert(lhs_id, SyntaxChange::Novel);
+                }
+            }
+            SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
+                if let Some(rhs_id) = vertex.rhs.id() {
+                    lhs_change_map.insert(rhs_id, SyntaxChange::Novel);
+                }
+            }
+            _ => {}
+        }
+    }
 
     let lhs_ranges = collect_novel_ranges(lhs_tree, &lhs_change_map);
     let rhs_ranges = collect_novel_ranges(rhs_tree, &rhs_change_map);
@@ -60,48 +103,10 @@ pub fn diff_trees(
     })
 }
 
-fn populate_change_map(
-    route: &[SyntaxPath<'_>],
-    lhs_map: &mut SyntaxChanges,
-    rhs_map: &mut SyntaxChanges,
-) {
-    // Route entries have vertices[0] = from (source), vertices[1] = to (destination).
-    // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
-
-    for path in route {
-        let Some(edge) = path.edge else { continue };
-        let Some(vertex) = path.vertices[0].as_ref() else {
-            continue;
-        };
-
-        match edge {
-            SyntaxEdge::Replaced { levenshtein_pct } => {
-                if let (Some(lhs_id), Some(rhs_id)) = (vertex.lhs.id(), vertex.rhs.id()) {
-                    if levenshtein_pct > 20 {
-                        lhs_map.insert(lhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
-                        rhs_map.insert(rhs_id, SyntaxChange::Replaced(lhs_id, rhs_id));
-                    } else {
-                        lhs_map.insert(lhs_id, SyntaxChange::Novel);
-                        rhs_map.insert(rhs_id, SyntaxChange::Novel);
-                    }
-                }
-            }
-            SyntaxEdge::NovelAtomLHS | SyntaxEdge::EnterNovelDelimiterLHS => {
-                if let Some(lhs_id) = vertex.lhs.id() {
-                    lhs_map.insert(lhs_id, SyntaxChange::Novel);
-                }
-            }
-            SyntaxEdge::NovelAtomRHS | SyntaxEdge::EnterNovelDelimiterRHS => {
-                if let Some(rhs_id) = vertex.rhs.id() {
-                    rhs_map.insert(rhs_id, SyntaxChange::Novel);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Range<usize>> {
+fn collect_novel_ranges(
+    tree: &SyntaxTree,
+    change_map: &FxHashMap<SyntaxId, SyntaxChange>,
+) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
 
     for (id, change) in change_map.iter() {
