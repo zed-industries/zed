@@ -28,42 +28,26 @@ pub async fn apply_diff(
 ) -> Result<OpenedBuffers> {
     let mut included_files = HashMap::default();
 
-    for line in diff_str.lines() {
-        let diff_line = DiffLine::parse(line);
-
-        if let DiffLine::OldPath { path } = diff_line {
-            let buffer = project
-                .update(cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(path.as_ref(), cx)
-                        .context("no such path")?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            included_files.insert(path.to_string(), buffer);
-        }
-    }
-
     let ranges = [Anchor::MIN..Anchor::MAX];
-
     let mut diff = DiffParser::new(diff_str);
     let mut current_file = None;
     let mut edits = vec![];
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk {
-                path: file_path,
-                hunk,
-            } => {
-                let (buffer, ranges) = match current_file {
+            DiffEvent::Hunk { path, hunk } => {
+                let buffer = match current_file {
                     None => {
-                        let buffer = included_files
-                            .get_mut(file_path.as_ref())
-                            .expect("Opened all files in diff");
-
-                        current_file = Some((buffer, ranges.as_slice()));
+                        let buffer = project
+                            .update(cx, |project, cx| {
+                                let project_path = project
+                                    .find_project_path(path.as_ref(), cx)
+                                    .context("no such path")?;
+                                anyhow::Ok(project.open_buffer(project_path, cx))
+                            })??
+                            .await?;
+                        included_files.insert(path.to_string(), buffer.clone());
+                        current_file = Some(buffer);
                         current_file.as_ref().unwrap()
                     }
                     Some(ref current) => current,
@@ -71,14 +55,14 @@ pub async fn apply_diff(
 
                 buffer.read_with(cx, |buffer, _| {
                     edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges)
+                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice())
                             .with_context(|| format!("Diff:\n{diff_str}"))?,
                     );
                     anyhow::Ok(())
                 })??;
             }
             DiffEvent::FileEnd { renamed_to } => {
-                let (buffer, _) = current_file
+                let buffer = current_file
                     .take()
                     .context("Got a FileEnd event before an Hunk event")?;
 
