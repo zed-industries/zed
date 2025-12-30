@@ -49,6 +49,19 @@ impl SyntaxDiff {
             rhs_ranges: adjust_ranges(self.rhs_ranges, rhs_offset),
         }
     }
+
+    /// Clips ranges to the given bounds, removing ranges outside and trimming
+    /// ranges that partially overlap.
+    ///
+    /// This is necessary because `descendant_for_byte_range` may return an AST node
+    /// larger than the hunk (e.g., an entire function when multiple hunks exist within it).
+    /// The diff produces ranges for the full node, so we clip them to the hunk's boundaries.
+    pub fn bound_to(self, lhs_bounds: Range<usize>, rhs_bounds: Range<usize>) -> Self {
+        Self {
+            lhs_ranges: clip_ranges_to_bounds(self.lhs_ranges, lhs_bounds),
+            rhs_ranges: clip_ranges_to_bounds(self.rhs_ranges, rhs_bounds),
+        }
+    }
 }
 
 /// Compute a syntax-aware diff between two `SyntaxTree`s.
@@ -166,6 +179,19 @@ fn adjust_ranges(ranges: Vec<Range<usize>>, offset: usize) -> Vec<Range<usize>> 
             let start = range.start.saturating_sub(offset);
             let end = range.end - offset;
             Some(start..end)
+        })
+        .collect()
+}
+
+fn clip_ranges_to_bounds(ranges: Vec<Range<usize>>, bounds: Range<usize>) -> Vec<Range<usize>> {
+    ranges
+        .into_iter()
+        .filter_map(|range| {
+            if range.end <= bounds.start || range.start >= bounds.end {
+                return None;
+            }
+
+            Some(range.start.max(bounds.start)..range.end.min(bounds.end))
         })
         .collect()
 }
