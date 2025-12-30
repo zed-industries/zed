@@ -719,7 +719,7 @@ impl RequestHandler<'_> {
                 return Ok(());
             }
 
-            if self.query.detect(file).unwrap_or(false) {
+            if self.query.detect(file).await.unwrap_or(false) {
                 // Yes, we should scan the whole file.
                 entry.should_scan_tx.send(entry.path).await?;
             }

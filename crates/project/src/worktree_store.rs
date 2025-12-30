@@ -1042,7 +1042,7 @@ impl WorktreeStore {
                 continue;
             }
 
-            if query.detect(file).unwrap_or(false) {
+            if query.detect(file).await.unwrap_or(false) {
                 entry.respond.send(entry.path).await?
             }
         }
