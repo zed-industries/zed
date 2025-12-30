@@ -1036,14 +1036,13 @@ fn build_syntax_tree(
         return None;
     }
 
-    let text = snapshot.text();
-
+    let text: String = snapshot.text();
     let layer = snapshot.syntax_layers().next()?;
     let subtree = layer
         .node()
         .descendant_for_byte_range(byte_range.start, byte_range.end)?;
 
-    Some(syntax_diff::build_tree(subtree.walk(), text.as_bytes()))
+    Some(syntax_diff::build_tree(subtree.walk(), &text))
 }
 
 fn build_diff_options(
