@@ -4,6 +4,8 @@ use std::cmp::{Reverse, min};
 use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
 
+use arrayvec::ArrayVec;
+
 use crate::SyntaxTree;
 use crate::syntax_tree::{SyntaxHint, SyntaxId, SyntaxTreeCursor};
 
@@ -253,8 +255,8 @@ fn pop_all_parents<'a>(
 }
 
 /// Compute all possible neighbor vertices from the current vertex.
-pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVertex<'a>)> {
-    let mut neighbours = Vec::with_capacity(7);
+pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, SyntaxVertex<'a>), 7> {
+    let mut neighbours = ArrayVec::new();
 
     if let (Some(lhs_node), Some(rhs_node)) = (v.lhs.node(), v.rhs.node()) {
         let lhs_id = v.lhs.id().unwrap();
