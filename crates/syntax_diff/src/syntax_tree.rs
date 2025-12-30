@@ -23,6 +23,7 @@ impl SyntaxId {
 #[derive(Debug)]
 pub struct SyntaxTree {
     nodes: Vec<SyntaxNode>,
+    pub offset: usize,
 }
 
 // TODO: Can this just wrap tree sitter's node?
@@ -42,6 +43,8 @@ pub struct SyntaxNode {
     /// Open delimiter = byte_range.start..content_range.start
     /// Close delimiter = content_range.end..byte_range.end
     pub content_range: Range<usize>,
+    /// Content of delimiters
+    pub delimiters: [Option<String>; 2],
     /// Number of descendants (children + their descendants).
     pub descendant_count: usize,
     /// Depth (number of ancestors)
@@ -51,16 +54,30 @@ pub struct SyntaxNode {
 }
 
 impl SyntaxNode {
+    #[inline]
+    pub fn open_delimiter(&self) -> Option<&str> {
+        self.delimiters[0].as_deref()
+    }
+
+    #[inline]
+    pub fn close_delimiter(&self) -> Option<&str> {
+        self.delimiters[1].as_deref()
+    }
+
     /// Returns the byte range of the opening delimiter (empty for atoms).
     #[inline]
-    pub fn open_delimiter(&self) -> Range<usize> {
+    pub fn open_delimiter_range(&self) -> Range<usize> {
         self.byte_range.start..self.content_range.start
     }
 
     /// Returns the byte range of the closing delimiter (empty for atoms).
     #[inline]
-    pub fn close_delimiter(&self) -> Range<usize> {
+    pub fn close_delimiter_range(&self) -> Range<usize> {
         self.content_range.end..self.byte_range.end
+    }
+
+    pub fn has_delimiters(&self) -> bool {
+        !self.open_delimiter_range().is_empty() && !self.close_delimiter_range().is_empty()
     }
 
     /// Returns true if this is a list node (has children).
@@ -79,7 +96,10 @@ impl SyntaxNode {
 impl SyntaxTree {
     /// Creates an empty syntax tree.
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            offset: 0,
+        }
     }
 
     /// Returns the root node's ID, if the tree is not empty.
@@ -377,36 +397,35 @@ impl Hash for SyntaxTreeCursor<'_> {
 ///
 /// The source text is used to compute structural hashes that include
 /// the actual content of leaf nodes, not just their types.
-///
-/// Byte ranges in the resulting tree are made relative to the root node's
-/// start position, so they can be used as offsets within a text slice.
-pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &[u8]) -> SyntaxTree {
+pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &str) -> SyntaxTree {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
     let base_offset = cursor.node().start_byte();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
-        build_tree_recursive(&mut cursor, &mut nodes, None, source, base_offset);
+        build_tree_recursive(&mut cursor, &mut nodes, None, source);
     }
 
-    SyntaxTree { nodes }
+    SyntaxTree {
+        nodes,
+        offset: base_offset,
+    }
 }
 
 fn build_tree_recursive(
     cursor: &mut tree_sitter::TreeCursor<'_>,
     nodes: &mut Vec<SyntaxNode>,
     parent: Option<SyntaxId>,
-    source: &[u8],
-    base_offset: usize,
+    source: &str,
 ) -> SyntaxId {
-    let ts_node = cursor.node();
+    let mut ts_node = cursor.node();
     let this_id = SyntaxId::new(nodes.len());
-    let byte_range = ts_node.start_byte() - base_offset..ts_node.end_byte() - base_offset;
 
     nodes.push(SyntaxNode {
         id: this_id,
         structural_hash: 0,
-        byte_range: byte_range.clone(),
-        content_range: byte_range,
+        byte_range: ts_node.byte_range(),
+        content_range: ts_node.byte_range(),
+        delimiters: [None, None],
         descendant_count: ts_node.descendant_count() - 1,
         depth: parent
             .map(|parent| nodes[parent.index()].depth + 1)
@@ -418,13 +437,13 @@ fn build_tree_recursive(
     ts_node.kind_id().hash(&mut hasher);
 
     let mut first_child_start = None;
-    let mut last_child_end = ts_node.end_byte() - base_offset;
+    let mut last_child_end = ts_node.end_byte();
 
     if cursor.goto_first_child() {
-        first_child_start = Some(cursor.node().start_byte() - base_offset);
+        first_child_start = Some(cursor.node().start_byte());
 
         loop {
-            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source, base_offset);
+            let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
             let child_node = &nodes[child_id.index()];
 
             last_child_end = child_node.byte_range.end;
@@ -448,6 +467,11 @@ fn build_tree_recursive(
 
     if let Some(first_start) = first_child_start {
         node.content_range = first_start..last_child_end;
+
+        node.delimiters = [
+            Some(source[node.open_delimiter_range()].to_string()),
+            Some(source[node.close_delimiter_range()].to_string()),
+        ];
     }
 
     this_id
@@ -463,7 +487,7 @@ mod tests {
             .set_language(&tree_sitter_json::LANGUAGE.into())
             .expect("failed to set language");
         let tree = parser.parse(source, None).expect("failed to parse");
-        build_tree(tree.walk(), source.as_bytes())
+        build_tree(tree.walk(), source)
     }
 
     fn parse_rust(source: &str) -> SyntaxTree {
@@ -472,7 +496,7 @@ mod tests {
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .expect("failed to set language");
         let tree = parser.parse(source, None).expect("failed to parse");
-        build_tree(tree.walk(), source.as_bytes())
+        build_tree(tree.walk(), source)
     }
 
     #[test]

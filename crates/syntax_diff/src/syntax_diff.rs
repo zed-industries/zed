@@ -91,8 +91,8 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
                 if node.is_atom() {
                     ranges.push(node.byte_range.clone());
                 } else {
-                    let open = node.open_delimiter();
-                    let close = node.close_delimiter();
+                    let open = node.open_delimiter_range();
+                    let close = node.close_delimiter_range();
 
                     if !open.is_empty() {
                         ranges.push(open);
@@ -128,4 +128,7 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
     }
 
     merged
+        .iter()
+        .map(|range| range.start - tree.offset..range.end - tree.offset)
+        .collect()
 }

@@ -284,7 +284,9 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> Vec<(SyntaxEdge, SyntaxVe
 
         // Both are lists with matching delimiters - enter them together
         if lhs_node.is_list() && rhs_node.is_list() {
-            if lhs_node.open_delimiter() == rhs_node.open_delimiter()
+            if lhs_node.has_delimiters()
+                && rhs_node.has_delimiters()
+                && lhs_node.open_delimiter() == rhs_node.open_delimiter()
                 && lhs_node.close_delimiter() == rhs_node.close_delimiter()
             {
                 let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
