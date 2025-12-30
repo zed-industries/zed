@@ -89,14 +89,20 @@ impl RenderOnce for WindowsCaptionButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let (hover_bg, hover_fg, active_bg, active_fg) = match self {
             Self::Close => {
-                let color = Rgba {
+                let color: Hsla = Rgba {
                     r: 232.0 / 255.0,
                     g: 17.0 / 255.0,
                     b: 32.0 / 255.0,
                     a: 1.0,
-                };
+                }
+                .into();
 
-                (color, gpui::white(), color, gpui::white())
+                (
+                    color,
+                    gpui::white(),
+                    color.opacity(0.8),
+                    gpui::white().opacity(0.8),
+                )
             }
             _ => (
                 cx.theme().colors().ghost_element_hover,
