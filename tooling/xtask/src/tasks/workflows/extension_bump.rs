@@ -245,7 +245,10 @@ pub(crate) fn generate_token(
 }
 
 fn install_bump_2_version() -> Step<Run> {
-    named::run(runners::Platform::Linux, "pip install bump2version")
+    named::run(
+        runners::Platform::Linux,
+        "pip install bump2version --break-system-packages",
+    )
 }
 
 fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
