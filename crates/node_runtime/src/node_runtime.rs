@@ -204,6 +204,16 @@ impl NodeRuntime {
         self.instance().await.binary_path()
     }
 
+    /// Returns the path to the managed (bundled) Node.js binary, bypassing system node selection.
+    /// This should be used for ACP agents and other components that require a consistent,
+    /// modern Node.js version regardless of project-level version managers (asdf, nvm, etc.).
+    /// See issue #45241.
+    pub async fn managed_binary_path(&self) -> Result<PathBuf> {
+        let http = self.0.lock().await.http.clone();
+        let instance = ManagedNodeRuntime::install_if_needed(&http).await?;
+        instance.binary_path()
+    }
+
     pub async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
