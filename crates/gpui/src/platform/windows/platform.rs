@@ -27,6 +27,8 @@ use windows::{
     core::*,
 };
 
+use super::{DirectXOffScreenTarget, DirectXRendererDevices};
+use crate::platform::offscreen::{BoxedDrawableOffScreenTarget, OffScreenTargetConfig};
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
@@ -721,6 +723,23 @@ impl Platform for WindowsPlatform {
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.update_jump_list(menus, entries)
+    }
+
+    fn supports_offscreen_rendering(&self) -> bool {
+        true
+    }
+
+    fn create_offscreen_target(
+        &self,
+        config: OffScreenTargetConfig,
+    ) -> Option<BoxedDrawableOffScreenTarget> {
+        let directx_devices_ref = self.inner.state.directx_devices.borrow();
+        let directx_devices = directx_devices_ref.as_ref()?;
+
+        let devices = DirectXRendererDevices::new(directx_devices, true).ok()?;
+        let target = DirectXOffScreenTarget::new(devices, config).ok()?;
+
+        Some(Box::new(target))
     }
 }
 

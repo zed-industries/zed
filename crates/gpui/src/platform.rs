@@ -185,6 +185,21 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    /// Creates an off-screen render target for headless rendering.
+    ///
+    /// Returns `None` if the platform does not support off-screen rendering.
+    fn create_offscreen_target(
+        &self,
+        _config: OffScreenTargetConfig,
+    ) -> Option<BoxedDrawableOffScreenTarget> {
+        None
+    }
+
+    /// Returns whether the platform supports off-screen rendering.
+    fn supports_offscreen_rendering(&self) -> bool {
+        false
+    }
+
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
     #[cfg(not(feature = "screen-capture"))]

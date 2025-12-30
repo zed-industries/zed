@@ -161,44 +161,27 @@ pub struct VulkanSharedTexture {
     pub offset: u32,
 }
 
-/// A render target that can receive GPUI scene rendering.
+/// An off-screen render target that supports pixel readback and texture sharing.
 ///
-/// This trait abstracts over different types of render targets:
-/// - Window surfaces (existing behavior)
-/// - Off-screen textures (new OSR behavior)
-pub(crate) trait RenderTarget: Send + Sync {
+/// This is the public interface for off-screen rendering. It provides:
+///
+/// - Reading pixels back to CPU memory
+/// - Obtaining shared texture handles for zero-copy access
+/// - Querying the pixel format and size
+/// - Resizing the render target
+///
+/// Note: Rendering to this target is done internally by GPUI when you use
+/// the off-screen rendering APIs. The `draw()` method is not exposed publicly
+/// because `Scene` is an internal type.
+pub trait OffScreenRenderTarget: Send + Sync {
     /// Returns the current size of the render target in device pixels.
     fn size(&self) -> Size<DevicePixels>;
 
     /// Resizes the render target.
     ///
-    /// This may reallocate GPU resources. The new size takes effect
-    /// on the next call to [`draw`](Self::draw).
+    /// This may reallocate GPU resources.
     fn resize(&mut self, size: Size<DevicePixels>);
 
-    /// Draws a scene to this render target.
-    ///
-    /// This submits GPU commands to render the scene. The rendering
-    /// may not be complete when this method returns; call
-    /// [`finish_frame`](Self::finish_frame) to ensure completion.
-    fn draw(&mut self, scene: &Scene);
-
-    /// Signals that the current frame is complete.
-    ///
-    /// For window surfaces, this typically presents the frame.
-    /// For off-screen targets, this ensures all GPU commands have completed.
-    fn finish_frame(&mut self);
-}
-
-/// An off-screen render target that supports pixel readback and texture sharing.
-///
-/// This trait extends [`RenderTarget`] with capabilities specific to
-/// off-screen rendering, including:
-///
-/// - Reading pixels back to CPU memory
-/// - Obtaining shared texture handles for zero-copy access
-/// - Querying the pixel format
-pub(crate) trait OffScreenRenderTarget: RenderTarget {
     /// Returns the pixel format used by this render target.
     fn pixel_format(&self) -> PixelFormat;
 
@@ -231,6 +214,26 @@ pub(crate) trait OffScreenRenderTarget: RenderTarget {
     }
 }
 
+/// Internal trait for off-screen targets that can be drawn to.
+///
+/// This extends `OffScreenRenderTarget` with the ability to draw scenes,
+/// which is kept internal because `Scene` is a `pub(crate)` type.
+pub(crate) trait DrawableOffScreenTarget: OffScreenRenderTarget {
+    /// Draws a scene to this render target.
+    ///
+    /// This submits GPU commands to render the scene. The rendering
+    /// may not be complete when this method returns; call
+    /// [`finish_frame`](Self::finish_frame) to ensure completion.
+    fn draw(&mut self, scene: &Scene);
+
+    /// Signals that the current frame is complete.
+    ///
+    /// This ensures all GPU commands have completed before pixel readback.
+    fn finish_frame(&mut self);
+}
+
+/// Boxed off-screen target with drawing capabilities (internal use).
+pub(crate) type BoxedDrawableOffScreenTarget = Box<dyn DrawableOffScreenTarget>;
 /// Configuration for creating an off-screen render target.
 #[derive(Debug, Clone)]
 pub struct OffScreenTargetConfig {
@@ -268,10 +271,10 @@ impl OffScreenTargetConfig {
 }
 
 /// A boxed off-screen render target for dynamic dispatch.
-pub(crate) type BoxedOffScreenTarget = Box<dyn OffScreenRenderTarget>;
+pub type BoxedOffScreenTarget = Box<dyn OffScreenRenderTarget>;
 
 /// An Arc-wrapped off-screen render target for shared ownership.
-pub(crate) type SharedOffScreenTarget = Arc<dyn OffScreenRenderTarget>;
+pub type SharedOffScreenTarget = Arc<dyn OffScreenRenderTarget>;
 
 #[cfg(test)]
 mod tests {

@@ -37,12 +37,12 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OffScreenRenderTarget, OffScreenTargetConfig,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1050,6 +1050,49 @@ impl App {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns whether the platform supports off-screen rendering.
+    ///
+    /// Off-screen rendering allows GPUI content to be rendered to a texture
+    /// without displaying in a window.
+    pub fn supports_offscreen_rendering(&self) -> bool {
+        self.platform.supports_offscreen_rendering()
+    }
+
+    /// Creates an off-screen render target for headless rendering.
+    ///
+    /// Off-screen render targets can be used to render GPUI scenes to a texture
+    /// for purposes like:
+    /// - Embedding GPUI views in other applications
+    /// - Headless rendering for testing
+    /// - Video capture without a window
+    /// - Zero-copy texture sharing between processes
+    ///
+    /// Returns `None` if the platform does not support off-screen rendering.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = OffScreenTargetConfig::new(size(DevicePixels(800), DevicePixels(600)))
+    ///     .with_sharing();
+    /// if let Some(target) = cx.create_offscreen_target(config) {
+    ///     // Read pixels back to CPU memory
+    ///     let image = target.read_pixels()?;
+    ///
+    ///     // Or get a shared texture handle for zero-copy GPU access
+    ///     if let Some(handle) = target.shared_texture_handle() {
+    ///         // Use handle to share texture with other processes/APIs
+    ///     }
+    /// }
+    /// ```
+    pub fn create_offscreen_target(
+        &self,
+        config: OffScreenTargetConfig,
+    ) -> Option<Box<dyn OffScreenRenderTarget>> {
+        self.platform
+            .create_offscreen_target(config)
+            .map(|target| target as Box<dyn OffScreenRenderTarget>)
     }
 
     /// Returns whether `screen_capture_sources` may work.
