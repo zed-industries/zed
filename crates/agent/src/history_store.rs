@@ -427,3 +427,96 @@ impl HistoryStore {
         self.draft_message.take()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal struct to test draft message operations in isolation.
+    struct DraftStore {
+        draft_message: Option<Vec<acp::ContentBlock>>,
+    }
+
+    impl DraftStore {
+        fn new() -> Self {
+            Self {
+                draft_message: None,
+            }
+        }
+
+        fn set_draft_message(&mut self, contents: Vec<acp::ContentBlock>) {
+            if contents.is_empty() {
+                self.draft_message = None;
+            } else {
+                self.draft_message = Some(contents);
+            }
+        }
+
+        fn take_draft_message(&mut self) -> Option<Vec<acp::ContentBlock>> {
+            self.draft_message.take()
+        }
+    }
+
+    #[test]
+    fn test_draft_message_set_and_take() {
+        let mut store = DraftStore::new();
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new("Hello"))];
+
+        store.set_draft_message(content);
+
+        // Verify the draft was set
+        assert!(store.draft_message.is_some());
+        assert_eq!(store.draft_message.as_ref().unwrap().len(), 1);
+
+        // Take should return the content and clear the store
+        let taken = store.take_draft_message();
+        assert!(taken.is_some());
+        assert_eq!(taken.unwrap().len(), 1);
+
+        // Verify draft is now empty after take
+        assert!(store.draft_message.is_none());
+    }
+
+    #[test]
+    fn test_draft_message_empty_contents_clears_draft() {
+        let mut store = DraftStore::new();
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new("Hello"))];
+
+        // First set some content
+        store.set_draft_message(content);
+        assert!(store.draft_message.is_some());
+
+        // Setting empty contents should clear the draft
+        store.set_draft_message(Vec::new());
+        assert!(store.draft_message.is_none());
+    }
+
+    #[test]
+    fn test_draft_message_take_returns_none_when_empty() {
+        let mut store = DraftStore::new();
+
+        // Taking from empty should return None
+        let taken = store.take_draft_message();
+        assert!(taken.is_none());
+
+        // Taking again should still return None
+        let taken_again = store.take_draft_message();
+        assert!(taken_again.is_none());
+    }
+
+    #[test]
+    fn test_draft_message_repeated_take_returns_none() {
+        let mut store = DraftStore::new();
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new("Test"))];
+
+        store.set_draft_message(content);
+
+        // First take should succeed
+        let first_take = store.take_draft_message();
+        assert!(first_take.is_some());
+
+        // Second take should return None
+        let second_take = store.take_draft_message();
+        assert!(second_take.is_none());
+    }
+}

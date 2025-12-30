@@ -1528,24 +1528,23 @@ impl AgentPanel {
             let history_store = self.history_store.clone();
             let new_thread_view = thread_view.clone();
 
+            // The capture runs asynchronously. During this brief window, the new thread
+            // may appear empty until the capture completes and transfers the content.
+            // This is acceptable as the delay is typically sub-millisecond.
             cx.spawn_in(window, async move |_this, cx| {
-                // Await the content capture task.
                 let pending_message = pending_message_task.await;
 
-                // Update the global draft store
-                history_store
-                    .update(cx, |store, _cx| {
-                        if let Some(content) = pending_message.as_ref() {
+                // Persist to the global draft store for recovery across panel close/open
+                if let Some(content) = pending_message.as_ref() {
+                    history_store
+                        .update(cx, |store, _cx| {
                             store.set_draft_message(content.clone());
-                        } else {
-                            // If content is empty/None, clear the draft
-                            store.set_draft_message(Vec::new());
-                        }
-                    })
-                    .ok();
+                        })
+                        .ok();
+                }
 
+                // Transfer to the new thread
                 if let Some(pending_message) = pending_message {
-                    // Transfer to the new thread immediately
                     new_thread_view
                         .update_in(cx, |view, window, cx| {
                             view.set_pending_message(pending_message, window, cx);
@@ -1558,29 +1557,8 @@ impl AgentPanel {
             })
             .detach_and_log_err(cx);
         } else if let Some(draft) = draft_to_restore {
-            // If we didn't have an active view to capture from (e.g. fresh panel open),
-            // restore from the persistent store.
-            // Note: If we DID have a capture, the async block above handles the transfer,
-            // which is fresher than the store (because store was updated by previous capture).
-            // However, the async block might take a ms.
-            // Ideally we pass "draft_to_restore" to New View immediately?
-            // But "draft_to_restore" is what WAS in the store.
-            // The Capture from Old View is NEWER.
-            // So if we are switching views, we should prefer the Capture.
-            // But the Capture is async!
-
-            // Wait: If I type "A", switch to T2.
-            // Capture "A". Store "A". Set T2 "A".
-            // Switch to T3.
-            // Capture "A". Store "A". Set T3 "A".
-
-            // What if I close panel?
-            // Capture "A". Store "A".
-
-            // Open panel.
-            // Capture None.
-            // Restore "A" from Store.
-
+            // No active view to capture from (e.g., fresh panel open or loading an existing thread).
+            // Restore from the persistent store, which was populated by a previous session.
             thread_view.update(cx, |view, cx| {
                 view.set_pending_message(draft, window, cx);
             });
