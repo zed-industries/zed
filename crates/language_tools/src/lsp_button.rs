@@ -17,8 +17,8 @@ use project::{
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
-    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationEdge,
-    DocumentationSide, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
+    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationSide,
+    Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
 };
 
 use util::{ResultExt, rel_path::RelPath};
@@ -384,7 +384,6 @@ impl LanguageServerState {
                 tooltip_text.map(|tooltip_text| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
-                        DocumentationEdge::Top,
                         Rc::new(move |_| Label::new(tooltip_text.clone()).into_any_element()),
                     )
                 }),

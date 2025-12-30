@@ -593,7 +593,6 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 
                 ui::DocumentationAside::new(
                     ui::DocumentationSide::Left,
-                    ui::DocumentationEdge::Top,
                     Rc::new(move |_| {
                         v_flex()
                             .gap_1()
@@ -603,6 +602,10 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                     }),
                 )
             })
+    }
+
+    fn documentation_aside_index(&self) -> Option<usize> {
+        self.selected_description.as_ref().map(|(ix, _, _)| *ix)
     }
 }
 
