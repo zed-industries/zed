@@ -151,7 +151,7 @@ struct PredictArgs {
     repetitions: usize,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
 enum PredictionProvider {
     Sweep,
     Mercury,

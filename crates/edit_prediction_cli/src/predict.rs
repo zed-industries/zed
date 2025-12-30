@@ -28,11 +28,15 @@ pub async fn run_prediction(
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if !example.predictions.is_empty() {
-        return Ok(());
-    }
-
     let provider = provider.context("provider is required")?;
+
+    if let Some(existing_prediction) = example.predictions.first() {
+        if existing_prediction.provider == provider {
+            return Ok(());
+        } else {
+            example.predictions.clear();
+        }
+    }
 
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
