@@ -184,7 +184,9 @@ pub async fn run_prediction(
         let actual_patch = prediction
             .and_then(|prediction| {
                 let prediction = prediction.prediction.ok()?;
-                prediction.edit_preview.as_unified_diff(&prediction.edits)
+                prediction
+                    .edit_preview
+                    .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
             })
             .unwrap_or_default();
 

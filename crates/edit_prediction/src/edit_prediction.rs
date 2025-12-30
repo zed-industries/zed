@@ -2046,7 +2046,9 @@ impl EditPredictionStore {
             "Edit Prediction Rated",
             rating,
             inputs = prediction.inputs,
-            output = prediction.edit_preview.as_unified_diff(&prediction.edits),
+            output = prediction
+                .edit_preview
+                .as_unified_diff(prediction.snapshot.file(), &prediction.edits),
             feedback
         );
         self.client.telemetry().flush_events().detach();

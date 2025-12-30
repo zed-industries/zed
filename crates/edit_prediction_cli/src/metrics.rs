@@ -160,7 +160,7 @@ fn ngram_delta_to_counts(delta: &CountsDelta) -> Counts {
     for (ngram, &delta) in delta {
         if delta > 0 {
             counts.insert(ngram.clone(), delta as usize);
-        } else {
+        } else if delta < 0 {
             counts.insert(format!("¬{ngram}"), delta.unsigned_abs());
         }
     }
