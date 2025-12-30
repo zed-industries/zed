@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use client::ProjectId;
 use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
@@ -104,7 +105,7 @@ impl HeadlessProject {
             project::trusted_worktrees::track_worktree_trust(
                 worktree_store.clone(),
                 None::<RemoteHostLocation>,
-                Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),
+                Some((session.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                 None,
                 cx,
             );
@@ -611,22 +612,23 @@ impl HeadlessProject {
     }
 
     pub async fn handle_trust_worktrees(
-        _: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.clone())?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             trusted_worktrees.trust(
+                &worktree_store,
                 envelope
                     .payload
                     .trusted_paths
                     .into_iter()
                     .filter_map(PathTrust::from_proto)
                     .collect(),
-                None,
                 cx,
             );
         })?;
@@ -634,13 +636,15 @@ impl HeadlessProject {
     }
 
     pub async fn handle_restrict_worktrees(
-        _: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
+        let worktree_store =
+            this.read_with(&cx, |project, _| project.worktree_store.downgrade())?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let restricted_paths = envelope
                 .payload
@@ -649,7 +653,7 @@ impl HeadlessProject {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            trusted_worktrees.restrict(restricted_paths, None, cx);
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         })?;
         Ok(proto::Ack {})
     }

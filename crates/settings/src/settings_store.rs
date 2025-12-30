@@ -32,7 +32,8 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId, fallible_options,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
+    fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -40,6 +41,8 @@ use crate::{
 };
 
 use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
+
+pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -256,6 +259,7 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
+    pub lsp_adapter_names: &'a [String],
 }
 
 impl SettingsStore {
@@ -1025,6 +1029,14 @@ impl SettingsStore {
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
 
+        generator.subschema_for::<LspSettings>();
+
+        let lsp_settings_def = generator
+            .definitions()
+            .get("LspSettings")
+            .expect("LspSettings should be defined")
+            .clone();
+
         replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
             json_schema!({
                 "type": "object",
@@ -1060,6 +1072,38 @@ impl SettingsStore {
             json_schema!({
                 "type": "string",
                 "enum": params.icon_theme_names,
+            })
+        });
+
+        replace_subschema::<LspSettingsMap>(&mut generator, || {
+            let mut lsp_properties = serde_json::Map::new();
+
+            for adapter_name in params.lsp_adapter_names {
+                let mut base_lsp_settings = lsp_settings_def
+                    .as_object()
+                    .expect("LspSettings should be an object")
+                    .clone();
+
+                if let Some(properties) = base_lsp_settings.get_mut("properties") {
+                    if let Some(props_obj) = properties.as_object_mut() {
+                        props_obj.insert(
+                            "initialization_options".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
+                            }),
+                        );
+                    }
+                }
+
+                lsp_properties.insert(
+                    adapter_name.clone(),
+                    serde_json::Value::Object(base_lsp_settings),
+                );
+            }
+
+            json_schema!({
+                "type": "object",
+                "properties": lsp_properties,
             })
         });
 
@@ -2303,5 +2347,40 @@ mod tests {
                 &SettingsFile::Default,
             ]
         )
+    }
+
+    #[gpui::test]
+    fn test_lsp_settings_schema_generation(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+
+        let schema = store.json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[
+                "rust-analyzer".to_string(),
+                "typescript-language-server".to_string(),
+            ],
+        });
+
+        let properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+
+        assert!(properties.contains_key("rust-analyzer"));
+        assert!(properties.contains_key("typescript-language-server"));
+
+        let init_options_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/initialization_options/$ref")
+            .expect("initialization_options should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
     }
 }

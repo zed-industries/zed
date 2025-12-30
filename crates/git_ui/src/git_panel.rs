@@ -3638,7 +3638,7 @@ impl GitPanel {
             self.entry_count += 1;
             let is_staging_or_staged = GitPanel::stage_status_for_entry(status_entry, repo)
                 .as_bool()
-                .unwrap_or(false);
+                .unwrap_or(true);
 
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;

@@ -42,7 +42,7 @@ impl WindowsWindowInner {
         let handled = match msg {
             // eagerly activate the window, so calls to `active_window` will work correctly
             WM_MOUSEACTIVATE => {
-                unsafe { SetActiveWindow(handle).log_err() };
+                unsafe { SetActiveWindow(handle).ok() };
                 None
             }
             WM_ACTIVATE => self.handle_activate_msg(wparam),
