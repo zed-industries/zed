@@ -22,7 +22,8 @@ pub struct ExceededGraphLimit;
 #[derive(Clone)]
 pub struct SyntaxPath<'a> {
     pub edge: Option<SyntaxEdge>,
-    pub cost: u32,
+    pub g_cost: u32,
+    pub f_cost: u32,
     pub vertices: [Option<SyntaxVertex<'a>>; 2],
 }
 
@@ -31,7 +32,7 @@ pub struct SyntaxRoute<'a>(pub Vec<SyntaxPath<'a>>);
 
 impl<'a> PartialEq for SyntaxPath<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.cost == other.cost
+        self.f_cost == other.f_cost
     }
 }
 
@@ -45,7 +46,7 @@ impl<'a> PartialOrd for SyntaxPath<'a> {
 
 impl<'a> Ord for SyntaxPath<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.cost.cmp(&other.cost)
+        self.f_cost.cmp(&other.f_cost)
     }
 }
 
@@ -393,7 +394,8 @@ fn find_shortest_path<'a>(
 
     heap.push(Reverse(SyntaxPath {
         edge: None,
-        cost: 0,
+        g_cost: 0,
+        f_cost: 0,
         vertices: [None, Some(start)],
     }));
 
@@ -408,7 +410,7 @@ fn find_shortest_path<'a>(
             .expect("current vertex should exist");
 
         if let Some(existing) = visited.get(&current_vertex) {
-            if current.cost >= existing.cost {
+            if current.g_cost >= existing.g_cost {
                 continue;
             }
         }
@@ -425,16 +427,20 @@ fn find_shortest_path<'a>(
 
         let neighbours = compute_neighbours(&current_vertex);
         for (edge, next_vertex) in neighbours {
-            let next_cost = current.cost + edge.cost();
+            let next_cost = current.g_cost + edge.cost();
 
             let dominated = visited
                 .get(&next_vertex)
-                .is_some_and(|v| next_cost >= v.cost);
+                .is_some_and(|v| next_cost >= v.g_cost);
 
             if !dominated {
                 heap.push(Reverse(SyntaxPath {
                     edge: Some(edge),
-                    cost: next_cost,
+                    g_cost: next_cost,
+                    // Dijkstra is a special case of A*
+                    // where h(n) = 0
+                    // TODO: Can we find a good heuristic?
+                    f_cost: next_cost + 0,
                     vertices: [Some(current_vertex.clone()), Some(next_vertex)],
                 }));
             }
@@ -458,7 +464,8 @@ fn reconstruct_path<'a>(
 
         route.push(SyntaxPath {
             edge: segment.edge,
-            cost: segment.cost,
+            g_cost: segment.g_cost,
+            f_cost: segment.f_cost,
             vertices: [Some(predecessor.clone()), Some(current)],
         });
 
