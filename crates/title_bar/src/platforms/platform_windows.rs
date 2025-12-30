@@ -34,16 +34,6 @@ impl WindowsWindowControls {
 
 impl RenderOnce for WindowsWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let close_button_hover_color = Rgba {
-            r: 232.0 / 255.0,
-            g: 17.0 / 255.0,
-            b: 32.0 / 255.0,
-            a: 1.0,
-        };
-
-        let button_hover_color = cx.theme().colors().ghost_element_hover;
-        let button_active_color = cx.theme().colors().ghost_element_active;
-
         div()
             .id("windows-window-controls")
             .font_family(Self::get_font())
@@ -53,75 +43,79 @@ impl RenderOnce for WindowsWindowControls {
             .content_stretch()
             .max_h(self.button_height)
             .min_h(self.button_height)
-            .child(WindowsCaptionButton::new(
-                "minimize",
-                WindowsCaptionButtonIcon::Minimize,
-                button_hover_color,
-                button_active_color,
-            ))
-            .child(WindowsCaptionButton::new(
-                "maximize-or-restore",
+            .child(WindowsCaptionButton::Minimize)
+            .map(|this| {
                 if window.is_maximized() {
-                    WindowsCaptionButtonIcon::Restore
+                    WindowsCaptionButton::Restore
                 } else {
-                    WindowsCaptionButtonIcon::Maximize
-                },
-                button_hover_color,
-                button_active_color,
-            ))
-            .child(WindowsCaptionButton::new(
-                "close",
-                WindowsCaptionButtonIcon::Close,
-                close_button_hover_color,
-                button_active_color,
-            ))
+                    WindowsCaptionButton::Maximize
+                }
+            })
+            .child(WindowsCaptionButton::Close)
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-enum WindowsCaptionButtonIcon {
+#[derive(IntoElement)]
+enum WindowsCaptionButton {
     Minimize,
     Restore,
     Maximize,
     Close,
 }
 
-#[derive(IntoElement)]
-struct WindowsCaptionButton {
-    id: ElementId,
-    icon: WindowsCaptionButtonIcon,
-    hover_background_color: Hsla,
-    active_background_color: Hsla,
-}
-
 impl WindowsCaptionButton {
-    pub fn new(
-        id: impl Into<ElementId>,
-        icon: WindowsCaptionButtonIcon,
-        hover_background_color: impl Into<Hsla>,
-        active_background_color: impl Into<Hsla>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            icon,
-            hover_background_color: hover_background_color.into(),
-            active_background_color: active_background_color.into(),
+    #[inline]
+    fn id(&self) -> &'static str {
+        match self {
+            Self::Minimize => "minimize",
+            Self::Restore => "restore",
+            Self::Maximize => "maximize",
+            Self::Close => "close",
+        }
+    }
+
+    #[inline]
+    fn icon(&self) -> &'static str {
+        match self {
+            Self::Minimize => "\u{e921}",
+            Self::Restore => "\u{e923}",
+            Self::Maximize => "\u{e922}",
+            Self::Close => "\u{e8bb}",
         }
     }
 }
 
 impl RenderOnce for WindowsCaptionButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let (hover_bg, hover_fg, active_bg, active_fg) = match self {
+            Self::Close => {
+                let color = Rgba {
+                    r: 232.0 / 255.0,
+                    g: 17.0 / 255.0,
+                    b: 32.0 / 255.0,
+                    a: 1.0,
+                };
+
+                (color, gpui::white(), color, gpui::white())
+            }
+            _ => (
+                cx.theme().colors().ghost_element_hover,
+                cx.theme().colors().text,
+                cx.theme().colors().ghost_element_active,
+                cx.theme().colors().text,
+            ),
+        };
+
         h_flex()
-            .id(self.id)
+            .id(self.id())
             .justify_center()
             .content_center()
             .occlude()
             .w(px(36.))
             .h_full()
             .text_size(px(10.0))
-            .hover(|style| style.bg(self.hover_background_color))
-            .active(|style| style.bg(self.active_background_color))
+            .hover(|style| style.bg(hover_bg).text_color(hover_fg))
+            .active(|style| style.bg(active_bg).text_color(active_fg))
             .map(|this| match self.icon {
                 WindowsCaptionButtonIcon::Close => {
                     this.window_control_area(WindowControlArea::Close)
@@ -133,11 +127,6 @@ impl RenderOnce for WindowsCaptionButton {
                     this.window_control_area(WindowControlArea::Min)
                 }
             })
-            .child(match self.icon {
-                WindowsCaptionButtonIcon::Minimize => "\u{e921}",
-                WindowsCaptionButtonIcon::Restore => "\u{e923}",
-                WindowsCaptionButtonIcon::Maximize => "\u{e922}",
-                WindowsCaptionButtonIcon::Close => "\u{e8bb}",
-            })
+            .child(self.icon())
     }
 }
