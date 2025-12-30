@@ -1042,14 +1042,7 @@ fn build_syntax_tree(
         .node()
         .descendant_for_byte_range(byte_range.start, byte_range.end)?;
 
-    let mut tree = syntax_diff::build_tree(subtree.walk(), &text);
-    // Use the hunk's byte_range.start as the offset for adjustment, not the
-    // subtree's start byte. The subtree returned by descendant_for_byte_range
-    // may start before byte_range.start (e.g., a parent node containing the range),
-    // which would cause the returned ranges to be shifted incorrectly.
-    tree.offset = byte_range.start;
-
-    Some(tree)
+    Some(syntax_diff::build_tree(subtree.walk(), &text))
 }
 
 fn build_diff_options(
@@ -1364,9 +1357,9 @@ fn process_patch_hunk(
         let buffer_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
 
         match (base_tree, buffer_tree) {
-            (Some(base_tree), Some(buffer_tree)) => {
-                syntax_diff::diff_trees(&base_tree, &buffer_tree).ok()
-            }
+            (Some(base_tree), Some(buffer_tree)) => syntax_diff::diff_trees(&base_tree, &buffer_tree)
+                .ok()
+                .map(|diff| diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)),
             _ => None,
         }
     } else {

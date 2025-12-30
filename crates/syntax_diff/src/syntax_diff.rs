@@ -16,12 +16,28 @@ use crate::syntax_graph::ExceededGraphLimit;
 pub const DEFAULT_GRAPH_LIMIT: usize = 10_000_000;
 
 /// Result of a syntax diff operation.
+///
+/// Ranges are absolute byte positions in the original source text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxDiff {
-    /// Byte ranges in the LHS that are novel (removed/changed).
+    /// Absolute byte ranges in the LHS that are novel (removed/changed).
     pub lhs_ranges: Vec<Range<usize>>,
-    /// Byte ranges in the RHS that are novel (added/changed).
+    /// Absolute byte ranges in the RHS that are novel (added/changed).
     pub rhs_ranges: Vec<Range<usize>>,
+}
+
+impl SyntaxDiff {
+    /// Adjusts absolute byte ranges to be relative to the given offsets.
+    ///
+    /// This filters out ranges that are entirely before their respective offset
+    /// (e.g., syntax nodes outside the hunk's range) and shifts the remaining
+    /// ranges so they start from 0 relative to the offset.
+    pub fn relative_to(self, lhs_offset: usize, rhs_offset: usize) -> Self {
+        Self {
+            lhs_ranges: adjust_ranges(self.lhs_ranges, lhs_offset),
+            rhs_ranges: adjust_ranges(self.rhs_ranges, rhs_offset),
+        }
+    }
 }
 
 /// Compute a syntax-aware diff between two `SyntaxTree`s.
@@ -128,7 +144,18 @@ fn collect_novel_ranges(tree: &SyntaxTree, change_map: &SyntaxChanges) -> Vec<Ra
     }
 
     merged
-        .iter()
-        .map(|range| range.start - tree.offset..range.end - tree.offset)
+}
+
+fn adjust_ranges(ranges: Vec<Range<usize>>, offset: usize) -> Vec<Range<usize>> {
+    ranges
+        .into_iter()
+        .filter_map(|range| {
+            if range.end <= offset {
+                return None;
+            }
+            let start = range.start.saturating_sub(offset);
+            let end = range.end - offset;
+            Some(start..end)
+        })
         .collect()
 }

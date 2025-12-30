@@ -23,7 +23,6 @@ impl SyntaxId {
 #[derive(Debug)]
 pub struct SyntaxTree {
     nodes: Vec<SyntaxNode>,
-    pub offset: usize,
 }
 
 // TODO: Can this just wrap tree sitter's node?
@@ -99,7 +98,6 @@ impl SyntaxTree {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            offset: 0,
         }
     }
 
@@ -398,18 +396,16 @@ impl Hash for SyntaxTreeCursor<'_> {
 ///
 /// The source text is used to compute structural hashes that include
 /// the actual content of leaf nodes, not just their types.
+///
+/// Node byte ranges are stored as absolute positions in the source text.
 pub fn build_tree(mut cursor: tree_sitter::TreeCursor<'_>, source: &str) -> SyntaxTree {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
-    let base_offset = cursor.node().start_byte();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
         build_tree_recursive(&mut cursor, &mut nodes, None, source);
     }
 
-    SyntaxTree {
-        nodes,
-        offset: base_offset,
-    }
+    SyntaxTree { nodes }
 }
 
 fn build_tree_recursive(
