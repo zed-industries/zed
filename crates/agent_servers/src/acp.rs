@@ -41,8 +41,9 @@ pub struct AcpConnection {
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
     root_dir: PathBuf,
-    // NB: Don't move this into the wait_task, since we need to ensure the process is
-    // killed on drop (setting kill_on_drop on the command seems to not always work).
+    // The child process is spawned in its own process group (via setsid on Unix).
+    // On drop, we use killpg to kill the entire process group, ensuring all descendant
+    // processes (MCP servers, tool executors, etc.) are terminated.
     child: smol::process::Child,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
@@ -113,17 +114,45 @@ impl AcpConnection {
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
-        let mut child =
-            builder.build_command(Some(command.path.display().to_string()), &command.args);
-        child
-            .envs(command.env.iter().flatten())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        if !is_remote {
-            child.current_dir(root_dir);
-        }
-        let mut child = child.spawn()?;
+
+        // On Unix, we need to spawn the child in its own process group so that when we kill it,
+        // all descendant processes (MCP servers spawned by Gemini CLI, tool executors, etc.)
+        // are also killed. Otherwise, these child processes become orphaned and leak.
+        #[cfg(unix)]
+        let mut child = {
+            let (program, args) =
+                builder.build(Some(command.path.display().to_string()), &command.args);
+            let mut std_command = util::command::new_std_command(&program);
+            std_command.args(&args);
+            std_command.envs(command.env.iter().flatten());
+            if !is_remote {
+                std_command.current_dir(root_dir);
+            }
+            util::set_pre_exec_to_start_new_session(&mut std_command);
+            // Note: smol::process::Command::from() doesn't preserve stdio configuration,
+            // so we set it on the smol command after conversion.
+            let mut smol_command = smol::process::Command::from(std_command);
+            smol_command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            smol_command.spawn()?
+        };
+
+        #[cfg(not(unix))]
+        let mut child = {
+            let mut child =
+                builder.build_command(Some(command.path.display().to_string()), &command.args);
+            child
+                .envs(command.env.iter().flatten())
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            if !is_remote {
+                child.current_dir(root_dir);
+            }
+            child.spawn()?
+        };
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -259,8 +288,25 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        // See the comment on the child field.
-        self.child.kill().log_err();
+        // Kill the process and all its descendants.
+        // On Unix, we spawned the child in its own process group (via setsid in pre_exec),
+        // so we can use killpg to kill the entire group. This ensures MCP servers and other
+        // child processes spawned by the agent (e.g., Gemini CLI) are properly terminated.
+        #[cfg(unix)]
+        {
+            let pid = self.child.id();
+            unsafe {
+                // SIGKILL the entire process group
+                libc::killpg(pid as i32, libc::SIGKILL);
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            // On non-Unix platforms, fall back to killing just the child process.
+            // TODO(windows): Use job objects to kill the entire process tree.
+            self.child.kill().log_err();
+        }
     }
 }
 

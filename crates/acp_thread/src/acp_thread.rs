@@ -1062,6 +1062,18 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = prompt_capabilities_rx.borrow().clone();
+
+        // Cancel the session when the AcpThread is dropped to prevent zombie sessions
+        // and ensure the agent server stops any in-progress work.
+        {
+            let connection = connection.clone();
+            let session_id = session_id.clone();
+            cx.on_release(move |_this, cx| {
+                connection.cancel(&session_id, cx);
+            })
+            .detach();
+        }
+
         let task = cx.spawn::<_, anyhow::Result<()>>(async move |this, cx| {
             loop {
                 let caps = prompt_capabilities_rx.recv().await?;
@@ -3690,14 +3702,14 @@ mod tests {
         }
 
         fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
-            let sessions = self.sessions.lock();
-            let thread = sessions.get(session_id).unwrap().clone();
+            let Some(thread) = self.sessions.lock().get(session_id).cloned() else {
+                return;
+            };
 
             cx.spawn(async move |cx| {
-                thread
-                    .update(cx, |thread, cx| thread.cancel(cx))
-                    .unwrap()
-                    .await
+                if let Ok(task) = thread.update(cx, |thread, cx| thread.cancel(cx)) {
+                    task.await;
+                }
             })
             .detach();
         }

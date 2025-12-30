@@ -473,15 +473,10 @@ mod test_support {
         }
 
         fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
-            if let Some(end_turn_tx) = self
-                .sessions
-                .lock()
-                .get_mut(session_id)
-                .unwrap()
-                .response_tx
-                .take()
-            {
-                end_turn_tx.send(acp::StopReason::Cancelled).unwrap();
+            if let Some(session) = self.sessions.lock().get_mut(session_id) {
+                if let Some(end_turn_tx) = session.response_tx.take() {
+                    end_turn_tx.send(acp::StopReason::Cancelled).ok();
+                }
             }
         }
 
