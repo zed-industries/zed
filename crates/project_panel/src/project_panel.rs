@@ -5153,14 +5153,13 @@ impl ProjectPanel {
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, _, cx| {
-                                                    if index != active_index
-                                                        && let Some(folds) =
-                                                            this.state.ancestors.get_mut(&entry_id)
-                                                        {
-                                                            folds.current_ancestor_depth =
-                                                                components_len - 1 - index;
-                                                            cx.notify();
-                                                        }
+                                                    set_active_ancestor_index(entry_id, active_index, components_len, index, this, cx);
+                                                }),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Right,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    set_active_ancestor_index(entry_id, active_index, components_len, index, this, cx);
                                                 }),
                                             )
                                             .child(
@@ -5575,6 +5574,22 @@ impl ProjectPanel {
                     .into_any()
             })
             .collect()
+    }
+}
+
+fn set_active_ancestor_index(
+    entry_id: ProjectEntryId,
+    active_index: usize,
+    components_len: usize,
+    index: usize,
+    this: &mut ProjectPanel,
+    cx: &mut Context<'_, ProjectPanel>,
+) {
+    if index != active_index
+        && let Some(folds) = this.state.ancestors.get_mut(&entry_id)
+    {
+        folds.current_ancestor_depth = components_len - 1 - index;
+        cx.notify();
     }
 }
 
