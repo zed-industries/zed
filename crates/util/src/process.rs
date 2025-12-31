@@ -1,6 +1,9 @@
 use anyhow::{Context as _, Result};
 use std::process::Stdio;
 
+#[cfg(windows)]
+use windows::Win32::{Foundation::CloseHandle, System::JobObjects::TerminateJobObject};
+
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
 /// are killed when the process is terminated by using process groups.
 pub struct Child {
@@ -96,7 +99,6 @@ impl Child {
     pub fn into_inner(self) -> smol::process::Child {
         #[cfg(windows)]
         if let Some(job) = self.job {
-            use windows::Win32::Foundation::CloseHandle;
             unsafe {
                 let _ = CloseHandle(job);
             }
@@ -116,10 +118,7 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        use windows::Win32::System::JobObjects::TerminateJobObject;
-
         if let Some(job) = self.job.take() {
-            use windows::Win32::Foundation::CloseHandle;
             unsafe {
                 let _ = TerminateJobObject(job, 1);
                 let _ = CloseHandle(job);
@@ -133,7 +132,6 @@ impl Child {
 impl Drop for Child {
     fn drop(&mut self) {
         if let Some(job) = self.job.take() {
-            use windows::Win32::{Foundation::CloseHandle, System::JobObjects::TerminateJobObject};
             unsafe {
                 let _ = TerminateJobObject(job, 1);
                 let _ = CloseHandle(job);
