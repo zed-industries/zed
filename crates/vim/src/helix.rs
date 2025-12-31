@@ -12,7 +12,7 @@ use editor::{
     SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{Context, Hsla, Window};
+use gpui::{Context, Font, Hsla, Pixels, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
@@ -939,6 +939,10 @@ impl Vim {
                 .map(|s| buffer_snapshot.point_to_offset(s.head()))
                 .unwrap_or(start_offset);
 
+            let style = editor.style(cx);
+            let font = style.text.font();
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+
             let accent = HelixSettings::get_global(cx).jump_label_accent;
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
@@ -948,6 +952,9 @@ impl Vim {
                 accent,
                 &skip_points,
                 &skip_ranges,
+                window.text_system(),
+                font,
+                font_size,
             )
         })
     }
@@ -960,6 +967,9 @@ impl Vim {
         accent: Hsla,
         skip_points: &[MultiBufferOffset],
         skip_ranges: &[Range<MultiBufferOffset>],
+        text_system: &WindowTextSystem,
+        font: Font,
+        font_size: Pixels,
     ) -> HelixJumpUiData {
         if start_offset >= end_offset {
             return HelixJumpUiData::default();
@@ -1026,17 +1036,114 @@ impl Vim {
         let mut highlights = Vec::with_capacity(ordered_candidates.len());
         let mut blocks = Vec::with_capacity(ordered_candidates.len());
 
+        let width_of = |text: &str| -> Pixels {
+            if text.is_empty() {
+                return px(0.0);
+            }
+
+            let run = gpui::TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+
+            text_system.layout_line(text, font_size, &[run], None).width
+        };
+
         for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
             let start_anchor = buffer.anchor_after(candidate.word_start);
             let end_anchor = buffer.anchor_after(candidate.word_end);
-            let first_two_anchor = buffer.anchor_after(candidate.first_two_end);
-
-            highlights.push(start_anchor..first_two_anchor);
 
             let label = [
                 HELIX_JUMP_ALPHABET[label_index / HELIX_JUMP_ALPHABET.len()],
                 HELIX_JUMP_ALPHABET[label_index % HELIX_JUMP_ALPHABET.len()],
             ];
+
+            // In proportional fonts, labels like "mw" can be wider than the first two letters of a
+            // word like "if". Instead of shrinking the label (which looks inconsistent), we hide
+            // as many characters of the word as needed (up to a cap) so the label can render at a
+            // consistent size without overlapping the following text.
+            //
+            // If the word is too short, extend the hidden region into following non-word
+            // characters (whitespace/punctuation) but stop before the start of the next word.
+            const MAX_HIDDEN_CHARS: usize = 16;
+            let label_text: String = label.iter().collect();
+            let label_width = width_of(&label_text);
+
+            let mut hidden_prefix = String::new();
+            let mut hide_end_offset = candidate.first_two_end;
+            let mut hidden_width = px(0.0);
+            let mut total_char_count = 0usize;
+            let mut word_char_count = 0usize;
+            let mut offset = candidate.word_start;
+            let mut hit_line_break = false;
+
+            'prefix: for chunk in buffer.text_for_range(candidate.word_start..end_offset) {
+                for (idx, ch) in chunk.char_indices() {
+                    let absolute = offset + idx;
+
+                    // Keep labels within a single logical line.
+                    if ch == '\n' || ch == '\r' {
+                        hit_line_break = true;
+                        break 'prefix;
+                    }
+
+                    // Don't hide into the next word (after the current word ends), which can make
+                    // two labels overlap.
+                    if absolute >= candidate.word_end && is_jump_word_char(ch) {
+                        break 'prefix;
+                    }
+
+                    total_char_count += 1;
+                    if total_char_count > MAX_HIDDEN_CHARS {
+                        break 'prefix;
+                    }
+
+                    hidden_prefix.push(ch);
+                    let end_offset = absolute + ch.len_utf8();
+
+                    if absolute < candidate.word_end && is_jump_word_char(ch) {
+                        word_char_count += 1;
+                    }
+
+                    if word_char_count < 2 {
+                        continue;
+                    }
+
+                    hide_end_offset = end_offset;
+                    hidden_width = width_of(&hidden_prefix);
+
+                    if hidden_width >= label_width {
+                        break 'prefix;
+                    }
+                }
+                offset += chunk.len();
+            }
+
+            // Fallback for unexpected measurement failure.
+            if hidden_width <= px(0.0) {
+                hidden_width = width_of(&hidden_prefix);
+            }
+
+            let hide_end_anchor = buffer.anchor_after(hide_end_offset);
+            highlights.push(start_anchor..hide_end_anchor);
+
+            let scale_factor = if label_width > hidden_width && label_width > px(0.0) {
+                // Leave a tiny margin to account for rounding differences between measurement and paint.
+                //
+                // If we reached a line break, there's no following text to overlap, so prefer a
+                // consistent label size over scaling down.
+                if hit_line_break {
+                    1.0
+                } else {
+                    (hidden_width / label_width).min(1.0) * 0.99
+                }
+            } else {
+                1.0
+            };
 
             labels.push(HelixJumpLabel {
                 label,
@@ -1048,6 +1155,9 @@ impl Vim {
                 label,
                 accent,
                 label_index,
+                font.clone(),
+                font_size,
+                scale_factor,
             ));
         }
 
@@ -1087,10 +1197,10 @@ impl Vim {
                         word_start = absolute;
                         char_count = 0;
                     }
-                    char_count += 1;
-                    if char_count == 2 {
+                    if char_count == 1 {
                         first_two_end = absolute + ch.len_utf8();
                     }
+                    char_count += 1;
                 }
 
                 if !is_word && in_word {
@@ -1180,6 +1290,9 @@ impl Vim {
         label: [char; 2],
         accent: Hsla,
         label_index: usize,
+        font: Font,
+        font_size: Pixels,
+        scale_factor: f32,
     ) -> BlockProperties<Anchor> {
         let text: SharedString = label.iter().collect::<String>().into();
         BlockProperties {
@@ -1187,13 +1300,13 @@ impl Vim {
             height: Some(0),
             style: BlockStyle::Fixed,
             render: Arc::new(move |_cx: &mut BlockContext| {
+                let scaled_font_size = (font_size * scale_factor).max(px(1.0));
                 div()
                     .block_mouse_except_scroll()
-                    .child(
-                        Label::new(text.clone())
-                            .size(LabelSize::Default)
-                            .color(Color::Custom(accent)),
-                    )
+                    .font(font.clone())
+                    .text_size(scaled_font_size)
+                    .text_color(accent)
+                    .child(text.clone())
                     .into_any_element()
             }),
             priority: label_index,
