@@ -8,6 +8,7 @@ use serde::Deserialize;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
 use workspace::Workspace;
+use workspace::notifications::ErrorMessagePrompt;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::notifications::{NotificationId, show_app_notification};
 
@@ -37,6 +38,40 @@ struct ReleaseNotesBody {
     )]
     title: String,
     release_notes: String,
+}
+
+fn show_view_release_notes_locally_error(
+    workspace: &mut Workspace,
+    _: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    struct ViewReleaseNotesLocallyError;
+    workspace.show_notification(
+        NotificationId::unique::<ViewReleaseNotesLocallyError>(),
+        cx,
+        |cx| {
+            cx.new(move |cx| {
+                let release_channel = ReleaseChannel::global(cx);
+                let url = match release_channel {
+                    ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                        let version = AppVersion::global(cx).to_string();
+                        let client = client::Client::global(cx).http_client();
+                        let release_channel = release_channel.dev_name();
+                        client.build_url(&format!("/releases/{release_channel}/{version}"))
+                    }
+                    ReleaseChannel::Nightly => {
+                        "https://github.com/zed-industries/zed/commits/nightly/".to_string()
+                    }
+                    ReleaseChannel::Dev => {
+                        "https://github.com/zed-industries/zed/commits/main/".to_string()
+                    }
+                };
+                let label = String::from("View It Online");
+                ErrorMessagePrompt::new(format!("Failed to view release notes locally"), cx)
+                    .with_link_button(&label, &url)
+            })
+        },
+    );
 }
 
 fn view_release_notes_locally(
@@ -77,6 +112,9 @@ fn view_release_notes_locally(
                 let markdown = markdown.await.log_err();
                 let response = client.get(&url, Default::default(), true).await;
                 let Some(mut response) = response.log_err() else {
+                    workspace
+                        .update_in(cx, show_view_release_notes_locally_error)
+                        .log_err();
                     return;
                 };
 
@@ -122,6 +160,10 @@ fn view_release_notes_locally(
                             );
                             cx.notify();
                         })
+                        .log_err();
+                } else {
+                    workspace
+                        .update_in(cx, show_view_release_notes_locally_error)
                         .log_err();
                 }
             })
