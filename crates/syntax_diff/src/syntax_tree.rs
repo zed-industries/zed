@@ -398,18 +398,22 @@ fn build_tree_recursive(
                 && first_child.child_count() == 0
                 && last_child.child_count() == 0
             {
-                let open_delimiter = source.get(first_child.byte_range());
-                let close_delimiter = source.get(last_child.byte_range());
+                if let (Some(open), Some(close)) = (
+                    source.get(first_child.byte_range()),
+                    source.get(last_child.byte_range()),
+                ) && open.len() <= 2
+                    && open.len() > 0
+                    && close.len() <= 2
+                    && close.len() > 0
+                {
+                    open.hash(&mut hasher);
+                    close.hash(&mut hasher);
 
-                open_delimiter.hash(&mut hasher);
-                close_delimiter.hash(&mut hasher);
+                    delimiters[0] = Some((first_child.byte_range(), open.to_string()));
+                    delimiters[1] = Some((last_child.byte_range(), close.to_string()));
 
-                delimiters[0] = open_delimiter
-                    .map(|delimiter| (first_child.byte_range(), delimiter.to_string()));
-                delimiters[1] = close_delimiter
-                    .map(|delimiter| (last_child.byte_range(), delimiter.to_string()));
-
-                remaining_children -= 2;
+                    remaining_children -= 2;
+                }
             }
         }
     }
@@ -459,6 +463,8 @@ fn build_tree_recursive(
     if flattened {
         cursor.goto_parent();
     }
+
+    println!("{:?}", delimiters);
 
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
