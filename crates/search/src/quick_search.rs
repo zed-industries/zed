@@ -10,15 +10,7 @@ use gpui::{
 use language::{Buffer, BufferEvent, HighlightId};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, search::SearchQuery};
-use std::{
-    path::Path,
-    pin::pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{path::Path, pin::pin, sync::Arc, time::Duration};
 use text::{ToOffset as _, ToPoint as _};
 use ui::{
     Button, ButtonStyle, Color, Divider, Icon, IconButton, IconButtonShape, IconName, KeyBinding,
@@ -384,7 +376,6 @@ pub struct QuickSearchDelegate {
     visible_line_match_indices: Vec<usize>,
     collapsed_files: HashSet<SharedString>,
     selected_index: usize,
-    search_cancelled: Option<Arc<AtomicBool>>,
     quick_search: WeakEntity<QuickSearchModal>,
     match_count: usize,
     file_count: usize,
@@ -622,7 +613,6 @@ impl QuickSearchModal {
             visible_line_match_indices: Vec::new(),
             collapsed_files: HashSet::default(),
             selected_index: 0,
-            search_cancelled: None,
             quick_search: weak_self,
             match_count: 0,
             file_count: 0,
@@ -1074,17 +1064,12 @@ async fn process_and_apply_batch(
     limit_reached: bool,
     picker: &WeakEntity<Picker<QuickSearchDelegate>>,
     quick_search: &WeakEntity<QuickSearchModal>,
-    cancelled: &AtomicBool,
     cx: &mut gpui::AsyncWindowContext,
 ) {
     let processed_results = cx
         .background_executor()
         .spawn(async move { process_results_in_background(buffer_data) })
         .await;
-
-    if cancelled.load(Ordering::Relaxed) {
-        return;
-    }
 
     let mut batch = SearchResults {
         items: Vec::with_capacity(processed_results.len() * 2),
@@ -1109,9 +1094,6 @@ async fn process_and_apply_batch(
 
         let preview_data = picker
             .update_in(cx, |picker, _window, cx| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return None;
-                }
                 apply_batch_to_picker(
                     &mut picker.delegate,
                     batch,
@@ -1203,9 +1185,6 @@ impl QuickSearchDelegate {
         self.items.clear();
         self.visible_indices.clear();
         self.visible_line_match_indices.clear();
-        if let Some(cancelled) = self.search_cancelled.take() {
-            cancelled.store(true, Ordering::Relaxed);
-        }
         self.match_count = 0;
         self.file_count = 0;
         self.is_limited = false;
@@ -1884,12 +1863,6 @@ impl PickerDelegate for QuickSearchDelegate {
 
         self.is_searching = true;
 
-        if let Some(prev_cancelled) = self.search_cancelled.take() {
-            prev_cancelled.store(true, Ordering::Relaxed);
-        }
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.search_cancelled = Some(cancelled.clone());
-
         let file_count = get_project_file_count(self.project.read(cx), cx);
         let debounce_ms = compute_search_debounce_ms(file_count);
 
@@ -1902,10 +1875,6 @@ impl PickerDelegate for QuickSearchDelegate {
                 cx.background_executor()
                     .timer(Duration::from_millis(debounce_ms))
                     .await;
-            }
-
-            if cancelled.load(Ordering::Relaxed) {
-                return;
             }
 
             let search_query = match build_search_query(&query, search_options) {
@@ -1943,10 +1912,8 @@ impl PickerDelegate for QuickSearchDelegate {
 
             picker
                 .update(cx, |picker, cx| {
-                    if !cancelled.load(Ordering::Relaxed) {
-                        picker.delegate.reset_for_new_search();
-                        cx.notify();
-                    }
+                    picker.delegate.reset_for_new_search();
+                    cx.notify();
                 })
                 .log_err();
 
@@ -1960,10 +1927,6 @@ impl PickerDelegate for QuickSearchDelegate {
 
             let mut results_stream = pin!(project_search_results.ready_chunks(STREAM_CHUNK_SIZE));
             while let Some(results) = results_stream.next().await {
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-
                 for result in results {
                     match result {
                         project::search::SearchResult::Buffer { buffer, ranges } => {
@@ -2003,7 +1966,6 @@ impl PickerDelegate for QuickSearchDelegate {
                     limit_reached,
                     &picker,
                     &quick_search,
-                    &cancelled,
                     cx,
                 )
                 .await;
@@ -2013,7 +1975,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 }
             }
 
-            if !pending.is_empty() && !cancelled.load(Ordering::Relaxed) {
+            if !pending.is_empty() {
                 let buffer_data_to_process = pending.take();
                 let limit_reached = pending.limit_reached;
 
@@ -2024,7 +1986,6 @@ impl PickerDelegate for QuickSearchDelegate {
                     limit_reached,
                     &picker,
                     &quick_search,
-                    &cancelled,
                     cx,
                 )
                 .await;
@@ -2032,11 +1993,9 @@ impl PickerDelegate for QuickSearchDelegate {
 
             picker
                 .update(cx, |picker, cx| {
-                    if !cancelled.load(Ordering::Relaxed) {
-                        picker.delegate.is_limited = counters.search_limited;
-                        picker.delegate.is_searching = false;
-                        cx.notify();
-                    }
+                    picker.delegate.is_limited = counters.search_limited;
+                    picker.delegate.is_searching = false;
+                    cx.notify();
                 })
                 .log_err();
         })
@@ -2379,13 +2338,12 @@ mod tests {
     async fn test_quick_search_empty_query_clears_results(cx: &mut TestAppContext) {
         let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn test() {}\n"})).await;
 
-        fixture.set_query("test");
-        assert!(fixture.delegate(|d| d.search_cancelled.is_some()));
+        fixture.search("test").await;
+        assert!(fixture.delegate(|d| d.items.len()) > 0);
 
         fixture.search("").await;
         fixture.delegate(|d| {
             assert_eq!(d.items.len(), 0);
-            assert!(d.search_cancelled.is_none());
         });
     }
 
@@ -2395,25 +2353,6 @@ mod tests {
 
         fixture.search("nonexistent_string_xyz_123").await;
         assert_eq!(fixture.delegate(|d| d.items.len()), 0);
-    }
-
-    #[gpui::test]
-    async fn test_quick_search_query_sets_cancellation_flag(cx: &mut TestAppContext) {
-        let mut fixture =
-            TestFixture::new(cx, json!({"file.rs": "fn hello() {}\nfn world() {}\n"})).await;
-
-        assert!(fixture.delegate(|d| d.search_cancelled.is_none()));
-
-        fixture.set_query("hello");
-        let first_cancelled = fixture.delegate(|d| d.search_cancelled.clone());
-        assert!(first_cancelled.is_some());
-        assert!(!first_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
-
-        fixture.set_query("world");
-        let second_cancelled = fixture.delegate(|d| d.search_cancelled.clone());
-        assert!(second_cancelled.is_some());
-        assert!(first_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
-        assert!(!second_cancelled.as_ref().unwrap().load(Ordering::Relaxed));
     }
 
     #[gpui::test]

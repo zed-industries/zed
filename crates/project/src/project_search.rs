@@ -5,10 +5,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     pin::pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
 };
 
 use anyhow::Context;
@@ -350,12 +347,8 @@ impl Search {
                 };
                 let ensure_matches_are_reported_in_order = if should_find_all_matches {
                     Some(
-                        Self::ensure_matched_ranges_are_reported_in_order(
-                            sorted_matches_rx,
-                            tx,
-                            &cancelled,
-                        )
-                        .boxed_local(),
+                        Self::ensure_matched_ranges_are_reported_in_order(sorted_matches_rx, tx)
+                            .boxed_local(),
                     )
                 } else {
                     drop(tx);
@@ -529,17 +522,12 @@ impl Search {
     async fn ensure_matched_ranges_are_reported_in_order(
         rx: Receiver<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         tx: Sender<SearchResult>,
-        cancelled: &AtomicBool,
     ) {
         use postage::stream::Stream;
         _ = maybe!(async move {
             let mut matched_buffers = 0;
             let mut matches = 0;
             while let Ok(mut next_buffer_matches) = rx.recv().await {
-                if cancelled.load(Ordering::Relaxed) {
-                    break;
-                }
-
                 let Some((buffer, ranges)) = next_buffer_matches.recv().await else {
                     continue;
                 };
@@ -552,15 +540,7 @@ impl Search {
                 }
                 matched_buffers += 1;
                 matches += ranges.len();
-
-                if tx
-                    .send(SearchResult::Buffer { buffer, ranges })
-                    .await
-                    .is_err()
-                {
-                    cancelled.store(true, Ordering::Relaxed);
-                    break;
-                }
+                _ = tx.send(SearchResult::Buffer { buffer, ranges }).await?;
             }
             anyhow::Ok(())
         })
@@ -618,7 +598,6 @@ struct Worker {
         BufferSnapshot,
         oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
     )>,
-    cancelled: &'search AtomicBool,
 }
 
 impl Worker {
@@ -651,10 +630,6 @@ impl Worker {
         let mut scan_path = pin!(input_paths_rx.fuse());
 
         loop {
-            if self.cancelled.load(Ordering::Relaxed) {
-                break;
-            }
-
             let handler = RequestHandler {
                 query: &self.query,
                 open_entries: &self.open_buffers,
