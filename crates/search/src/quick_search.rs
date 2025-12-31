@@ -1903,7 +1903,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 }
             };
 
-            let Some(project_search_results) = project
+            let Some(project::SearchResults { rx: results_rx, _task_handle }) = project
                 .update(cx, |project, cx| project.search(search_query, cx))
                 .log_err()
             else {
@@ -1925,7 +1925,7 @@ impl PickerDelegate for QuickSearchDelegate {
             let mut is_first_batch = true;
             let mut pending = PendingBufferData::new();
 
-            let mut results_stream = pin!(project_search_results.ready_chunks(STREAM_CHUNK_SIZE));
+            let mut results_stream = pin!(results_rx.ready_chunks(STREAM_CHUNK_SIZE));
             while let Some(results) = results_stream.next().await {
                 for result in results {
                     match result {
