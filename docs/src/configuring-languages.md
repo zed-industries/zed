@@ -462,4 +462,4 @@ Zed provides intelligent code completion suggestions as you type. You can manual
 
 ### Diagnostics
 
-Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the `diagnostics: Toggle` command.
+Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the {#action diagnostics::Deploy} command.
