@@ -5,6 +5,8 @@ use std::process::Stdio;
 /// are killed when the process is terminated by using process groups.
 pub struct Child {
     process: smol::process::Child,
+    #[cfg(windows)]
+    job: windows::Win32::Foundation::HANDLE,
 }
 
 impl std::ops::Deref for Child {
@@ -47,8 +49,32 @@ impl Child {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
-        // TODO(windows): create a job object and add the child process handle to it,
-        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{
+            Foundation::HANDLE,
+            System::JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+                SetInformationJobObject,
+            },
+        };
+
+        let job = unsafe { CreateJobObjectW(None, None) }
+            .with_context(|| "failed to create job object")?;
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        }
+        .with_context(|| "failed to set job object information")?;
+
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
@@ -57,7 +83,11 @@ impl Child {
             .spawn()
             .with_context(|| format!("failed to spawn command {command:?}"))?;
 
-        Ok(Self { process })
+        let process_handle = HANDLE(process.as_raw_handle());
+        unsafe { AssignProcessToJobObject(job, process_handle) }
+            .with_context(|| "failed to assign process to job object")?;
+
+        Ok(Self { process, job })
     }
 
     pub fn into_inner(self) -> smol::process::Child {
@@ -75,8 +105,21 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        // TODO(windows): terminate the job object in kill
-        self.process.kill()?;
+        use windows::Win32::System::JobObjects::TerminateJobObject;
+
+        unsafe { TerminateJobObject(self.job, 1) }
+            .with_context(|| "failed to terminate job object")?;
         Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Child {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::CloseHandle;
+
+        unsafe {
+            let _ = CloseHandle(self.job);
+        }
     }
 }
