@@ -20657,6 +20657,7 @@ version = "0.219.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
+ "agent",
  "agent_settings",
  "agent_ui",
  "agent_ui_v2",

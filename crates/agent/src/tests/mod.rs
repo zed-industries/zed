@@ -191,8 +191,10 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
         tool.run(
             crate::TerminalToolInput {
                 command: "sleep 1000".to_string(),
-                cd: ".".to_string(),
+                cd: Some(".".to_string()),
                 timeout_ms: Some(5),
+                r#async: false,
+                output_limit: None,
             },
             event_stream,
             cx,
@@ -254,12 +256,14 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
-    let _task = cx.update(|cx| {
+    let task = cx.update(|cx| {
         tool.run(
             crate::TerminalToolInput {
-                command: "sleep 1000".to_string(),
-                cd: ".".to_string(),
+                command: "echo hello".to_string(),
+                cd: Some(".".to_string()),
                 timeout_ms: None,
+                r#async: false,
+                output_limit: None,
             },
             event_stream,
             cx,
