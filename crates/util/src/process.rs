@@ -1,15 +1,32 @@
 use anyhow::{Context as _, Result};
+#[cfg(windows)]
+use std::mem::ManuallyDrop;
 use std::process::Stdio;
 
 #[cfg(windows)]
-use windows::Win32::{Foundation::CloseHandle, System::JobObjects::TerminateJobObject};
+use windows::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::JobObjects::TerminateJobObject,
+};
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct SendHandle(HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for SendHandle {}
+#[cfg(windows)]
+unsafe impl Sync for SendHandle {}
 
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
 /// are killed when the process is terminated by using process groups.
 pub struct Child {
+    #[cfg(not(windows))]
     process: smol::process::Child,
     #[cfg(windows)]
-    job: Option<windows::Win32::Foundation::HANDLE>,
+    process: ManuallyDrop<smol::process::Child>,
+    #[cfg(windows)]
+    job: Option<SendHandle>,
 }
 
 impl std::ops::Deref for Child {
@@ -91,20 +108,27 @@ impl Child {
             .with_context(|| "failed to assign process to job object")?;
 
         Ok(Self {
-            process,
-            job: Some(job),
+            process: ManuallyDrop::new(process),
+            job: Some(SendHandle(job)),
         })
     }
 
+    #[cfg(not(windows))]
     pub fn into_inner(self) -> smol::process::Child {
-        #[cfg(windows)]
-        if let Some(job) = self.job {
+        self.process
+    }
+
+    #[cfg(windows)]
+    pub fn into_inner(mut self) -> smol::process::Child {
+        if let Some(SendHandle(job)) = self.job.take() {
             unsafe {
                 let _ = CloseHandle(job);
             }
         }
 
-        self.process
+        let process = unsafe { ManuallyDrop::take(&mut self.process) };
+        std::mem::forget(self);
+        process
     }
 
     #[cfg(not(windows))]
@@ -118,7 +142,7 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        if let Some(job) = self.job.take() {
+        if let Some(SendHandle(job)) = self.job.take() {
             unsafe {
                 let _ = TerminateJobObject(job, 1);
                 let _ = CloseHandle(job);
@@ -131,7 +155,7 @@ impl Child {
 #[cfg(windows)]
 impl Drop for Child {
     fn drop(&mut self) {
-        if let Some(job) = self.job.take() {
+        if let Some(SendHandle(job)) = self.job.take() {
             unsafe {
                 let _ = TerminateJobObject(job, 1);
                 let _ = CloseHandle(job);
