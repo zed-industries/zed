@@ -5892,15 +5892,19 @@ impl EditorElement {
                 editor.last_keyboard_action_at,
             )
         };
-        let has_multiline_selection = {
+        let (has_nonempty_selection, selection_count) = {
             let (snapshot, selections) = editor.update(cx, |editor, cx| {
                 (editor.snapshot(window, cx), editor.selections.disjoint_anchors_arc())
             });
-            selections.iter().any(|selection| {
+            let mut has_nonempty = false;
+            for selection in selections.iter() {
                 let start = selection.start.to_point(&snapshot.buffer_snapshot());
                 let end = selection.end.to_point(&snapshot.buffer_snapshot());
-                start.row != end.row
-            })
+                if start != end {
+                    has_nonempty = true;
+                }
+            }
+            (has_nonempty, selections.len())
         };
 
         let mut controls = vec![];
@@ -6023,7 +6027,8 @@ impl EditorElement {
 
         if let Some((cursor_row, diff_status)) = active_line_row {
             let stage = diff_status.has_secondary_hunk();
-            let label = if has_multiline_selection {
+            let use_selection_ranges = has_nonempty_selection || selection_count > 1;
+            let label = if use_selection_ranges {
                 if stage {
                     "Stage selection"
                 } else {
@@ -6071,16 +6076,43 @@ impl EditorElement {
                         })
                         .on_click({
                             let editor = editor.clone();
-                            move |_event, _window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    let ranges = editor
-                                        .selections
-                                        .disjoint_anchors()
-                                        .iter()
-                                        .map(|s| s.range())
-                                        .collect::<Vec<_>>();
-                                    editor.stage_or_unstage_diff_lines(stage, ranges, cx);
-                                });
+                            move |_event, window, cx| {
+                                if use_selection_ranges {
+                                    editor.update(cx, |editor, cx| {
+                                        let ranges = editor
+                                            .selections
+                                            .disjoint_anchors()
+                                            .iter()
+                                            .map(|s| s.range())
+                                            .collect::<Vec<_>>();
+                                        editor.stage_or_unstage_diff_lines(stage, ranges, cx);
+                                    });
+                                } else {
+                                    let (start, end) = editor.update(cx, |editor, cx| {
+                                        let snapshot = editor.snapshot(window, cx);
+                                        let display_snapshot = &snapshot.display_snapshot;
+                                        let start_point = DisplayPoint::new(cursor_row, 0);
+                                        let max_point = display_snapshot.max_point();
+                                        let end_point = if cursor_row < max_point.row() {
+                                            DisplayPoint::new(cursor_row.next_row(), 0)
+                                        } else {
+                                            max_point
+                                        };
+                                        (
+                                            display_snapshot
+                                                .display_point_to_anchor(start_point, Bias::Left),
+                                            display_snapshot
+                                                .display_point_to_anchor(end_point, Bias::Right),
+                                        )
+                                    });
+                                    editor.update(cx, |editor, cx| {
+                                        editor.stage_or_unstage_diff_lines(
+                                            stage,
+                                            vec![start..end],
+                                            cx,
+                                        );
+                                    });
+                                }
                             }
                         }),
                 )
