@@ -1,3 +1,4 @@
+use crate::QueueMessage;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -31,7 +32,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
@@ -50,6 +51,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
+    Queue,
     Cancel,
     Focus,
     LostFocus,
@@ -132,6 +134,21 @@ impl MessageEditor {
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor.register_addon(MessageEditorAddon::new());
+
+            editor.set_custom_context_menu(|editor, _point, window, cx| {
+                let has_selection = editor.has_non_empty_selection(&editor.display_snapshot(cx));
+
+                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.action("Cut", Box::new(editor::actions::Cut))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy",
+                            Box::new(editor::actions::Copy),
+                        )
+                        .action("Paste", Box::new(editor::actions::Paste))
+                }))
+            });
+
             editor
         });
         let mention_set =
@@ -480,6 +497,18 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Send)
     }
 
+    pub fn queue(&mut self, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::Queue)
+    }
+
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
 
@@ -521,6 +550,10 @@ impl MessageEditor {
 
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         self.send(cx);
+    }
+
+    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.queue(cx);
     }
 
     fn chat_with_follow(
@@ -969,6 +1002,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::queue_message))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::paste_raw))

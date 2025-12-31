@@ -74,6 +74,9 @@ in
         '${../assets}'
     '';
   };
+  blade-macros = attrs: {
+    type = [ "proc-macro" ];
+  };
   inspector_ui = attrs: {
     postPatch = (attrs.postPatch or "") + ''
       substituteInPlace \

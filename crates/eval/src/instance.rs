@@ -635,6 +635,11 @@ impl agent::TerminalHandle for EvalTerminalHandle {
         })?;
         Ok(())
     }
+
+    fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool> {
+        self.terminal
+            .read_with(cx, |term, _cx| term.was_stopped_by_user())
+    }
 }
 
 impl agent::ThreadEnvironment for EvalThreadEnvironment {

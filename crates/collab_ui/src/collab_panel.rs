@@ -31,9 +31,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
+    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -2422,6 +2421,9 @@ impl CollabPanel {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
+
+        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
         v_flex()
             .size_full()
             .gap_1()
@@ -2437,7 +2439,18 @@ impl CollabPanel {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_filter_input(&self.filter_editor, cx)),
+                    .child(self.render_filter_input(&self.filter_editor, cx))
+                    .when(has_query, |this| {
+                        this.pr_2p5().child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 list(
@@ -2527,16 +2540,9 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                CopyButton::new(channel_link)
                     .visible_on_hover("section-header")
-                    .on_click(move |_, _, cx| {
-                        let item = ClipboardItem::new_string(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(Tooltip::text("Copy channel link"))
+                    .tooltip_label("Copy Channel Link")
                     .into_any_element()
             }),
             Section::Contacts => Some(

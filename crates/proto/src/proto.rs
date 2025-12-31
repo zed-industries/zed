@@ -115,8 +115,6 @@ messages!(
     (GetReferencesResponse, Background),
     (GetSignatureHelp, Background),
     (GetSignatureHelpResponse, Background),
-    (GetSupermavenApiKey, Background),
-    (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -276,7 +274,6 @@ messages!(
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateGitBranch, Background),
-    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
@@ -345,7 +342,10 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (ShareAgentThread, Foreground),
+    (GetSharedAgentThread, Foreground),
+    (GetSharedAgentThreadResponse, Foreground)
 );
 
 request_messages!(
@@ -388,7 +388,6 @@ request_messages!(
     (GetSignatureHelp, GetSignatureHelpResponse),
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
-    (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
@@ -445,6 +444,8 @@ request_messages!(
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
+    (ShareAgentThread, Ack),
+    (GetSharedAgentThread, GetSharedAgentThreadResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),

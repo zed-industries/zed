@@ -18,7 +18,7 @@ use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
@@ -49,6 +49,9 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel,
+    SharedAgentThread {
+        session_id: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -107,6 +110,14 @@ impl OpenRequest {
                 });
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
+                    });
+                } else {
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                }
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -204,7 +215,7 @@ impl OpenRequest {
             "cannot open both local and ssh paths"
         );
         let mut connection_options =
-            SshSettings::get_global(cx).connection_options_for(host, port, username);
+            RemoteSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
@@ -516,7 +527,7 @@ async fn open_workspaces(
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
                         })?;
                     }

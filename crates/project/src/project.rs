@@ -48,11 +48,13 @@ pub use git_store::{
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
-pub use project_search::Search;
+pub use project_search::{Search, SearchResults};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
-use client::{Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore, proto};
+use client::{
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
+};
 use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
@@ -108,7 +110,6 @@ use rpc::{
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
-use smol::channel::Receiver;
 use snippet::Snippet;
 pub use snippet_provider;
 use snippet_provider::SnippetProvider;
@@ -330,7 +331,7 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromSshRemote,
+    DisconnectedFromRemote,
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -417,6 +418,7 @@ pub enum InlayId {
     // LSP
     Hint(usize),
     Color(usize),
+    ReplResult(usize),
 }
 
 impl InlayId {
@@ -426,6 +428,7 @@ impl InlayId {
             Self::DebuggerValue(id) => *id,
             Self::Hint(id) => *id,
             Self::Color(id) => *id,
+            Self::ReplResult(id) => *id,
         }
     }
 }
@@ -831,6 +834,7 @@ enum EntitySubscription {
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
     DapStore(PendingEntitySubscription<DapStore>),
+    BreakpointStore(PendingEntitySubscription<BreakpointStore>),
 }
 
 #[derive(Debug, Clone)]
@@ -1293,34 +1297,13 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
             if init_worktree_trust {
-                let trust_remote_project = match &connection_options {
-                    RemoteConnectionOptions::Ssh(..) | RemoteConnectionOptions::Wsl(..) => false,
-                    RemoteConnectionOptions::Docker(..) => true,
-                };
-                let remote_host = RemoteHostLocation::from(connection_options);
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
-                    Some(remote_host.clone()),
+                    Some(RemoteHostLocation::from(connection_options)),
                     None,
-                    Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                    Some((remote_proto.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                     cx,
                 );
-                if trust_remote_project {
-                    if let Some(trusted_worktres) = TrustedWorktrees::try_get_global(cx) {
-                        trusted_worktres.update(cx, |trusted_worktres, cx| {
-                            trusted_worktres.trust(
-                                worktree_store
-                                    .read(cx)
-                                    .worktrees()
-                                    .map(|worktree| worktree.read(cx).id())
-                                    .map(PathTrust::Worktree)
-                                    .collect(),
-                                Some(remote_host),
-                                cx,
-                            );
-                        })
-                    }
-                }
             }
 
             let weak_self = cx.weak_entity();
@@ -1398,8 +1381,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(REMOTE_SERVER_PROJECT_ID, remote_proto.clone()));
+            let breakpoint_store = cx.new(|_| {
+                BreakpointStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote_proto.clone(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
@@ -1495,6 +1484,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.worktree_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.lsp_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
@@ -1516,6 +1506,7 @@ impl Project {
             TaskStore::init(Some(&remote_proto));
             ToolchainStore::init(&remote_proto);
             DapStore::init(&remote_proto, cx);
+            BreakpointStore::init(&remote_proto);
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
 
@@ -1545,6 +1536,9 @@ impl Project {
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
             EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
+            EntitySubscription::BreakpointStore(
+                client.subscribe_to_entity::<BreakpointStore>(remote_id)?,
+            ),
         ];
         let committer = get_git_committer(&cx).await;
         let response = client
@@ -1569,7 +1563,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 7],
+        subscriptions: [EntitySubscription; 8],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1603,8 +1597,14 @@ impl Project {
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx))?;
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
+        let breakpoint_store = cx.new(|_| {
+            BreakpointStore::remote(
+                remote_id,
+                client.clone().into(),
+                buffer_store.clone(),
+                worktree_store.clone(),
+            )
+        })?;
         let dap_store = cx.new(|cx| {
             DapStore::new_collab(
                 remote_id,
@@ -1727,7 +1727,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                breakpoint_store,
+                breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
                 agent_server_store,
@@ -1785,6 +1785,9 @@ impl Project {
                 }
                 EntitySubscription::DapStore(subscription) => {
                     subscription.set_entity(&dap_store, &cx)
+                }
+                EntitySubscription::BreakpointStore(subscription) => {
+                    subscription.set_entity(&breakpoint_store, &cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -2666,7 +2669,7 @@ impl Project {
 
     #[inline]
     pub fn is_read_only(&self, cx: &App) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) || !self.capability().editable()
     }
 
     #[inline]
@@ -3295,7 +3298,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromSshRemote);
+                cx.emit(Event::DisconnectedFromRemote);
             }
         }
     }
@@ -4162,7 +4165,11 @@ impl Project {
         searcher.into_handle(query, cx)
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> SearchResults<SearchResult> {
         self.search_impl(query, cx).results(cx)
     }
 
@@ -4546,6 +4553,18 @@ impl Project {
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if let Ok(rel_path) = RelPath::new(path, path_style) {
+                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: entry.path.clone(),
+                        });
+                    }
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
                 if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
                     && let Ok(path) = RelPath::new(relative_path, path_style)
@@ -4553,18 +4572,6 @@ impl Project {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into_arc(),
-                    });
-                }
-            }
-
-            for worktree in worktree_store.visible_worktrees(cx) {
-                let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::new(path, path_style)
-                    && let Some(entry) = worktree.entry_for_path(&path)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
                     });
                 }
             }
@@ -4596,11 +4603,9 @@ impl Project {
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
-        self.find_worktree(abs_path, cx)
-            .map(|(worktree, relative_path)| ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: relative_path,
-            })
+        self.worktree_store
+            .read(cx)
+            .project_path_for_absolute_path(abs_path, cx)
     }
 
     pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
@@ -4849,11 +4854,6 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |project, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust(worktree_id, cx)
-                });
-            }
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
@@ -4886,22 +4886,22 @@ impl Project {
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+            return Ok(proto::Ack {});
+        }
+
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let remote_host = this
-                .read(cx)
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
             trusted_worktrees.trust(
+                &this.read(cx).worktree_store(),
                 envelope
                     .payload
                     .trusted_paths
                     .into_iter()
                     .filter_map(|proto_path| PathTrust::from_proto(proto_path))
                     .collect(),
-                remote_host,
                 cx,
             );
         })?;
@@ -4913,10 +4913,15 @@ impl Project {
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        if this.read_with(&cx, |project, _| project.is_via_collab())? {
+            return Ok(proto::Ack {});
+        }
+
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let worktree_store = this.read(cx).worktree_store().downgrade();
             let restricted_paths = envelope
                 .payload
                 .worktree_ids
@@ -4924,11 +4929,7 @@ impl Project {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            let remote_host = this
-                .read(cx)
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
-            trusted_worktrees.restrict(restricted_paths, remote_host, cx);
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         })?;
         Ok(proto::Ack {})
     }
@@ -5054,7 +5055,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());
