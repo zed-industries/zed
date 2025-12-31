@@ -67,7 +67,7 @@ use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    word_diff_ranges,
+    unified_diff_with_offsets, word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -459,6 +459,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
+    }
+
+    /// Returns the JSON schema of the initialization_options for the language server.
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        _language_server_binary: &LanguageServerBinary,
+    ) -> Option<serde_json::Value> {
+        None
     }
 
     async fn workspace_configuration(

@@ -197,6 +197,41 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub enum SplitMode {
+    /// Clone the current pane.
+    #[default]
+    ClonePane,
+    /// Create an empty new pane.
+    EmptyPane,
+    /// Move the item into a new pane. This will map to nop if only one pane exists.
+    MovePane,
+}
+
+macro_rules! split_structs {
+    ($($name:ident => $doc:literal),* $(,)?) => {
+        $(
+            #[doc = $doc]
+            #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+            #[action(namespace = pane)]
+            #[serde(deny_unknown_fields, default)]
+            pub struct $name {
+                pub mode: SplitMode,
+            }
+        )*
+    };
+}
+
+split_structs!(
+    SplitLeft => "Splits the pane to the left.",
+    SplitRight => "Splits the pane to the right.",
+    SplitUp => "Splits the pane upward.",
+    SplitDown => "Splits the pane downward.",
+    SplitHorizontal => "Splits the pane horizontally.",
+    SplitVertical => "Splits the pane vertically."
+);
+
 actions!(
     pane,
     [
@@ -218,14 +253,6 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
-        /// Splits the pane to the left, cloning the current item.
-        SplitLeft,
-        /// Splits the pane upward, cloning the current item.
-        SplitUp,
-        /// Splits the pane to the right, cloning the current item.
-        SplitRight,
-        /// Splits the pane downward, cloning the current item.
-        SplitDown,
         /// Splits the pane to the left, moving the current item.
         SplitAndMoveLeft,
         /// Splits the pane upward, moving the current item.
@@ -234,10 +261,6 @@ actions!(
         SplitAndMoveRight,
         /// Splits the pane downward, moving the current item.
         SplitAndMoveDown,
-        /// Splits the pane horizontally.
-        SplitHorizontal,
-        /// Splits the pane vertically.
-        SplitVertical,
         /// Swaps the current item with the one to the left.
         SwapItemLeft,
         /// Swaps the current item with the one to the right.
@@ -279,7 +302,7 @@ pub enum Event {
     },
     Split {
         direction: SplitDirection,
-        clone_active_item: bool,
+        mode: SplitMode,
     },
     ItemPinned,
     ItemUnpinned,
@@ -311,13 +334,10 @@ impl fmt::Debug for Event {
                 .debug_struct("RemovedItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::Split {
-                direction,
-                clone_active_item,
-            } => f
+            Event::Split { direction, mode } => f
                 .debug_struct("Split")
                 .field("direction", direction)
-                .field("clone_active_item", clone_active_item)
+                .field("mode", mode)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -2295,10 +2315,7 @@ impl Pane {
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                    let new_path = ProjectPath {
-                        worktree_id,
-                        path: path,
-                    };
+                    let new_path = ProjectPath { worktree_id, path };
 
                     pane.update_in(cx, |pane, window, cx| {
                         if let Some(item) = pane.item_for_path(new_path.clone(), cx) {
@@ -2357,19 +2374,30 @@ impl Pane {
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        cx.emit(Event::Split {
-            direction,
-            clone_active_item: true,
-        });
-    }
-
-    pub fn split_and_move(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        if self.items.len() > 1 {
+    pub fn split(
+        &mut self,
+        direction: SplitDirection,
+        mode: SplitMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.items.len() <= 1 && mode == SplitMode::MovePane {
+            // MovePane with only one pane present behaves like a SplitEmpty in the opposite direction
+            let active_item = self.active_item();
             cx.emit(Event::Split {
-                direction,
-                clone_active_item: false,
+                direction: direction.opposite(),
+                mode: SplitMode::EmptyPane,
             });
+            // ensure that we focus the moved pane
+            // in this case we know that the window is the same as the active_item
+            if let Some(active_item) = active_item {
+                cx.defer_in(window, move |_, window, cx| {
+                    let focus_handle = active_item.item_focus_handle(cx);
+                    window.focus(&focus_handle, cx);
+                });
+            }
+        } else {
+            cx.emit(Event::Split { direction, mode });
         }
     }
 
@@ -3824,16 +3852,17 @@ fn default_render_tab_bar_buttons(
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
+                        let mode = SplitMode::MovePane;
                         if can_split_move {
-                            menu.action("Split Right", SplitAndMoveRight.boxed_clone())
-                                .action("Split Left", SplitAndMoveLeft.boxed_clone())
-                                .action("Split Up", SplitAndMoveUp.boxed_clone())
-                                .action("Split Down", SplitAndMoveDown.boxed_clone())
+                            menu.action("Split Right", SplitRight { mode }.boxed_clone())
+                                .action("Split Left", SplitLeft { mode }.boxed_clone())
+                                .action("Split Up", SplitUp { mode }.boxed_clone())
+                                .action("Split Down", SplitDown { mode }.boxed_clone())
                         } else {
-                            menu.action("Split Right", SplitRight.boxed_clone())
-                                .action("Split Left", SplitLeft.boxed_clone())
-                                .action("Split Up", SplitUp.boxed_clone())
-                                .action("Split Down", SplitDown.boxed_clone())
+                            menu.action("Split Right", SplitRight::default().boxed_clone())
+                                .action("Split Left", SplitLeft::default().boxed_clone())
+                                .action("Split Up", SplitUp::default().boxed_clone())
+                                .action("Split Down", SplitDown::default().boxed_clone())
                         }
                     })
                     .into()
@@ -3892,33 +3921,35 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .on_action(
-                cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitUp, _, cx| pane.split(SplitDirection::Up, cx)))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitLeft, window, cx| {
+                pane.split(SplitDirection::Left, split.mode, window, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitUp, window, cx| {
+                pane.split(SplitDirection::Up, split.mode, window, cx)
             }))
-            .on_action(
-                cx.listener(|pane, _: &SplitRight, _, cx| pane.split(SplitDirection::Right, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
-                pane.split_and_move(SplitDirection::Up, cx)
+            .on_action(cx.listener(|pane, split: &SplitHorizontal, window, cx| {
+                pane.split(SplitDirection::horizontal(cx), split.mode, window, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
-                pane.split_and_move(SplitDirection::Down, cx)
+            .on_action(cx.listener(|pane, split: &SplitVertical, window, cx| {
+                pane.split(SplitDirection::vertical(cx), split.mode, window, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
-                pane.split_and_move(SplitDirection::Left, cx)
+            .on_action(cx.listener(|pane, split: &SplitRight, window, cx| {
+                pane.split(SplitDirection::Right, split.mode, window, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
-                pane.split_and_move(SplitDirection::Right, cx)
+            .on_action(cx.listener(|pane, split: &SplitDown, window, cx| {
+                pane.split(SplitDirection::Down, split.mode, window, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, window, cx| {
+                pane.split(SplitDirection::Up, SplitMode::MovePane, window, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, window, cx| {
+                pane.split(SplitDirection::Down, SplitMode::MovePane, window, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, window, cx| {
+                pane.split(SplitDirection::Left, SplitMode::MovePane, window, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, window, cx| {
+                pane.split(SplitDirection::Right, SplitMode::MovePane, window, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
@@ -4443,11 +4474,14 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{iter::zip, num::NonZero};
 
     use super::*;
-    use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext, size};
+    use crate::{
+        Member,
+        item::test::{TestItem, TestProjectItem},
+    };
+    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -7125,6 +7159,32 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*", "B"], cx);
     }
 
+    #[gpui::test]
+    async fn test_split_empty(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A"], split_direction, SplitMode::EmptyPane, cx).await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_split_clone(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A"], split_direction, SplitMode::ClonePane, cx).await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_split_move_right_on_single_pane(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitMode::MovePane, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move(cx: &mut TestAppContext) {
+        for split_direction in SplitDirection::all() {
+            test_single_pane_split(["A", "B"], split_direction, SplitMode::MovePane, cx).await;
+        }
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -7219,5 +7279,164 @@ mod tests {
             actual_states, expected_states,
             "pane items do not match expectation"
         );
+    }
+
+    // Assert the item label, with the active item label expected active index
+    #[track_caller]
+    fn assert_item_labels_active_index(
+        pane: &Entity<Pane>,
+        expected_states: &[&str],
+        expected_active_idx: usize,
+        cx: &mut VisualTestContext,
+    ) {
+        let actual_states = pane.update(cx, |pane, cx| {
+            pane.items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any_view()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        assert_eq!(ix, expected_active_idx);
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
+                    }
+                    if pane.is_tab_pinned(ix) {
+                        state.push('!');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            actual_states, expected_states,
+            "pane items do not match expectation"
+        );
+    }
+
+    #[track_caller]
+    fn assert_pane_ids_on_axis<const COUNT: usize>(
+        workspace: &Entity<Workspace>,
+        expected_ids: [&EntityId; COUNT],
+        expected_axis: Axis,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, expected_axis);
+                assert_eq!(axis.members.len(), expected_ids.len());
+                assert!(
+                    zip(expected_ids, &axis.members).all(|(e, a)| {
+                        if let Member::Pane(p) = a {
+                            p.entity_id() == *e
+                        } else {
+                            false
+                        }
+                    }),
+                    "pane ids do not match expectation: {expected_ids:?} != {actual_ids:?}",
+                    actual_ids = axis.members
+                );
+            }
+            Member::Pane(_) => panic!("expected axis"),
+        });
+    }
+
+    async fn test_single_pane_split<const COUNT: usize>(
+        pane_labels: [&str; COUNT],
+        direction: SplitDirection,
+        operation: SplitMode,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let mut pane_before =
+            workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        for label in pane_labels {
+            add_labeled_item(&pane_before, label, false, cx);
+        }
+        pane_before.update_in(cx, |pane, window, cx| {
+            pane.split(direction, operation, window, cx)
+        });
+        cx.executor().run_until_parked();
+        let pane_after = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let num_labels = pane_labels.len();
+        let last_as_active = format!("{}*", String::from(pane_labels[num_labels - 1]));
+
+        // check labels for all split operations
+        match operation {
+            SplitMode::EmptyPane => {
+                assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&pane_after, [], cx);
+            }
+            SplitMode::ClonePane => {
+                assert_item_labels_active_index(&pane_before, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&pane_after, [&last_as_active], cx);
+            }
+            SplitMode::MovePane => {
+                let head = &pane_labels[..(num_labels - 1)];
+                if num_labels == 1 {
+                    // We special-case this behavior and actually execute an empty pane command
+                    // followed by a refocus of the old pane for this case.
+                    pane_before = workspace.read_with(cx, |workspace, _cx| {
+                        workspace
+                            .panes()
+                            .into_iter()
+                            .find(|pane| *pane != &pane_after)
+                            .unwrap()
+                            .clone()
+                    });
+                };
+
+                assert_item_labels_active_index(
+                    &pane_before,
+                    &head,
+                    head.len().saturating_sub(1),
+                    cx,
+                );
+                assert_item_labels(&pane_after, [&last_as_active], cx);
+                pane_after.update_in(cx, |pane, window, cx| {
+                    window.focused(cx).is_some_and(|focus_handle| {
+                        focus_handle == pane.active_item().unwrap().item_focus_handle(cx)
+                    })
+                });
+            }
+        }
+
+        // expected axis depends on split direction
+        let expected_axis = match direction {
+            SplitDirection::Right | SplitDirection::Left => Axis::Horizontal,
+            SplitDirection::Up | SplitDirection::Down => Axis::Vertical,
+        };
+
+        // expected ids depends on split direction
+        let expected_ids = match direction {
+            SplitDirection::Right | SplitDirection::Down => {
+                [&pane_before.entity_id(), &pane_after.entity_id()]
+            }
+            SplitDirection::Left | SplitDirection::Up => {
+                [&pane_after.entity_id(), &pane_before.entity_id()]
+            }
+        };
+
+        // check pane axes for all operations
+        match operation {
+            SplitMode::EmptyPane | SplitMode::ClonePane => {
+                assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+            SplitMode::MovePane => {
+                assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+        }
     }
 }

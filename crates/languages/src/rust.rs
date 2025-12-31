@@ -18,6 +18,7 @@ use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
+use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -66,6 +67,68 @@ enum LibcType {
 }
 
 impl RustLspAdapter {
+    fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
+        let Some(schema_array) = raw_schema.as_array() else {
+            return raw_schema.clone();
+        };
+
+        let mut root_properties = serde_json::Map::new();
+
+        for item in schema_array {
+            if let Some(props) = item.get("properties").and_then(|p| p.as_object()) {
+                for (key, value) in props {
+                    let parts: Vec<&str> = key.split('.').collect();
+
+                    if parts.is_empty() {
+                        continue;
+                    }
+
+                    let parts_to_process = if parts.first() == Some(&"rust-analyzer") {
+                        &parts[1..]
+                    } else {
+                        &parts[..]
+                    };
+
+                    if parts_to_process.is_empty() {
+                        continue;
+                    }
+
+                    let mut current = &mut root_properties;
+
+                    for (i, part) in parts_to_process.iter().enumerate() {
+                        let is_last = i == parts_to_process.len() - 1;
+
+                        if is_last {
+                            current.insert(part.to_string(), value.clone());
+                        } else {
+                            let next_current = current
+                                .entry(part.to_string())
+                                .or_insert_with(|| {
+                                    serde_json::json!({
+                                        "type": "object",
+                                        "properties": {}
+                                    })
+                                })
+                                .as_object_mut()
+                                .expect("should be an object")
+                                .entry("properties")
+                                .or_insert_with(|| serde_json::json!({}))
+                                .as_object_mut()
+                                .expect("properties should be an object");
+
+                            current = next_current;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": root_properties
+        })
+    }
+
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
@@ -446,6 +509,37 @@ impl LspAdapter for RustLspAdapter {
         }
 
         Some(label)
+    }
+
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        language_server_binary: &LanguageServerBinary,
+    ) -> Option<serde_json::Value> {
+        let mut command = util::command::new_smol_command(&language_server_binary.path);
+        command
+            .arg("--print-config-schema")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cmd = command
+            .spawn()
+            .map_err(|e| log::debug!("failed to spawn command {command:?}: {e}"))
+            .ok()?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| log::debug!("failed to execute command {command:?}: {e}"))
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw_schema: serde_json::Value = serde_json::from_slice(output.stdout.as_slice())
+            .map_err(|e| log::debug!("failed to parse rust-analyzer's JSON schema output: {e}"))
+            .ok()?;
+
+        // Convert rust-analyzer's array-based schema format to nested JSON Schema
+        let converted_schema = Self::convert_rust_analyzer_schema(&raw_schema);
+        Some(converted_schema)
     }
 
     async fn label_for_symbol(
@@ -1911,5 +2005,91 @@ mod tests {
             "--bin=x",
         );
         check([], "/project/src/main.rs", "--");
+    }
+
+    #[test]
+    fn test_convert_rust_analyzer_schema() {
+        let raw_schema = serde_json::json!([
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.emitMustUse": {
+                        "markdownDescription": "Insert #[must_use] when generating `as_` methods for enum variants.",
+                        "default": false,
+                        "type": "boolean"
+                    }
+                }
+            },
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.expressionFillDefault": {
+                        "markdownDescription": "Placeholder expression to use for missing expressions in assists.",
+                        "default": "todo",
+                        "type": "string"
+                    }
+                }
+            },
+            {
+                "title": "Cache Priming",
+                "properties": {
+                    "rust-analyzer.cachePriming.enable": {
+                        "markdownDescription": "Warm up caches on project load.",
+                        "default": true,
+                        "type": "boolean"
+                    }
+                }
+            }
+        ]);
+
+        let converted = RustLspAdapter::convert_rust_analyzer_schema(&raw_schema);
+
+        assert_eq!(
+            converted.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        let properties = converted
+            .pointer("/properties")
+            .expect("should have properties")
+            .as_object()
+            .expect("properties should be object");
+
+        assert!(properties.contains_key("assist"));
+        assert!(properties.contains_key("cachePriming"));
+        assert!(!properties.contains_key("rust-analyzer"));
+
+        let assist_props = properties
+            .get("assist")
+            .expect("should have assist")
+            .pointer("/properties")
+            .expect("assist should have properties")
+            .as_object()
+            .expect("assist properties should be object");
+
+        assert!(assist_props.contains_key("emitMustUse"));
+        assert!(assist_props.contains_key("expressionFillDefault"));
+
+        let emit_must_use = assist_props
+            .get("emitMustUse")
+            .expect("should have emitMustUse");
+        assert_eq!(
+            emit_must_use.get("type").and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            emit_must_use.get("default").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let cache_priming_props = properties
+            .get("cachePriming")
+            .expect("should have cachePriming")
+            .pointer("/properties")
+            .expect("cachePriming should have properties")
+            .as_object()
+            .expect("cachePriming properties should be object");
+
+        assert!(cache_priming_props.contains_key("enable"));
     }
 }
