@@ -41,7 +41,7 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use crate::{CodeActionSource, EditorSettings};
+use crate::{CodeActionSource, CompletionDetailAlignment, EditorSettings};
 use collections::{HashSet, VecDeque};
 use settings::{Settings, SnippetSortOrder};
 
@@ -786,6 +786,8 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let show_completion_documentation = self.show_completion_documentation;
+        let completion_detail_alignment =
+            EditorSettings::get_global(cx).completion_detail_alignment;
         let widest_completion_ix = if self.display_options.dynamic_width {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
@@ -943,7 +945,20 @@ impl CompletionsMenu {
 
                         let detail_label = detail_info.map(|(text, highlights)| {
                             div()
-                                .ml_6()
+                                .when(
+                                    matches!(
+                                        completion_detail_alignment,
+                                        CompletionDetailAlignment::Right
+                                    ),
+                                    |this| this.ml_6(),
+                                )
+                                .when(
+                                    matches!(
+                                        completion_detail_alignment,
+                                        CompletionDetailAlignment::Inline
+                                    ),
+                                    |this| this.ml_4(),
+                                )
                                 .flex_shrink()
                                 .min_w_0()
                                 .overflow_hidden()
@@ -964,22 +979,38 @@ impl CompletionsMenu {
                                 .into_any_element()
                         });
 
-                        // Keep the left label intact; the right column yields space first.
-                        let completion_row = h_flex()
-                            .flex_grow()
-                            .min_w_0()
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .flex_shrink_0()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(completion_label),
-                            )
-                            .when_some(detail_label, |this, detail_label| {
-                                this.child(detail_label)
-                            });
+                        // Keep the left label intact; the detail column yields space first.
+                        let completion_row = match completion_detail_alignment {
+                            CompletionDetailAlignment::Right => h_flex()
+                                .flex_grow()
+                                .min_w_0()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(completion_label),
+                                )
+                                .when_some(detail_label, |this, detail_label| {
+                                    this.child(detail_label)
+                                }),
+                            CompletionDetailAlignment::Inline => h_flex()
+                                .flex_grow()
+                                .min_w_0()
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(completion_label),
+                                )
+                                .when_some(detail_label, |this, detail_label| {
+                                    this.child(detail_label)
+                                }),
+                        };
 
                         let start_slot = completion
                             .color()
