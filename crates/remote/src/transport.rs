@@ -158,6 +158,9 @@ fn handle_rpc_messages_over_child_process_stdio(
             }
         };
         let status = remote_proxy_process.status().await?.code().unwrap_or(1);
+        if status != 0 {
+            anyhow::bail!("Remote server exited with status {status}");
+        }
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),

@@ -4837,15 +4837,15 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
-                let relative_number = relative_to.and_then(|base| match relative_line_numbers {
-                    RelativeLineNumbers::Disabled => None,
-                    RelativeLineNumbers::Enabled => {
-                        Some(snapshot.relative_line_delta_to_point(base, start_point))
-                    }
-                    RelativeLineNumbers::Wrapped => {
-                        Some(snapshot.relative_wrapped_line_delta_to_point(base, start_point))
-                    }
-                });
+                let relative_number = relative_to
+                    .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
+                    .map(|base| {
+                        snapshot.relative_line_delta_to_point(
+                            base,
+                            start_point,
+                            relative_line_numbers == RelativeLineNumbers::Wrapped,
+                        )
+                    });
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
@@ -9409,14 +9409,8 @@ impl Element for EditorElement {
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let glyph_grid_cell = size(em_advance, line_height);
 
-                    let gutter_dimensions = snapshot
-                        .gutter_dimensions(
-                            font_id,
-                            font_size,
-                            style,
-                            window,
-                            cx,
-                        );
+                    let gutter_dimensions =
+                        snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9775,25 +9769,26 @@ impl Element for EditorElement {
                         );
 
                     // relative rows are based on newest selection, even outside the visible area
-                    let relative_row_base =  self.editor.update(cx, |editor, cx| {
-                        if editor.selections.count()==0 {
-                            return None;
-                        }
+                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                        (editor.selections.count() != 0).then(|| {
                             let newest = editor
                                 .selections
                                 .newest::<Point>(&editor.display_snapshot(cx));
-                            Some(SelectionLayout::new(
+
+                            SelectionLayout::new(
                                 newest,
                                 editor.selections.line_mode(),
                                 editor.cursor_offset_on_selection,
                                 editor.cursor_shape,
-                                &snapshot.display_snapshot,
+                                &snapshot,
                                 true,
                                 true,
                                 None,
                             )
-                            .head.row())
-                        });
+                            .head
+                            .row()
+                        })
+                    });
 
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
@@ -9961,9 +9956,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. renderer widths may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "renderer widths may be stale."
+                            ));
                         }
                     }
 
@@ -10075,9 +10071,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. block layout may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "block layout may be stale."
+                            ));
                         }
                     }
 
@@ -12095,6 +12092,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -12241,6 +12239,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -12296,6 +12295,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line, even if deleted, has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }

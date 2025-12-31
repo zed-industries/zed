@@ -25469,36 +25469,34 @@ impl EditorSnapshot {
     /// Returns the line delta from `base` to `line` in the multibuffer, ignoring wrapped lines.
     ///
     /// This is positive if `base` is before `line`.
-    fn relative_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
+    fn relative_line_delta(
+        &self,
+        base: DisplayRow,
+        line: DisplayRow,
+        consider_wrapped_lines: bool,
+    ) -> i64 {
         let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_line_delta_to_point(base, point)
+        self.relative_line_delta_to_point(base, point, consider_wrapped_lines)
     }
 
-    /// Returns the line delta from `base` to `point` in the multibuffer, ignoring wrapped lines.
+    /// Returns the line delta from `base` to `point` in the multibuffer.
     ///
     /// This is positive if `base` is before `point`.
-    pub fn relative_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
+    pub fn relative_line_delta_to_point(
+        &self,
+        base: DisplayRow,
+        point: Point,
+        consider_wrapped_lines: bool,
+    ) -> i64 {
         let base_point = DisplayPoint::new(base, 0).to_point(self);
-        point.row as i64 - base_point.row as i64
-    }
-
-    /// Returns the line delta from `base` to `line` in the multibuffer, counting wrapped lines.
-    ///
-    /// This is positive if `base` is before `line`.
-    fn relative_wrapped_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
-        let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_wrapped_line_delta_to_point(base, point)
-    }
-
-    /// Returns the line delta from `base` to `point` in the multibuffer, counting wrapped lines.
-    ///
-    /// This is positive if `base` is before `point`.
-    pub fn relative_wrapped_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
-        let base_point = DisplayPoint::new(base, 0).to_point(self);
-        let wrap_snapshot = self.wrap_snapshot();
-        let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
-        let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
-        wrap_row.0 as i64 - base_wrap_row.0 as i64
+        if consider_wrapped_lines {
+            let wrap_snapshot = self.wrap_snapshot();
+            let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
+            let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+            wrap_row.0 as i64 - base_wrap_row.0 as i64
+        } else {
+            point.row as i64 - base_point.row as i64
+        }
     }
 
     /// Returns the unsigned relative line number to display for each row in `rows`.
@@ -25510,23 +25508,21 @@ impl EditorSnapshot {
         relative_to: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset = if count_wrapped_lines {
-            self.relative_wrapped_line_delta(relative_to, rows.start)
-        } else {
-            self.relative_line_delta(relative_to, rows.start)
-        };
-        let display_row_infos = self
-            .row_infos(rows.start)
+        let initial_offset = self.relative_line_delta(relative_to, rows.start, count_wrapped_lines);
+
+        self.row_infos(rows.start)
             .take(rows.len())
             .enumerate()
-            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info));
-        display_row_infos
+            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info))
             .filter(|(_row, row_info)| {
                 row_info.buffer_row.is_some()
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .map(|(i, (row, _row_info))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .flat_map(|(i, (row, _row_info))| {
+                (row != relative_to)
+                    .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+            })
             .collect()
     }
 }
