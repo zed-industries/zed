@@ -46,6 +46,8 @@ actions!(
         Blame,
         /// Shows the git history for the current file.
         FileHistory,
+        /// Shows the git commit graph visualization.
+        CommitGraph,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
