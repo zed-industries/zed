@@ -130,6 +130,7 @@ impl OAuthClient {
         let request = Request::builder()
             .uri(token_endpoint.clone())
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
             .body(AsyncBody::from(form))
             .context("Failed to build token exchange request")?;
 
