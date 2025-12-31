@@ -3958,34 +3958,36 @@ impl MultiBufferSnapshot {
                 range.end.row + 1
             };
 
-            let word_diffs = (!hunk.base_word_diffs.is_empty()
-                || !hunk.buffer_word_diffs.is_empty())
-            .then(|| {
-                let hunk_start_offset = if is_inverted {
-                    Anchor::in_buffer(
-                        excerpt.id,
-                        excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
-                    )
-                    .to_offset(self)
-                } else {
-                    Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self)
-                };
+            let word_diffs =
+                (!hunk.base_word_diffs.is_empty() || !hunk.buffer_word_diffs.is_empty())
+                    .then(|| {
+                        let mut word_diffs = Vec::new();
 
-                let mut word_diffs = hunk
-                    .base_word_diffs
-                    .iter()
-                    .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
-                    .collect::<Vec<_>>();
-                if !is_inverted {
-                    word_diffs.extend(
-                        hunk.buffer_word_diffs
-                            .into_iter()
-                            .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
-                    );
-                }
-                word_diffs
-            })
-            .unwrap_or_default();
+                        if self.show_deleted_hunks || is_inverted {
+                            let hunk_start_offset = if is_inverted {
+                                Anchor::in_buffer(
+                                    excerpt.id,
+                                    excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
+                                )
+                                .to_offset(self)
+                            } else {
+                                Anchor::in_buffer(excerpt.id, hunk.buffer_range.start)
+                                    .to_offset(self)
+                            };
+
+                            word_diffs.extend(hunk.base_word_diffs.iter().map(|diff| {
+                                hunk_start_offset + diff.start..hunk_start_offset + diff.end
+                            }));
+                        }
+
+                        if !is_inverted {
+                            word_diffs.extend(hunk.buffer_word_diffs.into_iter().map(|diff| {
+                                Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)
+                            }));
+                        }
+                        word_diffs
+                    })
+                    .unwrap_or_default();
 
             let buffer_range = if is_inverted {
                 excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start)
