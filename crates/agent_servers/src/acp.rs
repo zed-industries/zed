@@ -13,8 +13,10 @@ use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
 use util::ResultExt as _;
+use util::process::Child;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -41,9 +43,7 @@ pub struct AcpConnection {
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
     root_dir: PathBuf,
-    // NB: Don't move this into the wait_task, since we need to ensure the process is
-    // killed on drop (setting kill_on_drop on the command seems to not always work).
-    child: smol::process::Child,
+    child: Child,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -114,16 +114,12 @@ impl AcpConnection {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
-            builder.build_command(Some(command.path.display().to_string()), &command.args);
-        child
-            .envs(command.env.iter().flatten())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
+        child.envs(command.env.iter().flatten());
         if !is_remote {
             child.current_dir(root_dir);
         }
-        let mut child = child.spawn()?;
+        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -259,7 +255,6 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        // See the comment on the child field.
         self.child.kill().log_err();
     }
 }
