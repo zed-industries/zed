@@ -464,8 +464,6 @@ fn build_tree_recursive(
         cursor.goto_parent();
     }
 
-    println!("{:?}", delimiters);
-
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
     node.delimiters = delimiters;
