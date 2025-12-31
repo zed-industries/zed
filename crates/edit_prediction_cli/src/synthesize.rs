@@ -1,7 +1,7 @@
 use crate::{
     anthropic_client::PlainLlmClient,
     git::{ensure_repo_cloned, run_git},
-    paths::{FAILED_EXAMPLES_DIR, SYNTHESIZE_STATE_FILE},
+    paths::{FAILED_EXAMPLES_DIR, LATEST_FAILED_EXAMPLES_DIR, SYNTHESIZE_STATE_FILE},
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anthropic::ResponseContent;
@@ -98,6 +98,15 @@ pub async fn run_synthesize(config: SynthesizeConfig) -> Result<()> {
 
     std::fs::create_dir_all(&config.output_dir)?;
     std::fs::create_dir_all(&*FAILED_EXAMPLES_DIR)?;
+
+    // Create "latest_failed" symlink pointing to this run's failed directory
+    if LATEST_FAILED_EXAMPLES_DIR.is_symlink() {
+        std::fs::remove_file(&*LATEST_FAILED_EXAMPLES_DIR)?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&*FAILED_EXAMPLES_DIR, &*LATEST_FAILED_EXAMPLES_DIR)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&*FAILED_EXAMPLES_DIR, &*LATEST_FAILED_EXAMPLES_DIR)?;
 
     let progress = Progress::global();
     progress.set_total_examples(config.count);
@@ -361,16 +370,13 @@ fn build_prompt(config: &SynthesizeConfig, commit: &CommitInfo) -> String {
 
             ANALYSIS:
             Pattern: <one sentence describing the pattern>
-            Plan - I will output these hunks:
+            Steps:
             1. <file:line-range> - <what this hunk does>
             2. <file:line-range> - <what this hunk does>
             3. <file:line-range> - <what this hunk does>
             4. [EXPECTED PATCH] <file:line-range> - <what this hunk does>
 
             NAME: <short description, like a commit message, under 60 chars>
-
-            REASONING:
-            <2-4 sentences explaining the pattern and why the expected patch follows from edit history>
 
             EDIT_HISTORY:
 
@@ -468,14 +474,9 @@ async fn analyze_commit(
     }];
 
     let response = client
-        .generate_streaming(
-            "claude-sonnet-4-5",
-            8192,
-            messages,
-            |chars, _text| {
-                step_progress.set_substatus(format!("analyzing: {:.1}K", chars as f64 / 1000.0));
-            },
-        )
+        .generate_streaming("claude-sonnet-4-5", 8192, messages, |chars, _text| {
+            step_progress.set_substatus(format!("analyzing: {:.1}K", chars as f64 / 1000.0));
+        })
         .await?;
 
     // Extract text content from response
@@ -508,28 +509,13 @@ fn parse_claude_response(response: &str) -> Result<Option<ClaudeResponse>> {
         .map(|l| l.strip_prefix("NAME:").unwrap_or("").trim().to_string())
         .unwrap_or_else(|| "unnamed example".to_string());
 
-    // Parse ANALYSIS section (Claude's planning)
-    let analysis = extract_section(
+    // Parse ANALYSIS section (Claude's planning) - this is the primary reasoning
+    let reasoning = extract_section(
         response,
         "ANALYSIS:",
         &["NAME:", "REASONING:", "EDIT_HISTORY:", "EXPECTED_PATCH:"],
     )
     .unwrap_or_default();
-
-    // Parse REASONING section
-    let reasoning_text = extract_section(
-        response,
-        "REASONING:",
-        &["EDIT_HISTORY:", "EXPECTED_PATCH:"],
-    )
-    .unwrap_or_default();
-
-    // Combine analysis and reasoning
-    let reasoning = if analysis.is_empty() {
-        reasoning_text
-    } else {
-        format!("{}\n\n{}", analysis, reasoning_text)
-    };
 
     // Parse EDIT_HISTORY diff block
     let edit_history_hunks = extract_diff_block(response, "EDIT_HISTORY:")?;
