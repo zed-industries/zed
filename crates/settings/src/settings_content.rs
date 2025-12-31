@@ -963,9 +963,35 @@ pub struct SshPortForwardOption {
     pub remote_port: u16,
 }
 
+/// How cell markers are interpreted in source files.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CellMarkerStyle {
+    /// Standard jupytext style: `# %%` marks the start of a cell.
+    /// The cell includes all code from the marker until the next marker or end of file.
+    #[default]
+    Jupytext,
+    /// Inverse jupytext style: `# $$` marks the end of a cell.
+    /// The cell includes all code from the previous marker (or start of file) up to and including the marker line.
+    InverseJupytext,
+}
+
 /// Settings for configuring REPL display and behavior.
 #[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ReplSettingsContent {
     /// Maximum number of lines to keep in REPL's scrollback buffer.
     /// Clamped with [4, 256] range.
@@ -977,6 +1003,13 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 128
     pub max_columns: Option<usize>,
+    /// How cell markers are interpreted in source files.
+    ///
+    /// - `jupytext`: Standard jupytext style where `# %%` marks the start of a cell
+    /// - `inverse_jupytext`: Inverse style where `# $$` marks the end of a cell
+    ///
+    /// Default: jupytext
+    pub cell_marker_style: Option<CellMarkerStyle>,
 }
 
 /// Settings for configuring the which-key popup behaviour.
