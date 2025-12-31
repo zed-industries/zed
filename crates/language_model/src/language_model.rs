@@ -797,11 +797,26 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
+/// Either a built-in icon name or a path to an external SVG.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IconOrSvg {
+    /// A built-in icon from Zed's icon set.
+    Icon(IconName),
+    /// Path to a custom SVG icon file.
+    Svg(SharedString),
+}
+
+impl Default for IconOrSvg {
+    fn default() -> Self {
+        Self::Icon(IconName::ZedAssistant)
+    }
+}
+
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
-    fn icon(&self) -> IconName {
-        IconName::ZedAssistant
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::default()
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
@@ -820,7 +835,7 @@ pub trait LanguageModelProvider: 'static {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub enum ConfigurationViewTargetAgent {
     #[default]
     ZedAgent,

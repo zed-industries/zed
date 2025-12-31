@@ -23,7 +23,7 @@ use super::session::ThreadId;
 
 mod breakpoints_in_file {
     use collections::HashMap;
-    use language::{BufferEvent, DiskState};
+    use language::BufferEvent;
 
     use super::*;
 
@@ -82,7 +82,7 @@ mod breakpoints_in_file {
                     BufferEvent::FileHandleChanged => {
                         let entity_id = buffer.entity_id();
 
-                        if buffer.read(cx).file().is_none_or(|f| f.disk_state() == DiskState::Deleted) {
+                        if buffer.read(cx).file().is_none_or(|f| f.disk_state().is_deleted()) {
                             breakpoint_store.breakpoints.retain(|_, breakpoints_in_file| {
                                 breakpoints_in_file.buffer.entity_id() != entity_id
                             });

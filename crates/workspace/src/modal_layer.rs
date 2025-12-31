@@ -1,8 +1,17 @@
 use gpui::{
     AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _, ManagedView,
-    MouseButton, Subscription,
+    MouseButton, Pixels, Point, Subscription,
 };
 use ui::prelude::*;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ModalPlacement {
+    #[default]
+    Centered,
+    Anchored {
+        position: Point<Pixels>,
+    },
+}
 
 #[derive(Debug)]
 pub enum DismissDecision {
@@ -58,6 +67,7 @@ pub struct ActiveModal {
     _subscriptions: [Subscription; 2],
     previous_focus_handle: Option<FocusHandle>,
     focus_handle: FocusHandle,
+    placement: ModalPlacement,
 }
 
 pub struct ModalLayer {
@@ -88,6 +98,19 @@ impl ModalLayer {
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
+        self.toggle_modal_with_placement(window, cx, ModalPlacement::Centered, build_view);
+    }
+
+    pub fn toggle_modal_with_placement<V, B>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        placement: ModalPlacement,
+        build_view: B,
+    ) where
+        V: ModalView,
+        B: FnOnce(&mut Window, &mut Context<V>) -> V,
+    {
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
@@ -96,12 +119,17 @@ impl ModalLayer {
             }
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
-        self.show_modal(new_modal, window, cx);
+        self.show_modal(new_modal, placement, window, cx);
         cx.emit(ModalOpenedEvent);
     }
 
-    fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
-    where
+    fn show_modal<V>(
+        &mut self,
+        new_modal: Entity<V>,
+        placement: ModalPlacement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) where
         V: ModalView,
     {
         let focus_handle = cx.focus_handle();
@@ -123,6 +151,7 @@ impl ModalLayer {
             ],
             previous_focus_handle: window.focused(cx),
             focus_handle,
+            placement,
         });
         cx.defer_in(window, move |_, window, cx| {
             window.focus(&new_modal.focus_handle(cx), cx);
@@ -183,6 +212,30 @@ impl Render for ModalLayer {
             return active_modal.modal.view().into_any_element();
         }
 
+        let content = h_flex()
+            .occlude()
+            .child(active_modal.modal.view())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            });
+
+        let positioned = match active_modal.placement {
+            ModalPlacement::Centered => v_flex()
+                .h(px(0.0))
+                .top_20()
+                .items_center()
+                .track_focus(&active_modal.focus_handle)
+                .child(content)
+                .into_any_element(),
+            ModalPlacement::Anchored { position } => div()
+                .absolute()
+                .left(position.x)
+                .top(position.y - px(20.))
+                .track_focus(&active_modal.focus_handle)
+                .child(content)
+                .into_any_element(),
+        };
+
         div()
             .absolute()
             .size_full()
@@ -199,21 +252,7 @@ impl Render for ModalLayer {
                     this.hide_modal(window, cx);
                 }),
             )
-            .child(
-                v_flex()
-                    .h(px(0.0))
-                    .top_20()
-                    .items_center()
-                    .track_focus(&active_modal.focus_handle)
-                    .child(
-                        h_flex()
-                            .occlude()
-                            .child(active_modal.modal.view())
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation();
-                            }),
-                    ),
-            )
+            .child(positioned)
             .into_any_element()
     }
 }

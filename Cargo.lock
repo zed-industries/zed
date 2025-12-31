@@ -268,6 +268,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -3526,6 +3527,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "component_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "component",
+ "db",
+ "fs",
+ "gpui",
+ "language",
+ "log",
+ "node_runtime",
+ "notifications",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "session",
+ "settings",
+ "theme",
+ "ui",
+ "ui_input",
+ "uuid",
+ "workspace",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5021,8 +5049,6 @@ name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "command_palette",
- "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -5031,7 +5057,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "zed",
  "zlog",
 ]
 
@@ -5188,6 +5213,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "brotli",
+ "buffer_diff",
  "client",
  "clock",
  "cloud_api_types",
@@ -5225,7 +5251,9 @@ dependencies = [
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
+ "text",
  "thiserror 2.0.17",
+ "time",
  "ui",
  "util",
  "uuid",
@@ -5330,8 +5358,10 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "client",
+ "clock",
  "cloud_llm_client",
  "codestral",
+ "collections",
  "command_palette_hooks",
  "copilot",
  "edit_prediction",
@@ -5340,18 +5370,20 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
- "git",
  "gpui",
  "indoc",
  "language",
- "log",
+ "language_model",
  "lsp",
  "markdown",
  "menu",
  "multi_buffer",
  "paths",
+ "pretty_assertions",
  "project",
  "regex",
+ "release_channel",
+ "semver",
  "serde_json",
  "settings",
  "supermaven",
@@ -5364,6 +5396,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta_prompt",
+ "zlog",
 ]
 
 [[package]]
@@ -8621,6 +8654,7 @@ dependencies = [
  "extension",
  "gpui",
  "language",
+ "lsp",
  "paths",
  "project",
  "schemars",
@@ -8932,6 +8966,8 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "extension",
+ "extension_host",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -12571,6 +12607,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "notifications",
  "pretty_assertions",
  "project",
  "rayon",
@@ -20266,6 +20303,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "worktree_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "settings",
+ "worktree",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20633,6 +20680,7 @@ dependencies = [
  "collections",
  "command_palette",
  "component",
+ "component_preview",
  "copilot",
  "crashes",
  "dap",
@@ -20738,7 +20786,6 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
- "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
@@ -20918,7 +20965,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20932,7 +20979,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]

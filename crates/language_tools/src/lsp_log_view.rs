@@ -330,6 +330,8 @@ impl LspLogView {
         let server_info = format!(
             "* Server: {NAME} (id {ID})
 
+* Version: {VERSION}
+
 * Binary: {BINARY}
 
 * Registered workspace folders:
@@ -340,6 +342,12 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.status.name,
             ID = info.id,
+            VERSION = info
+                .status
+                .server_version
+                .as_ref()
+                .map(|version| version.as_ref())
+                .unwrap_or("Unknown"),
             BINARY = info
                 .status
                 .binary
@@ -1334,6 +1342,7 @@ impl ServerInfo {
             capabilities: server.capabilities(),
             status: LanguageServerStatus {
                 name: server.name(),
+                server_version: server.version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),

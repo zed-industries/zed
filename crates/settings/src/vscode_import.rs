@@ -431,6 +431,8 @@ impl VsCodeSettings {
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             extend_comment_on_newline: None,
+            extend_list_on_newline: None,
+            indent_list_on_tab: None,
             format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
                 if b {
                     FormatOnSave::On
@@ -735,7 +737,9 @@ impl VsCodeSettings {
             font_fallbacks,
             font_family,
             font_features: None,
-            font_size: self.read_f32("terminal.integrated.fontSize"),
+            font_size: self
+                .read_f32("terminal.integrated.fontSize")
+                .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
             line_height: self
@@ -794,7 +798,7 @@ impl VsCodeSettings {
             ui_font_weight: None,
             buffer_font_family,
             buffer_font_fallbacks,
-            buffer_font_size: self.read_f32("editor.fontSize"),
+            buffer_font_size: self.read_f32("editor.fontSize").map(FontSize::from),
             buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
             buffer_line_height: None,
             buffer_font_features: None,

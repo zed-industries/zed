@@ -24,11 +24,11 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, CursorStyle,
+    EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length, ListOffset,
+    ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task, TextStyle,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div, ease_in_out,
+    linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -47,14 +47,16 @@ use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
-    Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, Disclosure, Divider,
+    DividerColor, ElevationIndex, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
+    WithScrollbar, prelude::*, right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
+use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::ModeSelector;
@@ -271,12 +273,14 @@ pub struct AcpThreadView {
     message_editor: Entity<MessageEditor>,
     focus_handle: FocusHandle,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
+    config_options_view: Option<Entity<ConfigOptionsView>>,
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
+    token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -428,14 +432,15 @@ impl AcpThreadView {
             login: None,
             message_editor,
             model_selector: None,
+            config_options_view: None,
             profile_selector: None,
-
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -612,42 +617,64 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
-                        this.model_selector = thread
+                        // Check for config options first
+                        // Config options take precedence over legacy mode/model selectors
+                        // (feature flag gating happens at the data layer)
+                        let config_options_provider = thread
                             .read(cx)
                             .connection()
-                            .model_selector(thread.read(cx).session_id())
-                            .map(|selector| {
-                                let agent_server = this.agent.clone();
-                                let fs = this.project.read(cx).fs().clone();
-                                cx.new(|cx| {
-                                    AcpModelSelectorPopover::new(
-                                        selector,
-                                        agent_server,
-                                        fs,
-                                        PopoverMenuHandle::default(),
-                                        this.focus_handle(cx),
-                                        window,
-                                        cx,
-                                    )
-                                })
-                            });
+                            .session_config_options(thread.read(cx).session_id(), cx);
 
-                        let mode_selector = thread
-                            .read(cx)
-                            .connection()
-                            .session_modes(thread.read(cx).session_id(), cx)
-                            .map(|session_modes| {
-                                let fs = this.project.read(cx).fs().clone();
-                                let focus_handle = this.focus_handle(cx);
-                                cx.new(|_cx| {
-                                    ModeSelector::new(
-                                        session_modes,
-                                        this.agent.clone(),
-                                        fs,
-                                        focus_handle,
-                                    )
-                                })
-                            });
+                        let mode_selector;
+                        if let Some(config_options) = config_options_provider {
+                            // Use config options - don't create mode_selector or model_selector
+                            let agent_server = this.agent.clone();
+                            let fs = this.project.read(cx).fs().clone();
+                            this.config_options_view = Some(cx.new(|cx| {
+                                ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
+                            }));
+                            this.model_selector = None;
+                            mode_selector = None;
+                        } else {
+                            // Fall back to legacy mode/model selectors
+                            this.config_options_view = None;
+                            this.model_selector = thread
+                                .read(cx)
+                                .connection()
+                                .model_selector(thread.read(cx).session_id())
+                                .map(|selector| {
+                                    let agent_server = this.agent.clone();
+                                    let fs = this.project.read(cx).fs().clone();
+                                    cx.new(|cx| {
+                                        AcpModelSelectorPopover::new(
+                                            selector,
+                                            agent_server,
+                                            fs,
+                                            PopoverMenuHandle::default(),
+                                            this.focus_handle(cx),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                });
+
+                            mode_selector = thread
+                                .read(cx)
+                                .connection()
+                                .session_modes(thread.read(cx).session_id(), cx)
+                                .map(|session_modes| {
+                                    let fs = this.project.read(cx).fs().clone();
+                                    let focus_handle = this.focus_handle(cx);
+                                    cx.new(|_cx| {
+                                        ModeSelector::new(
+                                            session_modes,
+                                            this.agent.clone(),
+                                            fs,
+                                            focus_handle,
+                                        )
+                                    })
+                                });
+                        }
 
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
@@ -1393,6 +1420,7 @@ impl AcpThreadView {
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
         self.thread_error_markdown = None;
+        self.token_limit_callout_dismissed = true;
         cx.notify();
     }
 
@@ -1517,6 +1545,10 @@ impl AcpThreadView {
             }
             AcpThreadEvent::ModeUpdated(_mode) => {
                 // The connection keeps track of the mode
+                cx.notify();
+            }
+            AcpThreadEvent::ConfigOptionsUpdated(_) => {
+                // The watch task in ConfigOptionsView handles rebuilding selectors
                 cx.notify();
             }
         }
@@ -2038,7 +2070,7 @@ impl AcpThreadView {
                                         }
                                     })
                                     .text_xs()
-                                    .child(editor.clone().into_any_element()),
+                                    .child(editor.clone().into_any_element())
                             )
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
@@ -2154,7 +2186,6 @@ impl AcpThreadView {
                                     if this_is_blank {
                                         return None;
                                     }
-
                                     Some(
                                         self.render_thinking_block(
                                             entry_ix,
@@ -2180,7 +2211,7 @@ impl AcpThreadView {
                         .when(is_last, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
-                        .child(message_body)
+                        .child(self.render_message_context_menu(entry_ix, message_body, cx))
                         .into_any()
                 }
             }
@@ -2285,6 +2316,70 @@ impl AcpThreadView {
         } else {
             primary
         }
+    }
+
+    fn render_message_context_menu(
+        &self,
+        entry_ix: usize,
+        message_body: AnyElement,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let workspace = self.workspace.clone();
+
+        right_click_menu(format!("agent_context_menu-{}", entry_ix))
+            .trigger(move |_, _, _| message_body)
+            .menu(move |window, cx| {
+                let focus = window.focused(cx);
+                let entity = entity.clone();
+                let workspace = workspace.clone();
+
+                ContextMenu::build(window, cx, move |menu, _, cx| {
+                    let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
+
+                    let scroll_item = if is_at_top {
+                        ContextMenuEntry::new("Scroll to Bottom").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.scroll_to_bottom(cx);
+                                });
+                            }
+                        })
+                    } else {
+                        ContextMenuEntry::new("Scroll to Top").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.scroll_to_top(cx);
+                                });
+                            }
+                        })
+                    };
+
+                    let open_thread_as_markdown = ContextMenuEntry::new("Open Thread as Markdown")
+                        .handler({
+                            let entity = entity.clone();
+                            let workspace = workspace.clone();
+                            move |window, cx| {
+                                if let Some(workspace) = workspace.upgrade() {
+                                    entity
+                                        .update(cx, |this, cx| {
+                                            this.open_thread_as_markdown(workspace, window, cx)
+                                        })
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        });
+
+                    menu.when_some(focus, |menu, focus| menu.context(focus))
+                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .separator()
+                        .item(scroll_item)
+                        .item(open_thread_as_markdown)
+                })
+            })
+            .into_any_element()
     }
 
     fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
@@ -2489,9 +2584,11 @@ impl AcpThreadView {
                                     .border_color(self.tool_card_border_color(cx))
                                     .child(input_output_header("Raw Input:".into()))
                                     .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                        self.render_markdown(
-                                            input,
-                                            default_markdown_style(false, false, window, cx),
+                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
+                                            self.render_markdown(
+                                                input,
+                                                default_markdown_style(false, false, window, cx),
+                                            ),
                                         )
                                     }))
                                     .child(input_output_header("Output:".into())),
@@ -2499,15 +2596,17 @@ impl AcpThreadView {
                         })
                         .children(tool_call.content.iter().enumerate().map(
                             |(content_ix, content)| {
-                                div().child(self.render_tool_call_content(
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    use_card_layout,
-                                    window,
-                                    cx,
-                                ))
+                                div().id(("tool-call-output", entry_ix)).child(
+                                    self.render_tool_call_content(
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        use_card_layout,
+                                        window,
+                                        cx,
+                                    ),
+                                )
                             },
                         ))
                         .into_any(),
@@ -2718,7 +2817,7 @@ impl AcpThreadView {
                             ..default_markdown_style(false, true, window, cx)
                         },
                     ))
-                    .tooltip(Tooltip::text("Jump to File"))
+                    .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
                     }))
@@ -4284,37 +4383,6 @@ impl AcpThreadView {
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
-            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
-                    profile_selector.read(cx).menu_handle().toggle(window, cx);
-                } else if let Some(mode_selector) = this.mode_selector() {
-                    mode_selector.read(cx).menu_handle().toggle(window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
-                    profile_selector.update(cx, |profile_selector, cx| {
-                        profile_selector.cycle_profile(cx);
-                    });
-                } else if let Some(mode_selector) = this.mode_selector() {
-                    mode_selector.update(cx, |mode_selector, cx| {
-                        mode_selector.cycle_mode(window, cx);
-                    });
-                }
-            }))
-            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if let Some(model_selector) = this.model_selector.as_ref() {
-                    model_selector
-                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
-                if let Some(model_selector) = this.model_selector.as_ref() {
-                    model_selector.update(cx, |model_selector, cx| {
-                        model_selector.cycle_favorite_models(window, cx);
-                    });
-                }
-            }))
             .p_2()
             .gap_2()
             .border_t_1()
@@ -4378,8 +4446,12 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
-                            .children(self.mode_selector().cloned())
-                            .children(self.model_selector.clone())
+                            // Either config_options_view OR (mode_selector + model_selector)
+                            .children(self.config_options_view.clone())
+                            .when(self.config_options_view.is_none(), |this| {
+                                this.children(self.mode_selector().cloned())
+                                    .children(self.model_selector.clone())
+                            })
                             .child(self.render_send_button(cx)),
                     ),
             )
@@ -5354,22 +5426,26 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_token_limit_callout(
-        &self,
-        line_height: Pixels,
-        cx: &mut Context<Self>,
-    ) -> Option<Callout> {
+    fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.token_limit_callout_dismissed {
+            return None;
+        }
+
         let token_usage = self.thread()?.read(cx).token_usage()?;
         let ratio = token_usage.ratio();
 
-        let (severity, title) = match ratio {
+        let (severity, icon, title) = match ratio {
             acp_thread::TokenUsageRatio::Normal => return None,
-            acp_thread::TokenUsageRatio::Warning => {
-                (Severity::Warning, "Thread reaching the token limit soon")
-            }
-            acp_thread::TokenUsageRatio::Exceeded => {
-                (Severity::Error, "Thread reached the token limit")
-            }
+            acp_thread::TokenUsageRatio::Warning => (
+                Severity::Warning,
+                IconName::Warning,
+                "Thread reaching the token limit soon",
+            ),
+            acp_thread::TokenUsageRatio::Exceeded => (
+                Severity::Error,
+                IconName::XCircle,
+                "Thread reached the token limit",
+            ),
         };
 
         let burn_mode_available = self.as_native_thread(cx).is_some_and(|thread| {
@@ -5389,7 +5465,7 @@ impl AcpThreadView {
         Some(
             Callout::new()
                 .severity(severity)
-                .line_height(line_height)
+                .icon(icon)
                 .title(title)
                 .description(description)
                 .actions_slot(
@@ -5421,7 +5497,8 @@ impl AcpThreadView {
                                     })),
                             )
                         }),
-                ),
+                )
+                .dismiss_action(self.dismiss_error_button(cx)),
         )
     }
 
@@ -5844,18 +5921,13 @@ impl AcpThreadView {
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
 
-        IconButton::new("copy", IconName::Copy)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Copy Error Message"))
-            .on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-            })
+        CopyButton::new(message).tooltip_label("Copy Error Message")
     }
 
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         IconButton::new("dismiss", IconName::Close)
             .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Dismiss Error"))
+            .tooltip(Tooltip::text("Dismiss"))
             .on_click(cx.listener({
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
@@ -6001,6 +6073,37 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.read(cx).menu_handle().toggle(window, cx);
+                } else if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.update(cx, |profile_selector, cx| {
+                        profile_selector.cycle_profile(cx);
+                    });
+                } else if let Some(mode_selector) = this.mode_selector() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.cycle_mode(window, cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector
+                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
+                }
+            }))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
@@ -6084,7 +6187,7 @@ impl Render for AcpThreadView {
                 if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
                     Some(usage_callout.into_any_element())
                 } else {
-                    self.render_token_limit_callout(line_height, cx)
+                    self.render_token_limit_callout(cx)
                         .map(|token_limit_callout| token_limit_callout.into_any_element())
                 },
             )

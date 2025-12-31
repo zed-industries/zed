@@ -26,6 +26,7 @@ use settings::Settings;
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
+use std::process::Stdio;
 use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
@@ -2173,6 +2174,119 @@ pub(crate) struct RuffLspAdapter {
     fs: Arc<dyn Fs>,
 }
 
+impl RuffLspAdapter {
+    fn convert_ruff_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
+        let Some(schema_object) = raw_schema.as_object() else {
+            return raw_schema.clone();
+        };
+
+        let mut root_properties = serde_json::Map::new();
+
+        for (key, value) in schema_object {
+            let parts: Vec<&str> = key.split('.').collect();
+
+            if parts.is_empty() {
+                continue;
+            }
+
+            let mut current = &mut root_properties;
+
+            for (i, part) in parts.iter().enumerate() {
+                let is_last = i == parts.len() - 1;
+
+                if is_last {
+                    let mut schema_entry = serde_json::Map::new();
+
+                    if let Some(doc) = value.get("doc").and_then(|d| d.as_str()) {
+                        schema_entry.insert(
+                            "markdownDescription".to_string(),
+                            serde_json::Value::String(doc.to_string()),
+                        );
+                    }
+
+                    if let Some(default_val) = value.get("default") {
+                        schema_entry.insert("default".to_string(), default_val.clone());
+                    }
+
+                    if let Some(value_type) = value.get("value_type").and_then(|v| v.as_str()) {
+                        if value_type.contains('|') {
+                            let enum_values: Vec<serde_json::Value> = value_type
+                                .split('|')
+                                .map(|s| s.trim().trim_matches('"'))
+                                .filter(|s| !s.is_empty())
+                                .map(|s| serde_json::Value::String(s.to_string()))
+                                .collect();
+
+                            if !enum_values.is_empty() {
+                                schema_entry
+                                    .insert("type".to_string(), serde_json::json!("string"));
+                                schema_entry.insert(
+                                    "enum".to_string(),
+                                    serde_json::Value::Array(enum_values),
+                                );
+                            }
+                        } else if value_type.starts_with("list[") {
+                            schema_entry.insert("type".to_string(), serde_json::json!("array"));
+                            if let Some(item_type) = value_type
+                                .strip_prefix("list[")
+                                .and_then(|s| s.strip_suffix(']'))
+                            {
+                                let json_type = match item_type {
+                                    "str" => "string",
+                                    "int" => "integer",
+                                    "bool" => "boolean",
+                                    _ => "string",
+                                };
+                                schema_entry.insert(
+                                    "items".to_string(),
+                                    serde_json::json!({"type": json_type}),
+                                );
+                            }
+                        } else if value_type.starts_with("dict[") {
+                            schema_entry.insert("type".to_string(), serde_json::json!("object"));
+                        } else {
+                            let json_type = match value_type {
+                                "bool" => "boolean",
+                                "int" | "usize" => "integer",
+                                "str" => "string",
+                                _ => "string",
+                            };
+                            schema_entry.insert(
+                                "type".to_string(),
+                                serde_json::Value::String(json_type.to_string()),
+                            );
+                        }
+                    }
+
+                    current.insert(part.to_string(), serde_json::Value::Object(schema_entry));
+                } else {
+                    let next_current = current
+                        .entry(part.to_string())
+                        .or_insert_with(|| {
+                            serde_json::json!({
+                                "type": "object",
+                                "properties": {}
+                            })
+                        })
+                        .as_object_mut()
+                        .expect("should be an object")
+                        .entry("properties")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .expect("properties should be an object");
+
+                    current = next_current;
+                }
+            }
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": root_properties
+        })
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl RuffLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -2224,6 +2338,36 @@ impl RuffLspAdapter {
 impl LspAdapter for RuffLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        language_server_binary: &LanguageServerBinary,
+    ) -> Option<serde_json::Value> {
+        let mut command = util::command::new_smol_command(&language_server_binary.path);
+        command
+            .args(&["config", "--output-format", "json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cmd = command
+            .spawn()
+            .map_err(|e| log::debug!("failed to spawn command {command:?}: {e}"))
+            .ok()?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| log::debug!("failed to execute command {command:?}: {e}"))
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw_schema: serde_json::Value = serde_json::from_slice(output.stdout.as_slice())
+            .map_err(|e| log::debug!("failed to parse ruff's JSON schema output: {e}"))
+            .ok()?;
+
+        let converted_schema = Self::convert_ruff_schema(&raw_schema);
+        Some(converted_schema)
     }
 }
 
@@ -2567,5 +2711,150 @@ mod tests {
                 Some("foo\\bar".to_string())
             );
         }
+    }
+
+    #[test]
+    fn test_convert_ruff_schema() {
+        use super::RuffLspAdapter;
+
+        let raw_schema = serde_json::json!({
+            "line-length": {
+                "doc": "The line length to use when enforcing long-lines violations",
+                "default": "88",
+                "value_type": "int",
+                "scope": null,
+                "example": "line-length = 120",
+                "deprecated": null
+            },
+            "lint.select": {
+                "doc": "A list of rule codes or prefixes to enable",
+                "default": "[\"E4\", \"E7\", \"E9\", \"F\"]",
+                "value_type": "list[RuleSelector]",
+                "scope": null,
+                "example": "select = [\"E4\", \"E7\", \"E9\", \"F\", \"B\", \"Q\"]",
+                "deprecated": null
+            },
+            "lint.isort.case-sensitive": {
+                "doc": "Sort imports taking into account case sensitivity.",
+                "default": "false",
+                "value_type": "bool",
+                "scope": null,
+                "example": "case-sensitive = true",
+                "deprecated": null
+            },
+            "format.quote-style": {
+                "doc": "Configures the preferred quote character for strings.",
+                "default": "\"double\"",
+                "value_type": "\"double\" | \"single\" | \"preserve\"",
+                "scope": null,
+                "example": "quote-style = \"single\"",
+                "deprecated": null
+            }
+        });
+
+        let converted = RuffLspAdapter::convert_ruff_schema(&raw_schema);
+
+        assert!(converted.is_object());
+        assert_eq!(
+            converted.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        let properties = converted
+            .get("properties")
+            .expect("should have properties")
+            .as_object()
+            .expect("properties should be an object");
+
+        assert!(properties.contains_key("line-length"));
+        assert!(properties.contains_key("lint"));
+        assert!(properties.contains_key("format"));
+
+        let line_length = properties
+            .get("line-length")
+            .expect("should have line-length")
+            .as_object()
+            .expect("line-length should be an object");
+
+        assert_eq!(
+            line_length.get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+        assert_eq!(
+            line_length.get("default").and_then(|v| v.as_str()),
+            Some("88")
+        );
+
+        let lint = properties
+            .get("lint")
+            .expect("should have lint")
+            .as_object()
+            .expect("lint should be an object");
+
+        let lint_props = lint
+            .get("properties")
+            .expect("lint should have properties")
+            .as_object()
+            .expect("lint properties should be an object");
+
+        assert!(lint_props.contains_key("select"));
+        assert!(lint_props.contains_key("isort"));
+
+        let select = lint_props.get("select").expect("should have select");
+        assert_eq!(select.get("type").and_then(|v| v.as_str()), Some("array"));
+
+        let isort = lint_props
+            .get("isort")
+            .expect("should have isort")
+            .as_object()
+            .expect("isort should be an object");
+
+        let isort_props = isort
+            .get("properties")
+            .expect("isort should have properties")
+            .as_object()
+            .expect("isort properties should be an object");
+
+        let case_sensitive = isort_props
+            .get("case-sensitive")
+            .expect("should have case-sensitive");
+
+        assert_eq!(
+            case_sensitive.get("type").and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert!(case_sensitive.get("markdownDescription").is_some());
+
+        let format = properties
+            .get("format")
+            .expect("should have format")
+            .as_object()
+            .expect("format should be an object");
+
+        let format_props = format
+            .get("properties")
+            .expect("format should have properties")
+            .as_object()
+            .expect("format properties should be an object");
+
+        let quote_style = format_props
+            .get("quote-style")
+            .expect("should have quote-style");
+
+        assert_eq!(
+            quote_style.get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+
+        let enum_values = quote_style
+            .get("enum")
+            .expect("should have enum")
+            .as_array()
+            .expect("enum should be an array");
+
+        assert_eq!(enum_values.len(), 3);
+        assert!(enum_values.contains(&serde_json::json!("double")));
+        assert!(enum_values.contains(&serde_json::json!("single")));
+        assert!(enum_values.contains(&serde_json::json!("preserve")));
     }
 }
