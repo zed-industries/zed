@@ -832,6 +832,7 @@ enum EntitySubscription {
     LspStore(PendingEntitySubscription<LspStore>),
     SettingsObserver(PendingEntitySubscription<SettingsObserver>),
     DapStore(PendingEntitySubscription<DapStore>),
+    BreakpointStore(PendingEntitySubscription<BreakpointStore>),
 }
 
 #[derive(Debug, Clone)]
@@ -1533,6 +1534,9 @@ impl Project {
                 client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
             ),
             EntitySubscription::DapStore(client.subscribe_to_entity::<DapStore>(remote_id)?),
+            EntitySubscription::BreakpointStore(
+                client.subscribe_to_entity::<BreakpointStore>(remote_id)?,
+            ),
         ];
         let committer = get_git_committer(&cx).await;
         let response = client
@@ -1557,7 +1561,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscriptions: [EntitySubscription; 7],
+        subscriptions: [EntitySubscription; 8],
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
@@ -1721,7 +1725,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                breakpoint_store,
+                breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
                 agent_server_store,
@@ -1779,6 +1783,9 @@ impl Project {
                 }
                 EntitySubscription::DapStore(subscription) => {
                     subscription.set_entity(&dap_store, &cx)
+                }
+                EntitySubscription::BreakpointStore(subscription) => {
+                    subscription.set_entity(&breakpoint_store, &cx)
                 }
             })
             .collect::<Vec<_>>();
