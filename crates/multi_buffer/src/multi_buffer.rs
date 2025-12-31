@@ -138,25 +138,15 @@ pub struct MultiBufferDiffHunk {
     pub excerpt_id: ExcerptId,
     /// The range within the buffer's diff base that this hunk corresponds to.
     pub diff_base_byte_range: Range<BufferOffset>,
-    /// Whether or not this hunk also appears in the 'secondary diff'.
-    pub secondary_status: DiffHunkSecondaryStatus,
+    /// The status of this hunk (added/modified/deleted and secondary status).
+    pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
 }
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        let kind = if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatusKind::Deleted
-        } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatusKind::Added
-        } else {
-            DiffHunkStatusKind::Modified
-        };
-        DiffHunkStatus {
-            kind,
-            secondary: self.secondary_status,
-        }
+        self.status
     }
 
     pub fn is_created_file(&self) -> bool {
@@ -3995,6 +3985,13 @@ impl MultiBufferSnapshot {
             } else {
                 hunk.buffer_range.clone()
             };
+            let status_kind = if hunk.buffer_range.start == hunk.buffer_range.end {
+                DiffHunkStatusKind::Deleted
+            } else if hunk.diff_base_byte_range.is_empty() {
+                DiffHunkStatusKind::Added
+            } else {
+                DiffHunkStatusKind::Modified
+            };
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
@@ -4003,7 +4000,10 @@ impl MultiBufferSnapshot {
                 word_diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
-                secondary_status: hunk.secondary_status,
+                status: DiffHunkStatus {
+                    kind: status_kind,
+                    secondary: hunk.secondary_status,
+                },
             })
         })
     }

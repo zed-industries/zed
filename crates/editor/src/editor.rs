@@ -19940,7 +19940,7 @@ impl Editor {
                         buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
-                        secondary_status: hunk.secondary_status,
+                        secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
                     })
                     .collect::<Vec<_>>(),
