@@ -70,9 +70,10 @@ pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
-    let mut lhs_change_map = FxHashMap::default();
-    let mut rhs_change_map = FxHashMap::default();
     let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, DEFAULT_GRAPH_LIMIT)?;
+
+    let mut lhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
+    let mut rhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
 
     // Route entries have vertices[0] = from (source), vertices[1] = to (destination).
     // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
