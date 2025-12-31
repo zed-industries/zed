@@ -17,6 +17,7 @@ test-support = ["gpui/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64.workspace =true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -25,16 +26,18 @@ log.workspace = true
 net.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+rand.workspace = true
 schemars.workspace = true
-serde_json.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
+sha2.workspace = true
 slotmap.workspace = true
 smol.workspace = true
 tempfile.workspace = true
+terminal.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
-terminal.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

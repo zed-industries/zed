@@ -2,68 +2,208 @@ use std::{
     borrow::Cow,
     error::Error,
     fmt::{self, Display},
+    ops::Deref,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
-use http_client::{AsyncBody, HttpClient, Response, Uri};
+use base64::Engine as _;
+use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
+use rand::distr::Distribution;
 use serde::{Deserialize, Serialize, de::DeserializeOwned, ser};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use smol::io::AsyncReadExt;
+use url::Url;
 
-async fn authenticate(
-    server_endpoint: &str,
-    www_authenticate: Option<&WwwAuthenticate<'_>>,
-    http_client: &Arc<dyn HttpClient>,
-) -> Result<()> {
-    // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-discovery
-    // https://modelcontextprotocol.io/specification/draft/basic/authorization#protected-resource-metadata-discovery-requirements
-    let resource_meta = match www_authenticate
-        .and_then(|challenge| challenge.resource_metadata.as_ref())
-    {
-        Some(url) => ProtectedResourceMetadata::fetch(url, http_client).await?,
-        None => ProtectedResourceMetadata::fetch_well_known(server_endpoint, http_client).await?,
-    };
+pub const CALLBACK_URI: &str = "zed://mcp/auth/callback";
 
-    // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-metadata-discovery
-    let auth_server_url = resource_meta
-        .authorization_servers
-        // todo! try others?
-        .first()
-        .context("Resource metadata specified 0 authorization servers")?;
+pub struct OAuthClient {
+    registration: ClientRegistration,
+    server: AuthorizationServer,
+    scope: Option<String>,
+    token: Option<Token>,
+    http_client: Arc<dyn HttpClient>,
+}
 
-    let server_meta = AuthorizationServerMetadata::fetch(auth_server_url, http_client).await?;
+struct Token {
+    access_token: String,
+    token_type: String,
+    expires_at: Option<Instant>,
+    refresh_token: Option<String>,
+}
 
-    // https://modelcontextprotocol.io/specification/draft/basic/authorization#client-registration-approaches
-    // TODO: Pre-registration from settings?
-    let client_id = if server_meta.client_id_metadata_document_supported {
-        todo!("host client id meta doc somewhere");
-    } else if let Some(registration_endpoint) = server_meta.registration_endpoint.as_ref() {
-        register_client(registration_endpoint, http_client)
-            .await?
-            .client_id;
-    } else {
-        todo!("allow user to specify custom client meta");
-    };
+impl OAuthClient {
+    pub async fn init(
+        server_endpoint: &str,
+        www_authenticate: Option<&WwwAuthenticate<'_>>,
+        http_client: &Arc<dyn HttpClient>,
+    ) -> Result<Self> {
+        // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-discovery
+        // https://modelcontextprotocol.io/specification/draft/basic/authorization#protected-resource-metadata-discovery-requirements
+        let resource =
+            match www_authenticate.and_then(|challenge| challenge.resource_metadata.as_ref()) {
+                Some(url) => ProtectedResource::fetch(url, http_client).await?,
+                None => ProtectedResource::fetch_well_known(server_endpoint, http_client).await?,
+            };
 
-    // https://modelcontextprotocol.io/specification/draft/basic/authorization#scope-selection-strategy
-    let scope = www_authenticate
-        .and_then(|challenge| challenge.scope.clone())
-        .or_else(|| {
-            if resource_meta.scopes_supported.is_empty() {
-                None
-            } else {
-                Some(Cow::Owned(resource_meta.scopes_supported.join(" ")))
-            }
+        // https://modelcontextprotocol.io/specification/draft/basic/authorization#authorization-server-metadata-discovery
+        let auth_server_url = resource
+            .authorization_servers
+            // todo! try others?
+            .first()
+            .context("Resource metadata specified 0 authorization servers")?;
+
+        let server = AuthorizationServer::fetch(auth_server_url, http_client).await?;
+
+        // https://modelcontextprotocol.io/specification/draft/basic/authorization#client-registration-approaches
+        // TODO: Pre-registration from settings?
+        let registration = if server.client_id_metadata_document_supported {
+            todo!("host client id meta doc somewhere");
+        } else if let Some(registration_endpoint) = server.registration_endpoint.as_ref() {
+            Self::register(registration_endpoint, http_client).await?
+        } else {
+            todo!("allow user to specify custom client meta");
+        };
+
+        // https://modelcontextprotocol.io/specification/draft/basic/authorization#scope-selection-strategy
+        let scope = www_authenticate
+            .and_then(|challenge| challenge.scope.as_ref().map(|s| s.to_string()))
+            .or_else(|| {
+                if resource.scopes_supported.is_empty() {
+                    None
+                } else {
+                    Some(resource.scopes_supported.join(" "))
+                }
+            });
+
+        Ok(Self {
+            registration,
+            server,
+            scope,
+            token: None,
+            http_client: http_client.clone(),
+        })
+    }
+
+    pub fn authorize_url(&self) -> Result<(Url, String)> {
+        let auth_endpoint =
+            self.server.authorization_endpoint.as_ref().context(
+                "Authorization server metadata does not specify an authorization_endpoint",
+            )?;
+
+        let code_verifier = generate_code_verifier();
+        let code_challenge =
+            base64::engine::general_purpose::URL_SAFE.encode(Sha256::digest(&code_verifier));
+
+        let mut authorize_url = Url::parse(&auth_endpoint.to_string())?;
+
+        authorize_url
+            .query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", &self.registration.client_id)
+            .append_pair("redirect_uri", CALLBACK_URI)
+            .append_pair("code_challenge", &code_challenge)
+            .append_pair("code_challenge_method", "S256")
+            .extend_pairs(self.scope.iter().map(|value| ("scope", value)));
+
+        anyhow::Ok((authorize_url, code_verifier))
+    }
+
+    pub async fn exchange_token(&mut self, code: &str, code_verifier: &str) -> Result<()> {
+        let token_endpoint = self
+            .server
+            .token_endpoint
+            .as_ref()
+            // todo! implicit?
+            .context("Authorization server metadata does not specify a token_endpoint")?;
+
+        let form = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("grant_type", "authorization_code")
+            .append_pair("code", code)
+            .append_pair("redirect_uri", CALLBACK_URI)
+            .append_pair("client_id", &self.registration.client_id)
+            .append_pair("code_verifier", code_verifier)
+            .finish();
+
+        let request = Request::builder()
+            .uri(token_endpoint.clone())
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(AsyncBody::from(form))
+            .context("Failed to build token exchange request")?;
+
+        let requested_at = Instant::now();
+
+        let mut response = self.http_client.send(request).await?;
+        let token_response: TokenResponse = decode_response_json(&mut response).await?;
+
+        self.token = Some(Token {
+            access_token: token_response.access_token,
+            token_type: token_response.token_type,
+            expires_at: token_response
+                .expires_in
+                .map(|expires_in| requested_at + Duration::from_secs(expires_in)),
+            refresh_token: token_response.refresh_token,
         });
 
-    anyhow::Ok(())
+        anyhow::Ok(())
+    }
+
+    async fn register(
+        registration_endpoint: &AbsUri,
+        http_client: &Arc<dyn HttpClient>,
+    ) -> Result<ClientRegistration> {
+        let metadata = json!({
+            "redirect_uris": [CALLBACK_URI],
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "client_name": "Zed",
+            "client_uri": "https://zed.dev",
+            "logo_uri": "https://zed.dev/_next/static/media/stable-app-logo.9b5f959f.png"
+        });
+
+        post_json(&registration_endpoint.to_string(), metadata, http_client).await
+    }
+}
+
+fn generate_code_verifier() -> String {
+    const LENGTH: usize = 64;
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+
+    let dist = rand::distr::slice::Choose::new(ALPHABET).unwrap();
+
+    let bytes: Vec<u8> = dist
+        .sample_iter(rand::rng())
+        .take(LENGTH)
+        .copied()
+        .collect();
+
+    // SAFETY: All bytes come from ALPHABET which is ASCII
+    unsafe { String::from_utf8_unchecked(bytes) }
+}
+
+#[derive(Deserialize)]
+struct ClientRegistration {
+    client_id: String,
+    client_secret: Option<String>,
+    client_id_issued_at: Option<u64>,
+    client_secret_expires_at: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    token_type: String,
+    expires_in: Option<u64>,
+    refresh_token: Option<String>,
 }
 
 // Resource Metadata
 
 #[derive(Deserialize)]
-pub struct ProtectedResourceMetadata {
+pub struct ProtectedResource {
     resource: String,
 
     #[serde(default)]
@@ -79,7 +219,7 @@ pub struct ProtectedResourceMetadata {
     resource_name: Option<String>,
 }
 
-impl ProtectedResourceMetadata {
+impl ProtectedResource {
     pub async fn fetch(url: &str, http_client: &Arc<dyn HttpClient>) -> Result<Self> {
         get_json(url, http_client)
             .await
@@ -102,7 +242,7 @@ impl ProtectedResourceMetadata {
 // Server Metadata
 
 #[derive(Debug, Deserialize)]
-pub struct AuthorizationServerMetadata {
+pub struct AuthorizationServer {
     issuer: String,
 
     #[serde(default)]
@@ -136,7 +276,7 @@ pub struct AuthorizationServerMetadata {
     client_id_metadata_document_supported: bool,
 }
 
-impl AuthorizationServerMetadata {
+impl AuthorizationServer {
     pub async fn fetch(
         issuer_uri: &AbsUri,
         http_client: &Arc<dyn HttpClient>,
@@ -221,35 +361,6 @@ impl Display for AuthorizationServerMetadataDiscoveryError {
     }
 }
 
-// Registration
-
-pub const CALLBACK_URI: &str = "zed://mcp/auth/callback";
-
-#[derive(Deserialize)]
-struct DynamicRegistrationResponse {
-    client_id: String,
-    client_secret: Option<String>,
-    client_id_issued_at: Option<u64>,
-    client_secret_expires_at: Option<u64>,
-}
-
-async fn register_client(
-    registration_endpoint: &AbsUri,
-    http_client: &Arc<dyn HttpClient>,
-) -> Result<DynamicRegistrationResponse> {
-    let metadata = json!({
-        "redirect_uris": [CALLBACK_URI],
-        "token_endpoint_auth_method": "none",
-        "grant_types": ["authorization_code", "refresh_token"],
-        "response_types": ["code"],
-        "client_name": "Zed",
-        "client_uri": "https://zed.dev",
-        "logo_uri": "https://zed.dev/_next/static/media/stable-app-logo.9b5f959f.png"
-    });
-
-    post_json(&registration_endpoint.to_string(), metadata, http_client).await
-}
-
 async fn get_json<Out: DeserializeOwned>(
     url: &str,
     http_client: &Arc<dyn HttpClient>,
@@ -308,6 +419,12 @@ mod abs_uri {
 
         pub fn scheme_str(&self) -> &str {
             self.0.scheme_str().unwrap()
+        }
+    }
+
+    impl Into<Uri> for AbsUri {
+        fn into(self) -> Uri {
+            self.0
         }
     }
 
@@ -419,7 +536,7 @@ mod tests {
             let issuer_uri = issuer_uri.clone();
             let client = client.clone();
             let fetch_task = cx.background_spawn(async move {
-                AuthorizationServerMetadata::fetch(&issuer_uri, &client).await
+                AuthorizationServer::fetch(&issuer_uri, &client).await
             });
 
             for request_url in &urls[..i] {
@@ -458,7 +575,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-            AuthorizationServerMetadata::fetch(&issuer_uri, &http_client).await
+            AuthorizationServer::fetch(&issuer_uri, &http_client).await
         });
 
         let request = requests.next().await.expect("Expected first request");
@@ -492,7 +609,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-            AuthorizationServerMetadata::fetch(&issuer_uri, &http_client).await
+            AuthorizationServer::fetch(&issuer_uri, &http_client).await
         });
 
         for _ in 0..3 {

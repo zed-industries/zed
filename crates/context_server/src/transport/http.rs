@@ -11,7 +11,10 @@ use parking_lot::Mutex as SyncMutex;
 use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
-use crate::transport::Transport;
+use crate::transport::{
+    Transport,
+    http::{auth::OAuthClient, www_authenticate::WwwAuthenticate},
+};
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
@@ -134,7 +137,16 @@ impl HttpTransport {
                 log::debug!("Notification accepted");
             }
             status if status.as_u16() == 401 => {
-                todo!();
+                // todo! stateful
+                let www_authenticate_header = response.headers().get("WWW-Authenticate");
+
+                let www_authenticate = www_authenticate_header
+                    .and_then(|value| WwwAuthenticate::parse(value.to_str().ok()?));
+                let client =
+                    OAuthClient::init(&self.endpoint, www_authenticate.as_ref(), &self.http_client)
+                        .await?;
+                let (url, code_verifier) = client.authorize_url()?;
+                dbg!(url);
             }
             _ => {
                 let mut error_body = String::new();
