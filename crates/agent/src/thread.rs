@@ -1964,7 +1964,7 @@ impl Thread {
             messages,
             tools,
             tool_choice: None,
-            stop: Vec::new(),
+            stop: vec!["## User".to_string()],
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
         };
