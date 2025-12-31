@@ -1196,6 +1196,7 @@ impl EditorElement {
         let gutter_hovered = gutter_hitbox.bounds.contains(&event.position);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.show_mouse_cursor(cx);
+        editor.last_mouse_move_at = Some(Instant::now());
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
@@ -1233,7 +1234,18 @@ impl EditorElement {
             cx.notify();
         }
 
-        let hovered_diff_line_row = if text_hovered { Some(valid_point.row()) } else { None };
+        let hovered_line_control_row = position_map
+            .diff_line_control_bounds
+            .iter()
+            .find(|(_, bounds)| bounds.contains(&event.position))
+            .map(|(row, _)| *row);
+        let hovered_diff_line_row = if let Some(control_row) = hovered_line_control_row {
+            Some(control_row)
+        } else if text_hovered {
+            Some(valid_point.row())
+        } else {
+            None
+        };
         if hovered_diff_line_row != editor.hovered_diff_line_row {
             editor.hovered_diff_line_row = hovered_diff_line_row;
             cx.notify();
@@ -5865,10 +5877,21 @@ impl EditorElement {
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
+    ) -> (
+        Vec<AnyElement>,
+        Vec<(DisplayRow, Bounds<Pixels>)>,
+        Vec<(DisplayRow, Bounds<Pixels>)>,
+    ) {
         let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
-        let hovered_diff_line_row = editor.read(cx).hovered_diff_line_row;
+        let (hovered_diff_line_row, last_mouse_move_at, last_keyboard_action_at) = {
+            let editor = editor.read(cx);
+            (
+                editor.hovered_diff_line_row,
+                editor.last_mouse_move_at,
+                editor.last_keyboard_action_at,
+            )
+        };
         let has_multiline_selection = {
             let (snapshot, selections) = editor.update(cx, |editor, cx| {
                 (editor.snapshot(window, cx), editor.selections.disjoint_anchors_arc())
@@ -5881,7 +5904,8 @@ impl EditorElement {
         };
 
         let mut controls = vec![];
-        let mut control_bounds = vec![];
+        let mut hunk_control_bounds = vec![];
+        let mut line_control_bounds = vec![];
         let mut hunk_control_widths = BTreeMap::<DisplayRow, Pixels>::new();
 
         let active_positions = [
@@ -5964,7 +5988,7 @@ impl EditorElement {
                     }
 
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
-                    control_bounds.push((display_row_range.start, bounds));
+                    hunk_control_bounds.push((display_row_range.start, bounds));
 
                     window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
                         element.prepaint(window, cx)
@@ -5982,13 +6006,20 @@ impl EditorElement {
             row_infos.get(row_ix).and_then(|row_info| row_info.diff_status)
         };
 
-        let active_line_row = hovered_diff_line_row
-            .and_then(|row| diff_status_for_row(row).map(|status| (row, status)))
-            .or_else(|| {
-                newest_cursor_position
-                    .map(|position| position.row())
-                    .and_then(|row| diff_status_for_row(row).map(|status| (row, status)))
-            });
+        let prefer_hover = match (last_mouse_move_at, last_keyboard_action_at) {
+            (Some(mouse), Some(keyboard)) => mouse > keyboard,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        let hover_candidate = prefer_hover
+            .then(|| hovered_diff_line_row)
+            .flatten()
+            .and_then(|row| diff_status_for_row(row).map(|status| (row, status)));
+        let active_line_row = hover_candidate.or_else(|| {
+            newest_cursor_position
+                .map(|position| position.row())
+                .and_then(|row| diff_status_for_row(row).map(|status| (row, status)))
+        });
 
         if let Some((cursor_row, diff_status)) = active_line_row {
             let stage = diff_status.has_secondary_hunk();
@@ -6076,7 +6107,7 @@ impl EditorElement {
                 - offset
                 - size.width;
             let bounds = Bounds::new(gpui::Point::new(x, y), size);
-            control_bounds.push((cursor_row, bounds));
+            line_control_bounds.push((cursor_row, bounds));
 
             window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
                 element.prepaint(window, cx)
@@ -6084,7 +6115,7 @@ impl EditorElement {
             controls.push(element);
         }
 
-        (controls, control_bounds)
+        (controls, hunk_control_bounds, line_control_bounds)
     }
 
     fn layout_signature_help(
@@ -10486,8 +10517,9 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
-                    let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
-                        (vec![], vec![])
+                    let (diff_hunk_controls, diff_hunk_control_bounds, diff_line_control_bounds) =
+                        if is_read_only {
+                            (vec![], vec![], vec![])
                     } else {
                         self.layout_diff_hunk_controls(
                             start_row..end_row,
@@ -10525,6 +10557,7 @@ impl Element for EditorElement {
                             .map(|layout| (layout.bounds, layout.buffer_id, layout.entry.clone())),
                         display_hunks: display_hunks.clone(),
                         diff_hunk_control_bounds,
+                        diff_line_control_bounds,
                     });
 
                     self.editor.update(cx, |editor, _| {
@@ -11379,6 +11412,7 @@ pub(crate) struct PositionMap {
     pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
     pub display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     pub diff_hunk_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
+    pub diff_line_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
 }
 
 #[derive(Debug, Copy, Clone)]

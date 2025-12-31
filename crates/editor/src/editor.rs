@@ -1182,6 +1182,8 @@ pub struct Editor {
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     hovered_diff_hunk_row: Option<DisplayRow>,
     hovered_diff_line_row: Option<DisplayRow>,
+    last_mouse_move_at: Option<Instant>,
+    last_keyboard_action_at: Option<Instant>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
     in_project_search: bool,
@@ -2344,6 +2346,8 @@ impl Editor {
             gutter_breakpoint_indicator: (None, None),
             hovered_diff_hunk_row: None,
             hovered_diff_line_row: None,
+            last_mouse_move_at: None,
+            last_keyboard_action_at: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
                     vec![
@@ -3266,6 +3270,16 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         window.invalidate_character_coordinates();
+        if local {
+            const INPUT_SOURCE_GRACE: Duration = Duration::from_millis(200);
+            let now = Instant::now();
+            let recent_mouse_move = self
+                .last_mouse_move_at
+                .is_some_and(|when| now.saturating_duration_since(when) <= INPUT_SOURCE_GRACE);
+            if !recent_mouse_move {
+                self.last_keyboard_action_at = Some(now);
+            }
+        }
 
         // Copy selections to primary selection buffer
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
