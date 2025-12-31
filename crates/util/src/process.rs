@@ -42,7 +42,7 @@ impl Child {
 
     #[cfg(windows)]
     pub fn spawn(
-        mut command: std::process::Command,
+        command: std::process::Command,
         stdin: Stdio,
         stdout: Stdio,
         stderr: Stdio,
