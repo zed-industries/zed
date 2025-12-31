@@ -1233,6 +1233,12 @@ impl EditorElement {
             cx.notify();
         }
 
+        let hovered_diff_line_row = if text_hovered { Some(valid_point.row()) } else { None };
+        if hovered_diff_line_row != editor.hovered_diff_line_row {
+            editor.hovered_diff_line_row = hovered_diff_line_row;
+            cx.notify();
+        }
+
         if let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
@@ -5862,9 +5868,21 @@ impl EditorElement {
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
+        let hovered_diff_line_row = editor.read(cx).hovered_diff_line_row;
+        let has_multiline_selection = {
+            let (snapshot, selections) = editor.update(cx, |editor, cx| {
+                (editor.snapshot(window, cx), editor.selections.disjoint_anchors_arc())
+            });
+            selections.iter().any(|selection| {
+                let start = selection.start.to_point(&snapshot.buffer_snapshot());
+                let end = selection.end.to_point(&snapshot.buffer_snapshot());
+                start.row != end.row
+            })
+        };
 
         let mut controls = vec![];
         let mut control_bounds = vec![];
+        let mut hunk_control_widths = BTreeMap::<DisplayRow, Pixels>::new();
 
         let active_positions = [
             hovered_diff_hunk_row.map(|row| DisplayPoint::new(row, 0)),
@@ -5938,6 +5956,13 @@ impl EditorElement {
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
 
+                    let entry = hunk_control_widths
+                        .entry(display_row_range.start)
+                        .or_insert(size.width);
+                    if size.width > *entry {
+                        *entry = size.width;
+                    }
+
                     let bounds = Bounds::new(gpui::Point::new(x, y), size);
                     control_bounds.push((display_row_range.start, bounds));
 
@@ -5949,72 +5974,114 @@ impl EditorElement {
             }
         }
 
-        if let Some(cursor_position) = newest_cursor_position {
-            let cursor_row = cursor_position.row();
-            if cursor_row >= row_range.start && cursor_row < row_range.end {
-                let row_ix = (cursor_row - row_range.start).0 as usize;
-                if let Some(row_info) = row_infos.get(row_ix)
-                    && let Some(diff_status) = row_info.diff_status
-                {
-                    let stage = diff_status.has_secondary_hunk();
-                    let label = if stage { "Stage line" } else { "Unstage line" };
-                    let button_id = if stage {
-                        ("stage-line", cursor_row.0 as u64)
-                    } else {
-                        ("unstage-line", cursor_row.0 as u64)
-                    };
-
-                    let mut element = h_flex()
-                        .h(line_height)
-                        .mr_1()
-                        .gap_1()
-                        .px_0p5()
-                        .pb_1()
-                        .border_x_1()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .rounded_b_lg()
-                        .bg(cx.theme().colors().editor_background)
-                        .gap_1()
-                        .block_mouse_except_scroll()
-                        .shadow_md()
-                        .child(
-                            Button::new(button_id, label)
-                                .alpha(if diff_status.is_pending() { 0.66 } else { 1.0 })
-                                .on_click({
-                                    let editor = editor.clone();
-                                    move |_event, _window, cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            let ranges = editor
-                                                .selections
-                                                .disjoint_anchors()
-                                                .iter()
-                                                .map(|s| s.range())
-                                                .collect::<Vec<_>>();
-                                            editor.stage_or_unstage_diff_lines(stage, ranges, cx);
-                                        });
-                                    }
-                                }),
-                        )
-                        .into_any_element();
-
-                    let y = (cursor_row.as_f64()
-                        * ScrollPixelOffset::from(line_height)
-                        + ScrollPixelOffset::from(text_hitbox.bounds.top())
-                        - scroll_pixel_position.y)
-                        .into();
-                    let size =
-                        element.layout_as_root(size(px(140.0), line_height).into(), window, cx);
-                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
-                    let bounds = Bounds::new(gpui::Point::new(x, y), size);
-                    control_bounds.push((cursor_row, bounds));
-
-                    window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
-                        element.prepaint(window, cx)
-                    });
-                    controls.push(element);
-                }
+        let diff_status_for_row = |row: DisplayRow| -> Option<DiffHunkStatus> {
+            if row < row_range.start || row >= row_range.end {
+                return None;
             }
+            let row_ix = (row - row_range.start).0 as usize;
+            row_infos.get(row_ix).and_then(|row_info| row_info.diff_status)
+        };
+
+        let active_line_row = hovered_diff_line_row
+            .and_then(|row| diff_status_for_row(row).map(|status| (row, status)))
+            .or_else(|| {
+                newest_cursor_position
+                    .map(|position| position.row())
+                    .and_then(|row| diff_status_for_row(row).map(|status| (row, status)))
+            });
+
+        if let Some((cursor_row, diff_status)) = active_line_row {
+            let stage = diff_status.has_secondary_hunk();
+            let label = if has_multiline_selection {
+                if stage {
+                    "Stage selection"
+                } else {
+                    "Unstage selection"
+                }
+            } else if stage {
+                "Stage line"
+            } else {
+                "Unstage line"
+            };
+            let tooltip_label = label.to_string();
+            let button_id = if stage {
+                ("stage-line", cursor_row.0 as u64)
+            } else {
+                ("unstage-line", cursor_row.0 as u64)
+            };
+
+            let mut element = h_flex()
+                .h(line_height)
+                .mr_1()
+                .gap_1()
+                .px_0p5()
+                .pb_1()
+                .border_x_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_b_lg()
+                .bg(cx.theme().colors().editor_background)
+                .gap_1()
+                .block_mouse_except_scroll()
+                .shadow_md()
+                .child(
+                    Button::new(button_id, label)
+                        .alpha(if diff_status.is_pending() { 0.66 } else { 1.0 })
+                        .tooltip({
+                            let focus_handle = editor.focus_handle(cx);
+                            move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    tooltip_label.clone(),
+                                    &::git::ToggleStaged,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_event, _window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let ranges = editor
+                                        .selections
+                                        .disjoint_anchors()
+                                        .iter()
+                                        .map(|s| s.range())
+                                        .collect::<Vec<_>>();
+                                    editor.stage_or_unstage_diff_lines(stage, ranges, cx);
+                                });
+                            }
+                        }),
+                )
+                .into_any_element();
+
+            let y = (cursor_row.as_f64()
+                * ScrollPixelOffset::from(line_height)
+                + ScrollPixelOffset::from(text_hitbox.bounds.top())
+                - scroll_pixel_position.y)
+                .into();
+            let size = element.layout_as_root(size(px(140.0), line_height).into(), window, cx);
+            let reserved = hunk_control_widths
+                .get(&cursor_row)
+                .copied()
+                .unwrap_or(Pixels::ZERO);
+            let offset = if reserved > Pixels::ZERO {
+                reserved + px(6.0)
+            } else {
+                Pixels::ZERO
+            };
+            let x = text_hitbox.bounds.right()
+                - right_margin
+                - px(10.)
+                - offset
+                - size.width;
+            let bounds = Bounds::new(gpui::Point::new(x, y), size);
+            control_bounds.push((cursor_row, bounds));
+
+            window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
+                element.prepaint(window, cx)
+            });
+            controls.push(element);
         }
 
         (controls, control_bounds)

@@ -1181,6 +1181,7 @@ pub struct Editor {
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     hovered_diff_hunk_row: Option<DisplayRow>,
+    hovered_diff_line_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
     in_project_search: bool,
@@ -2342,6 +2343,7 @@ impl Editor {
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             hovered_diff_hunk_row: None,
+            hovered_diff_line_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
                     vec![
