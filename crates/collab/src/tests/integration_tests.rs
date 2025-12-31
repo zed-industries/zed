@@ -5195,7 +5195,7 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Ok(result) = search_rx.recv().await {
+    while let Ok(result) = search_rx.rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);

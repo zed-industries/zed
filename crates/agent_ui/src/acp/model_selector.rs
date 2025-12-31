@@ -16,7 +16,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
-use ui::{DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, prelude::*};
+use ui::{DocumentationAside, DocumentationSide, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
@@ -388,7 +388,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
 
                 DocumentationAside::new(
                     DocumentationSide::Left,
-                    DocumentationEdge::Top,
                     Rc::new(move |_| {
                         v_flex()
                             .gap_1()
@@ -398,6 +397,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     }),
                 )
             })
+    }
+
+    fn documentation_aside_index(&self) -> Option<usize> {
+        self.selected_description.as_ref().map(|(ix, _, _)| *ix)
     }
 
     fn render_footer(

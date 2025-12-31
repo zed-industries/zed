@@ -5,7 +5,7 @@ use git::blame::BlameEntry;
 use git::repository::CommitSummary;
 use git::{GitRemote, commit::ParsedCommitMessage};
 use gpui::{
-    App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
+    App, Asset, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
@@ -14,7 +14,7 @@ use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
@@ -315,8 +315,8 @@ impl Render for CommitTooltip {
                                                     cx.open_url(pr.url.as_str())
                                                 }),
                                             )
+                                            .child(Divider::vertical())
                                         })
-                                        .child(Divider::vertical())
                                         .child(
                                             Button::new(
                                                 "commit-sha-button",
@@ -342,18 +342,8 @@ impl Render for CommitTooltip {
                                                 },
                                             ),
                                         )
-                                        .child(
-                                            IconButton::new("copy-sha-button", IconName::Copy)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .icon_color(Color::Muted)
-                                                .on_click(move |_, _, cx| {
-                                                    cx.stop_propagation();
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(full_sha.clone()),
-                                                    )
-                                                }),
-                                        ),
+                                        .child(Divider::vertical())
+                                        .child(CopyButton::new(full_sha).tooltip_label("Copy SHA")),
                                 ),
                         ),
                 )

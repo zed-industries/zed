@@ -1069,7 +1069,7 @@ impl SettingsObserver {
                     if *can_trust_worktree.get_or_init(|| {
                         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(worktree_id, cx)
+                                trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
                             })
                         } else {
                             true

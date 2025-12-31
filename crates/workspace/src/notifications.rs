@@ -1,9 +1,9 @@
 use crate::{SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
-    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, TextStyleRefinement, UnderlineStyle, svg,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task,
+    TextStyleRefinement, UnderlineStyle, svg,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
@@ -13,7 +13,7 @@ use theme::ThemeSettings;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{Tooltip, prelude::*};
+use ui::{CopyButton, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -308,16 +308,8 @@ impl Render for LanguageServerPrompt {
                                 h_flex()
                                     .gap_1()
                                     .child(
-                                        IconButton::new("copy", IconName::Copy)
-                                            .on_click({
-                                                let message = request.message.clone();
-                                                move |_, _, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(message.clone()),
-                                                    )
-                                                }
-                                            })
-                                            .tooltip(Tooltip::text("Copy Description")),
+                                        CopyButton::new(request.message.clone())
+                                            .tooltip_label("Copy Description"),
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)

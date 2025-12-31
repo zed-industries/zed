@@ -86,6 +86,14 @@ pub trait AgentConnection {
         None
     }
 
+    fn session_config_options(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -123,6 +131,26 @@ pub trait AgentSessionModes {
     fn all_modes(&self) -> Vec<acp::SessionMode>;
 
     fn set_mode(&self, mode: acp::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionConfigOptions {
+    /// Get all current config options with their state
+    fn config_options(&self) -> Vec<acp::SessionConfigOption>;
+
+    /// Set a config option value
+    /// Returns the full updated list of config options
+    fn set_config_option(
+        &self,
+        config_id: acp::SessionConfigId,
+        value: acp::SessionConfigValueId,
+        cx: &mut App,
+    ) -> Task<Result<Vec<acp::SessionConfigOption>>>;
+
+    /// Whenever the config options are updated the receiver will be notified.
+    /// Optional for agents that don't update their config options dynamically.
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        None
+    }
 }
 
 #[derive(Debug)]

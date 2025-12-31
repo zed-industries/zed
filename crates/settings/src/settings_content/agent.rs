@@ -370,6 +370,20 @@ pub struct BuiltinAgentServerSettings {
     /// Default: []
     #[serde(default)]
     pub favorite_models: Vec<String>,
+    /// Default values for session config options.
+    ///
+    /// This is a map from config option ID to value ID.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub default_config_options: HashMap<String, String>,
+    /// Favorited values for session config options.
+    ///
+    /// This is a map from config option ID to a list of favorited value IDs.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
 #[with_fallible_options]
@@ -401,6 +415,20 @@ pub enum CustomAgentServerSettings {
         /// Default: []
         #[serde(default)]
         favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -422,5 +450,19 @@ pub enum CustomAgentServerSettings {
         /// Default: []
         #[serde(default)]
         favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
     },
 }

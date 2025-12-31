@@ -6,7 +6,7 @@ on:
 
 jobs:
   handle-good-first-issue:
-    if: github.event.label.name == 'good first issue' && github.repository_owner == 'zed-industries'
+    if: github.event.label.name == '.contrib/good first issue' && github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 
     steps:

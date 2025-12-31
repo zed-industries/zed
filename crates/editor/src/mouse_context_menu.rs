@@ -164,11 +164,6 @@ pub fn deploy_context_menu(
         window.focus(&editor.focus_handle(cx), cx);
     }
 
-    // Don't show context menu for inline editors
-    if !editor.mode().is_full() {
-        return;
-    }
-
     let display_map = editor.display_snapshot(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
@@ -179,6 +174,11 @@ pub fn deploy_context_menu(
         };
         menu
     } else {
+        // Don't show context menu for inline editors (only applies to default menu)
+        if !editor.mode().is_full() {
+            return;
+        }
+
         // Don't show the context menu if there isn't a project associated with this editor
         let Some(project) = editor.project.clone() else {
             return;

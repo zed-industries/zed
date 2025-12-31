@@ -11,7 +11,9 @@ use gpui::{
     TextStyleRefinement, WeakEntity,
 };
 
-use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
+use settings::{
+    CenteredPaddingSettings, CodeFade, DelayMs, FontSize, InactiveOpacity, MinimumContrast,
+};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,6 +107,7 @@ macro_rules! impl_newtype_numeric_stepper_int {
 #[rustfmt::skip]
 impl_newtype_numeric_stepper_float!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
 impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
+impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
 impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
@@ -238,6 +241,8 @@ impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
 impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 impl_numeric_stepper_nonzero_int!(NonZero<usize>, usize);
 
+type OnChangeCallback<T> = Rc<dyn Fn(&T, &mut Window, &mut App) + 'static>;
+
 #[derive(IntoElement, RegisterComponent)]
 pub struct NumberField<T: NumberFieldType = usize> {
     id: ElementId,
@@ -246,6 +251,10 @@ pub struct NumberField<T: NumberFieldType = usize> {
     mode: Entity<NumberFieldMode>,
     /// Stores a weak reference to the editor when in edit mode, so buttons can update its text
     edit_editor: Entity<Option<WeakEntity<Editor>>>,
+    /// Stores the on_change callback in Entity state so it's not stale in focus_out handlers
+    on_change_state: Entity<Option<OnChangeCallback<T>>>,
+    /// Tracks the last prop value we synced to, so we can detect external changes (like reset)
+    last_synced_value: Entity<Option<T>>,
     format: Box<dyn FnOnce(&T) -> String>,
     large_step: T,
     small_step: T,
@@ -261,17 +270,29 @@ impl<T: NumberFieldType> NumberField<T> {
     pub fn new(id: impl Into<ElementId>, value: T, window: &mut Window, cx: &mut App) -> Self {
         let id = id.into();
 
-        let (mode, focus_handle, edit_editor) = window.with_id(id.clone(), |window| {
-            let mode = window.use_state(cx, |_, _| NumberFieldMode::default());
-            let focus_handle = window.use_state(cx, |_, cx| cx.focus_handle());
-            let edit_editor = window.use_state(cx, |_, _| None);
-            (mode, focus_handle, edit_editor)
-        });
+        let (mode, focus_handle, edit_editor, on_change_state, last_synced_value) =
+            window.with_id(id.clone(), |window| {
+                let mode = window.use_state(cx, |_, _| NumberFieldMode::default());
+                let focus_handle = window.use_state(cx, |_, cx| cx.focus_handle());
+                let edit_editor = window.use_state(cx, |_, _| None);
+                let on_change_state: Entity<Option<OnChangeCallback<T>>> =
+                    window.use_state(cx, |_, _| None);
+                let last_synced_value: Entity<Option<T>> = window.use_state(cx, |_, _| None);
+                (
+                    mode,
+                    focus_handle,
+                    edit_editor,
+                    on_change_state,
+                    last_synced_value,
+                )
+            });
 
         Self {
             id,
             mode,
             edit_editor,
+            on_change_state,
+            last_synced_value,
             value,
             focus_handle: focus_handle.read(cx).clone(),
             format: Box::new(T::default_format),
@@ -338,6 +359,11 @@ impl<T: NumberFieldType> NumberField<T> {
         self.on_change = Rc::new(on_change);
         self
     }
+
+    fn sync_on_change_state(&self, cx: &mut App) {
+        self.on_change_state
+            .update(cx, |state, _| *state = Some(self.on_change.clone()));
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -348,7 +374,9 @@ enum ValueChangeDirection {
 
 impl<T: NumberFieldType> RenderOnce for NumberField<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut tab_index = self.tab_index;
+        // Sync the on_change callback to Entity state so focus_out handlers can access it
+        self.sync_on_change_state(cx);
+
         let is_edit_mode = matches!(*self.mode.read(cx), NumberFieldMode::Edit);
 
         let get_step = {
@@ -456,14 +484,13 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 this.child(
                     IconButton::new("reset", IconName::RotateCcw)
                         .icon_size(IconSize::Small)
-                        .when_some(tab_index.as_mut(), |this, tab_index| {
-                            *tab_index += 1;
-                            this.tab_index(*tab_index - 1)
-                        })
+                        .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                         .on_click(on_reset),
                 )
             })
-            .child(
+            .child({
+                let on_change_for_increment = self.on_change.clone();
+
                 h_flex()
                     .map(|decrement| {
                         let decrement_handler = {
@@ -487,22 +514,14 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                         decrement.child(
                             base_button(IconName::Dash)
-                                .id("decrement_button")
+                                .id((self.id.clone(), "decrement_button"))
                                 .rounded_tl_sm()
                                 .rounded_bl_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .unwrap_or(0),
-                                )
+                                .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                                 .on_click(decrement_handler),
                         )
                     })
-                    .child(
+                    .child({
                         h_flex()
                             .min_w_16()
                             .size_full()
@@ -515,20 +534,26 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     .px_1()
                                     .flex_1()
                                     .justify_center()
-                                    .child(Label::new((self.format)(&self.value)))
+                                    .child(
+                                        Label::new((self.format)(&self.value)).color(Color::Muted),
+                                    )
                                     .into_any_element(),
-                                NumberFieldMode::Edit => h_flex()
-                                    .flex_1()
-                                    .child(window.use_state(cx, {
-                                        |window, cx| {
+                                NumberFieldMode::Edit => {
+                                    let expected_text = format!("{}", self.value);
+
+                                    let editor = window.use_state(cx, {
+                                        let expected_text = expected_text.clone();
+
+                                        move |window, cx| {
                                             let mut editor = Editor::single_line(window, cx);
 
                                             editor.set_text_style_refinement(TextStyleRefinement {
+                                                color: Some(cx.theme().colors().text),
                                                 text_align: Some(TextAlign::Center),
                                                 ..Default::default()
                                             });
 
-                                            editor.set_text(format!("{}", self.value), window, cx);
+                                            editor.set_text(expected_text, window, cx);
 
                                             let editor_weak = cx.entity().downgrade();
 
@@ -601,36 +626,86 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                 .detach();
 
                                             cx.on_focus_out(&editor.focus_handle(cx), window, {
-                                                let mode = self.mode.clone();
-                                                let on_change = self.on_change.clone();
+                                                let on_change_state = self.on_change_state.clone();
                                                 move |this, _, window, cx| {
                                                     if let Ok(parsed_value) =
                                                         this.text(cx).parse::<T>()
                                                     {
                                                         let new_value = clamp_value(parsed_value);
-                                                        on_change(&new_value, window, cx);
+                                                        let on_change =
+                                                            on_change_state.read(cx).clone();
+
+                                                        if let Some(on_change) = on_change.as_ref()
+                                                        {
+                                                            on_change(&new_value, window, cx);
+                                                        }
                                                     };
-                                                    mode.write(cx, NumberFieldMode::Read);
                                                 }
                                             })
                                             .detach();
 
-                                            window.focus(&editor.focus_handle(cx), cx);
-
                                             editor
                                         }
-                                    }))
-                                    .on_action::<menu::Confirm>({
-                                        move |_, window, _| {
-                                            window.blur();
+                                    });
+
+                                    let focus_handle = editor.focus_handle(cx);
+                                    let is_focused = focus_handle.is_focused(window);
+
+                                    if !is_focused {
+                                        let current_text = editor.read(cx).text(cx);
+                                        let last_synced = *self.last_synced_value.read(cx);
+
+                                        // Detect if the value changed externally (e.g., reset button)
+                                        let value_changed_externally = last_synced
+                                            .map(|last| last != self.value)
+                                            .unwrap_or(true);
+
+                                        let should_sync = if value_changed_externally {
+                                            true
+                                        } else {
+                                            match current_text.parse::<T>().ok() {
+                                                Some(parsed) => parsed == self.value,
+                                                None => true,
+                                            }
+                                        };
+
+                                        if should_sync && current_text != expected_text {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.set_text(expected_text.clone(), window, cx);
+                                            });
                                         }
-                                    })
-                                    .into_any_element(),
-                            }),
-                    )
+
+                                        self.last_synced_value
+                                            .update(cx, |state, _| *state = Some(self.value));
+                                    }
+
+                                    let focus_handle = if self.tab_index.is_some() {
+                                        focus_handle.tab_index(0isize).tab_stop(true)
+                                    } else {
+                                        focus_handle
+                                    };
+
+                                    h_flex()
+                                        .flex_1()
+                                        .track_focus(&focus_handle)
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border_transparent)
+                                        .when(is_focused, |this| {
+                                            this.border_color(cx.theme().colors().border_focused)
+                                        })
+                                        .child(editor)
+                                        .on_action::<menu::Confirm>({
+                                            move |_, window, _| {
+                                                window.blur();
+                                            }
+                                        })
+                                        .into_any_element()
+                                }
+                            })
+                    })
                     .map(|increment| {
                         let increment_handler = {
-                            let on_change = self.on_change.clone();
+                            let on_change = on_change_for_increment.clone();
                             let get_current_value = get_current_value.clone();
                             let update_editor_text = update_editor_text.clone();
 
@@ -650,22 +725,14 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
                         increment.child(
                             base_button(IconName::Plus)
-                                .id("increment_button")
+                                .id((self.id.clone(), "increment_button"))
                                 .rounded_tr_sm()
                                 .rounded_br_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
-                                        })
-                                        .unwrap_or(0),
-                                )
+                                .when_some(self.tab_index, |this, _| this.tab_index(0isize))
                                 .on_click(increment_handler),
                         )
-                    }),
-            )
+                    })
+            })
     }
 }
 

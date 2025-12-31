@@ -123,19 +123,25 @@ pub async fn resolve_schema_request_inner(
                 .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
                 .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
 
-            let delegate = cx.update(|inner_cx| {
-                lsp_store.update(inner_cx, |lsp_store, inner_cx| {
-                    let Some(local) = lsp_store.as_local() else {
-                        return None;
-                    };
-                    let Some(worktree) = local.worktree_store.read(inner_cx).worktrees().next() else {
-                        return None;
-                    };
-                    Some(LocalLspAdapterDelegate::from_local_lsp(
-                        local, &worktree, inner_cx,
-                    ))
-                })
-            })?.context("Failed to create adapter delegate - either LSP store is not in local mode or no worktree is available")?;
+            let delegate = cx
+                .update(|inner_cx| {
+                    lsp_store.update(inner_cx, |lsp_store, inner_cx| {
+                        let Some(local) = lsp_store.as_local() else {
+                            return None;
+                        };
+                        let Some(worktree) = local.worktree_store.read(inner_cx).worktrees().next()
+                        else {
+                            return None;
+                        };
+                        Some(LocalLspAdapterDelegate::from_local_lsp(
+                            local, &worktree, inner_cx,
+                        ))
+                    })
+                })?
+                .context(concat!(
+                    "Failed to create adapter delegate - ",
+                    "either LSP store is not in local mode or no worktree is available"
+                ))?;
 
             let adapter_for_schema = adapter.clone();
 
@@ -152,7 +158,16 @@ pub async fn resolve_schema_request_inner(
                 )
                 .await
                 .await
-                .0.with_context(|| format!("Failed to find language server {lsp_name} to generate initialization params schema"))?;
+                .0
+                .with_context(|| {
+                    format!(
+                        concat!(
+                            "Failed to find language server {} ",
+                            "to generate initialization params schema"
+                        ),
+                        lsp_name
+                    )
+                })?;
 
             adapter_for_schema
                 .adapter

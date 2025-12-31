@@ -582,19 +582,21 @@ impl RemoteConnection for DockerExecConnection {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
-        let mut docker_args = vec![
-            "exec".to_string(),
-            "-w".to_string(),
-            self.remote_dir_for_server.clone(),
-            "-i".to_string(),
-            self.connection_options.container_id.to_string(),
-        ];
+        let mut docker_args = vec!["exec".to_string()];
         for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
             if let Some(value) = std::env::var(env_var).ok() {
                 docker_args.push("-e".to_string());
                 docker_args.push(format!("{}='{}'", env_var, value));
             }
         }
+
+        docker_args.extend([
+            "-w".to_string(),
+            self.remote_dir_for_server.clone(),
+            "-i".to_string(),
+            self.connection_options.container_id.to_string(),
+        ]);
+
         let val = remote_binary_relpath
             .display(self.path_style())
             .into_owned();

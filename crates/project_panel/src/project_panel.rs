@@ -3599,6 +3599,7 @@ impl ProjectPanel {
                                 == worktree_snapshot.root_entry()
                             {
                                 let Some(path_name) = worktree_abs_path.file_name() else {
+                                    entry_iter.advance();
                                     continue;
                                 };
                                 let depth = 0;
