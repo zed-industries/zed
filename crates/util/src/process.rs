@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use std::process::Stdio;
 
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
@@ -22,23 +22,41 @@ impl std::ops::DerefMut for Child {
 }
 
 impl Child {
+    #[cfg(not(windows))]
     pub fn spawn(
         mut command: std::process::Command,
         stdin: Stdio,
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
-        #[cfg(not(windows))]
-        {
-            crate::set_pre_exec_to_start_new_session(&mut command);
-        }
-        #[cfg(windows)]
-        {
-            // TODO(windows): create a job object and add the child process handle to it,
-            // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
-        }
+        crate::set_pre_exec_to_start_new_session(&mut command);
         let mut command = smol::process::Command::from(command);
-        let process = command.stdin(stdin).stdout(stdout).stderr(stderr).spawn()?;
+        let process = command
+            .stdin(stdin)
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .with_context(|| format!("failed to spawn command {command:?}"))?;
+        Ok(Self { process })
+    }
+
+    #[cfg(windows)]
+    pub fn spawn(
+        mut command: std::process::Command,
+        stdin: Stdio,
+        stdout: Stdio,
+        stderr: Stdio,
+    ) -> Result<Self> {
+        // TODO(windows): create a job object and add the child process handle to it,
+        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        let mut command = smol::process::Command::from(command);
+        let process = command
+            .stdin(stdin)
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .with_context(|| format!("failed to spawn command {command:?}"))?;
+
         Ok(Self { process })
     }
 

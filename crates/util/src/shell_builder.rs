@@ -211,7 +211,7 @@ impl ShellBuilder {
 
         #[cfg(windows)]
         if kind == ShellKind::Cmd {
-            use std::process::windows::CommandExt;
+            use std::os::windows::process::CommandExt;
 
             for arg in args {
                 child.raw_arg(arg);
