@@ -454,7 +454,7 @@ Use the `editor: Hover` command to display information about the symbol under th
 
 ### Workspace Symbol Search
 
-The `workspace: Open Symbol` command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
+The {#action project_symbols::Toggle} command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
 
 ### Code Completion
 
