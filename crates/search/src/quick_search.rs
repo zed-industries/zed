@@ -14,7 +14,7 @@ use std::{path::Path, pin::pin, sync::Arc, time::Duration};
 use text::{ToOffset as _, ToPoint as _};
 use ui::{
     Button, ButtonStyle, Color, Divider, Icon, IconButton, IconButtonShape, IconName, KeyBinding,
-    Label, ListItem, ListItemSpacing, Tooltip, prelude::*, rems_from_px,
+    Label, LabelSize, ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*, rems_from_px,
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
@@ -2093,6 +2093,23 @@ impl PickerDelegate for QuickSearchDelegate {
                         Label::new(format!("Invalid regex: {}", error))
                             .size(LabelSize::Small)
                             .color(Color::Error),
+                    )
+                    .into_any(),
+            );
+        }
+
+        if self.is_searching {
+            return Some(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .gap_2()
+                    .child(SpinnerLabel::new().size(LabelSize::Small))
+                    .child(
+                        Label::new("Searching...")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
                     .into_any(),
             );
