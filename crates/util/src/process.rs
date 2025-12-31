@@ -6,7 +6,7 @@ use std::process::Stdio;
 pub struct Child {
     process: smol::process::Child,
     #[cfg(windows)]
-    job: windows::Win32::Foundation::HANDLE,
+    job: Option<windows::Win32::Foundation::HANDLE>,
 }
 
 impl std::ops::Deref for Child {
@@ -87,10 +87,21 @@ impl Child {
         unsafe { AssignProcessToJobObject(job, process_handle) }
             .with_context(|| "failed to assign process to job object")?;
 
-        Ok(Self { process, job })
+        Ok(Self {
+            process,
+            job: Some(job),
+        })
     }
 
     pub fn into_inner(self) -> smol::process::Child {
+        #[cfg(windows)]
+        if let Some(job) = self.job {
+            use windows::Win32::Foundation::CloseHandle;
+            unsafe {
+                let _ = CloseHandle(job);
+            }
+        }
+
         self.process
     }
 
@@ -107,8 +118,13 @@ impl Child {
     pub fn kill(&mut self) -> Result<()> {
         use windows::Win32::System::JobObjects::TerminateJobObject;
 
-        unsafe { TerminateJobObject(self.job, 1) }
-            .with_context(|| "failed to terminate job object")?;
+        if let Some(job) = self.job.take() {
+            use windows::Win32::Foundation::CloseHandle;
+            unsafe {
+                let _ = TerminateJobObject(job, 1);
+                let _ = CloseHandle(job);
+            }
+        }
         Ok(())
     }
 }
@@ -116,10 +132,12 @@ impl Child {
 #[cfg(windows)]
 impl Drop for Child {
     fn drop(&mut self) {
-        use windows::Win32::Foundation::CloseHandle;
-
-        unsafe {
-            let _ = CloseHandle(self.job);
+        if let Some(job) = self.job.take() {
+            use windows::Win32::{Foundation::CloseHandle, System::JobObjects::TerminateJobObject};
+            unsafe {
+                let _ = TerminateJobObject(job, 1);
+                let _ = CloseHandle(job);
+            }
         }
     }
 }
