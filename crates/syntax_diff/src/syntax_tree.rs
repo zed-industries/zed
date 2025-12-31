@@ -381,19 +381,24 @@ fn build_tree_recursive(
     let mut hasher = std::hash::DefaultHasher::new();
     ts_node.kind_id().hash(&mut hasher);
 
-    let mut first_child_start = None;
-    let mut last_child_end = ts_node.end_byte();
     let mut descendant_count = 0;
-    let mut kind = None;
+    let mut hint = None;
 
+    // TODO: we need to extract and detect delimeters
+    // Ex: expression [0..19] children=3
+    //          "{" [0..1]
+    //          expression [1..17] children=..
+    //          "}" [17..18]
+    // possible heuristic:
+    //      - at least 2 children
+    //      - first child byte equals parent start byte
+    //      - last child byte equals parent end byte
+    //      - is it a delimeter token?
     if cursor.goto_first_child() {
-        first_child_start = Some(cursor.node().start_byte());
-
         loop {
             let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
             let child_node = &nodes[child_id.index()];
 
-            last_child_end = child_node.byte_range.end;
             descendant_count += child_node.descendant_count + 1;
             child_node.structural_hash.hash(&mut hasher);
 
@@ -414,9 +419,9 @@ fn build_tree_recursive(
             // accurately recognise punctuation in a language-agnostic way.
             // https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/diff/graph.rs#L422
             if source == "," || source == ";" || source == "." {
-                kind = Some(SyntaxHint::Punctuation);
+                hint = Some(SyntaxHint::Punctuation);
             } else if ts_node.is_extra() {
-                kind = Some(SyntaxHint::Comment(source.to_string()));
+                hint = Some(SyntaxHint::Comment(source.to_string()));
             }
         }
     }
@@ -429,20 +434,7 @@ fn build_tree_recursive(
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
     node.descendant_count = descendant_count;
-    node.hint = kind;
-
-    if let Some(first_start) = first_child_start {
-        node.content_range = first_start..last_child_end;
-
-        node.delimiters = [
-            source
-                .get(node.open_delimiter_range())
-                .map(ToString::to_string),
-            source
-                .get(node.close_delimiter_range())
-                .map(ToString::to_string),
-        ];
-    }
+    node.hint = hint;
 
     this_id
 }
