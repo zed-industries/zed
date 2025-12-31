@@ -53,6 +53,8 @@ struct SecondaryEditor {
     editor: Entity<Editor>,
     pane: Entity<Pane>,
     has_latest_selection: bool,
+    primary_to_secondary: HashMap<ExcerptId, ExcerptId>,
+    secondary_to_primary: HashMap<ExcerptId, ExcerptId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -105,17 +107,25 @@ impl SplittableEditor {
         });
         let panes = PaneGroup::new(pane);
         // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
-        let subscriptions =
-            vec![
-                cx.subscribe(&primary_editor, |this, _, event: &EditorEvent, cx| {
-                    if let EditorEvent::SelectionsChanged { .. } = event
-                        && let Some(secondary) = &mut this.secondary
-                    {
+        let subscriptions = vec![cx.subscribe(
+            &primary_editor,
+            |this, _, event: &EditorEvent, cx| match event {
+                EditorEvent::ExpandExcerptsRequested {
+                    excerpt_ids,
+                    lines,
+                    direction,
+                } => {
+                    this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
+                }
+                EditorEvent::SelectionsChanged { .. } => {
+                    if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = false;
                     }
-                    cx.emit(event.clone())
-                }),
-            ];
+                    cx.emit(event.clone());
+                }
+                _ => cx.emit(event.clone()),
+            },
+        )];
 
         window.defer(cx, {
             let workspace = workspace.downgrade();
@@ -165,6 +175,7 @@ impl SplittableEditor {
                 cx,
             );
             editor.number_deleted_lines = true;
+            editor.set_delegate_expand_excerpts(true);
             editor
         });
         let secondary_pane = cx.new(|cx| {
@@ -190,25 +201,42 @@ impl SplittableEditor {
             pane
         });
 
-        let subscriptions =
-            vec![
-                cx.subscribe(&secondary_editor, |this, _, event: &EditorEvent, cx| {
-                    if let EditorEvent::SelectionsChanged { .. } = event
-                        && let Some(secondary) = &mut this.secondary
-                    {
+        let subscriptions = vec![cx.subscribe(
+            &secondary_editor,
+            |this, _, event: &EditorEvent, cx| match event {
+                EditorEvent::ExpandExcerptsRequested {
+                    excerpt_ids,
+                    lines,
+                    direction,
+                } => {
+                    if let Some(secondary) = &this.secondary {
+                        let primary_ids: Vec<_> = excerpt_ids
+                            .iter()
+                            .filter_map(|id| secondary.secondary_to_primary.get(id).copied())
+                            .collect();
+                        this.expand_excerpts(primary_ids.into_iter(), *lines, *direction, cx);
+                    }
+                }
+                EditorEvent::SelectionsChanged { .. } => {
+                    if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = true;
                     }
-                    cx.emit(event.clone())
-                }),
-            ];
+                    cx.emit(event.clone());
+                }
+                _ => cx.emit(event.clone()),
+            },
+        )];
         let mut secondary = SecondaryEditor {
             editor: secondary_editor,
             multibuffer: secondary_multibuffer,
             pane: secondary_pane.clone(),
             has_latest_selection: false,
+            primary_to_secondary: HashMap::default(),
+            secondary_to_primary: HashMap::default(),
             _subscriptions: subscriptions,
         };
         self.primary_editor.update(cx, |editor, cx| {
+            editor.set_delegate_expand_excerpts(true);
             editor.buffer().update(cx, |primary_multibuffer, cx| {
                 primary_multibuffer.set_show_deleted_hunks(false, cx);
                 let paths = primary_multibuffer.paths().cloned().collect::<Vec<_>>();
@@ -239,6 +267,7 @@ impl SplittableEditor {
         };
         self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
+            primary.set_delegate_expand_excerpts(false);
             primary.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
             });
@@ -289,12 +318,7 @@ impl SplittableEditor {
             })
     }
 
-    /// Expands excerpts in both sides.
-    ///
-    /// While the left multibuffer does have separate excerpts with separate
-    /// IDs, this is an implementation detail. We do not expose the left excerpt
-    /// IDs in the public API of [`SplittableEditor`].
-    pub fn expand_excerpts(
+    fn expand_excerpts(
         &mut self,
         excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
         lines: u32,
@@ -331,7 +355,8 @@ impl SplittableEditor {
         self.primary_multibuffer.update(cx, |buffer, cx| {
             buffer.remove_excerpts_for_path(path.clone(), cx)
         });
-        if let Some(secondary) = &self.secondary {
+        if let Some(secondary) = &mut self.secondary {
+            secondary.remove_mappings_for_path(&path, cx);
             secondary
                 .multibuffer
                 .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
@@ -408,7 +433,41 @@ impl SplittableEditor {
 
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(primary_excerpts.len(), secondary_excerpts.len(),);
+        assert_eq!(primary_excerpts.len(), secondary_excerpts.len());
+
+        assert_eq!(
+            secondary.primary_to_secondary.len(),
+            primary_excerpts.len(),
+            "primary_to_secondary mapping count should match excerpt count"
+        );
+        assert_eq!(
+            secondary.secondary_to_primary.len(),
+            secondary_excerpts.len(),
+            "secondary_to_primary mapping count should match excerpt count"
+        );
+
+        for primary_id in &primary_excerpts {
+            assert!(
+                secondary.primary_to_secondary.contains_key(primary_id),
+                "primary excerpt {:?} should have a mapping to secondary",
+                primary_id
+            );
+        }
+        for secondary_id in &secondary_excerpts {
+            assert!(
+                secondary.secondary_to_primary.contains_key(secondary_id),
+                "secondary excerpt {:?} should have a mapping to primary",
+                secondary_id
+            );
+        }
+
+        for (primary_id, secondary_id) in &secondary.primary_to_secondary {
+            assert_eq!(
+                secondary.secondary_to_primary.get(secondary_id),
+                Some(primary_id),
+                "mappings should be bijective"
+            );
+        }
 
         if quiesced {
             let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
@@ -572,11 +631,16 @@ impl SecondaryEditor {
         cx: &mut App,
     ) {
         let Some(excerpt_id) = primary_multibuffer.excerpts_for_path(&path_key).next() else {
+            self.remove_mappings_for_path(&path_key, cx);
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.remove_excerpts_for_path(path_key, cx);
             });
             return;
         };
+
+        let primary_excerpt_ids: Vec<ExcerptId> =
+            primary_multibuffer.excerpts_for_path(&path_key).collect();
+
         let primary_multibuffer_snapshot = primary_multibuffer.snapshot(cx);
         let main_buffer = primary_multibuffer_snapshot
             .buffer_for_excerpt(excerpt_id)
@@ -610,10 +674,12 @@ impl SecondaryEditor {
 
         let main_buffer = primary_multibuffer.buffer(main_buffer.remote_id()).unwrap();
 
+        self.remove_mappings_for_path(&path_key, cx);
+
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.update_path_excerpts(
-                    path_key,
+                    path_key.clone(),
                     base_text_buffer,
                     &base_text_buffer_snapshot,
                     new,
@@ -622,6 +688,32 @@ impl SecondaryEditor {
                 buffer.add_inverted_diff(diff, main_buffer, cx);
             })
         });
+
+        let secondary_excerpt_ids: Vec<ExcerptId> = self
+            .multibuffer
+            .read(cx)
+            .excerpts_for_path(&path_key)
+            .collect();
+
+        for (primary_id, secondary_id) in primary_excerpt_ids.into_iter().zip(secondary_excerpt_ids)
+        {
+            self.primary_to_secondary.insert(primary_id, secondary_id);
+            self.secondary_to_primary.insert(secondary_id, primary_id);
+        }
+    }
+
+    fn remove_mappings_for_path(&mut self, path_key: &PathKey, cx: &App) {
+        let secondary_excerpt_ids: Vec<ExcerptId> = self
+            .multibuffer
+            .read(cx)
+            .excerpts_for_path(path_key)
+            .collect();
+
+        for secondary_id in secondary_excerpt_ids {
+            if let Some(primary_id) = self.secondary_to_primary.remove(&secondary_id) {
+                self.primary_to_secondary.remove(&primary_id);
+            }
+        }
     }
 }
 
