@@ -136,15 +136,12 @@ fn collect_novel_ranges(
             if node.is_atom() {
                 ranges.push(node.byte_range.clone());
             } else {
-                let open = node.open_delimiter_range();
-                let close = node.close_delimiter_range();
-
-                if !open.is_empty() {
-                    ranges.push(open);
+                if let Some(open_delimiter_range) = node.open_delimiter_range() {
+                    ranges.push(open_delimiter_range);
                 }
 
-                if !close.is_empty() {
-                    ranges.push(close);
+                if let Some(close_delimiter_range) = node.close_delimiter_range() {
+                    ranges.push(close_delimiter_range);
                 }
             }
         }

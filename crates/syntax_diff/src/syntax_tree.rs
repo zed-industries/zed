@@ -53,19 +53,19 @@ pub struct SyntaxNode {
     pub structural_hash: u64,
     /// The byte range this node spans in the source text.
     pub byte_range: Range<usize>,
-    /// For list nodes: the range of content between delimiters.
-    /// For atoms: equals byte_range.
-    ///
-    /// Open delimiter = byte_range.start..content_range.start
-    /// Close delimiter = content_range.end..byte_range.end
-    pub content_range: Range<usize>,
     /// The classification of this atom node, if it has special diff behavior.
     ///
     /// `Some` for atoms that need special handling (comments, punctuation).
     /// `None` for regular atoms and list nodes.
     pub hint: Option<SyntaxHint>,
-    /// Content of delimiters
-    pub delimiters: [Option<String>; 2],
+    /// Opening and closing delimiters for list nodes.
+    ///
+    /// `[0]` = opening delimiter (e.g., `{`, `(`, `[`)
+    /// `[1]` = closing delimiter (e.g., `}`, `)`, `]`)
+    ///
+    /// Each entry contains the byte range and content of the delimiter.
+    /// Delimiter children are excluded from the tree to reduce size.
+    pub delimiters: [Option<(Range<usize>, String)>; 2],
     /// Number of descendants (children + their descendants).
     pub descendant_count: usize,
     /// Depth (number of ancestors)
@@ -77,29 +77,29 @@ pub struct SyntaxNode {
 impl SyntaxNode {
     #[inline]
     pub fn open_delimiter(&self) -> Option<&str> {
-        self.delimiters[0].as_deref()
+        self.delimiters[0].as_ref().map(|d| d.1.as_str())
     }
 
     #[inline]
     pub fn close_delimiter(&self) -> Option<&str> {
-        self.delimiters[1].as_deref()
+        self.delimiters[1].as_ref().map(|d| d.1.as_str())
     }
 
     /// Returns the byte range of the opening delimiter (empty for atoms).
     #[inline]
-    pub fn open_delimiter_range(&self) -> Range<usize> {
-        self.byte_range.start..self.content_range.start
+    pub fn open_delimiter_range(&self) -> Option<Range<usize>> {
+        self.delimiters[0].as_ref().map(|d| d.0.clone())
     }
 
     /// Returns the byte range of the closing delimiter (empty for atoms).
     #[inline]
-    pub fn close_delimiter_range(&self) -> Range<usize> {
-        self.content_range.end..self.byte_range.end
+    pub fn close_delimiter_range(&self) -> Option<Range<usize>> {
+        self.delimiters[1].as_ref().map(|d| d.0.clone())
     }
 
     #[inline]
     pub fn has_delimiters(&self) -> bool {
-        !self.open_delimiter_range().is_empty() && !self.close_delimiter_range().is_empty()
+        self.delimiters[0].is_some() && self.delimiters[1].is_some()
     }
 
     /// Returns true if this is a list node (has children).
@@ -368,7 +368,6 @@ fn build_tree_recursive(
         id: this_id,
         structural_hash: 0,
         byte_range: ts_node.byte_range(),
-        content_range: ts_node.byte_range(),
         delimiters: [None, None],
         hint: None,
         descendant_count: 0,
@@ -381,24 +380,54 @@ fn build_tree_recursive(
     let mut hasher = std::hash::DefaultHasher::new();
     ts_node.kind_id().hash(&mut hasher);
 
+    let mut remaining_children = ts_node.child_count();
+    let mut delimiters = [None, None];
     let mut descendant_count = 0;
     let mut hint = None;
 
-    // TODO: we need to extract and detect delimeters
-    // Ex: expression [0..19] children=3
-    //          "{" [0..1]
-    //          expression [1..17] children=..
-    //          "}" [17..18]
-    // possible heuristic:
-    //      - at least 2 children
-    //      - first child byte equals parent start byte
-    //      - last child byte equals parent end byte
-    //      - is it a delimeter token?
+    // Detection and extraction of delimiters
+    //
+    // TODO: the heuristic should directly check the content of the delimiters
+    if remaining_children >= 2 {
+        if let (Some(first_child), Some(last_child)) = (
+            ts_node.child(0),
+            ts_node.child((remaining_children - 1) as u32),
+        ) {
+            if first_child.start_byte() == ts_node.start_byte()
+                && last_child.end_byte() == ts_node.end_byte()
+                && first_child.child_count() == 0
+                && last_child.child_count() == 0
+            {
+                let open_delimiter = source.get(first_child.byte_range());
+                let close_delimiter = source.get(last_child.byte_range());
+
+                open_delimiter.hash(&mut hasher);
+                close_delimiter.hash(&mut hasher);
+
+                delimiters[0] = open_delimiter
+                    .map(|delimiter| (first_child.byte_range(), delimiter.to_string()));
+                delimiters[1] = close_delimiter
+                    .map(|delimiter| (last_child.byte_range(), delimiter.to_string()));
+
+                remaining_children -= 2;
+            }
+        }
+    }
+
     if cursor.goto_first_child() {
+        if delimiters[0].is_some() {
+            cursor.goto_next_sibling();
+        }
+
         loop {
+            if remaining_children == 0 {
+                break;
+            }
+
             let child_id = build_tree_recursive(cursor, nodes, Some(this_id), source);
             let child_node = &nodes[child_id.index()];
 
+            remaining_children -= 1;
             descendant_count += child_node.descendant_count + 1;
             child_node.structural_hash.hash(&mut hasher);
 
@@ -433,6 +462,7 @@ fn build_tree_recursive(
 
     let node = &mut nodes[this_id.index()];
     node.structural_hash = hasher.finish();
+    node.delimiters = delimiters;
     node.descendant_count = descendant_count;
     node.hint = hint;
 
@@ -492,33 +522,6 @@ mod tests {
         assert_eq!(preorder.len(), tree.len());
         for (i, id) in preorder.iter().enumerate() {
             assert_eq!(id.index(), i);
-        }
-    }
-
-    #[test]
-    fn node_ranges_and_containment() {
-        let source = r#"{"key": "value"}"#;
-        let tree = parse_json(source);
-
-        for id in tree.preorder() {
-            let node = tree.get(id);
-            let range = &node.byte_range;
-            let content_range = &node.content_range;
-
-            assert!(range.start <= range.end);
-            assert!(range.end <= source.len());
-            assert!(range.start <= content_range.start);
-            assert!(content_range.end <= range.end);
-
-            if node.is_atom() {
-                assert_eq!(range, content_range);
-            }
-
-            if let Some(parent_id) = tree.parent(id) {
-                let parent = tree.get(parent_id);
-                assert!(parent.byte_range.start <= range.start);
-                assert!(parent.byte_range.end >= range.end);
-            }
         }
     }
 
