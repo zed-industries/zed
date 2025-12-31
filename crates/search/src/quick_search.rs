@@ -1903,7 +1903,10 @@ impl PickerDelegate for QuickSearchDelegate {
                 }
             };
 
-            let Some(project::SearchResults { rx: results_rx, _task_handle }) = project
+            let Some(project::SearchResults {
+                rx: results_rx,
+                _task_handle,
+            }) = project
                 .update(cx, |project, cx| project.search(search_query, cx))
                 .log_err()
             else {
@@ -1969,6 +1972,9 @@ impl PickerDelegate for QuickSearchDelegate {
                     cx,
                 )
                 .await;
+
+                // Yield to allow other UI tasks to run between batches
+                smol::future::yield_now().await;
 
                 if counters.search_limited {
                     break;
