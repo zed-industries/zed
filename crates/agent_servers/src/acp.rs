@@ -14,6 +14,7 @@ use task::ShellBuilder;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -39,9 +40,7 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     root_dir: PathBuf,
-    // NB: Don't move this into the wait_task, since we need to ensure the process is
-    // killed on drop (setting kill_on_drop on the command seems to not always work).
-    child: smol::process::Child,
+    child: ProcessGroup,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -91,16 +90,12 @@ impl AcpConnection {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
-            builder.build_command(Some(command.path.display().to_string()), &command.args);
-        child
-            .envs(command.env.iter().flatten())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
+        child.envs(command.env.iter().flatten());
         if !is_remote {
             child.current_dir(root_dir);
         }
-        let mut child = child.spawn()?;
+        let mut child = ProcessGroup::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -235,7 +230,6 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        // See the comment on the child field.
         self.child.kill().log_err();
     }
 }
@@ -980,5 +974,63 @@ impl ClientDelegate {
             .get(session_id)
             .context("Failed to get session")
             .map(|session| session.thread.clone())
+    }
+}
+
+/// A wrapper around `smol::process::Child` that ensures all subprocesses
+/// are killed when the process is dropped by using process groups.
+struct ProcessGroup {
+    process: smol::process::Child,
+}
+
+impl std::ops::Deref for ProcessGroup {
+    type Target = smol::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.process
+    }
+}
+
+impl std::ops::DerefMut for ProcessGroup {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.process
+    }
+}
+
+impl ProcessGroup {
+    fn spawn(
+        mut command: std::process::Command,
+        stdin: Stdio,
+        stdout: Stdio,
+        stderr: Stdio,
+    ) -> Result<Self> {
+        #[cfg(not(windows))]
+        {
+            util::set_pre_exec_to_start_new_session(&mut command);
+        }
+        #[cfg(windows)]
+        {
+            // TODO(windows): create a job object and add the child process handle to it,
+            // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        }
+        let mut command = smol::process::Command::from(command);
+        let process = command.stdin(stdin).stdout(stdout).stderr(stderr).spawn()?;
+        Ok(Self { process })
+    }
+
+    #[cfg(not(windows))]
+    fn kill(&mut self) -> Result<()> {
+        let pid = self.process.id();
+        unsafe {
+            libc::killpg(pid as i32, libc::SIGKILL);
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn kill(&mut self) -> Result<()> {
+        // TODO(windows): terminate the job object in kill
+        self.process.kill()?;
+        Ok(())
     }
 }
