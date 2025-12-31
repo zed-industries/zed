@@ -69,7 +69,7 @@ pub fn request_prediction_with_zeta(
     let excerpt_path: Arc<Path> = snapshot
         .file()
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+        .unwrap_or_else(|| Arc::from(Path::new(&format!("untitled-{}", snapshot.remote_id()))));
 
     let repo_url = if can_collect_data {
         let buffer_id = buffer.read(cx).remote_id();
