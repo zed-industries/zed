@@ -54,3 +54,27 @@
 {"Key":"i"}
 {"Key":"w"}
 {"Get":{"state":"ˇ","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree\nfour"}}
+{"Key":"3"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"ˇfour","mode":"Normal"}}
+{"Put":{"state":"ˇone\ntwo\nthree"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"ˇthree","mode":"Normal"}}
+{"Put":{"state":"one ˇtwo\nthree four"}}
+{"Key":"2"}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"w"}
+{"Get":{"state":"one ˇfour","mode":"Normal"}}

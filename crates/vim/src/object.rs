@@ -573,7 +573,15 @@ impl Object {
                 if around {
                     around_word(map, relative_to, ignore_punctuation, count)
                 } else {
-                    in_word(map, relative_to, ignore_punctuation, count)
+                    in_word(map, relative_to, ignore_punctuation, count).map(|range| {
+                        // For iw with count > 1, vim includes trailing whitespace
+                        if count > 1 {
+                            let spans_multiple_lines = range.start.row() != range.end.row();
+                            expand_to_include_whitespace(map, range, !spans_multiple_lines)
+                        } else {
+                            range
+                        }
+                    })
                 }
             }
             Object::Subword { ignore_punctuation } => {
@@ -809,9 +817,12 @@ fn in_word(
         |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let mut end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        classifier.kind(left) != classifier.kind(right)
-    });
+    let mut end =
+        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+            classifier.kind(left) != classifier.kind(right)
+        });
+
+    let is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
 
     for _ in 1..times {
         let kind_at_end = map
@@ -819,20 +830,13 @@ fn in_word(
             .next()
             .map(|(c, _)| classifier.kind(c));
 
-        // Whitespace is skipped when extending to the next word unit,
-        // but punctuation is itself a word unit and should not be skipped.
+        // Skip whitespace but not punctuation (punctuation is its own word unit).
         let next_end = if kind_at_end == Some(CharKind::Whitespace) {
             let after_whitespace =
-                movement::find_boundary(map, end, FindRange::SingleLine, |left, right| {
-                    classifier.kind(left) != classifier.kind(right)
-                });
-            movement::find_boundary(map, after_whitespace, FindRange::SingleLine, |left, right| {
-                classifier.kind(left) != classifier.kind(right)
-            })
+                movement::find_boundary(map, end, FindRange::MultiLine, is_boundary);
+            movement::find_boundary(map, after_whitespace, FindRange::MultiLine, is_boundary)
         } else {
-            movement::find_boundary(map, end, FindRange::SingleLine, |left, right| {
-                classifier.kind(left) != classifier.kind(right)
-            })
+            movement::find_boundary(map, end, FindRange::MultiLine, is_boundary)
         };
         if next_end == end {
             break;
@@ -1061,6 +1065,9 @@ fn around_containing_word(
     times: usize,
 ) -> Option<Range<DisplayPoint>> {
     in_word(map, relative_to, ignore_punctuation, times).map(|range| {
+        let spans_multiple_lines = range.start.row() != range.end.row();
+        let stop_at_newline = !spans_multiple_lines;
+
         let line_start = DisplayPoint::new(range.start.row(), 0);
         let is_first_word = map
             .buffer_chars_at(line_start.to_offset(map, Bias::Left))
@@ -1072,11 +1079,11 @@ fn around_containing_word(
 
         if is_first_word {
             // For first word on line, trim indentation
-            let mut expanded = expand_to_include_whitespace(map, range.clone(), true);
+            let mut expanded = expand_to_include_whitespace(map, range.clone(), stop_at_newline);
             expanded.start = range.start;
             expanded
         } else {
-            expand_to_include_whitespace(map, range, true)
+            expand_to_include_whitespace(map, range, stop_at_newline)
         }
     })
 }
@@ -1492,7 +1499,7 @@ pub fn expand_to_include_whitespace(
         }
 
         if char.is_whitespace() {
-            if char != '\n' {
+            if char != '\n' || !stop_at_newline {
                 range.end = offset + char.len_utf8();
                 whitespace_included = true;
             }
@@ -1906,54 +1913,61 @@ mod test {
     async fn test_word_object_with_count(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Test 2daw - should delete two words
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes("2 d a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test d2aw - should delete two words
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes("d 2 a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test with WORD (shift-w) - should delete two WORDs
+        // WORD (shift-w) ignores punctuation
         cx.set_shared_state("ˇone-two three-four five").await;
         cx.simulate_shared_keystrokes("2 d a shift-w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test 3daw - should delete three words
         cx.set_shared_state("ˇone two three four five").await;
         cx.simulate_shared_keystrokes("3 d a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test multiplied counts: 2d2aw should delete 4 words (2*2)
+        // Multiplied counts: 2d2aw deletes 4 words (2*2)
         cx.set_shared_state("ˇone two three four five six").await;
         cx.simulate_shared_keystrokes("2 d 2 a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test change with count: 2caw
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes("2 c a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test yank with count: 2yaw then paste
         cx.set_shared_state("ˇone two three four").await;
         cx.simulate_shared_keystrokes("2 y a w p").await;
         cx.shared_state().await.assert_matches();
 
-        // Test 2daw with punctuation - cursor on whitespace before foo-bar
-        // In vim, foo-bar is 3 word units: foo, -, bar
-        // So 2aw should select foo and - (2 units)
+        // Punctuation: foo-bar is 3 word units (foo, -, bar), so 2aw selects "foo-"
         cx.set_shared_state("  ˇfoo-bar baz").await;
         cx.simulate_shared_keystrokes("2 d a w").await;
         cx.shared_state().await.assert_matches();
 
-        // Test 2diw with trailing whitespace and no next word
-        // In vim, whitespace counts as a word unit, so 2iw selects:
-        // 1st unit: "foo", 2nd unit: "   " (trailing whitespace)
-        // Result: entire line deleted
+        // Trailing whitespace counts as a word unit for iw
         cx.set_shared_state("ˇfoo   ").await;
         cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Multi-line: count > 1 crosses line boundaries
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree\nfour").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("one ˇtwo\nthree four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
         cx.shared_state().await.assert_matches();
     }
 
