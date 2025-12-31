@@ -319,8 +319,6 @@ impl BufferDiffSnapshot {
     /// function returns `false`, they might be equal, but might not. This
     /// result is used to avoid recalculating diffs in situations where we know
     /// nothing has changed.
-    ///
-    /// todo! better name
     pub fn base_texts_definitely_eq(&self, other: &Self) -> bool {
         if self.inner.base_text_exists != other.inner.base_text_exists {
             return false;
