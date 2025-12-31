@@ -1,3 +1,4 @@
+pub mod semantic_engine;
 use anyhow::Context as _;
 use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
