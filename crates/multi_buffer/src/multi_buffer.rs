@@ -1096,7 +1096,13 @@ impl MultiBuffer {
     }
 
     pub fn without_headers(capability: Capability) -> Self {
-        Self::new_(capability, Default::default())
+        Self::new_(
+            capability,
+            MultiBufferSnapshot {
+                show_deleted_hunks: true,
+                ..MultiBufferSnapshot::default()
+            },
+        )
     }
 
     pub fn singleton(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {

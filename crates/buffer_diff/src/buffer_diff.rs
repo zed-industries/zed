@@ -2214,14 +2214,14 @@ mod tests {
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
         let (range, base_text_range) =
-            compare_hunks(&diff_1.inner.hunks, &empty_diff.inner.hunks, &buffer);
+            compare_hunks(&diff_2.inner.hunks, &diff_1.inner.hunks, &buffer);
         assert_eq!(
             range.unwrap().to_point(&buffer),
             Point::new(4, 0)..Point::new(5, 0),
         );
         assert_eq!(
             base_text_range.unwrap().to_point(diff_2.base_text()),
-            Point::new(0, 0)..Point::new(0, 0),
+            Point::new(6, 0)..Point::new(7, 0),
         );
 
         // Edit turns a deletion hunk into a modification.
