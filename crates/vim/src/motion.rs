@@ -1698,18 +1698,14 @@ pub(crate) fn next_word_start(
     point
 }
 
-pub(crate) fn next_word_end(
+fn next_end_impl(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
-    ignore_punctuation: bool,
     times: usize,
     allow_cross_newline: bool,
     always_advance: bool,
+    mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    let classifier = map
-        .buffer_snapshot()
-        .char_classifier_at(point.to_point(map))
-        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut need_next_char = false;
         let new_point = if always_advance {
@@ -1722,8 +1718,6 @@ pub(crate) fn next_word_end(
             new_point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = classifier.kind(left);
-                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1731,7 +1725,7 @@ pub(crate) fn next_word_end(
                     return true;
                 }
 
-                left_kind != right_kind && left_kind != CharKind::Whitespace
+                is_boundary(left, right)
             },
         );
         let new_point = if need_next_char {
@@ -1746,6 +1740,57 @@ pub(crate) fn next_word_end(
         point = new_point;
     }
     point
+}
+
+pub(crate) fn next_word_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+    allow_cross_newline: bool,
+    always_advance: bool,
+) -> DisplayPoint {
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+
+    next_end_impl(
+        map,
+        point,
+        times,
+        allow_cross_newline,
+        always_advance,
+        |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
+            left_kind != right_kind && left_kind != CharKind::Whitespace
+        },
+    )
+}
+
+pub(crate) fn next_subword_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+    allow_cross_newline: bool,
+) -> DisplayPoint {
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+
+    next_end_impl(map, point, times, allow_cross_newline, true, |left, right| {
+        let left_kind = classifier.kind(left);
+        let right_kind = classifier.kind(right);
+
+        let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
+        let is_subword_end =
+            left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+
+        !left.is_whitespace() && (is_word_end || is_subword_end)
+    })
 }
 
 fn previous_word_start(
@@ -1851,56 +1896,6 @@ fn next_subword_start(
             crossed_newline |= at_newline;
             found
         });
-        if point == new_point {
-            break;
-        }
-        point = new_point;
-    }
-    point
-}
-
-pub(crate) fn next_subword_end(
-    map: &DisplaySnapshot,
-    mut point: DisplayPoint,
-    ignore_punctuation: bool,
-    times: usize,
-    allow_cross_newline: bool,
-) -> DisplayPoint {
-    let classifier = map
-        .buffer_snapshot()
-        .char_classifier_at(point.to_point(map))
-        .ignore_punctuation(ignore_punctuation);
-    for _ in 0..times {
-        let new_point = next_char(map, point, allow_cross_newline);
-
-        let mut crossed_newline = false;
-        let mut need_next_char = false;
-        let new_point =
-            movement::find_boundary_exclusive(map, new_point, FindRange::MultiLine, |left, right| {
-                let left_kind = classifier.kind(left);
-                let right_kind = classifier.kind(right);
-                let at_newline = right == '\n';
-
-                if !allow_cross_newline && at_newline {
-                    need_next_char = true;
-                    return true;
-                }
-
-                let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
-
-                let found = !left.is_whitespace() && (is_word_end || is_subword_end);
-
-                crossed_newline |= at_newline;
-                found
-            });
-        let new_point = if need_next_char {
-            next_char(map, new_point, true)
-        } else {
-            new_point
-        };
-        let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
         }
