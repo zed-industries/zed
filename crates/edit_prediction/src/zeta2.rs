@@ -36,7 +36,7 @@ pub fn request_prediction_with_zeta2(
     let excerpt_path: Arc<Path> = snapshot
         .file()
         .map(|file| file.full_path(cx).into())
-        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+        .unwrap_or_else(|| Arc::from(Path::new(&format!("untitled-{}", snapshot.remote_id()))));
 
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
