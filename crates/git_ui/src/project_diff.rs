@@ -1691,12 +1691,6 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
@@ -1707,6 +1701,12 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo.txt", "foo\n".into())],
         );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
@@ -1714,8 +1714,8 @@ mod tests {
             &editor,
             cx,
             &"
-                - foo
-                + ˇFOO
+                - ˇfoo
+                + FOO
             "
             .unindent(),
         );
@@ -1822,6 +1822,12 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo", "original\n".into())],
+            "deadbeef",
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo"), cx)
@@ -1836,13 +1842,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("foo", "original\n".into())],
-            "deadbeef",
-        );
-        cx.run_until_parked();
-
         let diff_editor =
             diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
 
@@ -1850,8 +1849,8 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
-                + ˇmodified
+                - ˇoriginal
+                + modified
             "
             .unindent(),
         );
@@ -1914,9 +1913,9 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
+                - ˇoriginal
                 + different
-                  ˇ"
+            "
             .unindent(),
         );
     }
