@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use client::ProjectId;
 use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
@@ -52,6 +53,7 @@ pub struct HeadlessProject {
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
     pub dap_store: Entity<DapStore>,
+    pub breakpoint_store: Entity<BreakpointStore>,
     pub agent_server_store: Entity<AgentServerStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
@@ -104,7 +106,7 @@ impl HeadlessProject {
             project::trusted_worktrees::track_worktree_trust(
                 worktree_store.clone(),
                 None::<RemoteHostLocation>,
-                Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),
+                Some((session.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                 None,
                 cx,
             );
@@ -130,8 +132,13 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let breakpoint_store =
-            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+        let breakpoint_store = cx.new(|_| {
+            let mut breakpoint_store =
+                BreakpointStore::local(worktree_store.clone(), buffer_store.clone());
+            breakpoint_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+
+            breakpoint_store
+        });
 
         let dap_store = cx.new(|cx| {
             let mut dap_store = DapStore::new_local(
@@ -257,6 +264,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &task_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &dap_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &breakpoint_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &agent_server_store);
@@ -300,7 +308,7 @@ impl HeadlessProject {
         ToolchainStore::init(&session);
         DapStore::init(&session, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
-        // BreakpointStore::init(&client);
+        BreakpointStore::init(&session);
         GitStore::init(&session);
         AgentServerStore::init_headless(&session);
 
@@ -314,6 +322,7 @@ impl HeadlessProject {
             lsp_store,
             task_store,
             dap_store,
+            breakpoint_store,
             agent_server_store,
             languages,
             extensions,
@@ -611,22 +620,23 @@ impl HeadlessProject {
     }
 
     pub async fn handle_trust_worktrees(
-        _: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
+        let worktree_store = this.read_with(&cx, |project, _| project.worktree_store.clone())?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             trusted_worktrees.trust(
+                &worktree_store,
                 envelope
                     .payload
                     .trusted_paths
                     .into_iter()
                     .filter_map(PathTrust::from_proto)
                     .collect(),
-                None,
                 cx,
             );
         })?;
@@ -634,13 +644,15 @@ impl HeadlessProject {
     }
 
     pub async fn handle_restrict_worktrees(
-        _: Entity<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let trusted_worktrees = cx
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
+        let worktree_store =
+            this.read_with(&cx, |project, _| project.worktree_store.downgrade())?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let restricted_paths = envelope
                 .payload
@@ -649,7 +661,7 @@ impl HeadlessProject {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            trusted_worktrees.restrict(restricted_paths, None, cx);
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         })?;
         Ok(proto::Ack {})
     }
@@ -789,7 +801,7 @@ impl HeadlessProject {
 
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             let buffer_id = buffer.read_with(&cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store

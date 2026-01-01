@@ -13,7 +13,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{
     DirectoryLister,
     git_store::Repository,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
@@ -271,16 +271,18 @@ impl WorktreeListDelegate {
                     if let Some((parent_worktree, _)) =
                         project.read(cx).find_worktree(repo_path, cx)
                     {
+                        let worktree_store = project.read(cx).worktree_store();
                         trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            if trusted_worktrees.can_trust(parent_worktree.read(cx).id(), cx) {
+                            if trusted_worktrees.can_trust(
+                                &worktree_store,
+                                parent_worktree.read(cx).id(),
+                                cx,
+                            ) {
                                 trusted_worktrees.trust(
+                                    &worktree_store,
                                     HashSet::from_iter([PathTrust::AbsPath(
                                         new_worktree_path.clone(),
                                     )]),
-                                    project
-                                        .read(cx)
-                                        .remote_connection_options(cx)
-                                        .map(RemoteHostLocation::from),
                                     cx,
                                 );
                             }
