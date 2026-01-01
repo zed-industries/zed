@@ -1053,6 +1053,19 @@ impl Vim {
             text_system.layout_line(text, font_size, &[run], None).width
         };
 
+        // Fast path for fixed-width fonts: no per-word measurement required; the label width will
+        // match the width of any two characters.
+        let is_monospace = {
+            let monospace_tolerance = px(0.5);
+            let a = width_of("iiiiiiii");
+            let b = width_of("wwwwwwww");
+            let c = width_of("00000000");
+            let d = width_of("11111111");
+            let diff_1 = if a > b { a - b } else { b - a };
+            let diff_2 = if c > d { c - d } else { d - c };
+            diff_1 <= monospace_tolerance && diff_2 <= monospace_tolerance
+        };
+
         fn scan_hidden_prefix<F: Fn(&str) -> Pixels>(
             buffer: &MultiBufferSnapshot,
             range_start: MultiBufferOffset,
@@ -1116,6 +1129,26 @@ impl Vim {
                 HELIX_JUMP_ALPHABET[label_index / HELIX_JUMP_ALPHABET.len()],
                 HELIX_JUMP_ALPHABET[label_index % HELIX_JUMP_ALPHABET.len()],
             ];
+
+            if is_monospace {
+                let hide_end_anchor = buffer.anchor_after(candidate.first_two_end);
+                highlights.push(start_anchor..hide_end_anchor);
+                labels.push(HelixJumpLabel {
+                    label,
+                    range: start_anchor..end_anchor,
+                });
+                blocks.push(Self::jump_label_block(
+                    start_anchor,
+                    label,
+                    accent,
+                    label_index,
+                    font.clone(),
+                    font_size,
+                    1.0,
+                    px(0.0),
+                ));
+                continue;
+            }
 
             // In proportional fonts, labels like "mw" can be wider than the first two letters of a
             // word like "if". We hide enough of the word to ensure the label doesn't overlap
