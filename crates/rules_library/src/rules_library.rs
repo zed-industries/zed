@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
-    actions, point, size, transparent_black,
+    App, Bounds, CursorStyle, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
+    HitboxBehavior, PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, actions, canvas, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -165,6 +165,7 @@ pub struct RulesLibrary {
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
+    mouse_cursor_hidden: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -502,6 +503,34 @@ impl RulesLibrary {
             picker
         });
 
+        cx.intercept_keystrokes(|event, window, cx| {
+            // TODO - find a better way
+            let is_undo_redo = event.keystroke.modifiers.platform
+                && (event.keystroke.key == "z" || event.keystroke.key == "Z");
+
+            if !is_undo_redo
+                && (event.keystroke.modifiers.platform
+                    || event.keystroke.modifiers.control
+                    || event.keystroke.modifiers.alt)
+            {
+                return;
+            }
+
+            if let Some(rules) = window.window_handle().downcast::<RulesLibrary>() {
+                cx.defer(move |cx| {
+                    rules
+                        .update(cx, |rules, _window, cx| {
+                            if !rules.mouse_cursor_hidden {
+                                rules.mouse_cursor_hidden = true;
+                                cx.notify();
+                            }
+                        })
+                        .log_err();
+                });
+            }
+        })
+        .detach();
+
         Self {
             title_bar: if !cfg!(target_os = "macos") {
                 Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
@@ -515,6 +544,7 @@ impl RulesLibrary {
             pending_load: Task::ready(()),
             inline_assist_delegate,
             make_completion_provider,
+            mouse_cursor_hidden: false,
             _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
@@ -1390,6 +1420,7 @@ impl Render for RulesLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
+        let rules_handle = cx.entity();
 
         client_side_decorations(
             v_flex()
@@ -1410,6 +1441,17 @@ impl Render for RulesLibrary {
                 .on_action(cx.listener(|this, &RestoreDefaultContent, window, cx| {
                     this.restore_default_content_for_active_rule(window, cx)
                 }))
+                .on_mouse_move(move |_e, _window, cx| {
+                    let rules_handle = rules_handle.clone();
+                    cx.defer(move |cx| {
+                        rules_handle.update(cx, |rules, cx| {
+                            if rules.mouse_cursor_hidden {
+                                rules.mouse_cursor_hidden = false;
+                                cx.notify();
+                            }
+                        });
+                    });
+                })
                 .size_full()
                 .overflow_hidden()
                 .font(ui_font)
@@ -1423,7 +1465,22 @@ impl Render for RulesLibrary {
                             this.border_t_1().border_color(cx.theme().colors().border)
                         })
                         .child(self.render_rule_list(cx))
-                        .child(self.render_active_rule(cx)),
+                        .child(self.render_active_rule(cx))
+                        .child({
+                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
+                            canvas(
+                                |bounds, window, _cx| {
+                                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                                },
+                                move |_bounds, hitbox, window, _cx| {
+                                    if mouse_cursor_hidden {
+                                        window.set_cursor_style(CursorStyle::None, &hitbox);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
             window,
             cx,

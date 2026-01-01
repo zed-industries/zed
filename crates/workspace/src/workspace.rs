@@ -1204,6 +1204,7 @@ pub struct Workspace {
     removing: bool,
     utility_panes: UtilityPaneState,
     next_modal_placement: Option<ModalPlacement>,
+    mouse_cursor_hidden: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1565,6 +1566,32 @@ impl Workspace {
                     store.workspaces.remove(&window_handle);
                 })
             }),
+            cx.intercept_keystrokes(|event, window, cx| {
+                // TODO - find a better way
+                let is_undo_redo = event.keystroke.modifiers.platform
+                    && (event.keystroke.key == "z" || event.keystroke.key == "Z");
+
+                if !is_undo_redo
+                    && (event.keystroke.modifiers.platform
+                        || event.keystroke.modifiers.control
+                        || event.keystroke.modifiers.alt)
+                {
+                    return;
+                }
+
+                if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
+                    cx.defer(move |cx| {
+                        workspace
+                            .update(cx, |workspace, _window, cx| {
+                                if !workspace.mouse_cursor_hidden {
+                                    workspace.mouse_cursor_hidden = true;
+                                    cx.notify();
+                                }
+                            })
+                            .log_err();
+                    });
+                }
+            }),
         ];
 
         cx.defer_in(window, move |this, window, cx| {
@@ -1631,6 +1658,7 @@ impl Workspace {
             removing: false,
             utility_panes: UtilityPaneState::default(),
             next_modal_placement: None,
+            mouse_cursor_hidden: false,
         }
     }
 
@@ -6969,7 +6997,6 @@ impl Render for Workspace {
             (None, None)
         };
         let ui_font = theme::setup_ui_font(window, cx);
-
         let theme = cx.theme().clone();
         let colors = theme.colors();
         let notification_entities = self
@@ -7469,7 +7496,22 @@ impl Render for Workspace {
                             parent.child(self.status_bar.clone())
                         })
                         .child(self.modal_layer.clone())
-                        .child(self.toast_layer.clone()),
+                        .child(self.toast_layer.clone())
+                        .child({
+                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
+                            canvas(
+                                |bounds, window, _cx| {
+                                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                                },
+                                move |_bounds, hitbox, window, _cx| {
+                                    if mouse_cursor_hidden {
+                                        window.set_cursor_style(CursorStyle::None, &hitbox);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
             window,
             cx,
@@ -8524,7 +8566,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
-/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
+/// Add client-side decorations (rounded corners, shadows, resize, cursor visibility handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -8643,7 +8685,20 @@ pub fn client_side_decorations(
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, _, cx| {
+                .on_mouse_move(|_e, window, cx| {
+                    if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
+                        cx.defer(move |cx| {
+                            workspace
+                                .update(cx, |workspace, _window, cx| {
+                                    if workspace.mouse_cursor_hidden {
+                                        workspace.mouse_cursor_hidden = false;
+                                        cx.notify();
+                                    }
+                                })
+                                .log_err();
+                        });
+                    }
+
                     cx.stop_propagation();
                 })
                 .size_full()

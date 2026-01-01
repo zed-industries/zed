@@ -1195,7 +1195,6 @@ impl EditorElement {
         let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.bounds.contains(&event.position);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.show_mouse_cursor(cx);
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
@@ -6500,9 +6499,7 @@ impl EditorElement {
             }),
             |window| {
                 let editor = self.editor.read(cx);
-                if editor.mouse_cursor_hidden {
-                    window.set_window_cursor_style(CursorStyle::None);
-                } else if let SelectionDragState::ReadyToDrag {
+                if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
                 {

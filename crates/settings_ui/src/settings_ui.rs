@@ -6,10 +6,11 @@ use anyhow::Result;
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Action, App, ClipboardItem, CursorStyle, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity,
+    FocusHandle, Focusable, Global, HitboxBehavior, KeyContext, ListState, ReadGlobal as _,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, canvas, div, list, point, prelude::*, px,
+    uniform_list,
 };
 use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
@@ -691,6 +692,7 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    mouse_cursor_hidden: bool,
 }
 
 struct SearchIndex {
@@ -1400,6 +1402,34 @@ impl SettingsWindow {
         })
         .detach();
 
+        cx.intercept_keystrokes(|event, window, cx| {
+            // TODO - find a better way
+            let is_undo_redo = event.keystroke.modifiers.platform
+                && (event.keystroke.key == "z" || event.keystroke.key == "Z");
+
+            if !is_undo_redo
+                && (event.keystroke.modifiers.platform
+                    || event.keystroke.modifiers.control
+                    || event.keystroke.modifiers.alt)
+            {
+                return;
+            }
+
+            if let Some(settings) = window.window_handle().downcast::<SettingsWindow>() {
+                cx.defer(move |cx| {
+                    settings
+                        .update(cx, |settings, _window, cx| {
+                            if !settings.mouse_cursor_hidden {
+                                settings.mouse_cursor_hidden = true;
+                                cx.notify();
+                            }
+                        })
+                        .log_err();
+                });
+            }
+        })
+        .detach();
+
         if let Some(app_state) = AppState::global(cx).upgrade() {
             for project in app_state
                 .workspace_store
@@ -1531,6 +1561,7 @@ impl SettingsWindow {
             search_index: None,
             shown_errors: HashSet::default(),
             list_state,
+            mouse_cursor_hidden: false,
         };
 
         this.fetch_files(window, cx);
@@ -3440,10 +3471,22 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
+        let settings_handle = cx.entity();
 
         client_side_decorations(
             v_flex()
                 .text_color(cx.theme().colors().text)
+                .on_mouse_move(move |_e, _window, cx| {
+                    let settings_handle = settings_handle.clone();
+                    cx.defer(move |cx| {
+                        settings_handle.update(cx, |settings, cx| {
+                            if settings.mouse_cursor_hidden {
+                                settings.mouse_cursor_hidden = false;
+                                cx.notify();
+                            }
+                        });
+                    });
+                })
                 .size_full()
                 .children(self.title_bar.clone())
                 .child(
@@ -3518,7 +3561,22 @@ impl Render for SettingsWindow {
                             this.border_t_1().border_color(cx.theme().colors().border)
                         })
                         .child(self.render_nav(window, cx))
-                        .child(self.render_page(window, cx)),
+                        .child(self.render_page(window, cx))
+                        .child({
+                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
+                            canvas(
+                                |bounds, window, _cx| {
+                                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                                },
+                                move |_bounds, hitbox, window, _cx| {
+                                    if mouse_cursor_hidden {
+                                        window.set_cursor_style(CursorStyle::None, &hitbox);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
             window,
             cx,
@@ -4036,6 +4094,7 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            mouse_cursor_hidden: false,
         };
 
         settings_window.build_filter_table();
