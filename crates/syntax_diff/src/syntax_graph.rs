@@ -18,8 +18,10 @@ pub struct ExceededGraphLimit;
 /// A path segment in the diff graph.
 ///
 /// Represents a transition from one vertex to another via an edge.
-/// - `vertices[0]` is the source vertex (from)
-/// - `vertices[1]` is the destination vertex (to)
+/// - `from` is the source vertex (None for the start of the path)
+/// - `edge` is the transition taken (None for the start of the path)
+/// - `into` is the destination vertex
+/// - `cost` is the cumulative cost to reach `into` from the start
 #[derive(Clone)]
 pub struct SyntaxPath<'a> {
     pub from: Option<SyntaxVertex<'a>>,
