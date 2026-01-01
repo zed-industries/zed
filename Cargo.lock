@@ -845,7 +845,6 @@ name = "assistant_slash_command"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "collections",
  "derive_more 0.99.20",
  "extension",
@@ -858,7 +857,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
- "util",
  "workspace",
 ]
 

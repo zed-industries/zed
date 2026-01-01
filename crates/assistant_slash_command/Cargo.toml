@@ -13,7 +13,6 @@ path = "src/assistant_slash_command.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 extension.workspace = true
@@ -25,7 +24,6 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
