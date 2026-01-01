@@ -1053,6 +1053,61 @@ impl Vim {
             text_system.layout_line(text, font_size, &[run], None).width
         };
 
+        fn scan_hidden_prefix<F: Fn(&str) -> Pixels>(
+            buffer: &MultiBufferSnapshot,
+            range_start: MultiBufferOffset,
+            range_end: MultiBufferOffset,
+            word_end: MultiBufferOffset,
+            label_width: Pixels,
+            max_left_shift: Pixels,
+            min_label_scale: f32,
+            max_hidden_chars: usize,
+            width_of: &F,
+            hidden_prefix: &mut String,
+            hide_end_offset: &mut MultiBufferOffset,
+            hidden_width: &mut Pixels,
+            total_char_count: &mut usize,
+            word_char_count: &mut usize,
+        ) {
+            let mut offset = range_start;
+            for chunk in buffer.text_for_range(range_start..range_end) {
+                for (idx, ch) in chunk.char_indices() {
+                    let absolute = offset + idx;
+
+                    *total_char_count += 1;
+                    if *total_char_count > max_hidden_chars {
+                        return;
+                    }
+
+                    hidden_prefix.push(ch);
+                    let end_offset = absolute + ch.len_utf8();
+
+                    if absolute < word_end && is_jump_word_char(ch) {
+                        *word_char_count += 1;
+                    }
+
+                    if *word_char_count < 2 {
+                        continue;
+                    }
+
+                    *hide_end_offset = end_offset;
+                    *hidden_width = width_of(hidden_prefix.as_str());
+
+                    let effective_width = *hidden_width + max_left_shift;
+                    let scale_needed = if label_width > px(0.0) {
+                        (effective_width / label_width).min(1.0)
+                    } else {
+                        1.0
+                    };
+
+                    if scale_needed >= min_label_scale {
+                        return;
+                    }
+                }
+                offset += chunk.len();
+            }
+        }
+
         for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
             let start_anchor = buffer.anchor_after(candidate.word_start);
             let end_anchor = buffer.anchor_after(candidate.word_end);
@@ -1063,64 +1118,160 @@ impl Vim {
             ];
 
             // In proportional fonts, labels like "mw" can be wider than the first two letters of a
-            // word like "if". Instead of shrinking the label (which looks inconsistent), we hide
-            // as many characters of the word as needed (up to a cap) so the label can render at a
-            // consistent size without overlapping the following text.
+            // word like "if". We hide enough of the word to ensure the label doesn't overlap
+            // visible text.
             //
-            // If the word is too short, extend the hidden region into following non-word
-            // characters (whitespace/punctuation) but stop before the start of the next word.
+            // To avoid "eating" punctuation between targets, we only extend the hidden region past
+            // the end of the word into *whitespace*, and only when it doesn't eliminate all
+            // separation from the next word.
+            //
+            // For short words (e.g. `if`) we prefer shifting the label left into preceding
+            // whitespace (indentation) rather than shrinking the label or consuming punctuation.
             const MAX_HIDDEN_CHARS: usize = 16;
+            const MIN_LABEL_SCALE: f32 = 1.00;
             let label_text: String = label.iter().collect();
             let label_width = width_of(&label_text);
+
+            // Compute how much we can shift the label left into whitespace immediately preceding
+            // the word. This helps avoid tiny labels on short words without hiding punctuation.
+            const MAX_LEFT_WS_CHARS: usize = 32;
+            let mut left_ws_rev = String::new();
+            let mut left_ws_count = 0usize;
+            let mut left_stopped_at_line_break = false;
+            let mut left_stopped_at_non_ws = false;
+            let mut left_hit_limit = false;
+
+            for ch in buffer.reversed_chars_at(candidate.word_start) {
+                if ch == '\n' || ch == '\r' {
+                    left_stopped_at_line_break = true;
+                    break;
+                }
+
+                if !ch.is_whitespace() {
+                    left_stopped_at_non_ws = true;
+                    break;
+                }
+
+                left_ws_count += 1;
+                if left_ws_count > MAX_LEFT_WS_CHARS {
+                    left_hit_limit = true;
+                    break;
+                }
+
+                left_ws_rev.push(ch);
+            }
+
+            let left_ws: String = left_ws_rev.chars().rev().collect();
+            let left_ws_width = width_of(&left_ws);
+
+            // Leave a small gap before the label when it's between tokens; for indentation at the
+            // start of a line, it's safe to use the full width.
+            let left_is_indentation =
+                left_stopped_at_line_break || (!left_stopped_at_non_ws && !left_hit_limit);
+            let min_left_gap = if left_is_indentation { px(0.0) } else { px(2.0) };
+            let max_left_shift = (left_ws_width - min_left_gap).max(px(0.0));
+
+            // Determine how much whitespace after the word is safe to hide (if needed).
+            let mut allowed_ws_end_offset = candidate.word_end;
+            let mut ws_count = 0usize;
+            let mut last_ws_start = candidate.word_end;
+            let mut ws_end_offset = candidate.word_end;
+            let mut next_non_ws = None;
+            let mut hit_line_break_after_word = false;
+
+            let mut ws_scan_offset = candidate.word_end;
+            'ws: for chunk in buffer.text_for_range(candidate.word_end..end_offset) {
+                for (idx, ch) in chunk.char_indices() {
+                    let absolute = ws_scan_offset + idx;
+                    if ch == '\n' || ch == '\r' {
+                        hit_line_break_after_word = true;
+                        break 'ws;
+                    }
+                    if !ch.is_whitespace() {
+                        next_non_ws = Some(ch);
+                        break 'ws;
+                    }
+
+                    ws_count += 1;
+                    last_ws_start = absolute;
+                    ws_end_offset = absolute + ch.len_utf8();
+                }
+                ws_scan_offset += chunk.len();
+            }
+
+            let mut is_end_of_line = hit_line_break_after_word && next_non_ws.is_none();
+            if !is_end_of_line {
+                is_end_of_line = matches!(
+                    buffer.chars_at(candidate.word_end).next(),
+                    None | Some('\n') | Some('\r')
+                );
+            }
+
+            if ws_count > 0 {
+                let next_is_word = match next_non_ws {
+                    Some(ch) => is_jump_word_char(ch),
+                    None => false,
+                };
+
+                if next_is_word {
+                    // Only hide whitespace between words if we can leave at least one whitespace
+                    // character visible, so adjacent labels remain visually separated.
+                    if ws_count > 1 {
+                        allowed_ws_end_offset = last_ws_start;
+                    }
+                } else {
+                    // Next is punctuation (e.g. `if (`) or end-of-range: it's safe to hide all the
+                    // leading whitespace.
+                    allowed_ws_end_offset = ws_end_offset;
+                }
+            }
 
             let mut hidden_prefix = String::new();
             let mut hide_end_offset = candidate.first_two_end;
             let mut hidden_width = px(0.0);
             let mut total_char_count = 0usize;
             let mut word_char_count = 0usize;
-            let mut offset = candidate.word_start;
-            let mut hit_line_break = false;
+            let min_label_scale = if is_end_of_line { 1.0 } else { MIN_LABEL_SCALE };
 
-            'prefix: for chunk in buffer.text_for_range(candidate.word_start..end_offset) {
-                for (idx, ch) in chunk.char_indices() {
-                    let absolute = offset + idx;
+            // First, try to fit within the word itself (plus any available left shift).
+            scan_hidden_prefix(
+                buffer,
+                candidate.word_start,
+                candidate.word_end,
+                candidate.word_end,
+                label_width,
+                max_left_shift,
+                min_label_scale,
+                MAX_HIDDEN_CHARS,
+                &width_of,
+                &mut hidden_prefix,
+                &mut hide_end_offset,
+                &mut hidden_width,
+                &mut total_char_count,
+                &mut word_char_count,
+            );
 
-                    // Keep labels within a single logical line.
-                    if ch == '\n' || ch == '\r' {
-                        hit_line_break = true;
-                        break 'prefix;
-                    }
-
-                    // Don't hide into the next word (after the current word ends), which can make
-                    // two labels overlap.
-                    if absolute >= candidate.word_end && is_jump_word_char(ch) {
-                        break 'prefix;
-                    }
-
-                    total_char_count += 1;
-                    if total_char_count > MAX_HIDDEN_CHARS {
-                        break 'prefix;
-                    }
-
-                    hidden_prefix.push(ch);
-                    let end_offset = absolute + ch.len_utf8();
-
-                    if absolute < candidate.word_end && is_jump_word_char(ch) {
-                        word_char_count += 1;
-                    }
-
-                    if word_char_count < 2 {
-                        continue;
-                    }
-
-                    hide_end_offset = end_offset;
-                    hidden_width = width_of(&hidden_prefix);
-
-                    if hidden_width >= label_width {
-                        break 'prefix;
-                    }
-                }
-                offset += chunk.len();
+            // If still too small, fall back to hiding some whitespace after the word (if allowed).
+            if label_width > px(0.0)
+                && (hidden_width + max_left_shift) / label_width < MIN_LABEL_SCALE
+                && allowed_ws_end_offset > candidate.word_end
+            {
+                scan_hidden_prefix(
+                    buffer,
+                    candidate.word_end,
+                    allowed_ws_end_offset,
+                    candidate.word_end,
+                    label_width,
+                    max_left_shift,
+                    min_label_scale,
+                    MAX_HIDDEN_CHARS,
+                    &width_of,
+                    &mut hidden_prefix,
+                    &mut hide_end_offset,
+                    &mut hidden_width,
+                    &mut total_char_count,
+                    &mut word_char_count,
+                );
             }
 
             // Fallback for unexpected measurement failure.
@@ -1131,19 +1282,24 @@ impl Vim {
             let hide_end_anchor = buffer.anchor_after(hide_end_offset);
             highlights.push(start_anchor..hide_end_anchor);
 
-            let scale_factor = if label_width > hidden_width && label_width > px(0.0) {
-                // Leave a tiny margin to account for rounding differences between measurement and paint.
-                //
-                // If we reached a line break, there's no following text to overlap, so prefer a
-                // consistent label size over scaling down.
-                if hit_line_break {
-                    1.0
+            // Leave a tiny margin to account for rounding differences between measurement and paint.
+            let left_shift = if label_width > hidden_width {
+                (label_width - hidden_width).min(max_left_shift)
+            } else {
+                px(0.0)
+            };
+
+            let scale_factor = if label_width > px(0.0) {
+                let scale = ((hidden_width + left_shift) / label_width).min(1.0);
+                if scale < 1.0 {
+                    scale * 0.99
                 } else {
-                    (hidden_width / label_width).min(1.0) * 0.99
+                    1.0
                 }
             } else {
                 1.0
             };
+            let scale_factor = if is_end_of_line { 1.0 } else { scale_factor };
 
             labels.push(HelixJumpLabel {
                 label,
@@ -1158,6 +1314,7 @@ impl Vim {
                 font.clone(),
                 font_size,
                 scale_factor,
+                left_shift,
             ));
         }
 
@@ -1293,6 +1450,7 @@ impl Vim {
         font: Font,
         font_size: Pixels,
         scale_factor: f32,
+        left_shift: Pixels,
     ) -> BlockProperties<Anchor> {
         let text: SharedString = label.iter().collect::<String>().into();
         BlockProperties {
@@ -1303,6 +1461,8 @@ impl Vim {
                 let scaled_font_size = (font_size * scale_factor).max(px(1.0));
                 div()
                     .block_mouse_except_scroll()
+                    .relative()
+                    .left(-left_shift)
                     .font(font.clone())
                     .text_size(scaled_font_size)
                     .text_color(accent)
