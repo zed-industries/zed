@@ -49,7 +49,7 @@ pub struct MessageEditor {
 
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
-    Send,
+    Send { wait_for_agent: bool },
     Cancel,
     Focus,
     LostFocus,
@@ -486,13 +486,17 @@ impl MessageEditor {
     }
 
     pub fn send(&mut self, cx: &mut Context<Self>) {
+        self.send_with_wait(false, cx);
+    }
+
+    pub fn send_with_wait(&mut self, wait_for_agent: bool, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
         self.editor.update(cx, |editor, cx| {
             editor.clear_inlay_hints(cx);
         });
-        cx.emit(MessageEditorEvent::Send)
+        cx.emit(MessageEditorEvent::Send { wait_for_agent })
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -534,8 +538,10 @@ impl MessageEditor {
         .detach();
     }
 
-    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
-        self.send(cx);
+    fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = window.modifiers();
+        let wait_for_agent = modifiers.control && modifiers.shift;
+        self.send_with_wait(wait_for_agent, cx);
     }
 
     fn chat_with_follow(
