@@ -1,11 +1,11 @@
 use anyhow::Result;
-use async_trait::async_trait;
-use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
+use extension::{
+    Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegateAdapter,
+};
 use gpui::{App, Task, WeakEntity, Window};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::prelude::*;
-use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::{
@@ -37,35 +37,6 @@ impl ExtensionSlashCommandProxy for SlashCommandRegistryProxy {
     fn unregister_slash_command(&self, command_name: Arc<str>) {
         self.slash_command_registry
             .unregister_command_by_name(&command_name)
-    }
-}
-
-/// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
-struct WorktreeDelegateAdapter(Arc<dyn LspAdapterDelegate>);
-
-#[async_trait]
-impl WorktreeDelegate for WorktreeDelegateAdapter {
-    fn id(&self) -> u64 {
-        self.0.worktree_id().to_proto()
-    }
-
-    fn root_path(&self) -> String {
-        self.0.worktree_root_path().to_string_lossy().into_owned()
-    }
-
-    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
-        self.0.read_text_file(path).await
-    }
-
-    async fn which(&self, binary_name: String) -> Option<String> {
-        self.0
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().into_owned())
-    }
-
-    async fn shell_env(&self) -> Vec<(String, String)> {
-        self.0.shell_env().await.into_iter().collect()
     }
 }
 

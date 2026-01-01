@@ -39,6 +39,35 @@ pub trait WorktreeDelegate: Send + Sync + 'static {
     async fn shell_env(&self) -> Vec<(String, String)>;
 }
 
+/// An adapter that allows an [`language::LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
+pub struct WorktreeDelegateAdapter(pub Arc<dyn language::LspAdapterDelegate>);
+
+#[async_trait]
+impl WorktreeDelegate for WorktreeDelegateAdapter {
+    fn id(&self) -> u64 {
+        self.0.worktree_id().to_proto()
+    }
+
+    fn root_path(&self) -> String {
+        self.0.worktree_root_path().to_string_lossy().into_owned()
+    }
+
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
+        self.0.read_text_file(path).await
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        self.0
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().into_owned())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        self.0.shell_env().await.into_iter().collect()
+    }
+}
+
 pub trait ProjectDelegate: Send + Sync + 'static {
     fn worktree_ids(&self) -> Vec<u64>;
 }
@@ -168,6 +197,20 @@ pub trait Extension: Send + Sync + 'static {
         locator_name: String,
         config: SpawnInTerminal,
     ) -> Result<DebugRequest>;
+
+    async fn build_context(
+        &self,
+        language_name: String,
+        location: TaskContextLocation,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskVariable>>;
+
+    async fn associated_tasks(
+        &self,
+        language_name: String,
+        file: Option<TaskContextFile>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskDefinition>>;
 }
 
 pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Result<Version> {
