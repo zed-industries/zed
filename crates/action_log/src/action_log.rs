@@ -78,9 +78,8 @@ impl ActionLog {
                     project.register_buffer_with_language_servers(&buffer, cx)
                 });
 
-                let snapshot = buffer.read(cx).snapshot();
                 let text_snapshot = buffer.read(cx).text_snapshot();
-                let diff = cx.new(|cx| BufferDiff::new(&snapshot, cx));
+                let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
@@ -271,11 +270,10 @@ impl ActionLog {
         })??;
         let (new_base_text, new_diff_base) = rebase.await;
 
-        let language_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         Self::update_diff(
             this,
             buffer,
-            language_snapshot,
+            buffer_snapshot,
             new_base_text,
             new_diff_base,
             cx,
@@ -289,6 +287,13 @@ impl ActionLog {
         git_diff: &Entity<BufferDiff>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
+        let buffer_snapshot = this.read_with(cx, |this, _cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get(buffer)
+                .context("buffer not tracked")?;
+            anyhow::Ok(tracked_buffer.snapshot.clone())
+        })??;
         let (new_base_text, new_diff_base) = this
             .read_with(cx, |this, cx| {
                 let tracked_buffer = this
@@ -354,11 +359,10 @@ impl ActionLog {
             })??
             .await;
 
-        let language_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         Self::update_diff(
             this,
             buffer,
-            language_snapshot,
+            buffer_snapshot,
             new_base_text,
             new_diff_base,
             cx,
@@ -369,7 +373,7 @@ impl ActionLog {
     async fn update_diff(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
-        buffer_snapshot: language::BufferSnapshot,
+        buffer_snapshot: text::BufferSnapshot,
         new_base_text: Arc<str>,
         new_diff_base: Rope,
         cx: &mut AsyncApp,
@@ -398,7 +402,7 @@ impl ActionLog {
             let update = update.await;
 
             let diff_snapshot = diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &buffer_snapshot.text, cx);
+                diff.set_snapshot(update.clone(), &buffer_snapshot, cx);
                 diff.snapshot(cx)
             })?;
 
@@ -409,9 +413,9 @@ impl ActionLog {
                     async move {
                         let mut unreviewed_edits = Patch::default();
                         for hunk in diff_snapshot.hunks_intersecting_range(
-                            Anchor::min_for_buffer(buffer_snapshot.text.remote_id())
-                                ..Anchor::max_for_buffer(buffer_snapshot.text.remote_id()),
-                            &buffer_snapshot.text,
+                            Anchor::min_for_buffer(buffer_snapshot.remote_id())
+                                ..Anchor::max_for_buffer(buffer_snapshot.remote_id()),
+                            &buffer_snapshot,
                         ) {
                             let old_range = new_diff_base
                                 .offset_to_point(hunk.diff_base_byte_range.start)
@@ -423,7 +427,7 @@ impl ActionLog {
                                     new: new_range,
                                 },
                                 &new_diff_base,
-                                buffer_snapshot.text.as_rope(),
+                                buffer_snapshot.as_rope(),
                             ));
                         }
                         unreviewed_edits
@@ -437,7 +441,7 @@ impl ActionLog {
                 .get_mut(buffer)
                 .context("buffer not tracked")?;
             tracked_buffer.diff_base = new_diff_base;
-            tracked_buffer.snapshot = buffer_snapshot.text;
+            tracked_buffer.snapshot = buffer_snapshot;
             tracked_buffer.unreviewed_edits = unreviewed_edits;
             cx.notify();
             anyhow::Ok(())

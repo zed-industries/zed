@@ -13,14 +13,11 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
-use syntax_diff::{SyntaxDiff, SyntaxTree};
-
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
-pub const MAX_SYNTAX_DIFF_LINE_COUNT: usize = 100;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
@@ -97,12 +94,10 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
-    /// Anchors representing the word diff locations in the active buffer
+    // Anchors representing the word diff locations in the active buffer
     pub buffer_word_diffs: Vec<Range<Anchor>>,
-    /// Offsets relative to the start of the deleted diff that represent word diff locations
+    // Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
-    /// Pre-computed syntax diff for this hunk
-    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -112,7 +107,6 @@ struct InternalDiffHunk {
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
-    syntax_diff: Option<SyntaxDiff>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,263 +198,14 @@ impl std::fmt::Debug for BufferDiffInner<language::BufferSnapshot> {
 }
 
 impl BufferDiffSnapshot {
-    pub fn buffer_diff_id(&self) -> BufferId {
-        self.inner.base_text.remote_id()
-    }
-
-    fn empty(buffer: &text::BufferSnapshot, cx: &mut App) -> BufferDiffSnapshot {
-        BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text: language::Buffer::build_empty_snapshot(cx),
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                base_text_exists: false,
-            },
-            secondary_diff: None,
-        }
-    }
-
-    fn unchanged(
-        buffer: &text::BufferSnapshot,
-        base_text: language::BufferSnapshot,
-    ) -> BufferDiffSnapshot {
-        debug_assert_eq!(buffer.text(), base_text.text());
-        BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text,
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                base_text_exists: false,
-            },
-            secondary_diff: None,
-        }
-    }
-
-    fn new_with_base_text(
-        buffer: text::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        language: Option<Arc<Language>>,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut App,
-    ) -> impl Future<Output = Self> + use<> {
-        let base_text_pair;
-        let base_text_exists;
-        let base_text_snapshot;
-        let diff_options = build_diff_options(
-            None,
-            language.as_ref().map(|l| l.name()),
-            language.as_ref().map(|l| l.default_scope()),
-            cx,
-        );
-
-        if let Some(text) = &base_text {
-            let base_text_rope = Rope::from(text.as_str());
-            base_text_pair = Some((text.clone(), base_text_rope.clone()));
-            let snapshot =
-                language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
-            base_text_snapshot = cx.background_spawn(snapshot);
-            base_text_exists = true;
-        } else {
-            base_text_pair = None;
-            base_text_snapshot = Task::ready(language::Buffer::build_empty_snapshot(cx));
-            base_text_exists = false;
-        };
-
-        let hunks = cx
-            .background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, {
-                let buffer = buffer.clone();
-                async move { compute_hunks(base_text_pair, buffer, diff_options) }
-            });
-
-        async move {
-            let (base_text, hunks) = futures::join!(base_text_snapshot, hunks);
-            Self {
-                inner: BufferDiffInner {
-                    base_text,
-                    hunks,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer),
-                },
-                secondary_diff: None,
-            }
-        }
-    }
-
-    pub fn new_with_base_buffer(
-        buffer: text::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        base_text_snapshot: language::BufferSnapshot,
-        cx: &App,
-    ) -> impl Future<Output = Self> + use<> {
-        let diff_options = build_diff_options(
-            base_text_snapshot.file(),
-            base_text_snapshot.language().map(|l| l.name()),
-            base_text_snapshot.language().map(|l| l.default_scope()),
-            cx,
-        );
-        let base_text_exists = base_text.is_some();
-        let base_text_pair = base_text.map(|text| {
-            debug_assert_eq!(&*text, &base_text_snapshot.text());
-            (text, base_text_snapshot.as_rope().clone())
-        });
-        cx.background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                Self {
-                    inner: BufferDiffInner {
-                        base_text: base_text_snapshot,
-                        pending_hunks: SumTree::new(&buffer),
-                        hunks: compute_hunks(base_text_pair, buffer, diff_options),
-                        base_text_exists,
-                    },
-                    secondary_diff: None,
-                }
-            })
-    }
-
-    pub fn buffer_diff_id(&self) -> BufferId {
-        self.inner.base_text.remote_id()
-    }
-
-    fn empty(buffer: &text::BufferSnapshot, cx: &mut App) -> BufferDiffSnapshot {
-        BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text: language::Buffer::build_empty_snapshot(cx),
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                base_text_exists: false,
-            },
-            secondary_diff: None,
-        }
-    }
-
-    fn unchanged(
-        buffer: &text::BufferSnapshot,
-        base_text: language::BufferSnapshot,
-    ) -> BufferDiffSnapshot {
-        debug_assert_eq!(buffer.text(), base_text.text());
-        BufferDiffSnapshot {
-            inner: BufferDiffInner {
-                base_text,
-                hunks: SumTree::new(buffer),
-                pending_hunks: SumTree::new(buffer),
-                base_text_exists: false,
-            },
-            secondary_diff: None,
-        }
-    }
-
-    fn new_with_base_text(
-        buffer: language::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        language: Option<Arc<Language>>,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut App,
-    ) -> impl Future<Output = Self> + use<> {
-        let base_text_pair;
-        let base_text_exists;
-        let base_text_snapshot;
-        let diff_options = build_diff_options(
-            None,
-            language.as_ref().map(|l| l.name()),
-            language.as_ref().map(|l| l.default_scope()),
-            cx,
-        );
-
-        if let Some(text) = &base_text {
-            let base_text_rope = Rope::from(text.as_str());
-            base_text_pair = Some((text.clone(), base_text_rope.clone()));
-            let snapshot =
-                language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
-            base_text_snapshot = cx.background_spawn(snapshot);
-            base_text_exists = true;
-        } else {
-            base_text_pair = None;
-            base_text_snapshot = Task::ready(language::Buffer::build_empty_snapshot(cx));
-            base_text_exists = false;
-        };
-
-        let task = cx
-            .background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, {
-                let buffer = buffer.clone();
-                async move {
-                    let base_text_snapshot = base_text_snapshot.await;
-
-                    (
-                        compute_hunks(
-                            base_text_pair,
-                            &buffer,
-                            Some(&base_text_snapshot),
-                            diff_options,
-                        ),
-                        base_text_snapshot,
-                    )
-                }
-            });
-
-        async move {
-            let (hunks, base_text_snapshot) = task.await;
-
-            Self {
-                inner: BufferDiffInner {
-                    base_text: base_text_snapshot,
-                    hunks,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer.text),
-                },
-                secondary_diff: None,
-            }
-        }
-    }
-
-    pub fn new_with_base_buffer(
-        buffer: language::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        base_snapshot: language::BufferSnapshot,
-        cx: &App,
-    ) -> impl Future<Output = Self> + use<> {
-        let diff_options = build_diff_options(
-            base_snapshot.file(),
-            base_snapshot.language().map(|l| l.name()),
-            base_snapshot.language().map(|l| l.default_scope()),
-            cx,
-        );
-        let base_text_exists = base_text.is_some();
-        let base_text_pair = base_text.map(|text| {
-            debug_assert_eq!(&*text, &base_snapshot.text());
-            (text, base_snapshot.as_rope().clone())
-        });
-        cx.background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                let hunks =
-                    compute_hunks(base_text_pair, &buffer, Some(&base_snapshot), diff_options);
-                Self {
-                    inner: BufferDiffInner {
-                        base_text: base_snapshot,
-                        pending_hunks: SumTree::new(&buffer.text),
-                        hunks,
-                        base_text_exists,
-                    },
-                    secondary_diff: None,
-                }
-            })
-    }
-
     #[cfg(test)]
     fn new_sync(
-        buffer: language::BufferSnapshot,
+        buffer: text::BufferSnapshot,
         diff_base: String,
         cx: &mut gpui::TestAppContext,
     ) -> BufferDiffSnapshot {
         let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
         buffer_diff.update(cx, |buffer_diff, cx| buffer_diff.snapshot(cx))
-        cx.executor().block(cx.update(|cx| {
-            Self::new_with_base_text(buffer, Some(Arc::new(diff_base)), None, None, cx)
-        }))
-        cx.executor().block(cx.update(|cx| {
-            Self::new_with_base_text(buffer, Some(Arc::new(diff_base)), None, None, cx)
-        }))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -922,7 +667,6 @@ impl BufferDiffInner<language::BufferSnapshot> {
 
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
-                let syntax_diff = hunk.syntax_diff.clone();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -995,7 +739,6 @@ impl BufferDiffInner<language::BufferSnapshot> {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
-                    syntax_diff,
                 });
             }
         })
@@ -1022,27 +765,9 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
-                syntax_diff: hunk.syntax_diff.clone(),
             })
         })
     }
-}
-
-fn build_syntax_tree(
-    snapshot: &language::BufferSnapshot,
-    byte_range: Range<usize>,
-) -> Option<SyntaxTree> {
-    if byte_range.is_empty() {
-        return None;
-    }
-
-    let text: String = snapshot.text();
-    let layer = snapshot.syntax_layers().next()?;
-    let subtree = layer
-        .node()
-        .descendant_for_byte_range(byte_range.start, byte_range.end)?;
-
-    Some(syntax_diff::build_tree(subtree.walk(), &text))
 }
 
 fn build_diff_options(
@@ -1074,17 +799,12 @@ fn build_diff_options(
 fn compute_hunks(
     diff_base: Option<(Arc<str>, Rope)>,
     buffer: text::BufferSnapshot,
-    diff_base: Option<(Arc<String>, Rope)>,
-    buffer: text::BufferSnapshot,
-    diff_base: Option<(Arc<String>, Rope)>,
-    buffer: &language::BufferSnapshot,
-    base_snapshot: Option<&language::BufferSnapshot>,
     diff_options: Option<DiffOptions>,
 ) -> SumTree<InternalDiffHunk> {
-    let mut tree = SumTree::new(&buffer.text);
+    let mut tree = SumTree::new(&buffer);
 
     if let Some((diff_base, diff_base_rope)) = diff_base {
-        let buffer_text = buffer.text.as_rope().to_string();
+        let buffer_text = buffer.as_rope().to_string();
 
         let mut options = GitOptions::default();
         options.context_lines(0);
@@ -1103,13 +823,12 @@ fn compute_hunks(
         if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
             tree.push(
                 InternalDiffHunk {
-                    buffer_range: buffer.text.anchor_before(0)..buffer.text.anchor_before(0),
+                    buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
                     diff_base_byte_range: 0..diff_base.len() - 1,
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
-                    syntax_diff: None,
                 },
-                &buffer.text,
+                &buffer,
             );
             return tree;
         }
@@ -1121,24 +840,22 @@ fn compute_hunks(
                     &patch,
                     hunk_index,
                     &diff_base_rope,
-                    buffer,
-                    base_snapshot,
+                    &buffer,
                     &mut divergence,
                     diff_options.as_ref(),
                 );
-                tree.push(hunk, &buffer.text);
+                tree.push(hunk, &buffer);
             }
         }
     } else {
         tree.push(
             InternalDiffHunk {
-                buffer_range: Anchor::min_max_range_for_buffer(buffer.text.remote_id()),
+                buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 diff_base_byte_range: 0..0,
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
-                syntax_diff: None,
             },
-            &buffer.text,
+            &buffer,
         );
     }
 
@@ -1241,8 +958,7 @@ fn process_patch_hunk(
     patch: &GitPatch<'_>,
     hunk_index: usize,
     diff_base: &Rope,
-    buffer: &language::BufferSnapshot,
-    base_snapshot: Option<&language::BufferSnapshot>,
+    buffer: &text::BufferSnapshot,
     buffer_row_divergence: &mut i64,
     diff_options: Option<&DiffOptions>,
 ) -> InternalDiffHunk {
@@ -1308,7 +1024,7 @@ fn process_patch_hunk(
 
     let start = Point::new(buffer_row_range.start, 0);
     let end = Point::new(buffer_row_range.end, 0);
-    let buffer_range = buffer.text.anchor_before(start)..buffer.text.anchor_before(end);
+    let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
 
     let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
 
@@ -1321,7 +1037,7 @@ fn process_patch_hunk(
             .chunks_in_range(diff_base_byte_range.clone())
             .collect();
 
-        let buffer_text: String = buffer.text.text_for_range(buffer_range.clone()).collect();
+        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
 
         let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
             &base_text,
@@ -1332,12 +1048,12 @@ fn process_patch_hunk(
             },
         );
 
-        let buffer_start_offset = buffer_range.start.to_offset(&buffer.text);
+        let buffer_start_offset = buffer_range.start.to_offset(buffer);
         let buffer_word_diffs = buffer_word_diffs_relative
             .into_iter()
             .map(|range| {
-                let start = buffer.text.anchor_after(buffer_start_offset + range.start);
-                let end = buffer.text.anchor_after(buffer_start_offset + range.end);
+                let start = buffer.anchor_after(buffer_start_offset + range.start);
+                let end = buffer.anchor_after(buffer_start_offset + range.end);
                 start..end
             })
             .collect();
@@ -1347,31 +1063,11 @@ fn process_patch_hunk(
         (Vec::default(), Vec::default())
     };
 
-    let total_line_count = buffer_row_range.len() + base_line_count;
-    let syntax_diff = if total_line_count > 0 && total_line_count <= MAX_SYNTAX_DIFF_LINE_COUNT {
-        let buffer_byte_range =
-            buffer_range.start.to_offset(&buffer.text)..buffer_range.end.to_offset(&buffer.text);
-
-        let base_tree = base_snapshot
-            .and_then(|snapshot| build_syntax_tree(snapshot, diff_base_byte_range.clone()));
-        let buffer_tree = build_syntax_tree(buffer, buffer_byte_range.clone());
-
-        match (base_tree, buffer_tree) {
-            (Some(base_tree), Some(buffer_tree)) => syntax_diff::diff_trees(&base_tree, &buffer_tree)
-                .ok()
-                .map(|diff| diff.relative_to(diff_base_byte_range.start, buffer_byte_range.start)),
-            _ => None,
-        }
-    } else {
-        None
-    };
-
     InternalDiffHunk {
         buffer_range,
         diff_base_byte_range,
         base_word_diffs,
         buffer_word_diffs,
-        syntax_diff,
     }
 }
 
@@ -1403,8 +1099,6 @@ impl BufferDiff {
             buffer
         });
 
-    pub fn new(buffer: &text::BufferSnapshot, cx: &mut App) -> Self {
-    pub fn new(buffer: &language::BufferSnapshot, cx: &mut App) -> Self {
         BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiffInner {
@@ -1413,10 +1107,6 @@ impl BufferDiff {
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
             },
-            buffer_id: buffer.remote_id(),
-            inner: BufferDiffSnapshot::empty(buffer, cx).inner,
-            buffer_id: buffer.text.remote_id(),
-            inner: BufferDiffSnapshot::empty(&buffer.text, cx).inner,
             secondary_diff: None,
         }
     }
@@ -1455,14 +1145,6 @@ impl BufferDiff {
             buffer.clone(),
             Some(Arc::from(base_text)),
             true,
-        let snapshot = BufferDiffSnapshot::new_with_base_text(
-            buffer.read(cx).text_snapshot(),
-            Some(base_text.into()),
-            None,
-        let snapshot = BufferDiffSnapshot::new_with_base_text(
-            buffer.read(cx).snapshot(),
-            Some(base_text.into()),
-            None,
             None,
             cx,
         ));
@@ -1607,18 +1289,6 @@ impl BufferDiff {
 
     pub fn language_changed(
         &mut self,
-    pub async fn update_diff(
-        this: Entity<BufferDiff>,
-        buffer: text::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        base_text_changed: bool,
-        language_changed: bool,
-    pub async fn update_diff(
-        this: Entity<BufferDiff>,
-        buffer: language::BufferSnapshot,
-        base_text: Option<Arc<String>>,
-        base_text_changed: bool,
-        language_changed: bool,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut Context<Self>,
@@ -1753,10 +1423,6 @@ impl BufferDiff {
         base_text: Option<Arc<str>>,
         language: Option<Arc<Language>>,
         buffer: text::BufferSnapshot,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        buffer: text::BufferSnapshot,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        buffer: language::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
@@ -1775,8 +1441,6 @@ impl BufferDiff {
             let state = state.await;
             this.update(cx, |this, cx| {
                 this.set_snapshot(state, &buffer, cx);
-                this.set_snapshot(snapshot, &buffer, cx);
-                this.set_snapshot(snapshot, &buffer.text, cx);
             })
             .log_err();
             drop(complete_on_drop)
@@ -1797,28 +1461,6 @@ impl BufferDiff {
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
         let snapshot = cx.background_executor().block(fut);
-    pub fn recalculate_diff_sync(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
-        let base_text = self.base_text_string().map(Arc::new);
-        let snapshot = BufferDiffSnapshot::new_with_base_buffer(
-            buffer.clone(),
-            base_text,
-            self.inner.base_text.clone(),
-            cx,
-        );
-        let snapshot = cx.background_executor().block(snapshot);
-    pub fn recalculate_diff_sync(
-        &mut self,
-        buffer: language::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) {
-        let base_text = self.base_text_string().map(Arc::new);
-        let snapshot = BufferDiffSnapshot::new_with_base_buffer(
-            buffer.clone(),
-            base_text,
-            self.inner.base_text.clone(),
-            cx,
-        );
-        let snapshot = cx.background_executor().block(snapshot);
         self.set_snapshot(snapshot, &buffer, cx);
     }
 
