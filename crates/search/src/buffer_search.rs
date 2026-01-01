@@ -4,10 +4,10 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{ActionButtonState, input_base_styles, render_action_button, render_text_input},
 };
 use any_vec::AnyVec;
-use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset,
@@ -44,7 +44,7 @@ use workspace::{
 };
 
 pub use registrar::DivRegistrar;
-use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
+use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
@@ -107,7 +107,12 @@ pub struct BufferSearchBar {
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
-    active_searchable_item_subscription: Option<Subscription>,
+    #[cfg(target_os = "macos")]
+    active_searchable_item_subscriptions: Option<[Subscription; 2]>,
+    #[cfg(not(target_os = "macos"))]
+    active_searchable_item_subscriptions: Option<Subscription>,
+    #[cfg(target_os = "macos")]
+    pending_external_query: Option<(String, SearchOptions)>,
     active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
     pending_search: Option<Task<()>>,
@@ -473,7 +478,7 @@ impl ToolbarItemView for BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.active_searchable_item_subscription.take();
+        self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
 
         self.pending_search.take();
@@ -483,18 +488,61 @@ impl ToolbarItemView for BufferSearchBar {
         {
             let this = cx.entity().downgrade();
 
-            self.active_searchable_item_subscription =
-                Some(searchable_item_handle.subscribe_to_search_events(
-                    window,
-                    cx,
-                    Box::new(move |search_event, window, cx| {
-                        if let Some(this) = this.upgrade() {
-                            this.update(cx, |this, cx| {
-                                this.on_active_searchable_item_event(search_event, window, cx)
-                            });
+            let search_event_subscription = searchable_item_handle.subscribe_to_search_events(
+                window,
+                cx,
+                Box::new(move |search_event, window, cx| {
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.on_active_searchable_item_event(search_event, window, cx)
+                        });
+                    }
+                }),
+            );
+
+            #[cfg(target_os = "macos")]
+            {
+                let item_focus_handle = searchable_item_handle.item_focus_handle(cx);
+
+                self.active_searchable_item_subscriptions = Some([
+                    search_event_subscription,
+                    cx.on_focus(&item_focus_handle, window, |this, window, cx| {
+                        if this.query_editor_focused || this.replacement_editor_focused {
+                            // no need to read pasteboard since focus came from toolbar
+                            return;
                         }
+
+                        cx.defer_in(window, |this, window, cx| {
+                            let Some(item) = cx.read_from_find_pasteboard() else {
+                                return;
+                            };
+                            let Some(text) = item.text() else {
+                                return;
+                            };
+
+                            if this.query(cx) == text {
+                                return;
+                            }
+
+                            let search_options = item
+                                .metadata()
+                                .and_then(|m| m.parse().ok())
+                                .and_then(SearchOptions::from_bits)
+                                .unwrap_or(this.search_options);
+
+                            if this.dismissed {
+                                this.pending_external_query = Some((text, search_options));
+                            } else {
+                                drop(this.search(&text, Some(search_options), true, window, cx));
+                            }
+                        });
                     }),
-                ));
+                ]);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                self.active_searchable_item_subscriptions = Some(search_event_subscription);
+            }
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
@@ -518,7 +566,7 @@ impl BufferSearchBar {
 
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, window, cx| {
-            this.query_editor.focus_handle(cx).focus(window);
+            this.query_editor.focus_handle(cx).focus(window, cx);
             this.select_query(window, cx);
         }));
         registrar.register_handler(ForDeployed(
@@ -552,14 +600,16 @@ impl BufferSearchBar {
                 cx.propagate();
             }
         }));
-        registrar.register_handler(WithResults(|this, action: &SelectNextMatch, window, cx| {
-            if this.supported_options(cx).find_in_results {
-                cx.propagate();
-            } else {
-                this.select_next_match(action, window, cx);
-            }
-        }));
-        registrar.register_handler(WithResults(
+        registrar.register_handler(WithResultsOrExternalQuery(
+            |this, action: &SelectNextMatch, window, cx| {
+                if this.supported_options(cx).find_in_results {
+                    cx.propagate();
+                } else {
+                    this.select_next_match(action, window, cx);
+                }
+            },
+        ));
+        registrar.register_handler(WithResultsOrExternalQuery(
             |this, action: &SelectPreviousMatch, window, cx| {
                 if this.supported_options(cx).find_in_results {
                     cx.propagate();
@@ -568,7 +618,7 @@ impl BufferSearchBar {
                 }
             },
         ));
-        registrar.register_handler(WithResults(
+        registrar.register_handler(WithResultsOrExternalQuery(
             |this, action: &SelectAllMatches, window, cx| {
                 if this.supported_options(cx).find_in_results {
                     cx.propagate();
@@ -634,15 +684,19 @@ impl BufferSearchBar {
                 .read(cx)
                 .as_singleton()
                 .expect("query editor should be backed by a singleton buffer");
+
             query_buffer
                 .read(cx)
                 .set_language_registry(languages.clone());
 
             cx.spawn(async move |buffer_search_bar, cx| {
+                use anyhow::Context as _;
+
                 let regex_language = languages
                     .language_for_name("regex")
                     .await
                     .context("loading regex language")?;
+
                 buffer_search_bar
                     .update(cx, |buffer_search_bar, cx| {
                         buffer_search_bar.regex_language = Some(regex_language);
@@ -660,7 +714,9 @@ impl BufferSearchBar {
             replacement_editor,
             replacement_editor_focused: false,
             active_searchable_item: None,
-            active_searchable_item_subscription: None,
+            active_searchable_item_subscriptions: None,
+            #[cfg(target_os = "macos")]
+            pending_external_query: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
@@ -706,7 +762,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, window, cx);
             active_editor.toggle_filtered_search_ranges(None, window, cx);
             let handle = active_editor.item_focus_handle(cx);
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
         }
 
         cx.emit(Event::UpdateLocation);
@@ -749,7 +805,7 @@ impl BufferSearchBar {
                     self.select_query(window, cx);
                 }
 
-                window.focus(&handle);
+                window.focus(&handle, cx);
             }
             return true;
         }
@@ -806,11 +862,20 @@ impl BufferSearchBar {
             self.search(&suggestion, Some(self.default_options), true, window, cx)
         });
 
+        #[cfg(target_os = "macos")]
+        let search = search.or_else(|| {
+            self.pending_external_query
+                .take()
+                .map(|(query, options)| self.search(&query, Some(options), true, window, cx))
+        });
+
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
                 if search.await.is_ok() {
                     this.update_in(cx, |this, window, cx| {
-                        this.activate_current_match(window, cx)
+                        if !this.dismissed {
+                            this.activate_current_match(window, cx)
+                        }
                     })
                 } else {
                     Ok(())
@@ -878,7 +943,7 @@ impl BufferSearchBar {
     }
 
     pub fn focus_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(&self.replacement_editor.focus_handle(cx), window);
+        self.focus(&self.replacement_editor.focus_handle(cx), window, cx);
         cx.notify();
     }
 
@@ -901,15 +966,25 @@ impl BufferSearchBar {
             });
             self.set_search_options(options, cx);
             self.clear_matches(window, cx);
+            #[cfg(target_os = "macos")]
+            self.update_find_pasteboard(cx);
             cx.notify();
         }
         self.update_matches(!updated, add_to_history, window, cx)
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn update_find_pasteboard(&mut self, cx: &mut App) {
+        cx.write_to_find_pasteboard(gpui::ClipboardItem::new_string_with_metadata(
+            self.query(cx),
+            self.search_options.bits().to_string(),
+        ));
+    }
+
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
-            window.focus(&handle);
+            window.focus(&handle, cx);
         }
     }
 
@@ -1015,6 +1090,22 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "macos")]
+        if let Some((query, options)) = self.pending_external_query.take() {
+            let search_rx = self.search(&query, Some(options), true, window, cx);
+            cx.spawn_in(window, async move |this, cx| {
+                if search_rx.await.is_ok() {
+                    this.update_in(cx, |this, window, cx| {
+                        this.activate_current_match(window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+
+            return;
+        }
+
         if let Some(index) = self.active_match_index
             && let Some(searchable_item) = self.active_searchable_item.as_ref()
             && let Some(matches) = self
@@ -1095,11 +1186,12 @@ impl BufferSearchBar {
                 cx.spawn_in(window, async move |this, cx| {
                     if search.await.is_ok() {
                         this.update_in(cx, |this, window, cx| {
-                            this.activate_current_match(window, cx)
-                        })
-                    } else {
-                        Ok(())
+                            this.activate_current_match(window, cx);
+                            #[cfg(target_os = "macos")]
+                            this.update_find_pasteboard(cx);
+                        })?;
                     }
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -1214,6 +1306,8 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
+        #[cfg(target_os = "macos")]
+        self.pending_external_query.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.query_error = None;
@@ -1290,6 +1384,7 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(window, cx);
+
                             if add_to_history {
                                 this.search_history
                                     .add(&mut this.search_history_cursor, query_text);
@@ -1309,8 +1404,8 @@ impl BufferSearchBar {
                                         cx,
                                     );
                                 }
-                                let _ = done_tx.send(());
                             }
+                            let _ = done_tx.send(());
                             cx.notify();
                         }
                     })
@@ -1384,7 +1479,7 @@ impl BufferSearchBar {
             Direction::Prev => (current_index - 1) % handles.len(),
         };
         let next_focus_handle = &handles[new_index];
-        self.focus(next_focus_handle, window);
+        self.focus(next_focus_handle, window, cx);
         cx.stop_propagation();
     }
 
@@ -1431,9 +1526,9 @@ impl BufferSearchBar {
         }
     }
 
-    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window) {
+    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut App) {
         window.invalidate_character_coordinates();
-        window.focus(handle);
+        window.focus(handle, cx);
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
@@ -1444,7 +1539,7 @@ impl BufferSearchBar {
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
             cx.notify();
         }
     }
@@ -2038,7 +2133,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.activate_current_match(window, cx);
                 });
                 assert!(
@@ -2056,7 +2151,7 @@ mod tests {
                 search_bar.update(cx, |search_bar, cx| {
                     assert_eq!(search_bar.active_match_index, Some(0));
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
                 assert!(
@@ -2109,7 +2204,7 @@ mod tests {
                         "Match index should be updated to the next one"
                     );
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
             })
@@ -2175,7 +2270,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.search("abas_nonexistent_match", None, true, window, cx)
                 })
             })

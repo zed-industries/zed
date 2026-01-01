@@ -310,7 +310,7 @@ impl BreakpointList {
 
     fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.input.focus_handle(cx).contains_focused(window, cx) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else if self.strip_mode.is_some() {
             self.strip_mode.take();
             cx.notify();
@@ -364,9 +364,9 @@ impl BreakpointList {
                         }
                     }
                 }
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             } else {
-                handle.focus(window);
+                handle.focus(window, cx);
             }
 
             return;
@@ -627,7 +627,7 @@ impl BreakpointList {
                 .on_click({
                     let focus_handle = focus_handle.clone();
                     move |_, window, cx| {
-                        focus_handle.focus(window);
+                        focus_handle.focus(window, cx);
                         window.dispatch_action(ToggleEnableBreakpoint.boxed_clone(), cx)
                     }
                 }),
@@ -654,7 +654,7 @@ impl BreakpointList {
                     )
                     .on_click({
                         move |_, window, cx| {
-                            focus_handle.focus(window);
+                            focus_handle.focus(window, cx);
                             window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
                         }
                     }),

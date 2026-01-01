@@ -31,9 +31,9 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, CopyButton, Facepile,
+    HighlightedLabel, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
+    Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -1252,7 +1252,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1424,7 +1424,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1487,7 +1487,7 @@ impl CollabPanel {
             })
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1521,9 +1521,9 @@ impl CollabPanel {
         if cx.stop_active_drag(window) {
             return;
         } else if self.take_editing_state(window, cx) {
-            window.focus(&self.filter_editor.focus_handle(cx));
+            window.focus(&self.filter_editor.focus_handle(cx), cx);
         } else if !self.reset_filter_editor_text(window, cx) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1826,7 +1826,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1851,7 +1851,7 @@ impl CollabPanel {
         });
         self.update_entries(false, cx);
         self.select_channel_editor();
-        window.focus(&self.channel_name_editor.focus_handle(cx));
+        window.focus(&self.channel_name_editor.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -1900,7 +1900,7 @@ impl CollabPanel {
                 editor.set_text(channel.name.clone(), window, cx);
                 editor.select_all(&Default::default(), window, cx);
             });
-            window.focus(&self.channel_name_editor.focus_handle(cx));
+            window.focus(&self.channel_name_editor.focus_handle(cx), cx);
             self.update_entries(false, cx);
             self.select_channel_editor();
         }
@@ -2527,16 +2527,9 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                CopyButton::new(channel_link)
                     .visible_on_hover("section-header")
-                    .on_click(move |_, _, cx| {
-                        let item = ClipboardItem::new_string(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(Tooltip::text("Copy channel link"))
+                    .tooltip_label("Copy Channel Link")
                     .into_any_element()
             }),
             Section::Contacts => Some(

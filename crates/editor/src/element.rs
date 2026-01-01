@@ -37,11 +37,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
-use git::{
-    Oid,
-    blame::{BlameEntry, ParsedCommitMessage},
-    status::FileStatus,
-};
+use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
@@ -50,9 +46,9 @@ use gpui::{
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, TextStyleRefinement,
+    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -70,7 +66,7 @@ use project::{
 };
 use settings::{
     GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
-    Settings,
+    RelativeLineNumbers, Settings,
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -197,8 +193,6 @@ pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
 }
-
-type DisplayRowDelta = u32;
 
 impl EditorElement {
     pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
@@ -594,8 +588,6 @@ impl EditorElement {
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::signature_help_prev);
         register_action(editor, window, Editor::signature_help_next);
-        register_action(editor, window, Editor::next_edit_prediction);
-        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_edit_prediction);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -1703,9 +1695,13 @@ impl EditorElement {
                         [cursor_position.row().minus(visible_display_row_range.start) as usize];
                     let cursor_column = cursor_position.column() as usize;
 
-                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                    let mut block_width =
-                        cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column)
+                        + cursor_row_layout
+                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
+                    let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
+                        + cursor_row_layout
+                            .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
+                    let mut block_width = cursor_next_x - cursor_character_x;
                     if block_width == Pixels::ZERO {
                         block_width = em_advance;
                     }
@@ -3231,64 +3227,6 @@ impl EditorElement {
             .collect()
     }
 
-    fn calculate_relative_line_numbers(
-        &self,
-        snapshot: &EditorSnapshot,
-        rows: &Range<DisplayRow>,
-        relative_to: Option<DisplayRow>,
-        count_wrapped_lines: bool,
-    ) -> HashMap<DisplayRow, DisplayRowDelta> {
-        let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
-        let Some(relative_to) = relative_to else {
-            return relative_rows;
-        };
-
-        let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        let buffer_rows = snapshot
-            .row_infos(start)
-            .take(1 + end.minus(start) as usize)
-            .collect::<Vec<_>>();
-
-        let head_idx = relative_to.minus(start);
-        let mut delta = 1;
-        let mut i = head_idx + 1;
-        let should_count_line = |row_info: &RowInfo| {
-            if count_wrapped_lines {
-                row_info.buffer_row.is_some() || row_info.wrapped_buffer_row.is_some()
-            } else {
-                row_info.buffer_row.is_some()
-            }
-        };
-        while i < buffer_rows.len() as u32 {
-            if should_count_line(&buffer_rows[i as usize]) {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            }
-            i += 1;
-        }
-        delta = 1;
-        i = head_idx.min(buffer_rows.len().saturating_sub(1) as u32);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !count_wrapped_lines {
-            i -= 1;
-        }
-
-        while i > 0 {
-            i -= 1;
-            if should_count_line(&buffer_rows[i as usize]) {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            }
-        }
-
-        relative_rows
-    }
-
     fn layout_line_numbers(
         &self,
         gutter_hitbox: Option<&Hitbox>,
@@ -3298,7 +3236,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
-        newest_selection_head: Option<DisplayPoint>,
+        relative_line_base: Option<DisplayRow>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -3310,49 +3248,31 @@ impl EditorElement {
             return Arc::default();
         }
 
-        let (newest_selection_head, relative) = self.editor.update(cx, |editor, cx| {
-            let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx));
-                SelectionLayout::new(
-                    newest,
-                    editor.selections.line_mode(),
-                    editor.cursor_offset_on_selection,
-                    editor.cursor_shape,
-                    &snapshot.display_snapshot,
-                    true,
-                    true,
-                    None,
-                )
-                .head
-            });
-            let relative = editor.relative_line_numbers(cx);
-            (newest_selection_head, relative)
-        });
+        let relative = self.editor.read(cx).relative_line_numbers(cx);
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_to = relative_line_numbers_enabled.then(|| newest_selection_head.row());
+        let relative_rows = if relative_line_numbers_enabled && let Some(base) = relative_line_base
+        {
+            snapshot.calculate_relative_line_numbers(&rows, base, relative.wrapped())
+        } else {
+            Default::default()
+        };
 
-        let relative_rows =
-            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
         let mut line_number = String::new();
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
             let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
-            } else if self.editor.read(cx).use_base_text_line_numbers {
-                row_info.base_text_row?.0 + 1
             } else {
                 row_info.buffer_row? + 1
             };
             let relative_number = relative_rows.get(&display_row);
             if !(relative_line_numbers_enabled && relative_number.is_some())
+                && !snapshot.number_deleted_lines
                 && row_info
                     .diff_status
                     .is_some_and(|status| status.is_deleted())
-                && !self.editor.read(cx).use_base_text_line_numbers
             {
                 return None;
             }
@@ -4658,6 +4578,8 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         text_hitbox: &Hitbox,
         style: &EditorStyle,
+        relative_line_numbers: RelativeLineNumbers,
+        relative_to: Option<DisplayRow>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
@@ -4687,9 +4609,21 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
-                let number = (start_point.row + 1).to_string();
+                let relative_number = relative_to
+                    .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
+                    .map(|base| {
+                        snapshot.relative_line_delta_to_point(
+                            base,
+                            start_point,
+                            relative_line_numbers == RelativeLineNumbers::Wrapped,
+                        )
+                    });
+                let number = relative_number
+                    .filter(|&delta| delta != 0)
+                    .map(|delta| delta.unsigned_abs() as u32)
+                    .unwrap_or(start_point.row + 1);
                 let color = cx.theme().colors().editor_line_number;
-                self.shape_line_number(SharedString::from(number), color, window)
+                self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
             lines.push(StickyHeaderLine::new(
@@ -5422,6 +5356,12 @@ impl EditorElement {
                 .min(hitbox.size.height / 2.) // Shrink to half of the editor height
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
+
+        // Don't show hover popovers when context menu is open to avoid overlap
+        let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
+        if has_context_menu {
+            return;
+        }
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
             editor.hover_state.render(
@@ -6222,10 +6162,25 @@ impl EditorElement {
                     let color = cx.theme().colors().editor_hover_line_number;
 
                     let line = self.shape_line_number(shaped_line.text.clone(), color, window);
-                    line.paint(hitbox.origin, line_height, window, cx).log_err()
+                    line.paint(
+                        hitbox.origin,
+                        line_height,
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err()
                 } else {
                     shaped_line
-                        .paint(hitbox.origin, line_height, window, cx)
+                        .paint(
+                            hitbox.origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        )
                         .log_err()
                 }) else {
                     continue;
@@ -7314,23 +7269,27 @@ impl EditorElement {
                     .map(|row| {
                         let line_layout =
                             &layout.position_map.line_layouts[row.minus(start_row) as usize];
+                        let alignment_offset =
+                            line_layout.alignment_offset(layout.text_align, layout.content_width);
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
                                     + Pixels::from(
                                         ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.start.column() as usize),
+                                            line_layout.x_for_index(range.start.column() as usize)
+                                                + alignment_offset,
                                         ) - layout.position_map.scroll_pixel_position.x,
                                     )
                             } else {
-                                layout.content_origin.x
+                                layout.content_origin.x + alignment_offset
                                     - Pixels::from(layout.position_map.scroll_pixel_position.x)
                             },
                             end_x: if row == range.end.row() {
                                 layout.content_origin.x
                                     + Pixels::from(
                                         ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.end.column() as usize),
+                                            line_layout.x_for_index(range.end.column() as usize)
+                                                + alignment_offset,
                                         ) - layout.position_map.scroll_pixel_position.x,
                                     )
                             } else {
@@ -7338,6 +7297,7 @@ impl EditorElement {
                                     ScrollPixelOffset::from(
                                         layout.content_origin.x
                                             + line_layout.width
+                                            + alignment_offset
                                             + line_end_overshoot,
                                     ) - layout.position_map.scroll_pixel_position.x,
                                 )
@@ -8578,8 +8538,15 @@ impl LineWithInvisibles {
         for fragment in &self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
-                    line.paint(fragment_origin, line_height, window, cx)
-                        .log_err();
+                    line.paint(
+                        fragment_origin,
+                        line_height,
+                        layout.text_align,
+                        Some(layout.content_width),
+                        window,
+                        cx,
+                    )
+                    .log_err();
                     fragment_origin.x += line.width;
                 }
                 LineFragment::Element { size, .. } => {
@@ -8621,8 +8588,15 @@ impl LineWithInvisibles {
         for fragment in &self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
-                    line.paint_background(fragment_origin, line_height, window, cx)
-                        .log_err();
+                    line.paint_background(
+                        fragment_origin,
+                        line_height,
+                        layout.text_align,
+                        Some(layout.content_width),
+                        window,
+                        cx,
+                    )
+                    .log_err();
                     fragment_origin.x += line.width;
                 }
                 LineFragment::Element { size, .. } => {
@@ -8671,7 +8645,7 @@ impl LineWithInvisibles {
                 [token_offset, token_end_offset],
                 Box::new(move |window: &mut Window, cx: &mut App| {
                     invisible_symbol
-                        .paint(origin, line_height, window, cx)
+                        .paint(origin, line_height, TextAlign::Left, None, window, cx)
                         .log_err();
                 }),
             )
@@ -8831,6 +8805,15 @@ impl LineWithInvisibles {
         }
 
         None
+    }
+
+    pub fn alignment_offset(&self, text_align: TextAlign, content_width: Pixels) -> Pixels {
+        let line_width = self.width;
+        match text_align {
+            TextAlign::Left => px(0.0),
+            TextAlign::Center => (content_width - line_width) / 2.0,
+            TextAlign::Right => content_width - line_width,
+        }
     }
 }
 
@@ -9070,14 +9053,8 @@ impl Element for EditorElement {
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let glyph_grid_cell = size(em_advance, line_height);
 
-                    let gutter_dimensions = snapshot
-                        .gutter_dimensions(
-                            font_id,
-                            font_size,
-                            style,
-                            window,
-                            cx,
-                        );
+                    let gutter_dimensions =
+                        snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9164,6 +9141,15 @@ impl Element for EditorElement {
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
 
+                    // Calculate how much of the editor is clipped by parent containers (e.g., List).
+                    // This allows us to only render lines that are actually visible, which is
+                    // critical for performance when large AutoHeight editors are inside Lists.
+                    let visible_bounds = window.content_mask().bounds;
+                    let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
+                    let clipped_top_in_lines = f64::from(clipped_top / line_height);
+                    let visible_height_in_lines =
+                        f64::from(visible_bounds.size.height / line_height);
+
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
                         snapshot.mode,
@@ -9220,10 +9206,16 @@ impl Element for EditorElement {
                     let mut scroll_position = snapshot.scroll_position();
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
-                    let start_row = DisplayRow(scroll_position.y as u32);
+                    // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
+                    // but we don't modify scroll_position itself since the parent handles positioning.
                     let max_row = snapshot.max_point().row();
+                    let start_row = cmp::min(
+                        DisplayRow((scroll_position.y + clipped_top_in_lines).floor() as u32),
+                        max_row,
+                    );
                     let end_row = cmp::min(
-                        (scroll_position.y + height_in_lines).ceil() as u32,
+                        (scroll_position.y + clipped_top_in_lines + visible_height_in_lines).ceil()
+                            as u32,
                         max_row.next_row().0,
                     );
                     let end_row = DisplayRow(end_row);
@@ -9276,10 +9268,10 @@ impl Element for EditorElement {
                         };
 
                         let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added =>
-                                cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted =>
-                                cx.theme().colors().version_control_deleted,
+                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted => {
+                                cx.theme().colors().version_control_deleted
+                            }
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
@@ -9421,6 +9413,29 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
+
+                    // relative rows are based on newest selection, even outside the visible area
+                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                        (editor.selections.count() != 0).then(|| {
+                            let newest = editor
+                                .selections
+                                .newest::<Point>(&editor.display_snapshot(cx));
+
+                            SelectionLayout::new(
+                                newest,
+                                editor.selections.line_mode(),
+                                editor.cursor_offset_on_selection,
+                                editor.cursor_shape,
+                                &snapshot,
+                                true,
+                                true,
+                                None,
+                            )
+                            .head
+                            .row()
+                        })
+                    });
+
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
@@ -9438,7 +9453,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &row_infos,
                         &active_rows,
-                        newest_selection_head,
+                        relative_row_base,
                         &snapshot,
                         window,
                         cx,
@@ -9579,9 +9594,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. renderer widths may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "renderer widths may be stale."
+                            ));
                         }
                     }
 
@@ -9693,9 +9709,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            debug_panic!(
-                                "skipping recursive prepaint at max depth. block layout may be stale."
-                            );
+                            debug_panic!(concat!(
+                                "skipping recursive prepaint at max depth. ",
+                                "block layout may be stale."
+                            ));
                         }
                     }
 
@@ -9758,6 +9775,7 @@ impl Element for EditorElement {
                         && is_singleton
                         && EditorSettings::get_global(cx).sticky_scroll.enabled
                     {
+                        let relative = self.editor.read(cx).relative_line_numbers(cx);
                         self.layout_sticky_headers(
                             &snapshot,
                             editor_width,
@@ -9769,6 +9787,8 @@ impl Element for EditorElement {
                             &gutter_hitbox,
                             &text_hitbox,
                             &style,
+                            relative,
+                            relative_row_base,
                             window,
                             cx,
                         )
@@ -10194,6 +10214,8 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         snapshot,
+                        text_align: self.style.text.text_align,
+                        content_width: text_hitbox.size.width,
                         gutter_hitbox: gutter_hitbox.clone(),
                         text_hitbox: text_hitbox.clone(),
                         inline_blame_bounds: inline_blame_layout
@@ -10247,6 +10269,8 @@ impl Element for EditorElement {
                         sticky_buffer_header,
                         sticky_headers,
                         expand_toggles,
+                        text_align: self.style.text.text_align,
+                        content_width: text_hitbox.size.width,
                     }
                 })
             })
@@ -10427,6 +10451,8 @@ pub struct EditorLayout {
     sticky_buffer_header: Option<AnyElement>,
     sticky_headers: Option<StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
+    text_align: TextAlign,
+    content_width: Pixels,
 }
 
 struct StickyHeaders {
@@ -10594,7 +10620,9 @@ impl StickyHeaderLine {
                 gutter_origin.x + gutter_width - gutter_right_padding - line_number.width,
                 gutter_origin.y,
             );
-            line_number.paint(origin, line_height, window, cx).log_err();
+            line_number
+                .paint(origin, line_height, TextAlign::Left, None, window, cx)
+                .log_err();
         }
     }
 }
@@ -11033,6 +11061,8 @@ pub(crate) struct PositionMap {
     pub visible_row_range: Range<DisplayRow>,
     pub line_layouts: Vec<LineWithInvisibles>,
     pub snapshot: EditorSnapshot,
+    pub text_align: TextAlign,
+    pub content_width: Pixels,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
     pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
@@ -11098,10 +11128,12 @@ impl PositionMap {
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
         {
-            if let Some(ix) = line.index_for_x(x) {
+            let alignment_offset = line.alignment_offset(self.text_align, self.content_width);
+            let x_relative_to_text = x - alignment_offset;
+            if let Some(ix) = line.index_for_x(x_relative_to_text) {
                 (ix as u32, px(0.))
             } else {
-                (line.len as u32, px(0.).max(x - line.width))
+                (line.len as u32, px(0.).max(x_relative_to_text - line.width))
             }
         } else {
             (0, x)
@@ -11290,7 +11322,14 @@ impl CursorLayout {
 
         if let Some(block_text) = &self.block_text {
             block_text
-                .paint(self.origin + origin, self.line_height, window, cx)
+                .paint(
+                    self.origin + origin,
+                    self.line_height,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                )
                 .log_err();
         }
     }
@@ -11616,7 +11655,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_shape_line_numbers(cx: &mut TestAppContext) {
+    fn test_layout_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -11656,7 +11695,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11668,10 +11707,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     false,
                 )
             })
@@ -11680,6 +11718,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -11687,10 +11726,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(3)..DisplayRow(6)),
-                    Some(DisplayRow(1)),
+                    DisplayRow(1),
                     false,
                 )
             })
@@ -11704,10 +11742,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(3)),
-                    Some(DisplayRow(6)),
+                    DisplayRow(6),
                     false,
                 )
             })
@@ -11744,7 +11781,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11759,7 +11796,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_shape_line_numbers_wrapping(cx: &mut TestAppContext) {
+    fn test_layout_line_numbers_wrapping(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -11804,7 +11841,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::default(),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11816,10 +11853,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     true,
                 )
             })
@@ -11829,6 +11865,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
 
@@ -11856,7 +11893,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>(),
                     &BTreeMap::from_iter([(DisplayRow(0), LineHighlightSpec::default())]),
-                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    Some(DisplayRow(0)),
                     &snapshot,
                     window,
                     cx,
@@ -11871,10 +11908,9 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                element.calculate_relative_line_numbers(
-                    &snapshot,
+                snapshot.calculate_relative_line_numbers(
                     &(DisplayRow(0)..DisplayRow(6)),
-                    Some(DisplayRow(3)),
+                    DisplayRow(3),
                     true,
                 )
             })
@@ -11885,6 +11921,7 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
         // current line, even if deleted, has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }

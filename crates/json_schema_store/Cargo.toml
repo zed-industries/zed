@@ -20,6 +20,7 @@ dap.workspace = true
 extension.workspace = true
 gpui.workspace = true
 language.workspace = true
+lsp.workspace = true
 paths.workspace = true
 project.workspace = true
 schemars.workspace = true

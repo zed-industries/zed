@@ -2,7 +2,8 @@ mod agent_profile;
 
 use std::sync::Arc;
 
-use collections::IndexMap;
+use agent_client_protocol::ModelId;
+use collections::{HashSet, IndexMap};
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
@@ -33,6 +34,7 @@ pub struct AgentSettings {
     pub commit_message_model: Option<LanguageModelSelection>,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
+    pub favorite_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
     pub default_view: DefaultAgentView,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
@@ -95,6 +97,13 @@ impl AgentSettings {
 
     pub fn set_message_editor_max_lines(&self) -> usize {
         self.message_editor_min_lines * 2
+    }
+
+    pub fn favorite_model_ids(&self) -> HashSet<ModelId> {
+        self.favorite_models
+            .iter()
+            .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .collect()
     }
 }
 
@@ -164,6 +173,7 @@ impl Settings for AgentSettings {
             commit_message_model: agent.commit_message_model,
             thread_summary_model: agent.thread_summary_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
+            favorite_models: agent.favorite_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
             default_view: agent.default_view.unwrap(),
             profiles: agent

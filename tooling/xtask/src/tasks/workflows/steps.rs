@@ -54,6 +54,10 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
 pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
@@ -343,4 +347,17 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
+}
+
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
 }

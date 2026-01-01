@@ -10,7 +10,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
@@ -20,7 +20,7 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, InlineCode, List, ListBulletItem, prelude::*};
+use ui::{ButtonLike, Indicator, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -175,8 +175,8 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiLmStudio
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -691,7 +691,7 @@ impl Render for ConfigurationView {
                             .child(
                                 ListBulletItem::new("")
                                     .child(Label::new("To get your first model, try running"))
-                                    .child(InlineCode::new("lms get qwen2.5-coder-7b")),
+                                    .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx)),
                             ),
                     ),
                 )

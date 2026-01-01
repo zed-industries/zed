@@ -24,7 +24,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -656,6 +656,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .text_base()
             .mt(rems(1.))
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -709,6 +710,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -992,11 +994,13 @@ impl DiagnosticPopover {
                     .border_color(self.border_color)
                     .rounded_lg()
                     .child(
-                        div()
+                        h_flex()
                             .id("diagnostic-content-container")
-                            .overflow_y_scroll()
+                            .gap_1()
+                            .items_start()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
+                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 MarkdownElement::new(
@@ -1019,7 +1023,11 @@ impl DiagnosticPopover {
                                         }
                                     },
                                 ),
-                            ),
+                            )
+                            .child({
+                                let message = self.local_diagnostic.diagnostic.message.clone();
+                                CopyButton::new(message).tooltip_label("Copy Diagnostic")
+                            }),
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()

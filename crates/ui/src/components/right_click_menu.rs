@@ -253,13 +253,25 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                                     && let Some(previous_focus_handle) =
                                         previous_focus_handle.as_ref()
                                 {
-                                    window.focus(previous_focus_handle);
+                                    window.focus(previous_focus_handle, cx);
                                 }
                                 *menu2.borrow_mut() = None;
                                 window.refresh();
                             })
                             .detach();
-                        window.focus(&new_menu.focus_handle(cx));
+
+                        // Since menus are rendered in a deferred fashion, their focus handles are
+                        // not linked in the dispatch tree until after the deferred draw callback
+                        // runs. We need to wait for that to happen before focusing it, so that
+                        // calling `contains_focused` on the parent's focus handle returns `true`
+                        // when the menu is focused. This prevents the pane's tab bar buttons from
+                        // flickering when opening menus.
+                        let focus_handle = new_menu.focus_handle(cx);
+                        window.on_next_frame(move |window, _cx| {
+                            window.on_next_frame(move |window, cx| {
+                                window.focus(&focus_handle, cx);
+                            });
+                        });
                         *menu.borrow_mut() = Some(new_menu);
                         *position.borrow_mut() = if let Some(child_bounds) = child_bounds {
                             if let Some(attach) = attach {

@@ -111,6 +111,9 @@ struct CopilotSweAgentBot;
 impl CopilotSweAgentBot {
     const LOGIN: &'static str = "copilot-swe-agent[bot]";
     const USER_ID: i32 = 198982749;
+    /// The alias of the GitHub copilot user. Although https://api.github.com/users/copilot
+    /// yields a 404, GitHub still refers to the copilot bot user as @Copilot in some cases.
+    const NAME_ALIAS: &'static str = "Copilot";
 
     /// Returns the `created_at` timestamp for the Dependabot bot user.
     fn created_at() -> &'static NaiveDateTime {
@@ -125,7 +128,9 @@ impl CopilotSweAgentBot {
     /// Returns whether the given contributor selector corresponds to the Copilot bot user.
     fn is_copilot_bot(contributor: &ContributorSelector) -> bool {
         match contributor {
-            ContributorSelector::GitHubLogin { github_login } => github_login == Self::LOGIN,
+            ContributorSelector::GitHubLogin { github_login } => {
+                github_login == Self::LOGIN || github_login == Self::NAME_ALIAS
+            }
             ContributorSelector::GitHubUserId { github_user_id } => {
                 github_user_id == &Self::USER_ID
             }

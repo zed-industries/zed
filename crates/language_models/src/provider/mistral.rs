@@ -5,7 +5,7 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::B
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -176,8 +176,8 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiMistral
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiMistral)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

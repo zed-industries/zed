@@ -311,7 +311,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     |s| s.select_ranges([rows.start..rows.start]),
                 );
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
-                window.focus(&active_editor.focus_handle(cx));
+                window.focus(&active_editor.focus_handle(cx), cx);
             }
         });
 

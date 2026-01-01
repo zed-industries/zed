@@ -17,8 +17,8 @@ use gpui::{
     ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
-    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, LocalFile, Point, SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
@@ -722,7 +722,7 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| file.disk_state() == DiskState::Deleted);
+            .is_some_and(|file| file.disk_state().is_deleted());
 
         h_flex()
             .gap_2()
