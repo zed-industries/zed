@@ -622,6 +622,7 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    prompt_store: Option<Entity<prompt_store::PromptStore>>,
 }
 
 impl Thread {
@@ -638,6 +639,7 @@ impl Thread {
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
+        prompt_store: Option<Entity<prompt_store::PromptStore>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
@@ -678,6 +680,7 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            prompt_store,
         }
     }
 
@@ -799,6 +802,7 @@ impl Thread {
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
+        prompt_store: Option<Entity<prompt_store::PromptStore>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let profile_id = db_thread
@@ -866,6 +870,7 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            prompt_store,
         }
     }
 
@@ -1169,8 +1174,29 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
+        let mut content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
+
+        // Execute on_every_message rules synchronously if prompt_store is available
+        if let Some(prompt_store) = &self.prompt_store {
+            let execute_task =
+                prompt_store.update(cx, |store, cx| store.execute_on_every_message_rules(cx));
+
+            // Block on the task to get the output synchronously
+            if let Ok(output) = cx
+                .background_executor()
+                .block(async move { execute_task.await })
+            {
+                if !output.trim().is_empty() {
+                    log::info!(
+                        "Executed on_every_message rules, output length: {}",
+                        output.len()
+                    );
+                    // Append the command output to the content
+                    content.push(UserMessageContent::Text(format!("\n\n{}", output)));
+                }
+            }
+        }
 
         self.messages
             .push(Message::User(UserMessage { id, content }));

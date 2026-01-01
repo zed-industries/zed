@@ -28,7 +28,11 @@ parking_lot.workspace = true
 paths.workspace = true
 rope.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
 strum.workspace = true
+async-process = "2.3"
+smol.workspace = true
 text.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -36,3 +40,4 @@ uuid.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+

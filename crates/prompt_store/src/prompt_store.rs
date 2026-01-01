@@ -1,17 +1,27 @@
+mod command_approvals;
+mod command_executor;
+mod file_store;
+mod project_rules;
 mod prompts;
+
+pub use command_approvals::CommandApprovals;
+pub use command_executor::{CommandExecutionResult, execute_command};
+pub use file_store::{CommandConfig, FileStore, RuleType};
+pub use project_rules::{ParsedProjectRule, parse_project_rules_file, process_project_rules_file};
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::FutureExt as _;
+use futures::StreamExt;
 use futures::future::Shared;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString, Task,
 };
 use heed::{
-    Database, RoTxn,
-    types::{SerdeBincode, SerdeJson, Str},
+    Database,
+    types::{SerdeJson, Str},
 };
 use parking_lot::RwLock;
 pub use prompts::*;
@@ -22,6 +32,7 @@ use std::{
     future::Future,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
+    time::Duration,
 };
 use strum::{EnumIter, IntoEnumIterator as _};
 use text::LineEnding;
@@ -31,13 +42,14 @@ use uuid::Uuid;
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
 pub fn init(cx: &mut App) {
-    let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
-    let prompt_store_task = PromptStore::new(db_path, cx);
+    let rules_dir = paths::prompts_dir().join("rules");
+    let fs = <dyn fs::Fs>::global(cx);
+    let prompt_store_task = PromptStore::new(rules_dir, fs, cx);
     let prompt_store_entity_task = cx
         .spawn(async move |cx| {
             prompt_store_task
                 .await
-                .and_then(|prompt_store| cx.new(|_cx| prompt_store))
+                .and_then(|prompt_store| cx.new(|cx| prompt_store.setup_watcher(cx)))
                 .map_err(Arc::new)
         })
         .shared();
@@ -50,6 +62,8 @@ pub struct PromptMetadata {
     pub title: Option<SharedString>,
     pub default: bool,
     pub saved_at: DateTime<Utc>,
+    pub rule_type: RuleType,
+    pub command: Option<CommandConfig>,
 }
 
 impl PromptMetadata {
@@ -59,6 +73,8 @@ impl PromptMetadata {
             title: Some(builtin.title().into()),
             default: false,
             saved_at: DateTime::default(),
+            rule_type: RuleType::Static,
+            command: None,
         }
     }
 }
@@ -170,10 +186,9 @@ impl std::fmt::Display for PromptId {
 }
 
 pub struct PromptStore {
-    env: heed::Env,
     metadata_cache: RwLock<MetadataCache>,
-    metadata: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
-    bodies: Database<SerdeJson<PromptId>, Str>,
+    file_store: Arc<file_store::FileStore>,
+    _watch_updates: Task<()>,
 }
 
 pub struct PromptsUpdatedEvent;
@@ -187,38 +202,6 @@ struct MetadataCache {
 }
 
 impl MetadataCache {
-    fn from_db(
-        db: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
-        txn: &RoTxn,
-    ) -> Result<Self> {
-        let mut cache = MetadataCache::default();
-        for result in db.iter(txn)? {
-            // Fail-open: skip records that can't be decoded (e.g. from a different branch)
-            // rather than failing the entire prompt store initialization.
-            let Ok((prompt_id, metadata)) = result else {
-                log::warn!(
-                    "Skipping unreadable prompt record in database: {:?}",
-                    result.err()
-                );
-                continue;
-            };
-            cache.metadata.push(metadata.clone());
-            cache.metadata_by_id.insert(prompt_id, metadata);
-        }
-
-        // Insert all the built-in prompts that were not customized by the user
-        for builtin in BuiltInPrompt::iter() {
-            let builtin_id = PromptId::BuiltIn(builtin);
-            if !cache.metadata_by_id.contains_key(&builtin_id) {
-                let metadata = PromptMetadata::builtin(builtin);
-                cache.metadata.push(metadata.clone());
-                cache.metadata_by_id.insert(builtin_id, metadata);
-            }
-        }
-        cache.sort();
-        Ok(cache)
-    }
-
     fn insert(&mut self, metadata: PromptMetadata) {
         self.metadata_by_id.insert(metadata.id, metadata.clone());
         if let Some(old_metadata) = self.metadata.iter_mut().find(|m| m.id == metadata.id) {
@@ -243,130 +226,291 @@ impl MetadataCache {
     }
 }
 
+/// Legacy PromptId format for migration from old database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum LegacyPromptId {
+    User { uuid: UserPromptId },
+    CommitMessage,
+    // Add other legacy built-in variants if they existed
+}
+
+impl LegacyPromptId {
+    fn as_user(&self) -> Option<UserPromptId> {
+        match self {
+            Self::User { uuid } => Some(*uuid),
+            _ => None,
+        }
+    }
+}
+
+/// Legacy metadata format for migration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyPromptMetadata {
+    id: LegacyPromptId,
+    title: Option<String>,
+    default: bool,
+    saved_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl PromptStore {
     pub fn global(cx: &App) -> impl Future<Output = Result<Entity<Self>>> + use<> {
         let store = GlobalPromptStore::global(cx).0.clone();
         async move { store.await.map_err(|err| anyhow!(err)) }
     }
 
-    pub fn new(db_path: PathBuf, cx: &App) -> Task<Result<Self>> {
+    pub fn new(rules_dir: PathBuf, fs: Arc<dyn fs::Fs>, cx: &App) -> Task<Result<Self>> {
+        // Database was originally stored in data_dir, not config_dir
+        let db_path = paths::data_dir()
+            .join("prompts")
+            .join("prompts-library-db.0.mdb");
         cx.background_spawn(async move {
-            std::fs::create_dir_all(&db_path)?;
+            // Initialize file store
+            let file_store = Arc::new(file_store::FileStore::new(rules_dir, fs.clone()));
+            file_store.init().await?;
 
-            let db_env = unsafe {
-                heed::EnvOpenOptions::new()
-                    .map_size(1024 * 1024 * 1024) // 1GB
-                    .max_dbs(4) // Metadata and bodies (possibly v1 of both as well)
-                    .open(db_path)?
+            // Attempt one-time migration from database to files
+            Self::migrate_db_to_files_once(&db_path, &file_store)
+                .await
+                .log_err();
+
+            // Load rules from files and built-in prompts
+            let file_metadata = Self::load_file_metadata(&file_store).await?;
+
+            let mut metadata_cache = MetadataCache {
+                metadata: Vec::new(),
+                metadata_by_id: HashMap::default(),
             };
 
-            let mut txn = db_env.write_txn()?;
-            let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
-            let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
-            txn.commit()?;
+            // Add built-in prompts to cache
+            for built_in in BuiltInPrompt::iter() {
+                metadata_cache.insert(PromptMetadata::builtin(built_in));
+            }
 
-            Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
-
-            let txn = db_env.read_txn()?;
-            let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
-            txn.commit()?;
+            // Add file-based rules
+            for file_meta in file_metadata {
+                metadata_cache.insert(file_meta);
+            }
 
             Ok(PromptStore {
-                env: db_env,
                 metadata_cache: RwLock::new(metadata_cache),
-                metadata,
-                bodies,
+                file_store,
+                _watch_updates: Task::ready(()),
             })
         })
     }
 
-    fn upgrade_dbs(
-        env: &heed::Env,
-        metadata_db: heed::Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
-        bodies_db: heed::Database<SerdeJson<PromptId>, Str>,
+    /// Migrate user prompts from database to files, then move the database to .bak
+    async fn migrate_db_to_files_once(
+        db_path: &PathBuf,
+        file_store: &file_store::FileStore,
     ) -> Result<()> {
-        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
-        pub struct PromptIdV1(Uuid);
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct PromptMetadataV1 {
-            pub id: PromptIdV1,
-            pub title: Option<SharedString>,
-            pub default: bool,
-            pub saved_at: DateTime<Utc>,
+        // Check if database exists
+        if !db_path.exists() {
+            return Ok(());
         }
 
-        let mut txn = env.write_txn()?;
-        let Some(bodies_v1_db) = env
-            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<String>>(
-                &txn,
-                Some("bodies"),
-            )?
-        else {
-            return Ok(());
-        };
-        let mut bodies_v1 = bodies_v1_db
-            .iter(&txn)?
-            .collect::<heed::Result<HashMap<_, _>>>()?;
+        log::info!("Found existing rules database, starting migration to files...");
 
-        let Some(metadata_v1_db) = env
-            .open_database::<SerdeBincode<PromptIdV1>, SerdeBincode<PromptMetadataV1>>(
-                &txn,
-                Some("metadata"),
-            )?
-        else {
-            return Ok(());
+        // Open database
+        let db_env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(1024 * 1024 * 1024) // 1GB
+                .max_dbs(4)
+                .open(db_path)?
         };
-        let metadata_v1 = metadata_v1_db
-            .iter(&txn)?
-            .collect::<heed::Result<HashMap<_, _>>>()?;
 
-        for (prompt_id_v1, metadata_v1) in metadata_v1 {
-            let prompt_id_v2 = UserPromptId(prompt_id_v1.0).into();
-            let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
+        let txn = db_env.read_txn()?;
+        // Use legacy format for reading old database
+        let metadata_db: Database<SerdeJson<LegacyPromptId>, SerdeJson<LegacyPromptMetadata>> =
+            db_env
+                .open_database(&txn, Some("metadata.v2"))?
+                .ok_or_else(|| anyhow!("metadata.v2 not found"))?;
+        let bodies_db: Database<SerdeJson<LegacyPromptId>, Str> = db_env
+            .open_database(&txn, Some("bodies.v2"))?
+            .ok_or_else(|| anyhow!("bodies.v2 not found"))?;
+
+        let mut migrated_count = 0;
+        let mut skipped_count = 0;
+
+        // Iterate through all metadata entries
+        for result in metadata_db.iter(&txn)? {
+            let Ok((prompt_id, metadata)) = result else {
+                log::warn!("Skipping unreadable prompt record in database");
                 continue;
             };
 
-            if metadata_db
-                .get(&txn, &prompt_id_v2)?
-                .is_none_or(|metadata_v2| metadata_v1.saved_at > metadata_v2.saved_at)
-            {
-                metadata_db.put(
-                    &mut txn,
-                    &prompt_id_v2,
-                    &PromptMetadata {
-                        id: prompt_id_v2,
-                        title: metadata_v1.title.clone(),
-                        default: metadata_v1.default,
-                        saved_at: metadata_v1.saved_at,
-                    },
-                )?;
-                bodies_db.put(&mut txn, &prompt_id_v2, &body_v1)?;
+            // Only migrate user prompts, not built-in ones
+            if let Some(user_id) = prompt_id.as_user() {
+                // Check if file already exists
+                if file_store.load(&user_id).await.is_ok() {
+                    skipped_count += 1;
+                    continue;
+                }
+
+                // Load body from database
+                if let Ok(Some(body)) = bodies_db.get(&txn, &prompt_id) {
+                    let body: String = body.into();
+                    let title = metadata.title.as_ref().map(|s| s.as_ref());
+
+                    // Save to file
+                    match file_store
+                        .save(
+                            &user_id,
+                            title,
+                            &body,
+                            metadata.default,
+                            RuleType::Static,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            migrated_count += 1;
+                            log::info!("Migrated rule '{}' to file", title.unwrap_or("untitled"));
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to migrate rule '{}': {}",
+                                title.unwrap_or("untitled"),
+                                e
+                            );
+                        }
+                    }
+                }
             }
         }
 
         txn.commit()?;
+        drop(db_env);
+
+        log::info!(
+            "Migration complete: {} rules migrated, {} skipped (already exist)",
+            migrated_count,
+            skipped_count
+        );
+
+        // Move the database directory to .bak after successful migration
+        if migrated_count > 0 || skipped_count > 0 {
+            if let Some(db_dir) = db_path.parent() {
+                let backup_dir = db_dir.with_extension("bak");
+                match std::fs::rename(db_dir, &backup_dir) {
+                    Ok(_) => log::info!("Moved old database directory to backup: {:?}", backup_dir),
+                    Err(e) => log::warn!("Failed to move old database directory to backup: {}", e),
+                }
+            }
+        }
 
         Ok(())
     }
 
-    pub fn load(&self, id: PromptId, cx: &App) -> Task<Result<String>> {
-        let env = self.env.clone();
-        let bodies = self.bodies;
-        cx.background_spawn(async move {
-            let txn = env.read_txn()?;
-            let mut prompt: String = match bodies.get(&txn, &id)? {
-                Some(body) => body.into(),
-                None => {
-                    if let Some(built_in) = id.as_built_in() {
-                        built_in.default_content().into()
-                    } else {
-                        anyhow::bail!("prompt not found")
+    fn setup_watcher(mut self, cx: &mut Context<Self>) -> Self {
+        const WATCH_DURATION: Duration = Duration::from_millis(100);
+        let file_store = self.file_store.clone();
+
+        self._watch_updates = cx.spawn(async move |this, cx| {
+            let (mut events, _) = file_store
+                .fs
+                .watch(file_store.rules_dir(), WATCH_DURATION)
+                .await;
+
+            async move {
+                while events.next().await.is_some() {
+                    log::info!("Rules directory changed, reloading rules");
+
+                    // Reload all rules from files
+                    if let Ok(file_metadata) = Self::load_file_metadata(&file_store).await {
+                        this.update(cx, |this, cx| {
+                            // Update cache with file-based rules
+                            let mut cache = this.metadata_cache.write();
+
+                            // Remove old user rules from cache
+                            cache.metadata.retain(|m| m.id.as_user().is_none());
+
+                            // Add newly loaded file rules
+                            for file_meta in file_metadata {
+                                cache.insert(file_meta);
+                            }
+
+                            cx.emit(PromptsUpdatedEvent);
+                        })
+                        .ok();
                     }
                 }
-            };
-            LineEnding::normalize(&mut prompt);
-            Ok(prompt)
+                anyhow::Ok(())
+            }
+            .await
+            .log_err();
+        });
+
+        self
+    }
+
+    /// Load metadata from all rule files
+    async fn load_file_metadata(file_store: &file_store::FileStore) -> Result<Vec<PromptMetadata>> {
+        let rules = file_store.load_all().await?;
+        Ok(rules.into_iter().map(|rule| rule.to_metadata()).collect())
+    }
+
+    /// Execute all rules that have on_every_message = true and return their combined output
+    pub fn execute_on_every_message_rules(&self, cx: &App) -> Task<Result<String>> {
+        let file_store = self.file_store.clone();
+        cx.background_spawn(async move {
+            let rules = file_store.load_all().await?;
+            let mut outputs = Vec::new();
+
+            for rule in rules {
+                if rule.runs_on_every_message() {
+                    if let Some(config) = &rule.command {
+                        log::info!("Executing on_every_message command rule: {:?}", rule.title);
+                        match crate::command_executor::execute_command(config).await {
+                            Ok(result) => {
+                                if let Some(output) = result.output_for_rule() {
+                                    // Use only command output, ignore static content
+                                    outputs.push(output);
+                                } else if !result.stderr.is_empty() {
+                                    log::warn!(
+                                        "Command rule {:?} failed: {}",
+                                        rule.title,
+                                        result.stderr
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to execute on_every_message rule {:?}: {}",
+                                    rule.title,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(outputs.join("\n\n"))
+        })
+    }
+
+    pub fn load(&self, id: PromptId, cx: &App) -> Task<Result<String>> {
+        let file_store = self.file_store.clone();
+        cx.background_spawn(async move {
+            // Load from file for user prompts
+            if let Some(user_id) = id.as_user() {
+                if let Ok(rule) = file_store.load(&user_id).await {
+                    return Ok(rule.content);
+                }
+                anyhow::bail!("prompt not found")
+            }
+
+            // Load built-in prompts
+            if let Some(built_in) = id.as_built_in() {
+                let mut prompt = built_in.default_content().to_string();
+                LineEnding::normalize(&mut prompt);
+                Ok(prompt)
+            } else {
+                anyhow::bail!("prompt not found")
+            }
         })
     }
 
@@ -388,17 +532,15 @@ impl PromptStore {
     pub fn delete(&self, id: PromptId, cx: &Context<Self>) -> Task<Result<()>> {
         self.metadata_cache.write().remove(id);
 
-        let db_connection = self.env.clone();
-        let bodies = self.bodies;
-        let metadata = self.metadata;
+        let file_store = self.file_store.clone();
 
         let task = cx.background_spawn(async move {
-            let mut txn = db_connection.write_txn()?;
-
-            metadata.delete(&mut txn, &id)?;
-            bodies.delete(&mut txn, &id)?;
-
-            txn.commit()?;
+            // Delete from files for user prompts
+            if let Some(user_id) = id.as_user() {
+                file_store.delete(&user_id).await?;
+            } else {
+                anyhow::bail!("Cannot delete built-in prompts")
+            }
             anyhow::Ok(())
         });
 
@@ -471,6 +613,8 @@ impl PromptStore {
         title: Option<SharedString>,
         default: bool,
         body: Rope,
+        rule_type: RuleType,
+        command: Option<CommandConfig>,
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
         if !id.can_edit() {
@@ -487,30 +631,29 @@ impl PromptStore {
         } else {
             PromptMetadata {
                 id,
-                title,
+                title: title.clone(),
                 default,
                 saved_at: Utc::now(),
+                rule_type: rule_type.clone(),
+                command: command.clone(),
             }
         };
 
-        self.metadata_cache.write().insert(metadata.clone());
+        self.metadata_cache.write().insert(metadata);
 
-        let db_connection = self.env.clone();
-        let bodies = self.bodies;
-        let metadata_db = self.metadata;
+        let file_store = self.file_store.clone();
 
         let task = cx.background_spawn(async move {
-            let mut txn = db_connection.write_txn()?;
-
-            if is_default_content {
-                metadata_db.delete(&mut txn, &id)?;
-                bodies.delete(&mut txn, &id)?;
-            } else {
-                metadata_db.put(&mut txn, &id, &metadata)?;
-                bodies.put(&mut txn, &id, &body)?;
+            // Save user prompts to files
+            if let Some(user_id) = id.as_user() {
+                let title_str = title.as_ref().map(|s| s.as_ref());
+                file_store
+                    .save(&user_id, title_str, &body, default, rule_type, command)
+                    .await?;
+            } else if !is_default_content {
+                // Built-in prompts can't be saved unless they're default
+                anyhow::bail!("Cannot save built-in prompts")
             }
-
-            txn.commit()?;
 
             anyhow::Ok(())
         });
@@ -540,20 +683,37 @@ impl PromptStore {
 
         let prompt_metadata = PromptMetadata {
             id,
-            title,
+            title: title.clone(),
             default,
             saved_at: Utc::now(),
+            rule_type: RuleType::Static,
+            command: None,
         };
 
-        cache.insert(prompt_metadata.clone());
+        cache.insert(prompt_metadata);
 
-        let db_connection = self.env.clone();
-        let metadata = self.metadata;
+        let file_store = self.file_store.clone();
 
         let task = cx.background_spawn(async move {
-            let mut txn = db_connection.write_txn()?;
-            metadata.put(&mut txn, &id, &prompt_metadata)?;
-            txn.commit()?;
+            // Update file for user prompts
+            if let Some(user_id) = id.as_user() {
+                // Load existing content
+                if let Ok(rule) = file_store.load(&user_id).await {
+                    let title_str = title.as_ref().map(|s| s.as_ref());
+                    file_store
+                        .save(
+                            &user_id,
+                            title_str,
+                            &rule.content,
+                            default,
+                            RuleType::Static,
+                            None,
+                        )
+                        .await?;
+                }
+            } else {
+                anyhow::bail!("Cannot update metadata for built-in prompts")
+            }
 
             anyhow::Ok(())
         });
@@ -581,10 +741,14 @@ mod tests {
         cx.executor().allow_parking();
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("prompts-db");
+        let rules_dir = temp_dir.path().join("rules");
+        let fs = cx.read(|cx| <dyn fs::Fs>::global(cx));
 
-        let store = cx.update(|cx| PromptStore::new(db_path, cx)).await.unwrap();
-        let store = cx.new(|_cx| store);
+        let store = cx
+            .update(|cx| PromptStore::new(rules_dir, fs, cx))
+            .await
+            .unwrap();
+        let store = cx.new(|cx| store.setup_watcher(cx));
 
         let commit_message_id = PromptId::BuiltIn(BuiltInPrompt::CommitMessage);
 
@@ -625,6 +789,8 @@ mod tests {
                     Some("Commit message".into()),
                     false,
                     Rope::from(custom_content),
+                    RuleType::Static,
+                    None,
                     cx,
                 )
             })
@@ -655,6 +821,8 @@ mod tests {
                     Some("Commit message".into()),
                     false,
                     Rope::from(BuiltInPrompt::CommitMessage.default_content()),
+                    RuleType::Static,
+                    None,
                     cx,
                 )
             })
@@ -686,85 +854,6 @@ mod tests {
             loaded_after_reset.trim(),
             expected_content_after_reset.trim(),
             "Content should be back to default after saving default content"
-        );
-    }
-
-    /// Test that the prompt store initializes successfully even when the database
-    /// contains records with incompatible/undecodable PromptId keys (e.g., from
-    /// a different branch that used a different serialization format).
-    ///
-    /// This is a regression test for the "fail-open" behavior: we should skip
-    /// bad records rather than failing the entire store initialization.
-    #[gpui::test]
-    async fn test_prompt_store_handles_incompatible_db_records(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let db_path = temp_dir.path().join("prompts-db-with-bad-records");
-        std::fs::create_dir_all(&db_path).unwrap();
-
-        // First, create the DB and write an incompatible record directly.
-        // We simulate a record written by a different branch that used
-        // `{"kind":"CommitMessage"}` instead of `{"kind":"BuiltIn", ...}`.
-        {
-            let db_env = unsafe {
-                heed::EnvOpenOptions::new()
-                    .map_size(1024 * 1024 * 1024)
-                    .max_dbs(4)
-                    .open(&db_path)
-                    .unwrap()
-            };
-
-            let mut txn = db_env.write_txn().unwrap();
-            // Create the metadata.v2 database with raw bytes so we can write
-            // an incompatible key format.
-            let metadata_db: Database<heed::types::Bytes, heed::types::Bytes> = db_env
-                .create_database(&mut txn, Some("metadata.v2"))
-                .unwrap();
-
-            // Write an incompatible PromptId key: `{"kind":"CommitMessage"}`
-            // This is the old/branch format that current code can't decode.
-            let bad_key = br#"{"kind":"CommitMessage"}"#;
-            let dummy_metadata = br#"{"id":{"kind":"CommitMessage"},"title":"Bad Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
-            metadata_db.put(&mut txn, bad_key, dummy_metadata).unwrap();
-
-            // Also write a valid record to ensure we can still read good data.
-            let good_key = br#"{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"}"#;
-            let good_metadata = br#"{"id":{"kind":"User","uuid":"550e8400-e29b-41d4-a716-446655440000"},"title":"Good Record","default":false,"saved_at":"2024-01-01T00:00:00Z"}"#;
-            metadata_db.put(&mut txn, good_key, good_metadata).unwrap();
-
-            txn.commit().unwrap();
-        }
-
-        // Now try to create a PromptStore from this DB.
-        // With fail-open behavior, this should succeed and skip the bad record.
-        // Without fail-open, this would return an error.
-        let store_result = cx.update(|cx| PromptStore::new(db_path, cx)).await;
-
-        assert!(
-            store_result.is_ok(),
-            "PromptStore should initialize successfully even with incompatible DB records. \
-             Got error: {:?}",
-            store_result.err()
-        );
-
-        let store = cx.new(|_cx| store_result.unwrap());
-
-        // Verify the good record was loaded.
-        let good_id = PromptId::User {
-            uuid: UserPromptId("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()),
-        };
-        let metadata = store.read_with(cx, |store, _| store.metadata(good_id));
-        assert!(
-            metadata.is_some(),
-            "Valid records should still be loaded after skipping bad ones"
-        );
-        assert_eq!(
-            metadata
-                .as_ref()
-                .and_then(|m| m.title.as_ref().map(|t| t.as_ref())),
-            Some("Good Record"),
-            "Valid record should have correct title"
         );
     }
 }
