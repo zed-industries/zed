@@ -338,14 +338,15 @@ impl RecentProjects {
 
     pub fn open(
         workspace: &mut Workspace,
-        create_new_window: bool,
+        new_window_by_default: bool,
         window: &mut Window,
         focus_handle: FocusHandle,
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
+            let delegate =
+                RecentProjectsDelegate::new(weak, new_window_by_default, true, focus_handle);
 
             Self::new(delegate, 34., window, cx)
         })
@@ -353,14 +354,14 @@ impl RecentProjects {
 
     pub fn popover(
         workspace: WeakEntity<Workspace>,
-        create_new_window: bool,
+        new_window_by_default: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let delegate =
-                RecentProjectsDelegate::new(workspace, create_new_window, false, focus_handle);
+                RecentProjectsDelegate::new(workspace, new_window_by_default, false, focus_handle);
             let list = Self::new(delegate, 34., window, cx);
             list.picker.focus_handle(cx).focus(window, cx);
             list
@@ -396,7 +397,7 @@ pub struct RecentProjectsDelegate {
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
-    create_new_window: bool,
+    new_window_by_default: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
     has_any_non_local_projects: bool,
@@ -406,7 +407,7 @@ pub struct RecentProjectsDelegate {
 impl RecentProjectsDelegate {
     fn new(
         workspace: WeakEntity<Workspace>,
-        create_new_window: bool,
+        new_window_by_default: bool,
         render_paths: bool,
         focus_handle: FocusHandle,
     ) -> Self {
@@ -415,7 +416,7 @@ impl RecentProjectsDelegate {
             workspaces: Vec::new(),
             selected_match_index: 0,
             matches: Default::default(),
-            create_new_window,
+            new_window_by_default,
             render_paths,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
@@ -439,7 +440,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
-        let (create_window, reuse_window) = if self.create_new_window {
+        let (create_window, reuse_window) = if self.new_window_by_default {
             (
                 window.keystroke_text_for(&menu::Confirm),
                 window.keystroke_text_for(&menu::SecondaryConfirm),
@@ -532,7 +533,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         {
             let (candidate_workspace_id, candidate_workspace_location, candidate_workspace_paths) =
                 &self.workspaces[selected_match.candidate_id];
-            let replace_current_window = if self.create_new_window {
+            let replace_current_window = if self.new_window_by_default {
                 secondary
             } else {
                 !secondary

@@ -553,7 +553,7 @@ impl TitleBar {
         } else {
             "Open Recent Project".to_string()
         };
-        let create_new_window = false;
+        let new_window_by_default = false;
         let focus_handle = workspace
             .upgrade()
             .map(|w| w.read(cx).focus_handle(cx))
@@ -564,7 +564,7 @@ impl TitleBar {
                 Some(
                     recent_projects::RecentProjects::popover(
                         workspace.clone(),
-                        create_new_window,
+                        new_window_by_default,
                         focus_handle.clone(),
                         window,
                         cx,
