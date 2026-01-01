@@ -188,6 +188,7 @@ pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
     pub kind: acp::ToolKind,
+    pub source: ToolSource,
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
@@ -224,6 +225,13 @@ impl ToolCall {
             }
         }
 
+        let tool_source = tool_call
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("tool_source"))
+            .and_then(|v| serde_json::from_value::<ToolSource>(v.clone()).ok())
+            .unwrap_or_else(|| ToolSource::BuiltIn);
+
         let raw_input_markdown = tool_call
             .raw_input
             .as_ref()
@@ -234,6 +242,7 @@ impl ToolCall {
             label: cx
                 .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
             kind: tool_call.kind,
+            source: tool_source,
             content,
             locations: tool_call.locations,
             resolved_locations: Vec::default(),
@@ -424,6 +433,14 @@ impl From<&ResolvedLocation> for AgentLocation {
             position: value.position,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolSource {
+    /// Built-in tool
+    BuiltIn,
+    /// Tool coming from an MCP server
+    Mcp,
 }
 
 #[derive(Debug)]
@@ -1359,6 +1376,7 @@ impl AcpThread {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
                     kind: acp::ToolKind::Fetch,
+                    source: ToolSource::BuiltIn,
                     content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
                         "Tool call not found".into(),
                         &languages,

@@ -5,7 +5,7 @@ use crate::{
     RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
     ThinkingTool, WebSearchTool,
 };
-use acp_thread::{MentionUri, UserMessageId};
+use acp_thread::{MentionUri, ToolSource, UserMessageId};
 use action_log::ActionLog;
 
 use agent_client_protocol as acp;
@@ -756,6 +756,7 @@ impl Thread {
         stream.send_tool_call(
             &tool_use.id,
             &tool_use.name,
+            tool.source(),
             title,
             kind,
             tool_use.input.clone(),
@@ -1589,9 +1590,11 @@ impl Thread {
         let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
+        let mut source = acp_thread::ToolSource::BuiltIn;
         if let Some(tool) = tool.as_ref() {
             title = tool.initial_title(tool_use.input.clone(), cx);
             kind = tool.kind();
+            source = tool.source();
         }
 
         // Ensure the last message ends in the current tool use
@@ -1613,6 +1616,7 @@ impl Thread {
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
+                source,
                 title,
                 kind,
                 tool_use.input.clone(),
@@ -2320,6 +2324,9 @@ pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
+    fn source(&self) -> ToolSource {
+        ToolSource::BuiltIn
+    }
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
@@ -2429,6 +2436,7 @@ impl ThreadEventStream {
         &self,
         id: &LanguageModelToolUseId,
         tool_name: &str,
+        tool_source: ToolSource,
         title: SharedString,
         kind: acp::ToolKind,
         input: serde_json::Value,
@@ -2437,6 +2445,7 @@ impl ThreadEventStream {
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
                 tool_name,
+                tool_source,
                 title.to_string(),
                 kind,
                 input,
@@ -2447,6 +2456,7 @@ impl ThreadEventStream {
     fn initial_tool_call(
         id: &LanguageModelToolUseId,
         tool_name: &str,
+        tool_source: ToolSource,
         title: String,
         kind: acp::ToolKind,
         input: serde_json::Value,
@@ -2454,10 +2464,13 @@ impl ThreadEventStream {
         acp::ToolCall::new(id.to_string(), title)
             .kind(kind)
             .raw_input(input)
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                tool_name.into(),
-            )]))
+            .meta(acp::Meta::from_iter([
+                ("tool_name".into(), tool_name.into()),
+                (
+                    "tool_source".into(),
+                    serde_json::to_value(tool_source).unwrap(),
+                ),
+            ]))
     }
 
     fn update_tool_call_fields(
