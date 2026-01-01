@@ -2,6 +2,7 @@
 
 use std::cmp::{Reverse, min};
 use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 
 use arrayvec::ArrayVec;
@@ -21,10 +22,10 @@ pub struct ExceededGraphLimit;
 /// - `vertices[1]` is the destination vertex (to)
 #[derive(Clone)]
 pub struct SyntaxPath<'a> {
+    pub from: Option<SyntaxVertex<'a>>,
     pub edge: Option<SyntaxEdge>,
-    pub g_cost: u32,
-    pub f_cost: u32,
-    pub vertices: [Option<SyntaxVertex<'a>>; 2],
+    pub into: SyntaxVertex<'a>,
+    pub cost: u32,
 }
 
 /// Result of running Dijkstra's algorithm on two syntax trees.
@@ -32,7 +33,7 @@ pub struct SyntaxRoute<'a>(pub Vec<SyntaxPath<'a>>);
 
 impl<'a> PartialEq for SyntaxPath<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.f_cost == other.f_cost
+        self.cost == other.cost
     }
 }
 
@@ -46,7 +47,7 @@ impl<'a> PartialOrd for SyntaxPath<'a> {
 
 impl<'a> Ord for SyntaxPath<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.f_cost.cmp(&other.f_cost)
+        self.cost.cmp(&other.cost)
     }
 }
 
@@ -156,7 +157,7 @@ impl Hash for SyntaxVertex<'_> {
 /// An edge in the diff graph with an associated cost.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SyntaxEdge {
-    UnchangedNode {
+    Unchanged {
         depth_difference: u32,
         probably_punctuation: bool,
     },
@@ -175,7 +176,7 @@ pub enum SyntaxEdge {
 impl SyntaxEdge {
     pub fn cost(self) -> u32 {
         match self {
-            SyntaxEdge::UnchangedNode {
+            SyntaxEdge::Unchanged {
                 depth_difference,
                 probably_punctuation,
             } => {
@@ -279,7 +280,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
             );
 
             neighbours.push((
-                SyntaxEdge::UnchangedNode {
+                SyntaxEdge::Unchanged {
                     depth_difference,
                     probably_punctuation,
                 },
@@ -394,28 +395,27 @@ fn find_shortest_path<'a>(
 
     heap.push(Reverse(SyntaxPath {
         edge: None,
-        g_cost: 0,
-        f_cost: 0,
-        vertices: [None, Some(start)],
+        into: start,
+        cost: 0,
     }));
 
     let end_vertex = loop {
-        let Reverse(current) = match heap.pop() {
+        let Reverse(path) = match heap.pop() {
             Some(state) => state,
             None => panic!("Ran out of graph nodes before reaching end"),
         };
 
-        let current_vertex = current.vertices[1]
-            .clone()
-            .expect("current vertex should exist");
+        let current_vertex = path.into.clone();
 
-        if let Some(existing) = visited.get(&current_vertex) {
-            if current.g_cost >= existing.g_cost {
-                continue;
+        match visited.entry(current_vertex.clone()) {
+            Entry::Occupied(e) if path.cost >= e.get().cost => continue,
+            Entry::Occupied(mut e) => {
+                e.insert(path.clone());
             }
-        }
-
-        visited.insert(current_vertex.clone(), current.clone());
+            Entry::Vacant(e) => {
+                e.insert(path.clone());
+            }
+        };
 
         if current_vertex.is_end() {
             break current_vertex;
@@ -427,21 +427,18 @@ fn find_shortest_path<'a>(
 
         let neighbours = compute_neighbours(&current_vertex);
         for (edge, next_vertex) in neighbours {
-            let next_cost = current.g_cost + edge.cost();
+            let next_cost = path.cost + edge.cost();
 
             let dominated = visited
                 .get(&next_vertex)
-                .is_some_and(|v| next_cost >= v.g_cost);
+                .is_some_and(|v| next_cost >= v.cost);
 
             if !dominated {
                 heap.push(Reverse(SyntaxPath {
+                    from: Some(current_vertex.clone()),
                     edge: Some(edge),
-                    g_cost: next_cost,
-                    // Dijkstra is a special case of A*
-                    // where h(n) = 0
-                    // TODO: Can we find a good heuristic?
-                    f_cost: next_cost + 0,
-                    vertices: [Some(current_vertex.clone()), Some(next_vertex)],
+                    into: next_vertex,
+                    cost: next_cost,
                 }));
             }
         }
@@ -458,15 +455,15 @@ fn reconstruct_path<'a>(
     let mut current = end;
 
     while let Some(segment) = visited.get(&current) {
-        let Some(predecessor) = segment.vertices[0].clone() else {
+        let Some(predecessor) = segment.from.clone() else {
             break;
         };
 
         route.push(SyntaxPath {
+            from: Some(predecessor.clone()),
             edge: segment.edge,
-            g_cost: segment.g_cost,
-            f_cost: segment.f_cost,
-            vertices: [Some(predecessor.clone()), Some(current)],
+            into: current,
+            cost: segment.cost,
         });
 
         current = predecessor;

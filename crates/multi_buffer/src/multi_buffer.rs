@@ -142,6 +142,8 @@ pub struct MultiBufferDiffHunk {
     pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    /// The syntax diffs for this hunk.
+    pub syntax_diffs: Vec<Range<MultiBufferOffset>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -4004,6 +4006,7 @@ impl MultiBufferSnapshot {
                 excerpt_id: excerpt.id,
                 buffer_range,
                 word_diffs,
+                syntax_diffs: Vec::default(),
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
                 status: DiffHunkStatus {

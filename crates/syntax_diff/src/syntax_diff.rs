@@ -79,7 +79,7 @@ pub fn diff_trees(
     // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
     for path in route.0 {
         let Some(edge) = path.edge else { continue };
-        let Some(vertex) = path.vertices[0].as_ref() else {
+        let Some(vertex) = path.from.as_ref() else {
             continue;
         };
 
