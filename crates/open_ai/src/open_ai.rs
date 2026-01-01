@@ -722,14 +722,14 @@ pub mod responses {
             output_index: usize,
             #[serde(default)]
             sequence_number: Option<u64>,
-            item: ResponseItem,
+            item: ResponseOutputItem,
         },
         #[serde(rename = "response.output_item.done")]
         OutputItemDone {
             output_index: usize,
             #[serde(default)]
             sequence_number: Option<u64>,
-            item: ResponseItem,
+            item: ResponseOutputItem,
         },
         #[serde(rename = "response.content_part.added")]
         ContentPartAdded {
@@ -802,7 +802,7 @@ pub mod responses {
         #[serde(default)]
         pub usage: Option<ResponseUsage>,
         #[serde(default)]
-        pub output: Vec<ResponseItem>,
+        pub output: Vec<ResponseOutputItem>,
     }
 
     #[derive(Deserialize, Debug, Default, Clone)]
@@ -826,25 +826,38 @@ pub mod responses {
     }
 
     #[derive(Deserialize, Debug, Clone)]
-    pub struct ResponseItem {
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum ResponseOutputItem {
+        Message(ResponseOutputMessage),
+        FunctionCall(ResponseFunctionToolCall),
+        #[serde(other)]
+        Unknown,
+    }
+
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct ResponseOutputMessage {
         #[serde(default)]
         pub id: Option<String>,
-        #[serde(rename = "type")]
-        pub item_type: String,
+        #[serde(default)]
+        pub content: Vec<Value>,
         #[serde(default)]
         pub role: Option<String>,
         #[serde(default)]
         pub status: Option<String>,
+    }
+
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct ResponseFunctionToolCall {
         #[serde(default)]
-        pub name: Option<String>,
+        pub id: Option<String>,
+        #[serde(default)]
+        pub arguments: String,
         #[serde(default)]
         pub call_id: Option<String>,
         #[serde(default)]
-        pub arguments: Option<String>,
+        pub name: Option<String>,
         #[serde(default)]
-        pub output: Option<String>,
-        #[serde(default)]
-        pub content: Option<Vec<Value>>,
+        pub status: Option<String>,
     }
 
     pub async fn stream_response(
@@ -927,19 +940,17 @@ pub mod responses {
                                 item: item.clone(),
                             });
 
-                            if item.item_type == "message" {
-                                if let Some(ref content) = item.content {
-                                    for content_item in content {
-                                        if let Some(text) = content_item.get("text") {
-                                            if let Some(text_str) = text.as_str() {
-                                                if let Some(ref item_id) = item.id {
-                                                    all_events.push(StreamEvent::OutputTextDelta {
-                                                        item_id: item_id.clone(),
-                                                        output_index,
-                                                        content_index: None,
-                                                        delta: text_str.to_string(),
-                                                    });
-                                                }
+                            if let ResponseOutputItem::Message(message) = item {
+                                for content_item in &message.content {
+                                    if let Some(text) = content_item.get("text") {
+                                        if let Some(text_str) = text.as_str() {
+                                            if let Some(ref item_id) = message.id {
+                                                all_events.push(StreamEvent::OutputTextDelta {
+                                                    item_id: item_id.clone(),
+                                                    output_index,
+                                                    content_index: None,
+                                                    delta: text_str.to_string(),
+                                                });
                                             }
                                         }
                                     }

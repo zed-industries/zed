@@ -17,9 +17,8 @@ use menu;
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
     responses::{
-        Request as ResponseRequest, ResponseItem as ResponsesItem,
-        ResponseSummary as ResponsesSummary, ResponseUsage as ResponsesUsage,
-        StreamEvent as ResponsesStreamEvent, stream_response,
+        Request as ResponseRequest, ResponseOutputItem, ResponseSummary as ResponsesSummary,
+        ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent, stream_response,
     },
     stream_completion,
 };
@@ -907,30 +906,32 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemAdded { item, .. } => {
                 let mut events = Vec::new();
 
-                match item.item_type.as_str() {
-                    "message" => {
-                        if let Some(id) = item.id {
+                match &item {
+                    ResponseOutputItem::Message(message) => {
+                        if let Some(id) = &message.id {
                             events.push(Ok(LanguageModelCompletionEvent::StartMessage {
-                                message_id: id,
+                                message_id: id.clone(),
                             }));
                         }
                     }
-                    "function_call" => {
-                        if let Some(item_id) = item.id.clone() {
-                            let call_id = item
+                    ResponseOutputItem::FunctionCall(function_call) => {
+                        if let Some(item_id) = function_call.id.clone() {
+                            let call_id = function_call
                                 .call_id
                                 .clone()
-                                .or_else(|| item.id.clone())
+                                .or_else(|| function_call.id.clone())
                                 .unwrap_or_else(|| item_id.clone());
                             let entry = PendingResponseFunctionCall {
                                 call_id,
-                                name: Arc::<str>::from(item.name.unwrap_or_default()),
-                                arguments: item.arguments.unwrap_or_default(),
+                                name: Arc::<str>::from(
+                                    function_call.name.clone().unwrap_or_default(),
+                                ),
+                                arguments: function_call.arguments.clone(),
                             };
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
-                    _ => {}
+                    ResponseOutputItem::Unknown => {}
                 }
                 events
             }
@@ -1062,19 +1063,27 @@ impl OpenAiResponseEventMapper {
 
     fn emit_tool_calls_from_output(
         &mut self,
-        output: &[ResponsesItem],
+        output: &[ResponseOutputItem],
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
         for item in output {
-            if item.item_type == "function_call" {
-                let Some(call_id) = item.call_id.clone().or_else(|| item.id.clone()) else {
-                    log::error!("Function call item missing both call_id and id: {:?}", item);
+            if let ResponseOutputItem::FunctionCall(function_call) = item {
+                let Some(call_id) = function_call
+                    .call_id
+                    .clone()
+                    .or_else(|| function_call.id.clone())
+                else {
+                    log::error!(
+                        "Function call item missing both call_id and id: {:?}",
+                        function_call
+                    );
                     continue;
                 };
-                let name: Arc<str> = Arc::from(item.name.clone().unwrap_or_default());
-                if let Some(arguments) = item.arguments.clone() {
+                let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                let arguments = &function_call.arguments;
+                if !arguments.is_empty() {
                     self.pending_stop_reason = Some(StopReason::ToolUse);
-                    match serde_json::from_str::<serde_json::Value>(&arguments) {
+                    match serde_json::from_str::<serde_json::Value>(arguments) {
                         Ok(input) => {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -1368,8 +1377,8 @@ mod tests {
     use gpui::TestAppContext;
     use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use open_ai::responses::{
-        ResponseItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
-        StreamEvent as ResponsesStreamEvent,
+        ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage, ResponseStatusDetails,
+        ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use pretty_assertions::assert_eq;
 
@@ -1385,32 +1394,23 @@ mod tests {
         })
     }
 
-    fn response_item_message(id: &str) -> ResponseItem {
-        ResponseItem {
+    fn response_item_message(id: &str) -> ResponseOutputItem {
+        ResponseOutputItem::Message(ResponseOutputMessage {
             id: Some(id.to_string()),
-            item_type: "message".to_string(),
             role: Some("assistant".to_string()),
             status: Some("in_progress".to_string()),
-            name: None,
-            call_id: None,
-            arguments: None,
-            output: None,
-            content: Some(vec![]),
-        }
+            content: vec![],
+        })
     }
 
-    fn response_item_function_call(id: &str, args: Option<&str>) -> ResponseItem {
-        ResponseItem {
+    fn response_item_function_call(id: &str, args: Option<&str>) -> ResponseOutputItem {
+        ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
             id: Some(id.to_string()),
-            item_type: "function_call".to_string(),
-            role: None,
             status: Some("in_progress".to_string()),
             name: Some("get_weather".to_string()),
             call_id: Some("call_123".to_string()),
-            arguments: args.map(|s| s.to_string()),
-            output: None,
-            content: None,
-        }
+            arguments: args.map(|s| s.to_string()).unwrap_or_default(),
+        })
     }
 
     #[gpui::test]
