@@ -81,8 +81,8 @@ mod wrap_map;
 pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
-    StickyHeaderExcerpt,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionWrapData, CustomBlockId,
+    EditorMargins, RenderBlock, StickyHeaderExcerpt,
 };
 pub use crease_map::*;
 pub use fold_map::{
@@ -258,38 +258,57 @@ impl DisplayMap {
         }
     }
 
-    fn sync_companion(&self, cx: &mut Context<Self>) {
-        if let Some(companion) = &self.companion {
-            let _ = companion.display_map.update(cx, |companion, cx| {
-                let tab_size = Self::tab_size(&companion.buffer, cx);
-                let buffer_snapshot = companion.buffer.read(cx).snapshot(cx);
-                let edits = companion.buffer_subscription.consume().into_inner();
-                let (snapshot, edits) = companion.inlay_map.sync(buffer_snapshot, edits);
-                let (snapshot, edits) = companion.fold_map.read(snapshot, edits);
-                let (snapshot, edits) = companion.tab_map.sync(snapshot, edits, tab_size);
-                let (snapshot, edits) = companion
-                    .wrap_map
-                    .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-                companion.block_map.read(snapshot, edits);
-            });
+    fn sync_through_wrap(&mut self, cx: &mut Context<Self>) -> CompanionWrapData {
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+
+        let old_snapshot = self.block_map.wrap_snapshot.borrow().clone();
+
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (new_snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+
+        CompanionWrapData {
+            old_snapshot,
+            new_snapshot,
+            edits,
         }
     }
 
     #[instrument(skip_all)]
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
-        let tab_size = Self::tab_size(&self.buffer, cx);
+        let self_wrap_data = self.sync_through_wrap(cx);
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
 
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
-        let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot, edits);
-        let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot, edits, tab_size);
-        let (wrap_snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
-        let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
+        let block_snapshot = self
+            .block_map
+            .read(
+                self_wrap_data.new_snapshot.clone(),
+                self_wrap_data.edits.clone(),
+                companion_wrap_data.as_ref(),
+            )
+            .snapshot;
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
 
         DisplaySnapshot {
             block_snapshot,
@@ -325,13 +344,22 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map
+            .read(snapshot, edits, companion_wrap_data.as_ref());
 
         let inline = creases.iter().filter_map(|crease| {
             if let Crease::Inline {
@@ -346,10 +374,21 @@ impl DisplayMap {
         let (snapshot, edits) = fold_map.fold(inline);
 
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
+        let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+
+        let self_wrap_data = CompanionWrapData {
+            old_snapshot: self.block_map.wrap_snapshot.borrow().clone(),
+            new_snapshot: self_new_wrap_snapshot.clone(),
+            edits: self_new_wrap_edits.clone(),
+        };
+
+        let mut block_map = self.block_map.write(
+            self_new_wrap_snapshot,
+            self_new_wrap_edits,
+            companion_wrap_data.as_ref(),
+        );
         let blocks = creases.into_iter().filter_map(|crease| {
             if let Crease::Block {
                 range,
@@ -387,7 +426,17 @@ impl DisplayMap {
                 }),
         );
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     /// Removes any folds with the given ranges.
@@ -401,21 +450,52 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map
+            .read(snapshot, edits, companion_wrap_data.as_ref());
+
         let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
+        let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.write(snapshot, edits);
 
-        self.sync_companion(cx);
+        let self_wrap_data = CompanionWrapData {
+            old_snapshot: self.block_map.wrap_snapshot.borrow().clone(),
+            new_snapshot: self_new_wrap_snapshot.clone(),
+            edits: self_new_wrap_edits.clone(),
+        };
+
+        self.block_map.write(
+            self_new_wrap_snapshot,
+            self_new_wrap_edits,
+            companion_wrap_data.as_ref(),
+        );
+
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -433,41 +513,85 @@ impl DisplayMap {
             .collect::<Vec<_>>();
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map
+            .read(snapshot, edits, companion_wrap_data.as_ref());
 
         let (snapshot, edits) =
             fold_map.unfold_intersecting(offset_ranges.iter().cloned(), inclusive);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
+        let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+
+        let self_wrap_data = CompanionWrapData {
+            old_snapshot: self.block_map.wrap_snapshot.borrow().clone(),
+            new_snapshot: self_new_wrap_snapshot.clone(),
+            edits: self_new_wrap_edits.clone(),
+        };
+
+        let mut block_map = self.block_map.write(
+            self_new_wrap_snapshot,
+            self_new_wrap_edits,
+            companion_wrap_data.as_ref(),
+        );
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     #[instrument(skip_all)]
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
         block_map.disable_header_for_buffer(buffer_id);
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     #[instrument(skip_all)]
@@ -477,20 +601,22 @@ impl DisplayMap {
         cx: &mut Context<Self>,
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
-        // Sync companion and fold mapped buffers
-        self.sync_companion(cx);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
+        block_map.fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
         if let Some(companion) = &self.companion {
             let their_buffer_ids: Vec<_> = buffer_ids
@@ -498,15 +624,18 @@ impl DisplayMap {
                 .filter_map(|id| companion.our_buffer_to_their_buffer.get(id).copied())
                 .collect();
 
-            if !their_buffer_ids.is_empty() {
-                let _ = companion.display_map.update(cx, |dm, cx| {
-                    let wrap_snapshot = dm.block_map.wrap_snapshot.borrow().clone();
-                    let mut block_map = dm
-                        .block_map
-                        .write(wrap_snapshot, language::Patch::default());
-                    block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
-                });
-            }
+            let _ = companion.display_map.update(cx, |dm, cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    let mut block_map = dm.block_map.write(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                    if !their_buffer_ids.is_empty() {
+                        block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                    }
+                }
+            });
         }
     }
 
@@ -517,20 +646,22 @@ impl DisplayMap {
         cx: &mut Context<Self>,
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
-        // Sync companion and unfold mapped buffers
-        self.sync_companion(cx);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
+        block_map.unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
         if let Some(companion) = &self.companion {
             let their_buffer_ids: Vec<_> = buffer_ids
@@ -538,15 +669,18 @@ impl DisplayMap {
                 .filter_map(|id| companion.our_buffer_to_their_buffer.get(id).copied())
                 .collect();
 
-            if !their_buffer_ids.is_empty() {
-                let _ = companion.display_map.update(cx, |dm, cx| {
-                    let wrap_snapshot = dm.block_map.wrap_snapshot.borrow().clone();
-                    let mut block_map = dm
-                        .block_map
-                        .write(wrap_snapshot, language::Patch::default());
-                    block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
-                });
-            }
+            let _ = companion.display_map.update(cx, |dm, cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    let mut block_map = dm.block_map.write(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                    if !their_buffer_ids.is_empty() {
+                        block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                    }
+                }
+            });
         }
     }
 
@@ -586,38 +720,66 @@ impl DisplayMap {
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Vec<CustomBlockId> {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
         let result = block_map.insert(blocks);
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
 
         result
     }
 
     #[instrument(skip_all)]
     pub fn resize_blocks(&mut self, heights: HashMap<CustomBlockId, u32>, cx: &mut Context<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
         block_map.resize(heights);
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     #[instrument(skip_all)]
@@ -627,19 +789,33 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut Context<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let mut block_map = self.block_map.write(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
         block_map.remove(ids);
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     #[instrument(skip_all)]
@@ -648,19 +824,33 @@ impl DisplayMap {
         block_id: CustomBlockId,
         cx: &mut Context<Self>,
     ) -> Option<DisplayRow> {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let block_map = self.block_map.read(snapshot, edits);
+        let self_wrap_data = self.sync_through_wrap(cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
+        let block_map = self.block_map.read(
+            self_wrap_data.new_snapshot.clone(),
+            self_wrap_data.edits.clone(),
+            companion_wrap_data.as_ref(),
+        );
         let block_row = block_map.row_for_block(block_id)?;
 
-        self.sync_companion(cx);
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
 
         Some(DisplayRow(block_row.0))
     }
@@ -764,23 +954,53 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map
+            .read(snapshot, edits, companion_wrap_data.as_ref());
 
         let (snapshot, edits) = fold_map.update_fold_widths(widths);
         let widths_changed = !edits.is_empty();
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
+        let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
 
-        self.sync_companion(cx);
+        let self_wrap_data = CompanionWrapData {
+            old_snapshot: self.block_map.wrap_snapshot.borrow().clone(),
+            new_snapshot: self_new_wrap_snapshot.clone(),
+            edits: self_new_wrap_edits.clone(),
+        };
+
+        self.block_map.read(
+            self_new_wrap_snapshot,
+            self_new_wrap_edits,
+            companion_wrap_data.as_ref(),
+        );
+
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
 
         widths_changed
     }
@@ -801,24 +1021,54 @@ impl DisplayMap {
         }
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+
+        let companion_wrap_data = self.companion.as_ref().and_then(|companion| {
+            companion
+                .display_map
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+                .ok()
+        });
+
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map
+            .read(snapshot, edits, companion_wrap_data.as_ref());
 
         let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
+        let (self_new_wrap_snapshot, self_new_wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
 
-        self.sync_companion(cx);
+        let self_wrap_data = CompanionWrapData {
+            old_snapshot: self.block_map.wrap_snapshot.borrow().clone(),
+            new_snapshot: self_new_wrap_snapshot.clone(),
+            edits: self_new_wrap_edits.clone(),
+        };
+
+        self.block_map.read(
+            self_new_wrap_snapshot,
+            self_new_wrap_edits,
+            companion_wrap_data.as_ref(),
+        );
+
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |dm, _cx| {
+                if let Some(companion_data) = companion_wrap_data {
+                    dm.block_map.read(
+                        companion_data.new_snapshot,
+                        companion_data.edits,
+                        Some(&self_wrap_data),
+                    );
+                }
+            });
+        }
     }
 
     #[instrument(skip_all)]
