@@ -7273,6 +7273,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Syntax Diff Enabled",
+            description: "Whether to enable syntax-based diff highlighting in the editor. When enabled, changes are detected using the AST structure, providing more precise highlighting of what changed.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).syntax_diff_enabled"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.syntax_diff_enabled.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.syntax_diff_enabled = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
             description: "Preferred debuggers for this language.",
             field: Box::new(

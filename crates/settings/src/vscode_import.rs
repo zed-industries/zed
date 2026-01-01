@@ -494,6 +494,7 @@ impl VsCodeSettings {
                         .collect()
                 }),
             word_diff_enabled: None,
+            syntax_diff_enabled: None,
         }
     }
 

@@ -443,6 +443,13 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub word_diff_enabled: Option<bool>,
+    /// Whether to enable syntax-based diff highlighting in the editor.
+    ///
+    /// When enabled, changes are detected using the AST structure,
+    /// providing more precise highlighting of what changed.
+    ///
+    /// Default: false
+    pub syntax_diff_enabled: Option<bool>,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     ///
     /// Default: false

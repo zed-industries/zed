@@ -1241,6 +1241,13 @@
   //
   // Default: true
   "word_diff_enabled": true,
+  // Whether to enable syntax-based diff highlighting in the editor.
+  //
+  // When enabled, changes are detected using the AST structure,
+  // providing more precise highlighting of what changed.
+  //
+  // Default: false
+  "syntax_diff_enabled": false,
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.

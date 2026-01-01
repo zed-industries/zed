@@ -164,6 +164,13 @@ pub struct LanguageSettings {
     ///
     /// Default: `true`
     pub word_diff_enabled: bool,
+    /// Whether to enable syntax-based diff highlighting in the editor.
+    ///
+    /// When enabled, changes are detected using the AST structure,
+    /// providing more precise highlighting of what changed.
+    ///
+    /// Default: `false`
+    pub syntax_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -612,6 +619,7 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 debuggers: settings.debuggers.unwrap(),
                 word_diff_enabled: settings.word_diff_enabled.unwrap(),
+                syntax_diff_enabled: settings.syntax_diff_enabled.unwrap(),
             }
         }
 
