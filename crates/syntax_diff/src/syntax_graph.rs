@@ -262,9 +262,6 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
     let mut neighbours = ArrayVec::new();
 
     if let (Some(lhs_node), Some(rhs_node)) = (v.lhs.node(), v.rhs.node()) {
-        let lhs_id = v.lhs.id().unwrap();
-        let rhs_id = v.rhs.id().unwrap();
-
         // Both nodes have same structure - unchanged
         if lhs_node.structural_hash == rhs_node.structural_hash {
             let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
@@ -317,7 +314,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
                 && lhs_node.close_delimiter() == rhs_node.close_delimiter()
             {
                 let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-                let parents = v.push_both_delimiters(lhs_id, rhs_id);
+                let parents = v.push_both_delimiters(lhs_node.id, rhs_node.id);
 
                 let (lhs, rhs, parents) =
                     pop_all_parents(v.lhs.first_child(), v.rhs.first_child(), parents);
@@ -338,8 +335,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
             neighbours.push((SyntaxEdge::NovelAtomLHS, SyntaxVertex { lhs, rhs, parents }));
         } else {
             // Enter novel LHS list
-            let lhs_id = v.lhs.id().unwrap();
-            let parents = v.push_lhs_delimiter(lhs_id);
+            let parents = v.push_lhs_delimiter(lhs_node.id);
 
             let (lhs, rhs, parents) = pop_all_parents(v.lhs.first_child(), v.rhs, parents);
             neighbours.push((
@@ -357,8 +353,7 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
             neighbours.push((SyntaxEdge::NovelAtomRHS, SyntaxVertex { lhs, rhs, parents }));
         } else {
             // Enter novel RHS list
-            let rhs_id = v.rhs.id().unwrap();
-            let parents = v.push_rhs_delimiter(rhs_id);
+            let parents = v.push_rhs_delimiter(rhs_node.id);
 
             let (lhs, rhs, parents) = pop_all_parents(v.lhs, v.rhs.first_child(), parents);
             neighbours.push((
@@ -394,6 +389,7 @@ fn find_shortest_path<'a>(
     let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> = FxHashMap::default();
 
     heap.push(Reverse(SyntaxPath {
+        from: None,
         edge: None,
         into: start,
         cost: 0,
