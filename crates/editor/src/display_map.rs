@@ -92,7 +92,9 @@ pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 
 use collections::{HashMap, HashSet};
-use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
+use gpui::{
+    App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle, WeakEntity,
+};
 use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
@@ -145,6 +147,12 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
+pub struct Companion {
+    pub display_map: WeakEntity<DisplayMap>,
+    pub our_buffer_to_their_buffer: HashMap<BufferId, BufferId>,
+    pub their_buffer_to_our_buffer: HashMap<BufferId, BufferId>,
+}
+
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
 ///
@@ -173,6 +181,7 @@ pub struct DisplayMap {
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
+    companion: Option<Companion>,
 }
 
 impl DisplayMap {
@@ -215,6 +224,54 @@ impl DisplayMap {
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
             masked: false,
+            companion: None,
+        }
+    }
+
+    pub fn set_companion(&mut self, display_map: Option<WeakEntity<DisplayMap>>) {
+        self.companion = display_map.map(|dm| Companion {
+            display_map: dm,
+            our_buffer_to_their_buffer: HashMap::default(),
+            their_buffer_to_our_buffer: HashMap::default(),
+        });
+    }
+
+    pub fn add_companion_buffer_mapping(
+        &mut self,
+        our_id: BufferId,
+        their_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(companion) = &mut self.companion {
+            companion
+                .our_buffer_to_their_buffer
+                .insert(our_id, their_id);
+            companion
+                .their_buffer_to_our_buffer
+                .insert(their_id, our_id);
+        }
+
+        // If our buffer is folded, re-call fold_buffers. This is idempotent for us,
+        // but now that the mapping exists, it will sync the fold to the companion.
+        if self.block_map.folded_buffers.contains(&our_id) {
+            self.fold_buffers([our_id], cx);
+        }
+    }
+
+    fn sync_companion(&self, cx: &mut Context<Self>) {
+        if let Some(companion) = &self.companion {
+            let _ = companion.display_map.update(cx, |companion, cx| {
+                let tab_size = Self::tab_size(&companion.buffer, cx);
+                let buffer_snapshot = companion.buffer.read(cx).snapshot(cx);
+                let edits = companion.buffer_subscription.consume().into_inner();
+                let (snapshot, edits) = companion.inlay_map.sync(buffer_snapshot, edits);
+                let (snapshot, edits) = companion.fold_map.read(snapshot, edits);
+                let (snapshot, edits) = companion.tab_map.sync(snapshot, edits, tab_size);
+                let (snapshot, edits) = companion
+                    .wrap_map
+                    .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+                companion.block_map.read(snapshot, edits);
+            });
         }
     }
 
@@ -231,6 +288,8 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
+
+        self.sync_companion(cx);
 
         DisplaySnapshot {
             block_snapshot,
@@ -327,6 +386,8 @@ impl DisplayMap {
                     }
                 }),
         );
+
+        self.sync_companion(cx);
     }
 
     /// Removes any folds with the given ranges.
@@ -353,6 +414,8 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.write(snapshot, edits);
+
+        self.sync_companion(cx);
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -386,6 +449,8 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
+
+        self.sync_companion(cx);
     }
 
     #[instrument(skip_all)]
@@ -400,7 +465,9 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.disable_header_for_buffer(buffer_id)
+        block_map.disable_header_for_buffer(buffer_id);
+
+        self.sync_companion(cx);
     }
 
     #[instrument(skip_all)]
@@ -409,6 +476,7 @@ impl DisplayMap {
         buffer_ids: impl IntoIterator<Item = language::BufferId>,
         cx: &mut Context<Self>,
     ) {
+        let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -419,7 +487,27 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.fold_buffers(buffer_ids, self.buffer.read(cx), cx)
+        block_map.fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+
+        // Sync companion and fold mapped buffers
+        self.sync_companion(cx);
+
+        if let Some(companion) = &self.companion {
+            let their_buffer_ids: Vec<_> = buffer_ids
+                .iter()
+                .filter_map(|id| companion.our_buffer_to_their_buffer.get(id).copied())
+                .collect();
+
+            if !their_buffer_ids.is_empty() {
+                let _ = companion.display_map.update(cx, |dm, cx| {
+                    let wrap_snapshot = dm.block_map.wrap_snapshot.borrow().clone();
+                    let mut block_map = dm
+                        .block_map
+                        .write(wrap_snapshot, language::Patch::default());
+                    block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                });
+            }
+        }
     }
 
     #[instrument(skip_all)]
@@ -428,6 +516,7 @@ impl DisplayMap {
         buffer_ids: impl IntoIterator<Item = language::BufferId>,
         cx: &mut Context<Self>,
     ) {
+        let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -438,7 +527,27 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.unfold_buffers(buffer_ids, self.buffer.read(cx), cx)
+        block_map.unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+
+        // Sync companion and unfold mapped buffers
+        self.sync_companion(cx);
+
+        if let Some(companion) = &self.companion {
+            let their_buffer_ids: Vec<_> = buffer_ids
+                .iter()
+                .filter_map(|id| companion.our_buffer_to_their_buffer.get(id).copied())
+                .collect();
+
+            if !their_buffer_ids.is_empty() {
+                let _ = companion.display_map.update(cx, |dm, cx| {
+                    let wrap_snapshot = dm.block_map.wrap_snapshot.borrow().clone();
+                    let mut block_map = dm
+                        .block_map
+                        .write(wrap_snapshot, language::Patch::default());
+                    block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                });
+            }
+        }
     }
 
     #[instrument(skip_all)]
@@ -487,7 +596,11 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.insert(blocks)
+        let result = block_map.insert(blocks);
+
+        self.sync_companion(cx);
+
+        result
     }
 
     #[instrument(skip_all)]
@@ -503,6 +616,8 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.resize(heights);
+
+        self.sync_companion(cx);
     }
 
     #[instrument(skip_all)]
@@ -523,6 +638,8 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.remove(ids);
+
+        self.sync_companion(cx);
     }
 
     #[instrument(skip_all)]
@@ -542,6 +659,9 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let block_map = self.block_map.read(snapshot, edits);
         let block_row = block_map.row_for_block(block_id)?;
+
+        self.sync_companion(cx);
+
         Some(DisplayRow(block_row.0))
     }
 
@@ -660,6 +780,8 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
+        self.sync_companion(cx);
+
         widths_changed
     }
 
@@ -695,6 +817,8 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+
+        self.sync_companion(cx);
     }
 
     #[instrument(skip_all)]
