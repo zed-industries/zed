@@ -940,21 +940,34 @@ pub mod responses {
                                 item: item.clone(),
                             });
 
-                            if let ResponseOutputItem::Message(message) = item {
-                                for content_item in &message.content {
-                                    if let Some(text) = content_item.get("text") {
-                                        if let Some(text_str) = text.as_str() {
-                                            if let Some(ref item_id) = message.id {
-                                                all_events.push(StreamEvent::OutputTextDelta {
-                                                    item_id: item_id.clone(),
-                                                    output_index,
-                                                    content_index: None,
-                                                    delta: text_str.to_string(),
-                                                });
+                            match item {
+                                ResponseOutputItem::Message(message) => {
+                                    for content_item in &message.content {
+                                        if let Some(text) = content_item.get("text") {
+                                            if let Some(text_str) = text.as_str() {
+                                                if let Some(ref item_id) = message.id {
+                                                    all_events.push(StreamEvent::OutputTextDelta {
+                                                        item_id: item_id.clone(),
+                                                        output_index,
+                                                        content_index: None,
+                                                        delta: text_str.to_string(),
+                                                    });
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                ResponseOutputItem::FunctionCall(function_call) => {
+                                    if let Some(ref item_id) = function_call.id {
+                                        all_events.push(StreamEvent::FunctionCallArgumentsDone {
+                                            item_id: item_id.clone(),
+                                            output_index,
+                                            arguments: function_call.arguments.clone(),
+                                            sequence_number: None,
+                                        });
+                                    }
+                                }
+                                ResponseOutputItem::Unknown => {}
                             }
 
                             all_events.push(StreamEvent::OutputItemDone {
