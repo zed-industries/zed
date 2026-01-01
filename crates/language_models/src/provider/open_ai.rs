@@ -539,7 +539,7 @@ pub fn into_open_ai_response(
         messages,
         tools,
         tool_choice,
-        stop,
+        stop: _,
         temperature,
         thinking_allowed: _,
     } = request;
@@ -563,7 +563,6 @@ pub fn into_open_ai_response(
         model: model_id.into(),
         input: input_items,
         stream,
-        stop_sequences: stop,
         temperature,
         top_p: None,
         max_output_tokens,
@@ -1613,7 +1612,6 @@ mod tests {
                 }
             ],
             "stream": true,
-            "stop_sequences": ["<STOP>"],
             "max_output_tokens": 2048,
             "parallel_tool_calls": true,
             "tool_choice": "required",
