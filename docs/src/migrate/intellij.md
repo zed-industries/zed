@@ -349,7 +349,7 @@ Here are a few useful tweaks:
 
 Now that you're set up, here are some resources to help you get the most out of Zed:
 
-- [Configuring Zed](../configuring-zed.md) — Customize settings, themes, and editor behavior
+- [All Settings](../reference/all-settings.md) — Customize settings, themes, and editor behavior
 - [Key Bindings](../key-bindings.md) — Learn how to customize and extend your keymap
 - [Tasks](../tasks.md) — Set up build and run commands for your projects
 - [AI Features](../ai/overview.md) — Explore Zed's AI capabilities beyond code completion
