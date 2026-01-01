@@ -198,7 +198,7 @@ fn main() {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use image::{DynamicImage, ImageReader, ImageResult, imageops};
         use std::env;
