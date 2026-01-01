@@ -154,12 +154,6 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         // Override with available models from settings
         for model in &OpenAiLanguageModelProvider::settings(cx).available_models {
-            if !model.capabilities.chat_completions {
-                log::debug!(
-                    "Model `{}` does not support /chat/completions; falling back to Responses API",
-                    model.name
-                );
-            }
             models.insert(
                 model.name.clone(),
                 open_ai::Model::Custom {

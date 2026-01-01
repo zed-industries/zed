@@ -144,21 +144,12 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let state = self.state.read(cx);
-        if let Some(model) = state
+        self.state
+            .read(cx)
             .settings
             .available_models
-            .iter()
-            .find(|model| model.capabilities.chat_completions)
-        {
-            Some(self.create_language_model(model.clone()))
-        } else {
-            state
-                .settings
-                .available_models
-                .first()
-                .map(|model| self.create_language_model(model.clone()))
-        }
+            .first()
+            .map(|model| self.create_language_model(model.clone()))
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -166,15 +157,13 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.state.read(cx).settings.available_models.iter().map(|model| {
-            if !model.capabilities.chat_completions {
-                log::debug!(
-                    "Model `{}` does not support /chat/completions; falling back to Responses API",
-                    model.name
-                );
-            }
-            self.create_language_model(model.clone())
-        }).collect()
+        self.state
+            .read(cx)
+            .settings
+            .available_models
+            .iter()
+            .map(|model| self.create_language_model(model.clone()))
+            .collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
