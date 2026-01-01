@@ -9122,7 +9122,9 @@ impl Element for EditorElement {
                             match update.phase {
                                 ScrollAnimationPhase::Intermediate => {
                                     editor.scroll_manager.set_scroll_position_visual(
-                                        update.position, &snapshot, cx,
+                                        update.position,
+                                        &snapshot,
+                                        cx,
                                     );
 
                                     window.request_animation_frame();
