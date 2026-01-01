@@ -70,13 +70,19 @@ pub fn open(
 ) {
     let workspace_handle = workspace.weak_handle();
     let repository = workspace.project().read(cx).active_repository(cx);
-    let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(workspace_handle, repository, style, rems(34.), window, cx)
+        BranchList::new(
+            workspace_handle,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            window,
+            cx,
+        )
     })
 }
 
-pub fn popover(
+pub fn popover_full(
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
@@ -86,7 +92,27 @@ pub fn popover(
         let list = BranchList::new(
             workspace,
             repository,
-            BranchListStyle::Popover,
+            BranchListStyle::PopoverFull,
+            rems(34.),
+            window,
+            cx,
+        );
+        list.focus_handle(cx).focus(window, cx);
+        list
+    })
+}
+
+pub fn popover_simplified(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<BranchList> {
+    cx.new(|cx| {
+        let list = BranchList::new(
+            workspace,
+            repository,
+            BranchListStyle::PopoverSimplified,
             rems(20.),
             window,
             cx,
@@ -99,7 +125,31 @@ pub fn popover(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum BranchListStyle {
     Modal,
-    Popover,
+    PopoverFull,
+    PopoverSimplified,
+}
+
+impl BranchListStyle {
+    fn editor_position(&self) -> PickerEditorPosition {
+        match self {
+            BranchListStyle::Modal | BranchListStyle::PopoverFull => PickerEditorPosition::Start,
+            BranchListStyle::PopoverSimplified => PickerEditorPosition::End,
+        }
+    }
+
+    fn show_footer(&self) -> bool {
+        match self {
+            BranchListStyle::Modal | BranchListStyle::PopoverFull => true,
+            BranchListStyle::PopoverSimplified => false,
+        }
+    }
+
+    fn show_delete_and_actions(&self) -> bool {
+        match self {
+            BranchListStyle::Modal => false,
+            BranchListStyle::PopoverFull | BranchListStyle::PopoverSimplified => true,
+        }
+    }
 }
 
 pub struct BranchList {
@@ -537,12 +587,12 @@ impl PickerDelegate for BranchListDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let focus_handle = self.focus_handle.clone();
+        let editor_position = self.style.editor_position();
 
         v_flex()
-            .when(
-                self.editor_position() == PickerEditorPosition::End,
-                |this| this.child(Divider::horizontal()),
-            )
+            .when(editor_position == PickerEditorPosition::End, |this| {
+                this.child(Divider::horizontal())
+            })
             .child(
                 h_flex()
                     .overflow_hidden()
@@ -550,46 +600,39 @@ impl PickerDelegate for BranchListDelegate {
                     .h_9()
                     .px_2p5()
                     .child(editor.clone())
-                    .when(
-                        self.editor_position() == PickerEditorPosition::End,
-                        |this| {
-                            let tooltip_label = match self.branch_filter {
-                                BranchFilter::All => "Filter Remote Branches",
-                                BranchFilter::Remote => "Show All Branches",
-                            };
+                    .when(editor_position == PickerEditorPosition::End, |this| {
+                        let tooltip_label = match self.branch_filter {
+                            BranchFilter::All => "Filter Remote Branches",
+                            BranchFilter::Remote => "Show All Branches",
+                        };
 
-                            this.gap_1().justify_between().child({
-                                IconButton::new("filter-remotes", IconName::Filter)
-                                    .toggle_state(self.branch_filter == BranchFilter::Remote)
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action_in(
-                                            tooltip_label,
-                                            &branch_picker::FilterRemotes,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_click, window, cx| {
-                                        window.dispatch_action(
-                                            branch_picker::FilterRemotes.boxed_clone(),
-                                            cx,
-                                        );
-                                    })
-                            })
-                        },
-                    ),
+                        this.gap_1().justify_between().child({
+                            IconButton::new("filter-remotes", IconName::Filter)
+                                .toggle_state(self.branch_filter == BranchFilter::Remote)
+                                .tooltip(move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        tooltip_label,
+                                        &branch_picker::FilterRemotes,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                })
+                                .on_click(|_click, window, cx| {
+                                    window.dispatch_action(
+                                        branch_picker::FilterRemotes.boxed_clone(),
+                                        cx,
+                                    );
+                                })
+                        })
+                    }),
             )
-            .when(
-                self.editor_position() == PickerEditorPosition::Start,
-                |this| this.child(Divider::horizontal()),
-            )
+            .when(editor_position == PickerEditorPosition::Start, |this| {
+                this.child(Divider::horizontal())
+            })
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
-        match self.style {
-            BranchListStyle::Modal => PickerEditorPosition::Start,
-            BranchListStyle::Popover => PickerEditorPosition::End,
-        }
+        self.style.editor_position()
     }
 
     fn match_count(&self) -> usize {
@@ -874,6 +917,8 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. }
         );
 
+        let show_delete_and_actions = self.style.show_delete_and_actions();
+
         let deleted_branch_icon = |entry_ix: usize, is_head_branch: bool| {
             IconButton::new(("delete", entry_ix), IconName::Trash)
                 .tooltip(move |_, cx| {
@@ -930,62 +975,71 @@ impl PickerDelegate for BranchListDelegate {
                                         .w_full()
                                         .justify_between()
                                         .gap_1p5()
-                                        .when(self.style == BranchListStyle::Modal, |el| {
-                                            el.child(div().max_w_96().child({
-                                                let message = match entry {
-                                                    Entry::NewUrl { url } => {
-                                                        format!("Based off {url}")
-                                                    }
-                                                    Entry::NewRemoteName { url, .. } => {
-                                                        format!("Based off {url}")
-                                                    }
-                                                    Entry::NewBranch { .. } => {
-                                                        if let Some(current_branch) =
-                                                            self.repo.as_ref().and_then(|repo| {
-                                                                repo.read(cx)
-                                                                    .branch
-                                                                    .as_ref()
-                                                                    .map(|b| b.name())
-                                                            })
-                                                        {
-                                                            format!("Based off {}", current_branch)
-                                                        } else {
-                                                            "Based off the current branch"
-                                                                .to_string()
+                                        .when(
+                                            self.style == BranchListStyle::Modal
+                                                || self.style == BranchListStyle::PopoverFull,
+                                            |el| {
+                                                el.child(div().max_w_96().child({
+                                                    let message = match entry {
+                                                        Entry::NewUrl { url } => {
+                                                            format!("Based off {url}")
                                                         }
-                                                    }
-                                                    Entry::Branch { .. } => {
-                                                        let show_author_name =
-                                                            ProjectSettings::get_global(cx)
-                                                                .git
-                                                                .branch_picker
-                                                                .show_author_name;
+                                                        Entry::NewRemoteName { url, .. } => {
+                                                            format!("Based off {url}")
+                                                        }
+                                                        Entry::NewBranch { .. } => {
+                                                            if let Some(current_branch) = self
+                                                                .repo
+                                                                .as_ref()
+                                                                .and_then(|repo| {
+                                                                    repo.read(cx)
+                                                                        .branch
+                                                                        .as_ref()
+                                                                        .map(|b| b.name())
+                                                                })
+                                                            {
+                                                                format!(
+                                                                    "Based off {}",
+                                                                    current_branch
+                                                                )
+                                                            } else {
+                                                                "Based off the current branch"
+                                                                    .to_string()
+                                                            }
+                                                        }
+                                                        Entry::Branch { .. } => {
+                                                            let show_author_name =
+                                                                ProjectSettings::get_global(cx)
+                                                                    .git
+                                                                    .branch_picker
+                                                                    .show_author_name;
 
-                                                        subject.map_or(
-                                                            "No commits found".into(),
-                                                            |subject| {
-                                                                if show_author_name
-                                                                    && let Some(author) =
-                                                                        author_name
-                                                                {
-                                                                    format!(
-                                                                        "{}  •  {}",
-                                                                        author, subject
-                                                                    )
-                                                                } else {
-                                                                    subject.to_string()
-                                                                }
-                                                            },
-                                                        )
-                                                    }
-                                                };
+                                                            subject.map_or(
+                                                                "No commits found".into(),
+                                                                |subject| {
+                                                                    if show_author_name
+                                                                        && let Some(author) =
+                                                                            author_name
+                                                                    {
+                                                                        format!(
+                                                                            "{}  •  {}",
+                                                                            author, subject
+                                                                        )
+                                                                    } else {
+                                                                        subject.to_string()
+                                                                    }
+                                                                },
+                                                            )
+                                                        }
+                                                    };
 
-                                                Label::new(message)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate()
-                                            }))
-                                        })
+                                                    Label::new(message)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .truncate()
+                                                }))
+                                            },
+                                        )
                                         .when_some(commit_time, |label, commit_time| {
                                             label.child(
                                                 Label::new(commit_time)
@@ -1000,22 +1054,18 @@ impl PickerDelegate for BranchListDelegate {
                                 ),
                         ),
                 )
-                .when(
-                    self.editor_position() == PickerEditorPosition::End && !is_new_items,
-                    |this| {
-                        this.map(|this| {
-                            let is_head_branch =
-                                entry.as_branch().is_some_and(|branch| branch.is_head);
-                            if self.selected_index() == ix {
-                                this.end_slot(deleted_branch_icon(ix, is_head_branch))
-                            } else {
-                                this.end_hover_slot(deleted_branch_icon(ix, is_head_branch))
-                            }
-                        })
-                    },
-                )
+                .when(show_delete_and_actions && !is_new_items, |this| {
+                    this.map(|this| {
+                        let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
+                        if self.selected_index() == ix {
+                            this.end_slot(deleted_branch_icon(ix, is_head_branch))
+                        } else {
+                            this.end_hover_slot(deleted_branch_icon(ix, is_head_branch))
+                        }
+                    })
+                })
                 .when_some(
-                    if self.editor_position() == PickerEditorPosition::End && is_new_items {
+                    if show_delete_and_actions && is_new_items {
                         create_from_default_button
                     } else {
                         None
@@ -1049,9 +1099,10 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if self.editor_position() == PickerEditorPosition::End {
+        if !self.style.show_footer() {
             return None;
         }
+
         let focus_handle = self.focus_handle.clone();
 
         let footer_container = || {
