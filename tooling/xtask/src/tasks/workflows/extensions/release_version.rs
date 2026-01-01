@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Job, Push, UsesJob, Workflow};
+use gh_workflow::{Event, Job, Level, Permissions, Push, UsesJob, Workflow};
 
 use crate::tasks::workflows::{
     extensions::WithAppSecrets,
@@ -14,6 +14,11 @@ pub(crate) fn release_version() -> Workflow {
 
 pub(crate) fn call_release_version() -> NamedJob<UsesJob> {
     let job = Job::default()
+        .permissions(
+            Permissions::default()
+                .contents(Level::Write)
+                .pull_requests(Level::Write),
+        )
         .uses(
             "zed-industries",
             "zed",

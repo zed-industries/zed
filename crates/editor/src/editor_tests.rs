@@ -28729,7 +28729,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             assert_eq!(
                 relative_number,
                 snapshot
-                    .relative_line_delta(display_row, base_display_row)
+                    .relative_line_delta(display_row, base_display_row, false)
                     .unsigned_abs() as u32,
             );
         }
@@ -28739,6 +28739,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             .into_iter()
             .enumerate()
             .map(|(i, row)| (DisplayRow(row), i.abs_diff(wrapped_base_row) as u32))
+            .filter(|(row, _)| *row != base_display_row)
             .collect_vec();
         let actual_relative_numbers = snapshot
             .calculate_relative_line_numbers(
@@ -28755,7 +28756,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
             assert_eq!(
                 relative_number,
                 snapshot
-                    .relative_wrapped_line_delta(display_row, base_display_row)
+                    .relative_line_delta(display_row, base_display_row, true)
                     .unsigned_abs() as u32,
             );
         }
@@ -29982,11 +29983,14 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
             .map(|wt| wt.read(cx).id())
             .expect("should have a worktree")
     });
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
 
     let trusted_worktrees =
         cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
 
-    let can_trust = trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
+    let can_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
     assert!(!can_trust, "worktree should be restricted initially");
 
     let buffer_before_approval = project
@@ -30032,8 +30036,8 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
 
     trusted_worktrees.update(cx, |store, cx| {
         store.trust(
+            &worktree_store,
             std::collections::HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-            None,
             cx,
         );
     });
@@ -30060,8 +30064,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
         "inlay hints should be queried after trust approval"
     );
 
-    let can_trust_after =
-        trusted_worktrees.update(cx, |store, cx| store.can_trust(worktree_id, cx));
+    let can_trust_after = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust(&worktree_store, worktree_id, cx)
+    });
     assert!(can_trust_after, "worktree should be trusted after trust()");
 }
 

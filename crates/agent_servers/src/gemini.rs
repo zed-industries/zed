@@ -4,9 +4,10 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
-use gpui::{App, SharedString, Task};
+use gpui::{App, AppContext as _, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
-use project::agent_server_store::GEMINI_NAME;
+use project::agent_server_store::{AllAgentServersSettings, GEMINI_NAME};
+use settings::SettingsStore;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -33,6 +34,14 @@ impl AgentServer for Gemini {
         let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .gemini
+                .as_ref()
+                .map(|s| s.default_config_options.clone())
+                .unwrap_or_default()
+        });
 
         cx.spawn(async move |cx| {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
@@ -65,6 +74,7 @@ impl AgentServer for Gemini {
                 root_dir.as_ref(),
                 default_mode,
                 default_model,
+                default_config_options,
                 is_remote,
                 cx,
             )

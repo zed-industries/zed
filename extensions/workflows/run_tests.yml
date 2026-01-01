@@ -10,6 +10,8 @@ on:
     - main
 jobs:
   call_extension_tests:
+    permissions:
+      contents: read
     uses: zed-industries/zed/.github/workflows/extension_tests.yml@main
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}pr
