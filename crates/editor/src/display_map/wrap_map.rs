@@ -1119,7 +1119,6 @@ impl Iterator for WrapRows<'_> {
             RowInfo {
                 buffer_id: None,
                 buffer_row: None,
-                base_text_row: None,
                 multibuffer_row: None,
                 diff_status,
                 expand_info: None,

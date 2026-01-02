@@ -34,7 +34,7 @@ impl StdioTransport {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut command =
-            builder.build_command(Some(binary.executable.display().to_string()), &binary.args);
+            builder.build_smol_command(Some(binary.executable.display().to_string()), &binary.args);
 
         command
             .envs(binary.env.unwrap_or_default())
