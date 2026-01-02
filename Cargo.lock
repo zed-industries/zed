@@ -18249,6 +18249,7 @@ dependencies = [
  "serde_json",
  "settings",
  "settings_ui",
+ "strum 0.27.2",
  "task",
  "text",
  "theme",
