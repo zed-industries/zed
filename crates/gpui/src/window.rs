@@ -3824,7 +3824,7 @@ impl Window {
                     })
                 }
                 FileDropEvent::Exited => {
-                    cx.active_drag.take();
+                    cx.stop_active_drag(self);
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
