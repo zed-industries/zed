@@ -349,7 +349,7 @@ impl MacTextSystemState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
-        Ok(font
+        let mut bounds: Bounds<DevicePixels> = font
             .raster_bounds(
                 params.glyph_id.0,
                 params.font_size.into(),
@@ -357,7 +357,21 @@ impl MacTextSystemState {
                 HintingOptions::None,
                 font_kit::canvas::RasterizationOptions::GrayscaleAa,
             )?
-            .into())
+            .into();
+
+        // Add padding to prevent glyph clipping, especially for numbers and characters
+        // with descenders or tall ascenders. This ensures the full glyph is rendered.
+        // Use a percentage-based padding that scales with font size (8% of font size).
+        let padding_ratio = 0.08; // 8% of font size
+        let padding_pixels = (params.font_size.0 * params.scale_factor * padding_ratio).ceil() as i32;
+        let padding = DevicePixels(padding_pixels.max(2)); // Minimum 2 pixels
+
+        bounds.origin.x -= padding;
+        bounds.origin.y -= padding;
+        bounds.size.width += DevicePixels(padding.0 * 2);
+        bounds.size.height += DevicePixels(padding.0 * 2);
+
+        Ok(bounds)
     }
 
     fn rasterize_glyph(
