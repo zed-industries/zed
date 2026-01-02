@@ -9,7 +9,7 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
-mod manifest_tree;
+pub mod manifest_tree;
 pub mod prettier_store;
 mod project_search;
 pub mod project_settings;
@@ -313,6 +313,8 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Entity<Buffer>),
+    EntryOpened(ProjectPath, ProjectEntryId),
+    EntryClosed(ProjectPath, ProjectEntryId),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
@@ -4441,6 +4443,26 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
         });
+    }
+
+    pub fn set_open_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
+        if let Some((project_path, entry_id)) = entry.and_then(|project_path| {
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
+            Some((project_path, entry.id))
+        }) {
+            cx.emit(Event::EntryOpened(project_path, entry_id));
+        }
+    }
+
+    pub fn set_closed_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
+        if let Some((project_path, entry_id)) = entry.and_then(|project_path| {
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
+            Some((project_path, entry.id))
+        }) {
+            cx.emit(Event::EntryClosed(project_path, entry_id));
+        }
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {

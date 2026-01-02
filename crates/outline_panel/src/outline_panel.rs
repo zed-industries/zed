@@ -2226,7 +2226,7 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id));
         let color = entry_label_color(is_active);
         let icon = if has_outlines {
-            FileIcons::get_chevron_icon(is_expanded, cx)
+            FileIcons::get_chevron_icon(is_expanded, false, cx)
                 .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
         } else {
             None
@@ -2311,7 +2311,7 @@ impl OutlinePanel {
         ));
 
         let icon = if has_children {
-            FileIcons::get_chevron_icon(is_expanded, cx)
+            FileIcons::get_chevron_icon(is_expanded, false, cx)
                 .map(|icon_path| {
                     Icon::from_path(icon_path)
                         .color(entry_label_color(is_active))
@@ -2386,9 +2386,14 @@ impl OutlinePanel {
                     is_active,
                 );
                 let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, directory.entry.path.as_std_path(), cx)
+                    FileIcons::get_folder_icon(
+                        is_expanded,
+                        false,
+                        directory.entry.path.as_std_path(),
+                        cx,
+                    )
                 } else {
-                    FileIcons::get_chevron_icon(is_expanded, cx)
+                    FileIcons::get_chevron_icon(is_expanded, false, cx)
                 }
                 .map(Icon::from_path)
                 .map(|icon| icon.color(color).into_any_element());
@@ -2483,9 +2488,9 @@ impl OutlinePanel {
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
-                FileIcons::get_folder_icon(is_expanded, &Path::new(&name), cx)
+                FileIcons::get_folder_icon(is_expanded, false, &Path::new(&name), cx)
             } else {
-                FileIcons::get_chevron_icon(is_expanded, cx)
+                FileIcons::get_chevron_icon(is_expanded, false, cx)
             }
             .map(Icon::from_path)
             .map(|icon| icon.color(color).into_any_element());

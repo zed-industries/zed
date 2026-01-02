@@ -13,7 +13,7 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Subscription};
 use language::{ManifestDelegate, ManifestName, ManifestQuery};
 pub use manifest_store::ManifestProvidersStore;
-use path_trie::{LabelPresence, RootPathTrie, TriePath};
+pub use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
 use util::rel_path::RelPath;
 use worktree::{Event as WorktreeEvent, Snapshot, Worktree};

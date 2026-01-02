@@ -13,7 +13,8 @@ use util::rel_path::RelPath;
 /// A path is unexplored when the closest ancestor of a path is not the path itself; that means that we have not yet ran the scan on that path.
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
-pub(super) struct RootPathTrie<Label> {
+#[derive(Clone)]
+pub struct RootPathTrie<Label> {
     worktree_relative_path: Arc<RelPath>,
     labels: BTreeMap<Label, LabelPresence>,
     children: BTreeMap<Arc<str>, RootPathTrie<Label>>,
@@ -32,22 +33,26 @@ pub(super) struct RootPathTrie<Label> {
 /// Storing absent nodes allows us to recognize which paths have already been scanned for a project root unsuccessfully. This way we don't need to run
 /// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub(super) enum LabelPresence {
+pub enum LabelPresence {
     KnownAbsent,
     Present,
 }
 
 impl<Label: Ord + Clone> RootPathTrie<Label> {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self::new_with_key(Arc::from(RelPath::empty()))
     }
 
-    fn new_with_key(worktree_relative_path: Arc<RelPath>) -> Self {
+    pub fn new_with_key(worktree_relative_path: Arc<RelPath>) -> Self {
         RootPathTrie {
             worktree_relative_path,
             labels: Default::default(),
             children: Default::default(),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.children.len()
     }
 
     // Internal implementation of inner that allows one to visit descendants of insertion point for a node.
@@ -74,7 +79,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         current
     }
 
-    pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
+    pub fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
         self.insert_inner(path, value, presence);
     }
 
@@ -103,7 +108,15 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         }
     }
 
-    pub(super) fn remove(&mut self, path: &TriePath) {
+    pub fn get(&self, path: &TriePath) -> Option<&BTreeMap<Label, LabelPresence>> {
+        let mut current = self;
+        for key in path.0.iter() {
+            current = current.children.get(key)?
+        }
+        Some(&current.labels)
+    }
+
+    pub fn remove(&mut self, path: &TriePath) {
         let mut current = self;
         for path in path.0.iter().take(path.0.len().saturating_sub(1)) {
             current = match current.children.get_mut(path) {
@@ -115,14 +128,42 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
             current.children.remove(final_entry_name);
         }
     }
+
+    // Remove path and resulting childless ancestors
+    pub fn prune(&mut self, path: &TriePath) {
+        let mut current = &self.children;
+        let mut prune = 0;
+        // Find nearest ancestor having multiple children
+        for (i, key) in path.0.iter().enumerate() {
+            if current.len() > 1 {
+                prune = i;
+            }
+            current = match current.get(key) {
+                Some(child) => &child.children,
+                None => return,
+            };
+        }
+        // Prune nearest ancestor having multiple children
+        let mut ancestor = self;
+        for (i, key) in path.0.iter().enumerate() {
+            if i == prune {
+                ancestor.children.remove(key);
+                return;
+            }
+            ancestor = match ancestor.children.get_mut(key) {
+                Some(child) => child,
+                None => return,
+            };
+        }
+    }
 }
 
 /// [TriePath] is a [Path] preprocessed for amortizing the cost of doing multiple lookups in distinct [RootPathTrie]s.
 #[derive(Clone)]
-pub(super) struct TriePath(Arc<[Arc<str>]>);
+pub struct TriePath(Arc<[Arc<str>]>);
 
 impl TriePath {
-    fn new(value: &RelPath) -> Self {
+    pub fn new(value: &RelPath) -> Self {
         TriePath(
             value
                 .components()

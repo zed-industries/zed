@@ -311,6 +311,7 @@ impl ThemeRegistry {
                         DirectoryIcons {
                             collapsed: value.collapsed.map(resolve_icon_path),
                             expanded: value.expanded.map(resolve_icon_path),
+                            pinned: value.pinned.map(resolve_icon_path),
                         },
                     )
                 },
@@ -326,11 +327,13 @@ impl ThemeRegistry {
                 directory_icons: DirectoryIcons {
                     collapsed: icon_theme.directory_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.directory_icons.expanded.map(resolve_icon_path),
+                    pinned: icon_theme.directory_icons.pinned.map(resolve_icon_path),
                 },
                 named_directory_icons,
                 chevron_icons: ChevronIcons {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),
+                    pinned: icon_theme.chevron_icons.pinned.map(resolve_icon_path),
                 },
                 file_stems,
                 file_suffixes,
