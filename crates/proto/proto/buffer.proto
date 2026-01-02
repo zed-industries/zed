@@ -311,5 +311,20 @@ message FindSearchCandidates {
 }
 
 message FindSearchCandidatesResponse {
-    repeated uint64 buffer_ids = 1;
+  uint64 handle = 1;
+}
+
+message FindSearchCandidatesDone {}
+
+message FindSearchCandidatesMatches {
+  repeated uint64 buffer_ids = 1;
+}
+message FindSearchCandidatesChunk {
+  uint64 project_id = 1;
+  uint64 handle = 2;
+
+  oneof variant {
+    FindSearchCandidatesMatches matches = 3;
+    FindSearchCandidatesDone done = 4;
+  }
 }
