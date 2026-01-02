@@ -188,6 +188,18 @@ impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for Anchor {
     }
 }
 
+impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for usize {
+    fn cmp(&self, cursor_location: &DiffHunkSummary, _cx: &text::BufferSnapshot) -> Ordering {
+        if *self < cursor_location.diff_base_byte_range.start {
+            Ordering::Less
+        } else if *self > cursor_location.diff_base_byte_range.end {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
 impl std::fmt::Debug for BufferDiffInner<language::BufferSnapshot> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
@@ -386,6 +398,60 @@ impl BufferDiffSnapshot {
                 .to_point(self.base_text())
         } else {
             self.base_text().max_point()
+        };
+        unclipped_point.min(max_point).row
+    }
+
+    pub fn base_text_row_to_row(
+        &self,
+        row: u32,
+        bias: Bias,
+        buffer: &text::BufferSnapshot,
+    ) -> BufferRow {
+        let target = self.base_text().point_to_offset(Point::new(row, 0));
+        let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
+        cursor.seek(&target, Bias::Left);
+        if cursor
+            .item()
+            .is_none_or(|hunk| hunk.diff_base_byte_range.start > target)
+        {
+            cursor.prev();
+        }
+
+        let unclipped_point = if let Some(hunk) = cursor.item()
+            && hunk.diff_base_byte_range.start <= target
+        {
+            let hunk_buffer_end = cursor.end().buffer_range.end;
+            let unclipped_point = if target >= cursor.end().diff_base_byte_range.end {
+                let mut unclipped_point = hunk_buffer_end.to_point(buffer);
+                unclipped_point += Point::new(row, 0)
+                    - cursor
+                        .end()
+                        .diff_base_byte_range
+                        .end
+                        .to_point(self.base_text());
+                unclipped_point
+            } else if bias == Bias::Right {
+                hunk_buffer_end.to_point(buffer)
+            } else {
+                hunk.buffer_range.start.to_point(buffer)
+            };
+            cursor.next();
+            unclipped_point
+        } else {
+            debug_assert!(
+                self.inner
+                    .hunks
+                    .first()
+                    .is_none_or(|first_hunk| { target <= first_hunk.diff_base_byte_range.start })
+            );
+            Point::new(row, 0)
+        };
+
+        let max_point = if let Some(next_hunk) = cursor.item() {
+            next_hunk.buffer_range.start.to_point(buffer)
+        } else {
+            buffer.max_point()
         };
         unclipped_point.min(max_point).row
     }
@@ -2488,7 +2554,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_row_to_base_text_row(cx: &mut TestAppContext) {
+    async fn test_row_translation(cx: &mut TestAppContext) {
         let base_text = "
             zero
             one
@@ -2521,11 +2587,13 @@ mod tests {
         //   five
         // - six
         //   seven
-        // + eight
+        // - eight
 
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let buffer_snapshot = buffer.snapshot();
-        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
+        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text.clone(), cx);
+
+        // Test row_to_base_text_row
         let expected_results = [
             // main buffer row, base text row (right bias), base text row (left bias)
             (0, 0, 0),
@@ -2540,12 +2608,38 @@ mod tests {
             assert_eq!(
                 diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
                 expected_right,
-                "{buffer_row}"
+                "row_to_base_text_row buffer_row={buffer_row}"
             );
             assert_eq!(
                 diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
                 expected_left,
-                "{buffer_row}"
+                "row_to_base_text_row buffer_row={buffer_row}"
+            );
+        }
+
+        // Test base_text_row_to_row (the inverse direction)
+        let expected_results = [
+            // base text row, buffer row (right bias), buffer row (left bias)
+            (0, 0, 0),
+            (1, 2, 1),
+            (2, 2, 2),
+            (3, 4, 3),
+            (4, 4, 3),
+            (5, 4, 4),
+            (6, 5, 5),
+            (7, 5, 5),
+            (8, 6, 6),
+        ];
+        for (base_text_row, expected_right, expected_left) in expected_results {
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Right, &buffer_snapshot),
+                expected_right,
+                "base_text_row_to_row base_text_row={base_text_row}"
+            );
+            assert_eq!(
+                diff.base_text_row_to_row(base_text_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "base_text_row_to_row base_text_row={base_text_row}"
             );
         }
     }

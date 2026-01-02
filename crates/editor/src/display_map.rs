@@ -90,6 +90,7 @@ pub use fold_map::{
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
+pub use wrap_map::WrapPoint;
 
 use collections::{HashMap, HashSet};
 use gpui::{
@@ -97,7 +98,7 @@ use gpui::{
 };
 use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
@@ -126,7 +127,7 @@ use block_map::{BlockRow, BlockSnapshot};
 use fold_map::FoldSnapshot;
 use inlay_map::InlaySnapshot;
 use tab_map::TabSnapshot;
-use wrap_map::{WrapMap, WrapSnapshot};
+use wrap_map::{WrapMap, WrapRow, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -147,10 +148,13 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
-pub struct Companion {
-    pub display_map: WeakEntity<DisplayMap>,
-    pub our_buffer_to_their_buffer: HashMap<BufferId, BufferId>,
-    pub their_buffer_to_our_buffer: HashMap<BufferId, BufferId>,
+pub(crate) struct Companion {
+    pub(crate) display_map: WeakEntity<DisplayMap>,
+    pub(crate) our_buffer_to_their_buffer: HashMap<BufferId, BufferId>,
+    pub(crate) their_excerpt_to_our_excerpt: HashMap<ExcerptId, ExcerptId>,
+    // companion, my snapshot, their snapshot, their row, bias -> my row
+    pub(crate) convert_wrap_row:
+        fn(&Companion, &WrapSnapshot, &WrapSnapshot, WrapRow, Bias) -> WrapRow,
 }
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -228,11 +232,18 @@ impl DisplayMap {
         }
     }
 
-    pub fn set_companion(&mut self, display_map: Option<WeakEntity<DisplayMap>>) {
-        self.companion = display_map.map(|dm| Companion {
+    pub fn set_companion(
+        &mut self,
+        companion: Option<(
+            WeakEntity<DisplayMap>,
+            fn(&Companion, &WrapSnapshot, &WrapSnapshot, WrapRow, Bias) -> WrapRow,
+        )>,
+    ) {
+        self.companion = companion.map(|(dm, align_wrap_row)| Companion {
             display_map: dm,
             our_buffer_to_their_buffer: HashMap::default(),
-            their_buffer_to_our_buffer: HashMap::default(),
+            their_excerpt_to_our_excerpt: HashMap::default(),
+            convert_wrap_row: align_wrap_row,
         });
     }
 
@@ -246,15 +257,20 @@ impl DisplayMap {
             companion
                 .our_buffer_to_their_buffer
                 .insert(our_id, their_id);
-            companion
-                .their_buffer_to_our_buffer
-                .insert(their_id, our_id);
         }
 
         // If our buffer is folded, re-call fold_buffers. This is idempotent for us,
         // but now that the mapping exists, it will sync the fold to the companion.
         if self.block_map.folded_buffers.contains(&our_id) {
             self.fold_buffers([our_id], cx);
+        }
+    }
+
+    pub fn add_companion_excerpt_mapping(&mut self, our_id: ExcerptId, their_id: ExcerptId) {
+        if let Some(companion) = &mut self.companion {
+            companion
+                .their_excerpt_to_our_excerpt
+                .insert(their_id, our_id);
         }
     }
 
