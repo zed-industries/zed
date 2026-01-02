@@ -276,7 +276,7 @@ impl LspAdapter for JsonLspAdapter {
         })?;
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| replace_absolute_path(delegate, s.settings.clone()))
         })?;
 
         if let Some(override_options) = project_options {
@@ -297,6 +297,36 @@ impl LspAdapter for JsonLspAdapter {
 
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
+    }
+}
+
+fn replace_absolute_path(
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    settings: Option<Value>,
+) -> Option<Value> {
+    match settings {
+        Some(Value::Object(mut map)) => match map.get_mut("json") {
+            Some(Value::Object(json_map)) => {
+                if let Some(Value::Array(schemas)) = json_map.get_mut("schemas") {
+                    for schema in schemas.iter_mut() {
+                        if let Value::Object(schema_map) = schema {
+                            if let Some(Value::String(url)) = schema_map.get_mut("url") {
+                                if !(url.starts_with(".") && url.starts_with("/")) {
+                                    continue;
+                                }
+                                *url = delegate
+                                    .resolve_executable_path((&url).into())
+                                    .to_string_lossy()
+                                    .into_owned();
+                            }
+                        }
+                    }
+                }
+                Some(Value::Object(map))
+            }
+            _ => Some(Value::Object(map)),
+        },
+        other => other,
     }
 }
 
