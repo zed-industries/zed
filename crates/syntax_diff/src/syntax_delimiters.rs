@@ -1,15 +1,3 @@
-//! Persistent stack for tracking delimiter entries during diff graph traversal.
-//!
-//! When computing a syntax diff, we traverse both LHS and RHS trees simultaneously.
-//! As we enter delimiters (brackets, parens, braces), we need to track them so we
-//! know where to return when exiting. This module provides an efficient persistent
-//! stack implementation for this purpose.
-//!
-//! The key insight is that during Dijkstra's algorithm, many graph vertices share
-//! common delimiter history. Instead of cloning the entire stack for each vertex,
-//! we store all entries in a shared tree structure where each node points to its
-//! parent. A "stack" is then just a pointer to a node in this tree.
-
 use std::cell::RefCell;
 
 use crate::SyntaxId;
