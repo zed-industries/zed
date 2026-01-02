@@ -9,9 +9,9 @@ use serde::Deserialize;
 use settings::DevContainerConnection;
 use smol::fs;
 use ui::{
-    App, Color, Context, Headline, HeadlineSize, Icon, IconName, InteractiveElement, IntoElement,
-    Label, ListItem, ListSeparator, ModalHeader, Navigable, NavigableEntry, ParentElement, Render,
-    Styled, StyledExt, Toggleable, Window, div, rems,
+    AnyElement, App, Color, Context, Headline, HeadlineSize, Icon, IconName, InteractiveElement,
+    IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable, NavigableEntry,
+    ParentElement, Render, Styled, StyledExt, Toggleable, Window, div, rems,
 };
 use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
@@ -295,108 +295,277 @@ pub fn init(cx: &mut App) {
     });
 }
 
-struct DevContainerModal {
+#[derive(Debug, Clone, Copy)]
+pub enum DevContainerState {
+    Initial,
+    Activated,
+}
+
+pub enum DevContainerMessage {
+    SingleMessage,
+}
+
+pub struct DevContainerModal {
     focus_handle: FocusHandle,
     search_navigable_entry: NavigableEntry,
     other_navigable_entry: NavigableEntry,
+    state: DevContainerState,
 }
 
 impl DevContainerModal {
-    fn new(window: &mut Window, cx: &mut App) -> Self {
-        let search_navigable_entry = NavigableEntry::focusable(cx);
-        let other_navigable_entry = NavigableEntry::focusable(cx);
-        let focus_handle = cx.focus_handle();
+    pub fn new(_window: &mut Window, cx: &mut App) -> Self {
         DevContainerModal {
-            focus_handle,
-            search_navigable_entry,
-            other_navigable_entry,
+            state: DevContainerState::Initial,
+            focus_handle: cx.focus_handle(),
+            search_navigable_entry: NavigableEntry::focusable(cx),
+            other_navigable_entry: NavigableEntry::focusable(cx),
         }
+    }
+}
+
+impl ElmLikeModalV2 for DevContainerModal {
+    type State = DevContainerState;
+    type Message = DevContainerMessage;
+
+    fn state_for_message(&self, message: &Self::Message) -> Self::State {
+        todo!()
+    }
+
+    fn state(&self) -> Self::State {
+        self.state
+    }
+
+    fn render_for_state(
+        &self,
+        state: &Self::State,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match state {
+            DevContainerState::Initial => {
+                let mut view = Navigable::new(
+                    div()
+                        .child(div().track_focus(&self.focus_handle).child(
+                            ModalHeader::new().child(
+                                Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                            ),
+                        ))
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .track_focus(&self.search_navigable_entry.focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    println!("action on search containers");
+                                }))
+                                .child(
+                                    ListItem::new("li-search-containers")
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                        .toggle_state(
+                                            self.search_navigable_entry
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .child(Label::new("Search for dev containers in registry")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .track_focus(&self.other_navigable_entry.focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    println!("action on other containers");
+                                }))
+                                .child(
+                                    ListItem::new("li-search-containers")
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                        .toggle_state(
+                                            self.other_navigable_entry
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .child(Label::new("Do another thing")),
+                                ),
+                        )
+                        .into_any_element(),
+                );
+                view = view.entry(self.search_navigable_entry.clone());
+                view = view.entry(self.other_navigable_entry.clone());
+                view.render(window, cx).into_any_element()
+            }
+            DevContainerState::Activated => div().into_any_element(),
+        }
+    }
+}
+impl EventEmitter<DismissEvent> for DevContainerModal {}
+impl Focusable for DevContainerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+impl ModalView for DevContainerModal {}
+
+impl Render for DevContainerModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_inner(window, cx)
+    }
+}
+
+pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
+    type State;
+    type Message;
+
+    fn state_for_message(&self, message: &Self::Message) -> Self::State;
+
+    fn state(&self) -> Self::State;
+
+    fn render_for_state(
+        &self,
+        state: &Self::State,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement;
+
+    fn accept_message(&mut self, message: Self::Message, cx: &mut Context<Self>) {
+        // self.state = self.state_for_message(&message);
+        cx.notify();
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
-}
 
-impl ModalView for DevContainerModal {}
-impl EventEmitter<DismissEvent> for DevContainerModal {}
-impl Focusable for DevContainerModal {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Render for DevContainerModal {
-    fn render(
-        &mut self,
-        window: &mut ui::Window,
-        cx: &mut ui::Context<Self>,
-    ) -> impl ui::IntoElement {
-        let mut view =
-            Navigable::new(
-                div()
-                    .child(div().track_focus(&self.focus_handle).child(
-                        ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
-                        ),
-                    ))
-                    .child(ListSeparator)
-                    .child(
-                        div()
-                            .track_focus(&self.search_navigable_entry.focus_handle)
-                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                println!("action on search containers");
-                            }))
-                            .child(
-                                ListItem::new("li-search-containers")
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                    .toggle_state(
-                                        self.search_navigable_entry
-                                            .focus_handle
-                                            .contains_focused(window, cx),
-                                    )
-                                    .child(Label::new("Search for dev containers in registry")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .track_focus(&self.other_navigable_entry.focus_handle)
-                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                println!("action on other containers");
-                            }))
-                            .child(
-                                ListItem::new("li-search-containers")
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                    .toggle_state(
-                                        self.other_navigable_entry
-                                            .focus_handle
-                                            .contains_focused(window, cx),
-                                    )
-                                    .child(Label::new("Do another thing")),
-                            ),
-                    )
-                    .into_any_element(),
-            );
-        view = view.entry(self.search_navigable_entry.clone());
-        view = view.entry(self.other_navigable_entry.clone());
-
-        // // This is an interesting edge. Can't focus in render, or you'll just override whatever was focused before.
-        // // self.search_navigable_entry.focus_handle.focus(window, cx);
-
-        // view.render(window, cx).into_any_element()
+    // Why can't I make this a default implementation of render?
+    fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let element = self.render_for_state(&self.state(), window, cx);
         div()
             .elevation_3(cx)
             .w(rems(34.))
             // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
             .key_context("ContainerModal")
             .on_action(cx.listener(Self::dismiss))
-            .child(view.render(window, cx).into_any_element())
+            .child(element)
     }
 }
+
+// This doesn't work because render isn't owned in this crate.
+// impl<T: ElmLikeModalV2> Render for T {
+//     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+//         let element = self.render_for_state(&self.state(), window, cx);
+//         div()
+//             .elevation_3(cx)
+//             .w(rems(34.))
+//             // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
+//             .key_context("ContainerModal")
+//             .on_action(cx.listener(Self::dismiss))
+//             .child(element)
+//     }
+// }
+
+// struct DevContainerModal {
+//     focus_handle: FocusHandle,
+//     search_navigable_entry: NavigableEntry,
+//     other_navigable_entry: NavigableEntry,
+// }
+
+// impl DevContainerModal {
+//     fn new(window: &mut Window, cx: &mut App) -> Self {
+//         let search_navigable_entry = NavigableEntry::focusable(cx);
+//         let other_navigable_entry = NavigableEntry::focusable(cx);
+//         let focus_handle = cx.focus_handle();
+//         DevContainerModal {
+//             focus_handle,
+//             search_navigable_entry,
+//             other_navigable_entry,
+//         }
+//     }
+
+//     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+//         cx.emit(DismissEvent);
+//     }
+// }
+
+// impl ModalView for DevContainerModal {}
+// impl EventEmitter<DismissEvent> for DevContainerModal {}
+// impl Focusable for DevContainerModal {
+//     fn focus_handle(&self, _cx: &App) -> FocusHandle {
+//         self.focus_handle.clone()
+//     }
+// }
+
+// impl Render for DevContainerModal {
+//     fn render(
+//         &mut self,
+//         window: &mut ui::Window,
+//         cx: &mut ui::Context<Self>,
+//     ) -> impl ui::IntoElement {
+//         let mut view =
+//             Navigable::new(
+//                 div()
+//                     .child(div().track_focus(&self.focus_handle).child(
+//                         ModalHeader::new().child(
+//                             Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+//                         ),
+//                     ))
+//                     .child(ListSeparator)
+//                     .child(
+//                         div()
+//                             .track_focus(&self.search_navigable_entry.focus_handle)
+//                             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+//                                 println!("action on search containers");
+//                             }))
+//                             .child(
+//                                 ListItem::new("li-search-containers")
+//                                     .inset(true)
+//                                     .spacing(ui::ListItemSpacing::Sparse)
+//                                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+//                                     .toggle_state(
+//                                         self.search_navigable_entry
+//                                             .focus_handle
+//                                             .contains_focused(window, cx),
+//                                     )
+//                                     .child(Label::new("Search for dev containers in registry")),
+//                             ),
+//                     )
+//                     .child(
+//                         div()
+//                             .track_focus(&self.other_navigable_entry.focus_handle)
+//                             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+//                                 println!("action on other containers");
+//                             }))
+//                             .child(
+//                                 ListItem::new("li-search-containers")
+//                                     .inset(true)
+//                                     .spacing(ui::ListItemSpacing::Sparse)
+//                                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+//                                     .toggle_state(
+//                                         self.other_navigable_entry
+//                                             .focus_handle
+//                                             .contains_focused(window, cx),
+//                                     )
+//                                     .child(Label::new("Do another thing")),
+//                             ),
+//                     )
+//                     .into_any_element(),
+//             );
+//         view = view.entry(self.search_navigable_entry.clone());
+//         view = view.entry(self.other_navigable_entry.clone());
+
+//         // // This is an interesting edge. Can't focus in render, or you'll just override whatever was focused before.
+//         // // self.search_navigable_entry.focus_handle.focus(window, cx);
+
+//         // view.render(window, cx).into_any_element()
+//         div()
+//             .elevation_3(cx)
+//             .w(rems(34.))
+//             // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
+//             .key_context("ContainerModal")
+//             .on_action(cx.listener(Self::dismiss))
+//             .child(view.render(window, cx).into_any_element())
+//     }
+// }
 
 #[cfg(test)]
 mod test {
