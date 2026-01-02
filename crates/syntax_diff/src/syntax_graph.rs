@@ -379,16 +379,18 @@ pub fn shortest_path<'a>(
     let lhs_cursor = lhs_tree.cursor();
     let rhs_cursor = rhs_tree.cursor();
     let start = SyntaxVertex::new(lhs_cursor, rhs_cursor);
+    let size_hint = std::cmp::min(lhs_tree.len() * rhs_tree.len(), graph_limit);
 
-    Ok(SyntaxRoute(find_shortest_path(start, graph_limit)?))
+    Ok(SyntaxRoute(find_shortest_path(start, size_hint)?))
 }
 
 fn find_shortest_path<'a>(
     start: SyntaxVertex<'a>,
     graph_limit: usize,
 ) -> Result<Vec<SyntaxPath<'a>>, ExceededGraphLimit> {
-    let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::new();
-    let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> = FxHashMap::default();
+    let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::default();
+    let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> =
+        FxHashMap::with_capacity_and_hasher(graph_limit, Default::default());
 
     heap.push(Reverse(SyntaxPath {
         from: None,

@@ -75,8 +75,6 @@ pub fn diff_trees(
     let mut lhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
     let mut rhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
 
-    // Route entries have vertices[0] = from (source), vertices[1] = to (destination).
-    // The source vertex's lhs/rhs point to the nodes being consumed by the edge.
     for path in route.0 {
         let Some(edge) = path.edge else { continue };
         let Some(vertex) = path.from.as_ref() else {
