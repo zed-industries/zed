@@ -529,7 +529,7 @@
     },
   },
   {
-    "context": "Editor && extension == md",
+    "context": "Editor && (extension == md || extension == MD)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
