@@ -785,10 +785,6 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.ansi.bright_black")]
     pub terminal_ansi_bright_black: Option<String>,
 
-    /// Dim black ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_black")]
-    pub terminal_ansi_dim_black: Option<String>,
-
     /// Red ANSI terminal color.
     #[serde(rename = "terminal.ansi.red")]
     pub terminal_ansi_red: Option<String>,
@@ -796,10 +792,6 @@ pub struct ThemeColorsContent {
     /// Bright red ANSI terminal color.
     #[serde(rename = "terminal.ansi.bright_red")]
     pub terminal_ansi_bright_red: Option<String>,
-
-    /// Dim red ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_red")]
-    pub terminal_ansi_dim_red: Option<String>,
 
     /// Green ANSI terminal color.
     #[serde(rename = "terminal.ansi.green")]
@@ -809,10 +801,6 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.ansi.bright_green")]
     pub terminal_ansi_bright_green: Option<String>,
 
-    /// Dim green ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_green")]
-    pub terminal_ansi_dim_green: Option<String>,
-
     /// Yellow ANSI terminal color.
     #[serde(rename = "terminal.ansi.yellow")]
     pub terminal_ansi_yellow: Option<String>,
@@ -820,10 +808,6 @@ pub struct ThemeColorsContent {
     /// Bright yellow ANSI terminal color.
     #[serde(rename = "terminal.ansi.bright_yellow")]
     pub terminal_ansi_bright_yellow: Option<String>,
-
-    /// Dim yellow ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_yellow")]
-    pub terminal_ansi_dim_yellow: Option<String>,
 
     /// Blue ANSI terminal color.
     #[serde(rename = "terminal.ansi.blue")]
@@ -833,10 +817,6 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.ansi.bright_blue")]
     pub terminal_ansi_bright_blue: Option<String>,
 
-    /// Dim blue ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_blue")]
-    pub terminal_ansi_dim_blue: Option<String>,
-
     /// Magenta ANSI terminal color.
     #[serde(rename = "terminal.ansi.magenta")]
     pub terminal_ansi_magenta: Option<String>,
@@ -844,10 +824,6 @@ pub struct ThemeColorsContent {
     /// Bright magenta ANSI terminal color.
     #[serde(rename = "terminal.ansi.bright_magenta")]
     pub terminal_ansi_bright_magenta: Option<String>,
-
-    /// Dim magenta ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_magenta")]
-    pub terminal_ansi_dim_magenta: Option<String>,
 
     /// Cyan ANSI terminal color.
     #[serde(rename = "terminal.ansi.cyan")]
@@ -857,10 +833,6 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.ansi.bright_cyan")]
     pub terminal_ansi_bright_cyan: Option<String>,
 
-    /// Dim cyan ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_cyan")]
-    pub terminal_ansi_dim_cyan: Option<String>,
-
     /// White ANSI terminal color.
     #[serde(rename = "terminal.ansi.white")]
     pub terminal_ansi_white: Option<String>,
@@ -868,10 +840,6 @@ pub struct ThemeColorsContent {
     /// Bright white ANSI terminal color.
     #[serde(rename = "terminal.ansi.bright_white")]
     pub terminal_ansi_bright_white: Option<String>,
-
-    /// Dim white ANSI terminal color.
-    #[serde(rename = "terminal.ansi.dim_white")]
-    pub terminal_ansi_dim_white: Option<String>,
 
     #[serde(rename = "link_text.hover")]
     pub link_text_hover: Option<String>,
