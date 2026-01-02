@@ -11,6 +11,7 @@
 .claude/settings.local.json
 .envrc
 .flatpak-builder
+.gdb_history
 .idea
 .netrc
 *.pyc
