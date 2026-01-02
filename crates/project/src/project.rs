@@ -4545,12 +4545,6 @@ impl Project {
                             path: entry.path.clone(),
                         });
                     }
-                    if worktree_store.visible_worktrees(cx).count() == 1 {
-                        return Some(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: rel_path.into_arc(),
-                        });
-                    }
                 }
             }
         }

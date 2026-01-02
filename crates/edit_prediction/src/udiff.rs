@@ -1,21 +1,19 @@
-use std::borrow::Cow;
-use std::fmt::Display;
-use std::sync::Arc;
 use std::{
-    fmt::{Debug, Write},
+    borrow::Cow,
+    fmt::{Debug, Display, Write},
     mem,
     ops::Range,
     path::Path,
+    sync::Arc,
 };
 
-use anyhow::Context as _;
-use anyhow::Result;
-use anyhow::anyhow;
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use gpui::AsyncApp;
-use gpui::Entity;
+use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot, text_diff};
+use postage::stream::Stream as _;
 use project::Project;
+use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
@@ -26,6 +24,28 @@ pub async fn apply_diff(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
+    let worktree = project
+        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
+        .context("project has no worktree")?;
+
+    // Ensure the files in the diff are loaded, since worktree scanning is disabled in
+    // edit prediction CLI.
+    let mut paths = Vec::new();
+    for line in diff_str.lines() {
+        if let DiffLine::OldPath { path } = DiffLine::parse(line) {
+            paths.push(RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc());
+        }
+    }
+    worktree
+        .update(cx, |worktree, _| {
+            worktree
+                .as_local()
+                .unwrap()
+                .refresh_entries_for_paths(paths)
+        })?
+        .recv()
+        .await;
+
     let mut included_files = HashMap::default();
 
     let ranges = [Anchor::MIN..Anchor::MAX];
