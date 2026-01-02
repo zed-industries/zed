@@ -7254,37 +7254,18 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Word Diff Enabled",
-            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+            title: "Diff Strategy",
+            description: "Controls how diffs are displayed: line-level only, word-level, or syntax-aware.",
             field: Box::new(SettingField {
-                json_path: Some("languages.$(language).word_diff_enabled"),
+                json_path: Some("languages.$(language).diff_strategy"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
-                        language.word_diff_enabled.as_ref()
+                        language.diff_strategy.as_ref()
                     })
                 },
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
-                        language.word_diff_enabled = value;
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | PROJECT,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Syntax Diff Enabled",
-            description: "Whether to enable syntax-based diff highlighting in the editor. When enabled, changes are detected using the AST structure, providing more precise highlighting of what changed.",
-            field: Box::new(SettingField {
-                json_path: Some("languages.$(language).syntax_diff_enabled"),
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        language.syntax_diff_enabled.as_ref()
-                    })
-                },
-                write: |settings_content, value| {
-                    language_settings_field_mut(settings_content, value, |language, value| {
-                        language.syntax_diff_enabled = value;
+                        language.diff_strategy = value;
                     })
                 },
             }),

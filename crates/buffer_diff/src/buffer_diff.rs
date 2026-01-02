@@ -3,7 +3,8 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
     BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    language_settings::{DiffStrategy, language_settings},
+    word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -793,13 +794,14 @@ fn build_diff_options(
         }
     }
 
-    language_settings(language, file, cx)
-        .word_diff_enabled
-        .then_some(DiffOptions {
+    match language_settings(language, file, cx).diff_strategy {
+        DiffStrategy::Line => None,
+        DiffStrategy::Word | DiffStrategy::Syntax => Some(DiffOptions {
             language_scope,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
             ..Default::default()
-        })
+        }),
+    }
 }
 
 fn compute_hunks(
