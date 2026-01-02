@@ -215,6 +215,11 @@ pub struct EditorSettingsContent {
     /// 4. Never show the scrollbar:
     ///    "never" (default)
     pub completion_menu_scrollbar: Option<ShowScrollbar>,
+
+    /// Whether to select the word under the cursor when expanding the selection.
+    ///
+    /// Default: true
+    pub select_word_as_node: Option<bool>,
 }
 
 #[derive(

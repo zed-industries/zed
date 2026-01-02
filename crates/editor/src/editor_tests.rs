@@ -9678,6 +9678,66 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_select_larger_syntax_node_disabled_word_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        fn fn_1() {
+            let var1 = "hello world";
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Disable word selection
+    update_test_editor_settings(cx, |settings| {
+        settings.select_word_as_node = Some(false);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 17)..DisplayPoint::new(DisplayRow(1), 17)
+            ]);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn fn_1() {
+                    let var1 = "hˇello world";
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        // Should skip the "hello" word selection and go straight to the string content
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn fn_1() {
+                    let var1 = "«ˇhello world»";
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 

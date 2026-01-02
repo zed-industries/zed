@@ -15889,23 +15889,25 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
 
-                if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
-                    // manually select word at selection
-                    if ["string_content", "inline"].contains(&node.kind()) {
-                        let (word_range, _) = buffer.surrounding_word(old_range.start, None);
-                        // ignore if word is already selected
-                        if !word_range.is_empty() && old_range != word_range {
-                            let (last_word_range, _) = buffer.surrounding_word(old_range.end, None);
-                            // only select word if start and end point belongs to same word
-                            if word_range == last_word_range {
-                                selected_larger_node = true;
-                                return Selection {
-                                    id: selection.id,
-                                    start: word_range.start,
-                                    end: word_range.end,
-                                    goal: SelectionGoal::None,
-                                    reversed: selection.reversed,
-                                };
+                if EditorSettings::get_global(cx).select_word_as_node {
+                    if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
+                        // manually select word at selection
+                        if ["string_content", "inline"].contains(&node.kind()) {
+                            let (word_range, _) = buffer.surrounding_word(old_range.start, None);
+                            // ignore if word is already selected
+                            if !word_range.is_empty() && old_range != word_range {
+                                let (last_word_range, _) = buffer.surrounding_word(old_range.end, None);
+                                // only select word if start and end point belongs to same word
+                                if word_range == last_word_range {
+                                    selected_larger_node = true;
+                                    return Selection {
+                                        id: selection.id,
+                                        start: word_range.start,
+                                        end: word_range.end,
+                                        goal: SelectionGoal::None,
+                                        reversed: selection.reversed,
+                                    };
+                                }
                             }
                         }
                     }
