@@ -157,10 +157,10 @@ pub fn strip_diff_metadata(diff: &str) -> String {
     result
 }
 
-pub fn apply_diff_to_string(original: &str, diff_str: &str) -> Result<String> {
+pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
     let mut diff = DiffParser::new(diff_str);
 
-    let mut text = original.to_string();
+    let mut text = text.to_string();
 
     while let Some(event) = diff.next()? {
         match event {
