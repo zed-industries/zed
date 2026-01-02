@@ -2588,7 +2588,7 @@ dependencies = [
 [[package]]
 name = "calloop"
 version = "0.14.3"
-source = "git+https://github.com/zed-industries/calloop#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
+source = "git+https://github.com/zed-industries/calloop?rev=eb6b4fd17b9af5ecc226546bdd04185391b3e265#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
 dependencies = [
  "bitflags 2.9.4",
  "polling",
