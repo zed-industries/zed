@@ -2680,7 +2680,7 @@ impl Editor {
                     file.full_path(cx)
                         .extension()?
                         .to_string_lossy()
-                        .into_owned(),
+                        .to_lowercase(),
                 )
             }) {
                 key_context.set("extension", extension);
