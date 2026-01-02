@@ -2640,34 +2640,13 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
+                    let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+
                     this.child(
-                        v_flex()
-                            .p_1p5()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
-                            .bg(self.tool_card_header_bg(cx))
-                            .child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                MarkdownElement::new(
-                                    tool_call.label.clone(),
-                                    terminal_command_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: false,
-                                    },
-                                )
-                            ),
+                        self.render_terminal_command_preview(is_expanded, tool_call, window, cx)
                     )
                 } else {
-                   this.child(
+                    this.child(
                         h_flex()
                             .group(&card_header_id)
                             .relative()
@@ -3130,6 +3109,82 @@ impl AcpThreadView {
                 },
             )
             .into_any()
+    }
+
+    fn render_terminal_command_preview(
+        &self,
+        expanded: bool,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let header_bg = self.tool_card_header_bg(cx);
+        let icon = if expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
+        v_flex()
+            .relative()
+            .bg(header_bg)
+            .when(!expanded, |this| this.max_h(rems(12.0)).overflow_hidden())
+            .child(
+                v_flex()
+                    .p_1p5()
+                    .gap_0p5()
+                    .text_ui_sm(cx)
+                    .child(
+                        Label::new("Run Command")
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        MarkdownElement::new(
+                            tool_call.label.clone(),
+                            terminal_command_markdown_style(window, cx),
+                        )
+                        .code_block_renderer(
+                            markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                copy_button_on_hover: false,
+                                border: false,
+                            },
+                        ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .id("expand-command-btn")
+                    .cursor_pointer()
+                    .when(!expanded, |this| {
+                        this.absolute().left_0().bottom_0().bg(cx
+                            .theme()
+                            .colors()
+                            .element_active
+                            .opacity(0.2))
+                    })
+                    .w_full()
+                    .py_0p5()
+                    .justify_center()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_b_sm()
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .child(Icon::new(icon).size(IconSize::Small))
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call.id.clone();
+                        move |this, _event, _window, cx| {
+                            if expanded {
+                                this.expanded_tool_calls.remove(&tool_call_id);
+                            } else {
+                                this.expanded_tool_calls.insert(tool_call_id.clone());
+                            }
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     fn render_terminal_tool_call(
