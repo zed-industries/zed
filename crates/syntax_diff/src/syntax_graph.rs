@@ -9,7 +9,8 @@ use arrayvec::ArrayVec;
 use collections::FxHashMap;
 
 use crate::SyntaxTree;
-use crate::syntax_tree::{SyntaxHint, SyntaxId, SyntaxTreeCursor};
+use crate::syntax_delimiters::{SyntaxDelimiterCursor, SyntaxDelimiterEntry, SyntaxDelimiterTree};
+use crate::syntax_tree::{SyntaxHint, SyntaxTreeCursor};
 
 /// Error when the graph search exceeds the configured limit.
 #[derive(Debug)]
@@ -53,88 +54,36 @@ impl<'a> Ord for SyntaxPath<'a> {
     }
 }
 
-/// Tracks how we entered list delimiters.
-#[derive(Clone, PartialEq, Eq)]
-pub enum EnteredDelimiter {
-    /// We entered LHS and RHS lists together - must pop together.
-    PopBoth { lhs: SyntaxId, rhs: SyntaxId },
-    /// We entered LHS and RHS separately - can pop independently.
-    PopEither {
-        lhs: Vec<SyntaxId>,
-        rhs: Vec<SyntaxId>,
-    },
-}
-
 /// A vertex in the diff graph.
 ///
 /// Each vertex represents positions in both the LHS and RHS syntax trees,
-/// along with a stack of entered delimiters that tracks how we got here.
+/// along with a cursor into the delimiter stack that tracks how we got here.
 #[derive(Clone)]
 pub struct SyntaxVertex<'a> {
     pub lhs: SyntaxTreeCursor<'a>,
     pub rhs: SyntaxTreeCursor<'a>,
-    parents: Vec<EnteredDelimiter>,
+    pub delimiters: SyntaxDelimiterCursor<'a>,
 }
 
 impl<'a> SyntaxVertex<'a> {
-    pub fn new(lhs: SyntaxTreeCursor<'a>, rhs: SyntaxTreeCursor<'a>) -> Self {
+    pub fn new(
+        lhs: SyntaxTreeCursor<'a>,
+        rhs: SyntaxTreeCursor<'a>,
+        delimiters: SyntaxDelimiterCursor<'a>,
+    ) -> Self {
         Self {
             lhs,
             rhs,
-            parents: Vec::new(),
+            delimiters,
         }
     }
 
     pub fn is_end(&self) -> bool {
-        self.lhs.is_end() && self.rhs.is_end() && self.parents.is_empty()
+        self.lhs.is_end() && self.rhs.is_end() && self.delimiters.is_empty()
     }
 
     fn can_pop_either(&self) -> bool {
-        matches!(
-            self.parents.last(),
-            Some(EnteredDelimiter::PopEither { .. })
-        )
-    }
-
-    fn push_both_delimiters(&self, lhs_id: SyntaxId, rhs_id: SyntaxId) -> Vec<EnteredDelimiter> {
-        let mut parents = self.parents.clone();
-        parents.push(EnteredDelimiter::PopBoth {
-            lhs: lhs_id,
-            rhs: rhs_id,
-        });
-        parents
-    }
-
-    fn push_lhs_delimiter(&self, id: SyntaxId) -> Vec<EnteredDelimiter> {
-        let mut parents = self.parents.clone();
-        match parents.last_mut() {
-            Some(EnteredDelimiter::PopEither { lhs, .. }) => {
-                lhs.push(id);
-            }
-            _ => {
-                parents.push(EnteredDelimiter::PopEither {
-                    lhs: vec![id],
-                    rhs: vec![],
-                });
-            }
-        }
-        parents
-    }
-
-    fn push_rhs_delimiter(&self, id: SyntaxId) -> Vec<EnteredDelimiter> {
-        let mut parents = self.parents.clone();
-        match parents.last_mut() {
-            Some(EnteredDelimiter::PopEither { rhs, .. }) => {
-                rhs.push(id);
-            }
-            _ => {
-                parents.push(EnteredDelimiter::PopEither {
-                    lhs: vec![],
-                    rhs: vec![id],
-                });
-            }
-        }
-        parents
+        self.delimiters.can_pop_either()
     }
 }
 
@@ -195,68 +144,43 @@ impl SyntaxEdge {
     }
 }
 
-/// Pop as many parents as possible when cursors reach end of their current level.
-fn pop_all_parents<'a>(
+/// Pop as many delimiters as possible when cursors reach end of their current level.
+fn pop_all_delimiters<'a>(
     mut lhs: SyntaxTreeCursor<'a>,
     mut rhs: SyntaxTreeCursor<'a>,
-    mut parents: Vec<EnteredDelimiter>,
+    mut delimiters: SyntaxDelimiterCursor<'a>,
 ) -> (
     SyntaxTreeCursor<'a>,
     SyntaxTreeCursor<'a>,
-    Vec<EnteredDelimiter>,
+    SyntaxDelimiterCursor<'a>,
 ) {
     loop {
-        if lhs.is_end() {
-            if let Some(EnteredDelimiter::PopEither {
-                lhs: lhs_stack,
-                rhs: rhs_stack,
-            }) = parents.last_mut()
-            {
-                if let Some(lhs_parent_id) = lhs_stack.pop() {
-                    lhs = lhs.tree().cursor_at(lhs_parent_id).next_sibling();
-                    if lhs_stack.is_empty() && rhs_stack.is_empty() {
-                        parents.pop();
-                    }
-                    continue;
-                }
-            }
-        }
+        let Some((entry, parent)) = delimiters.pop() else {
+            break;
+        };
 
-        if rhs.is_end() {
-            if let Some(EnteredDelimiter::PopEither {
-                lhs: lhs_stack,
-                rhs: rhs_stack,
-            }) = parents.last_mut()
-            {
-                if let Some(rhs_parent_id) = rhs_stack.pop() {
-                    rhs = rhs.tree().cursor_at(rhs_parent_id).next_sibling();
-                    if lhs_stack.is_empty() && rhs_stack.is_empty() {
-                        parents.pop();
-                    }
-                    continue;
-                }
+        match entry {
+            SyntaxDelimiterEntry::Lhs(id) if lhs.is_end() => {
+                lhs = lhs.tree().cursor_at(id).next_sibling();
+                delimiters = parent;
             }
-        }
-
-        if lhs.is_end() && rhs.is_end() {
-            if let Some(EnteredDelimiter::PopBoth {
+            SyntaxDelimiterEntry::Rhs(id) if rhs.is_end() => {
+                rhs = rhs.tree().cursor_at(id).next_sibling();
+                delimiters = parent;
+            }
+            SyntaxDelimiterEntry::Both {
                 lhs: lhs_id,
                 rhs: rhs_id,
-            }) = parents.last()
-            {
-                let lhs_id = *lhs_id;
-                let rhs_id = *rhs_id;
-                parents.pop();
+            } if lhs.is_end() && rhs.is_end() => {
                 lhs = lhs.tree().cursor_at(lhs_id).next_sibling();
                 rhs = rhs.tree().cursor_at(rhs_id).next_sibling();
-                continue;
+                delimiters = parent;
             }
+            _ => break,
         }
-
-        break;
     }
 
-    (lhs, rhs, parents)
+    (lhs, rhs, delimiters)
 }
 
 /// Compute all possible neighbor vertices from the current vertex.
@@ -271,19 +195,18 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
                 .lhs
                 .node()
                 .is_some_and(|node| node.hint == Some(SyntaxHint::Punctuation));
-
-            let (lhs, rhs, parents) = pop_all_parents(
-                v.lhs.next_sibling(),
-                v.rhs.next_sibling(),
-                v.parents.clone(),
-            );
-
+            let (lhs, rhs, delimiters) =
+                pop_all_delimiters(v.lhs.next_sibling(), v.rhs.next_sibling(), v.delimiters);
             neighbours.push((
                 SyntaxEdge::Unchanged {
                     depth_difference,
                     probably_punctuation,
                 },
-                SyntaxVertex { lhs, rhs, parents },
+                SyntaxVertex {
+                    lhs,
+                    rhs,
+                    delimiters,
+                },
             ));
         } else {
             if let (
@@ -294,16 +217,15 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
                 let levenshtein_pct = (strsim::normalized_levenshtein(lhs_comment, rhs_comment)
                     * 100.0)
                     .round() as u8;
-
-                let (lhs, rhs, parents) = pop_all_parents(
-                    v.lhs.next_sibling(),
-                    v.rhs.next_sibling(),
-                    v.parents.clone(),
-                );
-
+                let (lhs, rhs, delimiters) =
+                    pop_all_delimiters(v.lhs.next_sibling(), v.rhs.next_sibling(), v.delimiters);
                 neighbours.push((
                     SyntaxEdge::Replaced { levenshtein_pct },
-                    SyntaxVertex { lhs, rhs, parents },
+                    SyntaxVertex {
+                        lhs,
+                        rhs,
+                        delimiters,
+                    },
                 ));
             }
         }
@@ -316,14 +238,16 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
                 && lhs_node.close_delimiter() == rhs_node.close_delimiter()
             {
                 let depth_difference = (v.lhs.depth() as i32 - v.rhs.depth() as i32).unsigned_abs();
-                let parents = v.push_both_delimiters(lhs_node.id, rhs_node.id);
-
-                let (lhs, rhs, parents) =
-                    pop_all_parents(v.lhs.first_child(), v.rhs.first_child(), parents);
-
+                let delimiters = v.delimiters.push_both(lhs_node.id, rhs_node.id);
+                let (lhs, rhs, delimiters) =
+                    pop_all_delimiters(v.lhs.first_child(), v.rhs.first_child(), delimiters);
                 neighbours.push((
                     SyntaxEdge::EnterUnchangedDelimiter { depth_difference },
-                    SyntaxVertex { lhs, rhs, parents },
+                    SyntaxVertex {
+                        lhs,
+                        rhs,
+                        delimiters,
+                    },
                 ));
             }
         }
@@ -332,17 +256,27 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
     // Novel LHS atom
     if let Some(lhs_node) = v.lhs.node() {
         if lhs_node.is_atom() {
-            let (lhs, rhs, parents) =
-                pop_all_parents(v.lhs.next_sibling(), v.rhs, v.parents.clone());
-            neighbours.push((SyntaxEdge::NovelAtomLHS, SyntaxVertex { lhs, rhs, parents }));
+            let (lhs, rhs, delimiters) =
+                pop_all_delimiters(v.lhs.next_sibling(), v.rhs, v.delimiters.clone());
+            neighbours.push((
+                SyntaxEdge::NovelAtomLHS,
+                SyntaxVertex {
+                    lhs,
+                    rhs,
+                    delimiters,
+                },
+            ));
         } else {
             // Enter novel LHS list
-            let parents = v.push_lhs_delimiter(lhs_node.id);
-
-            let (lhs, rhs, parents) = pop_all_parents(v.lhs.first_child(), v.rhs, parents);
+            let delimiters = v.delimiters.push_lhs(lhs_node.id);
+            let (lhs, rhs, delimiters) = pop_all_delimiters(v.lhs.first_child(), v.rhs, delimiters);
             neighbours.push((
                 SyntaxEdge::EnterNovelDelimiterLHS,
-                SyntaxVertex { lhs, rhs, parents },
+                SyntaxVertex {
+                    lhs,
+                    rhs,
+                    delimiters,
+                },
             ));
         }
     }
@@ -350,17 +284,27 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
     // Novel RHS atom
     if let Some(rhs_node) = v.rhs.node() {
         if rhs_node.is_atom() {
-            let (lhs, rhs, parents) =
-                pop_all_parents(v.lhs, v.rhs.next_sibling(), v.parents.clone());
-            neighbours.push((SyntaxEdge::NovelAtomRHS, SyntaxVertex { lhs, rhs, parents }));
+            let (lhs, rhs, delimiters) =
+                pop_all_delimiters(v.lhs, v.rhs.next_sibling(), v.delimiters);
+            neighbours.push((
+                SyntaxEdge::NovelAtomRHS,
+                SyntaxVertex {
+                    lhs,
+                    rhs,
+                    delimiters,
+                },
+            ));
         } else {
             // Enter novel RHS list
-            let parents = v.push_rhs_delimiter(rhs_node.id);
-
-            let (lhs, rhs, parents) = pop_all_parents(v.lhs, v.rhs.first_child(), parents);
+            let delimiters = v.delimiters.push_rhs(rhs_node.id);
+            let (lhs, rhs, delimiters) = pop_all_delimiters(v.lhs, v.rhs.first_child(), delimiters);
             neighbours.push((
                 SyntaxEdge::EnterNovelDelimiterRHS,
-                SyntaxVertex { lhs, rhs, parents },
+                SyntaxVertex {
+                    lhs,
+                    rhs,
+                    delimiters,
+                },
             ));
         }
     }
@@ -374,23 +318,19 @@ pub fn compute_neighbours<'a>(v: &SyntaxVertex<'a>) -> ArrayVec<(SyntaxEdge, Syn
 pub fn shortest_path<'a>(
     lhs_tree: &'a SyntaxTree,
     rhs_tree: &'a SyntaxTree,
+    delimeters: &'a SyntaxDelimiterTree,
     graph_limit: usize,
 ) -> Result<SyntaxRoute<'a>, ExceededGraphLimit> {
     let lhs_cursor = lhs_tree.cursor();
     let rhs_cursor = rhs_tree.cursor();
-    let start = SyntaxVertex::new(lhs_cursor, rhs_cursor);
-    let size_hint = std::cmp::min(lhs_tree.len() * rhs_tree.len(), graph_limit);
 
-    Ok(SyntaxRoute(find_shortest_path(start, size_hint)?))
-}
+    let graph_limit = std::cmp::min(lhs_tree.len() * rhs_tree.len(), graph_limit);
 
-fn find_shortest_path<'a>(
-    start: SyntaxVertex<'a>,
-    graph_limit: usize,
-) -> Result<Vec<SyntaxPath<'a>>, ExceededGraphLimit> {
     let mut heap: BinaryHeap<Reverse<SyntaxPath<'a>>> = BinaryHeap::default();
     let mut visited: FxHashMap<SyntaxVertex<'a>, SyntaxPath<'a>> =
         FxHashMap::with_capacity_and_hasher(graph_limit, Default::default());
+
+    let start = SyntaxVertex::new(lhs_cursor, rhs_cursor, delimeters.cursor());
 
     heap.push(Reverse(SyntaxPath {
         from: None,
@@ -444,7 +384,7 @@ fn find_shortest_path<'a>(
         }
     };
 
-    Ok(reconstruct_path(end_vertex, &visited))
+    Ok(SyntaxRoute(reconstruct_path(end_vertex, &visited)))
 }
 
 fn reconstruct_path<'a>(

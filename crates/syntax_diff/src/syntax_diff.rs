@@ -1,5 +1,6 @@
 //! AST-aware diffing for syntax trees.
 
+mod syntax_delimiters;
 mod syntax_graph;
 mod syntax_tree;
 
@@ -10,7 +11,10 @@ pub use syntax_tree::{SyntaxId, SyntaxNode, SyntaxTree, SyntaxTreeCursor, build_
 
 use std::ops::Range;
 
-use crate::{syntax_graph::ExceededGraphLimit, syntax_tree::SyntaxHint};
+use crate::{
+    syntax_delimiters::SyntaxDelimiterTree, syntax_graph::ExceededGraphLimit,
+    syntax_tree::SyntaxHint,
+};
 
 /// Default graph limit (1 million vertices).
 ///
@@ -72,7 +76,9 @@ pub fn diff_trees(
     lhs_tree: &SyntaxTree,
     rhs_tree: &SyntaxTree,
 ) -> Result<SyntaxDiff, ExceededGraphLimit> {
-    let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, DEFAULT_GRAPH_LIMIT)?;
+    let delimeters = SyntaxDelimiterTree::new();
+
+    let route = syntax_graph::shortest_path(lhs_tree, rhs_tree, &delimeters, DEFAULT_GRAPH_LIMIT)?;
 
     let mut lhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
     let mut rhs_change_map = FxHashMap::with_capacity_and_hasher(route.0.len(), Default::default());
