@@ -12,8 +12,10 @@ use std::ops::Range;
 
 use crate::{syntax_graph::ExceededGraphLimit, syntax_tree::SyntaxHint};
 
-/// Default graph limit (10 million vertices).
-pub const DEFAULT_GRAPH_LIMIT: usize = 10_000_000;
+/// Default graph limit (1 million vertices).
+///
+/// Difftastic uses a higher value: https://github.com/Wilfred/difftastic/blob/cba6cc5d5a0b47b36fdb028a87af03c89d1908b4/src/options.rs#L25
+pub const DEFAULT_GRAPH_LIMIT: usize = 1_000_000;
 
 /// The kind of change for a syntax node.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
