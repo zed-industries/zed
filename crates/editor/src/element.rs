@@ -3804,6 +3804,13 @@ impl EditorElement {
 
                 result.into_any()
             }
+
+            Block::Spacer { height, .. } => div()
+                .id(block_id)
+                .w_full()
+                .h((*height as f32) * line_height)
+                .debug_bg_cyan()
+                .into_any(),
         };
 
         // Discover the element's content height, then round up to the nearest multiple of line height.

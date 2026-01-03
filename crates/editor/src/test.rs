@@ -245,6 +245,11 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                     lines[row as usize].push_str("§ -----");
                 }
             }
+            Block::Spacer { height, .. } => {
+                for row in row.0..row.0 + height {
+                    lines[row as usize].push_str("§ spacer");
+                }
+            }
         }
     }
     lines.join("\n")

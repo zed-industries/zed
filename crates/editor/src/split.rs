@@ -41,6 +41,10 @@ struct SplitDiff;
 #[action(namespace = editor)]
 struct UnsplitDiff;
 
+#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
+#[action(namespace = editor)]
+struct JumpToCorrespondingRow;
+
 pub struct SplittableEditor {
     primary_multibuffer: Entity<MultiBuffer>,
     primary_editor: Entity<Editor>,
@@ -209,10 +213,15 @@ impl SplittableEditor {
                     lines,
                     direction,
                 } => {
-                    if let Some(secondary) = &this.secondary {
+                    if this.secondary.is_some() {
+                        let primary_display_map = this.primary_editor.read(cx).display_map.read(cx);
+                        let excerpt_mapping = primary_display_map
+                            .companion
+                            .as_ref()
+                            .map(|c| &c.companion_excerpt_to_my_excerpt);
                         let primary_ids: Vec<_> = excerpt_ids
                             .iter()
-                            .filter_map(|id| secondary.secondary_to_primary.get(id).copied())
+                            .filter_map(|id| excerpt_mapping?.get(id).copied())
                             .collect();
                         this.expand_excerpts(primary_ids.into_iter(), *lines, *direction, cx);
                     }
@@ -239,12 +248,14 @@ impl SplittableEditor {
         primary_display_map.update(cx, |dm, _| {
             dm.set_companion(Some((
                 secondary_display_map.downgrade(),
-                |companion, my_snapshot, their_snapshot, their_row, bias| {
+                |companion_excerpt_to_my_excerpt, my_snapshot, their_snapshot, their_row, bias| {
                     let their_point = their_snapshot.to_point(WrapPoint::new(their_row, 0), bias);
-                    let (_their_buffer_snapshot, their_buffer_point, their_excerpt_id) =
-                        their_snapshot.point_to_buffer_point(their_point).unwrap();
-                    let my_excerpt_id = companion
-                        .their_excerpt_to_our_excerpt
+                    let Some((_their_buffer_snapshot, their_buffer_point, their_excerpt_id)) =
+                        their_snapshot.point_to_buffer_point(their_point)
+                    else {
+                        return my_snapshot.max_point().row();
+                    };
+                    let my_excerpt_id = companion_excerpt_to_my_excerpt
                         .get(&their_excerpt_id)
                         .copied()
                         .unwrap();
@@ -257,11 +268,16 @@ impl SplittableEditor {
                         bias,
                         &my_buffer_snapshot,
                     );
+                    let my_point = Point::new(my_row, 0);
+                    let text_anchor = my_buffer_snapshot.anchor_at(my_point, bias);
+                    let ctx_range = my_snapshot
+                        .context_range_for_excerpt(my_excerpt_id)
+                        .unwrap();
+                    let text_anchor = *text_anchor
+                        .max(&ctx_range.start, &my_buffer_snapshot)
+                        .min(&ctx_range.end, &my_buffer_snapshot);
                     let my_anchor = my_snapshot
-                        .anchor_in_excerpt(
-                            my_excerpt_id,
-                            my_buffer_snapshot.anchor_at(Point::new(my_row, 0), bias),
-                        )
+                        .anchor_in_excerpt(my_excerpt_id, text_anchor)
                         .unwrap();
                     my_snapshot
                         .make_wrap_point(my_anchor.to_point(&my_snapshot), bias)
@@ -272,12 +288,14 @@ impl SplittableEditor {
         secondary_display_map.update(cx, |dm, _| {
             dm.set_companion(Some((
                 primary_display_map.downgrade(),
-                |companion, my_snapshot, their_snapshot, their_row, bias| {
+                |companion_excerpt_to_my_excerpt, my_snapshot, their_snapshot, their_row, bias| {
                     let their_point = their_snapshot.to_point(WrapPoint::new(their_row, 0), bias);
-                    let (their_buffer_snapshot, their_buffer_point, their_excerpt_id) =
-                        their_snapshot.point_to_buffer_point(their_point).unwrap();
-                    let my_excerpt_id = companion
-                        .their_excerpt_to_our_excerpt
+                    let Some((their_buffer_snapshot, their_buffer_point, their_excerpt_id)) =
+                        their_snapshot.point_to_buffer_point(their_point)
+                    else {
+                        return my_snapshot.max_point().row();
+                    };
+                    let my_excerpt_id = companion_excerpt_to_my_excerpt
                         .get(&their_excerpt_id)
                         .copied()
                         .unwrap();
@@ -290,11 +308,16 @@ impl SplittableEditor {
                         bias,
                         &their_buffer_snapshot,
                     );
+                    let my_point = Point::new(my_row, 0);
+                    let text_anchor = my_buffer_snapshot.anchor_at(my_point, bias);
+                    let ctx_range = my_snapshot
+                        .context_range_for_excerpt(my_excerpt_id)
+                        .unwrap();
+                    let text_anchor = *text_anchor
+                        .max(&ctx_range.start, &my_buffer_snapshot)
+                        .min(&ctx_range.end, &my_buffer_snapshot);
                     let my_anchor = my_snapshot
-                        .anchor_in_excerpt(
-                            my_excerpt_id,
-                            my_buffer_snapshot.anchor_at(Point::new(my_row, 0), bias),
-                        )
+                        .anchor_in_excerpt(my_excerpt_id, text_anchor)
                         .unwrap();
                     my_snapshot
                         .make_wrap_point(my_anchor.to_point(&my_snapshot), bias)
@@ -358,6 +381,63 @@ impl SplittableEditor {
             });
         });
         cx.notify();
+    }
+
+    fn jump_to_corresponding_row(
+        &mut self,
+        _: &JumpToCorrespondingRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(secondary) = &self.secondary else {
+            return;
+        };
+
+        let (source_editor, target_editor) = if secondary.has_latest_selection {
+            (&secondary.editor, &self.primary_editor)
+        } else {
+            (&self.primary_editor, &secondary.editor)
+        };
+
+        let source_anchor = source_editor.read(cx).selections.newest_anchor().head();
+
+        let source_display_map = source_editor.read(cx).display_map.clone();
+        let target_display_map = target_editor.read(cx).display_map.clone();
+
+        let (source_wrap_row, source_snapshot) = source_display_map.update(cx, |dm, cx| {
+            let snapshot = dm.snapshot(cx);
+            let source_point = source_anchor.to_point(&snapshot);
+            let row = snapshot.make_wrap_point(source_point, Bias::Left).row();
+            (row, (*snapshot).clone())
+        });
+
+        let target_point = target_display_map.update(cx, |dm, cx| {
+            let target_snapshot = dm.snapshot(cx);
+            let companion = dm.companion.as_ref()?;
+
+            let target_wrap_row = (companion.convert_wrap_row_from_companion)(
+                &companion.companion_excerpt_to_my_excerpt,
+                &target_snapshot,
+                &source_snapshot,
+                source_wrap_row,
+                Bias::Left,
+            );
+
+            let target_wrap_point = WrapPoint::new(target_wrap_row, 0);
+            Some(target_snapshot.to_point(target_wrap_point, Bias::Left))
+        });
+
+        let Some(target_point) = target_point else {
+            return;
+        };
+
+        target_editor.update(cx, |editor, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([target_point..target_point]);
+            });
+
+            window.focus(&editor.focus_handle(cx), cx);
+        });
     }
 
     pub fn added_to_workspace(
@@ -466,8 +546,16 @@ impl SplittableEditor {
         self.primary_multibuffer.update(cx, |buffer, cx| {
             buffer.remove_excerpts_for_path(path.clone(), cx)
         });
-        if let Some(secondary) = &mut self.secondary {
-            secondary.remove_mappings_for_path(&path, cx);
+        if let Some(secondary) = &self.secondary {
+            let primary_display_map = self.primary_editor.read(cx).display_map.clone();
+            let secondary_display_map = secondary.editor.read(cx).display_map.clone();
+            secondary.remove_mappings_for_path(
+                &path,
+                &self.primary_multibuffer,
+                &primary_display_map,
+                &secondary_display_map,
+                cx,
+            );
             secondary
                 .multibuffer
                 .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
@@ -545,40 +633,6 @@ impl SplittableEditor {
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
         assert_eq!(primary_excerpts.len(), secondary_excerpts.len());
-
-        assert_eq!(
-            secondary.primary_to_secondary.len(),
-            primary_excerpts.len(),
-            "primary_to_secondary mapping count should match excerpt count"
-        );
-        assert_eq!(
-            secondary.secondary_to_primary.len(),
-            secondary_excerpts.len(),
-            "secondary_to_primary mapping count should match excerpt count"
-        );
-
-        for primary_id in &primary_excerpts {
-            assert!(
-                secondary.primary_to_secondary.contains_key(primary_id),
-                "primary excerpt {:?} should have a mapping to secondary",
-                primary_id
-            );
-        }
-        for secondary_id in &secondary_excerpts {
-            assert!(
-                secondary.secondary_to_primary.contains_key(secondary_id),
-                "secondary excerpt {:?} should have a mapping to primary",
-                secondary_id
-            );
-        }
-
-        for (primary_id, secondary_id) in &secondary.primary_to_secondary {
-            assert_eq!(
-                secondary.secondary_to_primary.get(secondary_id),
-                Some(primary_id),
-                "mappings should be bijective"
-            );
-        }
 
         if quiesced {
             let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
@@ -728,6 +782,7 @@ impl Render for SplittableEditor {
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
             .on_action(cx.listener(Self::unsplit))
+            .on_action(cx.listener(Self::jump_to_corresponding_row))
             .size_full()
             .child(inner)
     }
@@ -745,7 +800,13 @@ impl SecondaryEditor {
     ) {
         let primary_multibuffer_ref = primary_multibuffer.read(cx);
         let Some(excerpt_id) = primary_multibuffer_ref.excerpts_for_path(&path_key).next() else {
-            self.remove_mappings_for_path(&path_key, cx);
+            self.remove_mappings_for_path(
+                &path_key,
+                primary_multibuffer,
+                primary_display_map,
+                secondary_display_map,
+                cx,
+            );
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.remove_excerpts_for_path(path_key, cx);
             });
@@ -794,7 +855,13 @@ impl SecondaryEditor {
             .buffer(main_buffer.remote_id())
             .unwrap();
 
-        self.remove_mappings_for_path(&path_key, cx);
+        self.remove_mappings_for_path(
+            &path_key,
+            primary_multibuffer,
+            primary_display_map,
+            secondary_display_map,
+            cx,
+        );
 
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
@@ -815,14 +882,24 @@ impl SecondaryEditor {
             .excerpts_for_path(&path_key)
             .collect();
 
-        self.editor.update(cx, |editor, cx| {
-            editor.display_map.update(cx, |display_map, cx| {
-                for (primary_id, secondary_id) in
-                    primary_excerpt_ids.into_iter().zip(secondary_excerpt_ids)
-                {
-                    display_map.add_companion_excerpt_mapping(primary_id, secondary_id);
-                }
-            })
+        debug_assert_eq!(primary_excerpt_ids.len(), secondary_excerpt_ids.len());
+
+        // Add excerpt ID mappings to both display maps
+        // Primary display map: keyed by secondary IDs (companion's IDs)
+        primary_display_map.update(cx, |dm, _| {
+            for (primary_id, secondary_id) in
+                primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
+            {
+                dm.add_companion_excerpt_mapping(*primary_id, *secondary_id);
+            }
+        });
+        // Secondary display map: keyed by primary IDs (companion's IDs)
+        secondary_display_map.update(cx, |dm, _| {
+            for (primary_id, secondary_id) in
+                primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
+            {
+                dm.add_companion_excerpt_mapping(*secondary_id, *primary_id);
+            }
         });
 
         // Add buffer ID mappings for companion sync
@@ -834,18 +911,31 @@ impl SecondaryEditor {
         });
     }
 
-    fn remove_mappings_for_path(&mut self, path_key: &PathKey, cx: &App) {
+    fn remove_mappings_for_path(
+        &self,
+        path_key: &PathKey,
+        primary_multibuffer: &Entity<MultiBuffer>,
+        primary_display_map: &Entity<DisplayMap>,
+        secondary_display_map: &Entity<DisplayMap>,
+        cx: &mut App,
+    ) {
+        let primary_excerpt_ids: Vec<ExcerptId> = primary_multibuffer
+            .read(cx)
+            .excerpts_for_path(path_key)
+            .collect();
         let secondary_excerpt_ids: Vec<ExcerptId> = self
             .multibuffer
             .read(cx)
             .excerpts_for_path(path_key)
             .collect();
 
-        for secondary_id in secondary_excerpt_ids {
-            if let Some(primary_id) = self.secondary_to_primary.remove(&secondary_id) {
-                self.primary_to_secondary.remove(&primary_id);
-            }
-        }
+        primary_display_map.update(cx, |dm, _| {
+            dm.remove_companion_excerpt_mappings(secondary_excerpt_ids.iter().copied());
+        });
+
+        secondary_display_map.update(cx, |dm, _| {
+            dm.remove_companion_excerpt_mappings(primary_excerpt_ids);
+        });
     }
 }
 
@@ -971,5 +1061,259 @@ mod tests {
                 editor.check_invariants(quiesced, cx);
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_split_row_translation(cx: &mut gpui::TestAppContext) {
+        use buffer_diff::BufferDiff;
+        use language::Buffer;
+        use text::Bias;
+
+        use crate::display_map::WrapRow;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        init_test(cx);
+
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Buffer A: has insertion + modification
+        // Base: "one\ntwo\nthree\nfour\n"
+        // Buffer: "one\nTWO\nINSERTED\nthree\nfour\n"
+        let buffer_a_base = "
+            one
+            two
+            three
+            four
+        "
+        .unindent();
+        let buffer_a_text = "
+            one
+            TWO
+            INSERTED
+            three
+            four
+        "
+        .unindent();
+
+        // Buffer B: has deletion
+        // Base: "alpha\nbeta\ngamma\ndelta\n"
+        // Buffer: "alpha\ngamma\ndelta\n"
+        let buffer_b_base = "
+            alpha
+            beta
+            gamma
+            delta
+        "
+        .unindent();
+        let buffer_b_text = "
+            alpha
+            gamma
+            delta
+        "
+        .unindent();
+
+        let buffer_a = cx.new(|cx| Buffer::local(buffer_a_text.clone(), cx));
+        let buffer_b = cx.new(|cx| Buffer::local(buffer_b_text.clone(), cx));
+
+        let diff_a = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&buffer_a_base, &buffer_a.read(cx).text_snapshot(), cx)
+        });
+        let diff_b = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&buffer_b_base, &buffer_b.read(cx).text_snapshot(), cx)
+        });
+
+        let primary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = SplittableEditor::new_unsplit(
+                primary_multibuffer.clone(),
+                project,
+                workspace,
+                window,
+                cx,
+            );
+            editor.split(&Default::default(), window, cx);
+            editor
+        });
+
+        // Add excerpts for both buffers
+        let (path_a, path_b) = cx.update(|_, cx| {
+            (
+                PathKey::for_buffer(&buffer_a, cx),
+                PathKey::for_buffer(&buffer_b, cx),
+            )
+        });
+
+        editor.update(cx, |editor, cx| {
+            // Buffer A: excerpt covering the whole buffer
+            editor.set_excerpts_for_path(
+                path_a.clone(),
+                buffer_a.clone(),
+                vec![Point::new(0, 0)..Point::new(4, 0)],
+                0,
+                diff_a.clone(),
+                cx,
+            );
+            // Buffer B: excerpt covering the whole buffer
+            editor.set_excerpts_for_path(
+                path_b.clone(),
+                buffer_b.clone(),
+                vec![Point::new(0, 0)..Point::new(3, 0)],
+                0,
+                diff_b.clone(),
+                cx,
+            );
+        });
+
+        // Now test the row translation
+        editor.update(cx, |editor, cx| {
+            let primary_display_map = editor.primary_editor.read(cx).display_map.clone();
+            let secondary = editor.secondary.as_ref().unwrap();
+            let secondary_display_map = secondary.editor.read(cx).display_map.clone();
+
+            // Get snapshots and closures
+            // The closure on primary_display_map converts secondary (companion) rows -> primary rows
+            // The closure on secondary_display_map converts primary (companion) rows -> secondary rows
+            let (primary_wrap, secondary_to_primary_excerpt_mapping, convert_secondary_to_primary) =
+                primary_display_map.update(cx, |dm, cx| {
+                    let snapshot = dm.snapshot(cx);
+                    let companion = dm.companion.as_ref().unwrap();
+                    (
+                        (*snapshot).clone(),
+                        companion.companion_excerpt_to_my_excerpt.clone(),
+                        companion.convert_wrap_row_from_companion,
+                    )
+                });
+
+            let (
+                secondary_wrap,
+                primary_to_secondary_excerpt_mapping,
+                convert_primary_to_secondary,
+            ) = secondary_display_map.update(cx, |dm, cx| {
+                let snapshot = dm.snapshot(cx);
+                let companion = dm.companion.as_ref().unwrap();
+                (
+                    (*snapshot).clone(),
+                    companion.companion_excerpt_to_my_excerpt.clone(),
+                    companion.convert_wrap_row_from_companion,
+                )
+            });
+
+            // Primary shows modified text: "one\nTWO\nINSERTED\nthree\nfour\n"
+            // Secondary shows base text: "one\ntwo\nthree\nfour\n"
+
+            // Test primary -> secondary translation
+            // Primary row 0 ("one") -> Secondary row 0 ("one")
+            assert_eq!(
+                convert_primary_to_secondary(
+                    &primary_to_secondary_excerpt_mapping,
+                    &secondary_wrap,
+                    &primary_wrap,
+                    WrapRow(0),
+                    Bias::Left
+                ),
+                WrapRow(0),
+                "primary row 0 (one) -> secondary row 0 (one)"
+            );
+
+            // Primary row 1 ("TWO") -> Secondary row 1 ("two")
+            assert_eq!(
+                convert_primary_to_secondary(
+                    &primary_to_secondary_excerpt_mapping,
+                    &secondary_wrap,
+                    &primary_wrap,
+                    WrapRow(1),
+                    Bias::Left
+                ),
+                WrapRow(1),
+                "primary row 1 (TWO) -> secondary row 1 (two)"
+            );
+
+            // Primary row 2 ("INSERTED") is an inserted line, should map to row 1 or 2
+            let inserted_row_left = convert_primary_to_secondary(
+                &primary_to_secondary_excerpt_mapping,
+                &secondary_wrap,
+                &primary_wrap,
+                WrapRow(2),
+                Bias::Left,
+            );
+            assert!(
+                inserted_row_left.0 == 1 || inserted_row_left.0 == 2,
+                "primary row 2 (INSERTED) with Bias::Left should map to 1 or 2, got {}",
+                inserted_row_left.0
+            );
+            let inserted_row_right = convert_primary_to_secondary(
+                &primary_to_secondary_excerpt_mapping,
+                &secondary_wrap,
+                &primary_wrap,
+                WrapRow(2),
+                Bias::Right,
+            );
+            assert!(
+                inserted_row_right.0 == 1 || inserted_row_right.0 == 2,
+                "primary row 2 (INSERTED) with Bias::Right should map to 1 or 2, got {}",
+                inserted_row_right.0
+            );
+
+            // Primary row 3 ("three") -> Secondary row 2 ("three")
+            assert_eq!(
+                convert_primary_to_secondary(
+                    &primary_to_secondary_excerpt_mapping,
+                    &secondary_wrap,
+                    &primary_wrap,
+                    WrapRow(3),
+                    Bias::Left
+                ),
+                WrapRow(2),
+                "primary row 3 (three) -> secondary row 2 (three)"
+            );
+
+            // Test secondary -> primary translation
+            // Secondary row 0 ("one") -> Primary row 0 ("one")
+            assert_eq!(
+                convert_secondary_to_primary(
+                    &secondary_to_primary_excerpt_mapping,
+                    &primary_wrap,
+                    &secondary_wrap,
+                    WrapRow(0),
+                    Bias::Left
+                ),
+                WrapRow(0),
+                "secondary row 0 (one) -> primary row 0 (one)"
+            );
+
+            // Secondary row 1 ("two") -> Primary row 1 ("TWO")
+            assert_eq!(
+                convert_secondary_to_primary(
+                    &secondary_to_primary_excerpt_mapping,
+                    &primary_wrap,
+                    &secondary_wrap,
+                    WrapRow(1),
+                    Bias::Left
+                ),
+                WrapRow(1),
+                "secondary row 1 (two) -> primary row 1 (TWO)"
+            );
+
+            // Secondary row 2 ("three") -> Primary row 3 ("three")
+            assert_eq!(
+                convert_secondary_to_primary(
+                    &secondary_to_primary_excerpt_mapping,
+                    &primary_wrap,
+                    &secondary_wrap,
+                    WrapRow(2),
+                    Bias::Left
+                ),
+                WrapRow(3),
+                "secondary row 2 (three) -> primary row 3 (three)"
+            );
+        });
     }
 }
