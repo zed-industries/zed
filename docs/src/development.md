@@ -58,12 +58,10 @@ Here's a typical workflow for comparing frame rendering performance between diff
    ```
 
 2. **Test the first version:**
-
    - Checkout the commit you want to measure
    - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-a`
 
 3. **Test the second version:**
-
    - Checkout another commit you want to compare
    - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-b`
 
