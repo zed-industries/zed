@@ -175,10 +175,6 @@ struct SynthesizeArgs {
     #[clap(long, default_value_t = 100)]
     max_commits: usize,
 
-    /// Only generate examples that require retrieved context to make a correct prediction
-    #[clap(long)]
-    require_context: bool,
-
     /// Ignore state file and reprocess all commits
     #[clap(long)]
     fresh: bool,
@@ -229,7 +225,6 @@ fn main() {
                 count: synth_args.count,
                 max_commits: synth_args.max_commits,
                 output_dir,
-                require_context: synth_args.require_context,
                 fresh: synth_args.fresh,
             };
             smol::block_on(async {

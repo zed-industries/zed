@@ -25,7 +25,6 @@ pub struct SynthesizeConfig {
     pub count: usize,
     pub max_commits: usize,
     pub output_dir: PathBuf,
-    pub require_context: bool,
     pub fresh: bool,
 }
 
@@ -307,14 +306,6 @@ async fn list_commits(
 }
 
 fn build_prompt(config: &SynthesizeConfig, commit: &CommitInfo) -> String {
-    let context_guidance = if config.require_context {
-        "IMPORTANT: Only identify patterns that REQUIRE reading context from other files to make the prediction. \
-         Single-file patterns (where the edit history and expected patch are in the same file) are NOT acceptable \
-         unless the pattern clearly requires understanding code from other files."
-    } else {
-        "Both single-file and multi-file patterns are acceptable."
-    };
-
     format!(
         indoc! {r#"
             You are analyzing a git commit to construct a realistic edit prediction example.
@@ -325,7 +316,7 @@ fn build_prompt(config: &SynthesizeConfig, commit: &CommitInfo) -> String {
             1. **Edit History**: 3-6 hunks showing what the programmer did BEFORE making the expected patch. This is the most important part - it must tell a coherent story of the changes leading up to the prediction.
             2. **Expected Patch**: One small hunk that logically follows from the edit history.
 
-            {context_guidance}
+            Both single-file and multi-file patterns are acceptable.
 
             ## What Makes a Good Example
 
@@ -448,7 +439,6 @@ fn build_prompt(config: &SynthesizeConfig, commit: &CommitInfo) -> String {
             - Must be SMALL: 1-15 changed lines (not counting context)
             - Must be clearly predictable from the edit history narrative
         "#},
-        context_guidance = context_guidance,
         repo_url = config.repo_url,
         sha = commit.sha,
         message = commit.message,
