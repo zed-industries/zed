@@ -4798,7 +4798,10 @@ impl AcpThreadView {
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
+        let message_editor = self.message_editor.read(cx);
+        let is_editor_empty = message_editor.is_empty(cx);
+        let focus_handle = message_editor.focus_handle(cx);
+
         let is_generating = self
             .thread()
             .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
@@ -4813,21 +4816,13 @@ impl AcpThreadView {
         } else if is_generating && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
-                .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                .style(ButtonStyle::Tinted(TintColor::Error))
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action("Stop Generation", &editor::actions::Cancel, cx)
                 })
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
         } else {
-            let send_btn_tooltip = if is_editor_empty && !is_generating {
-                "Type to Send"
-            } else if is_generating {
-                "Stop and Send Message"
-            } else {
-                "Send"
-            };
-
             IconButton::new("send-message", IconName::Send)
                 .style(ButtonStyle::Filled)
                 .map(|this| {
@@ -4837,7 +4832,46 @@ impl AcpThreadView {
                         this.icon_color(Color::Accent)
                     }
                 })
-                .tooltip(move |_window, cx| Tooltip::for_action(send_btn_tooltip, &Chat, cx))
+                .tooltip(move |_window, cx| {
+                    if is_editor_empty && !is_generating {
+                        Tooltip::for_action("Type to Send", &Chat, cx)
+                    } else {
+                        let title = if is_generating {
+                            "Stop and Send Message"
+                        } else {
+                            "Send"
+                        };
+
+                        let focus_handle = focus_handle.clone();
+
+                        Tooltip::element(move |_window, cx| {
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .justify_between()
+                                        .child(Label::new(title))
+                                        .child(KeyBinding::for_action_in(&Chat, &focus_handle, cx)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .pt_1()
+                                        .gap_2()
+                                        .justify_between()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(Label::new("Queue Message"))
+                                        .child(KeyBinding::for_action_in(
+                                            &QueueMessage,
+                                            &focus_handle,
+                                            cx,
+                                        )),
+                                )
+                                .into_any_element()
+                        })(_window, cx)
+                    }
+                })
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.send(window, cx);
                 }))
@@ -6232,6 +6266,9 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
+                this.send_queued_message_at_index(0, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
