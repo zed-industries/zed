@@ -300,6 +300,12 @@ pub struct AcpThreadView {
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
+    message_queue: Vec<QueuedMessage>,
+}
+
+struct QueuedMessage {
+    content: Vec<acp::ContentBlock>,
+    tracked_buffers: Vec<Entity<Buffer>>,
 }
 
 enum ThreadState {
@@ -477,6 +483,7 @@ impl AcpThreadView {
         );
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
+        self.message_queue.clear();
         cx.notify();
     }
 
@@ -991,6 +998,7 @@ impl AcpThreadView {
     ) {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
+            MessageEditorEvent::Queue => self.queue_message(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1042,6 +1050,7 @@ impl AcpThreadView {
                     }
                 }
             }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Queue) => {}
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
                 self.regenerate(event.entry_index, editor.clone(), window, cx);
             }
@@ -1276,6 +1285,153 @@ impl AcpThreadView {
         .detach();
     }
 
+    fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+
+        let contents = self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.contents(full_mention_content, cx)
+        });
+
+        let message_editor = self.message_editor.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (content, tracked_buffers) = contents.await?;
+
+            if content.is_empty() {
+                return Ok::<(), anyhow::Error>(());
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.message_queue.push(QueuedMessage {
+                    content,
+                    tracked_buffers,
+                });
+                message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+                cx.notify();
+            })?;
+            Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn send_queued_message_at_index(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.message_queue.len() {
+            return;
+        }
+
+        let queued = self.message_queue.remove(index);
+        let content = queued.content;
+        let tracked_buffers = queued.tracked_buffers;
+
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
+        let thread = thread.downgrade();
+
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
+
+        self.is_loading_contents = true;
+        let model_id = self.current_model_id(cx);
+        let mode_id = self.current_mode_id(cx);
+        let guard = cx.new(|_| ());
+
+        cx.observe_release(&guard, |this, _guard, cx| {
+            this.is_loading_contents = false;
+            cx.notify();
+        })
+        .detach();
+
+        let task = cx.spawn_in(window, async move |this, cx| {
+            this.update_in(cx, |this, _window, cx| {
+                this.in_flight_prompt = Some(content.clone());
+                this.set_editor_is_expanded(false, cx);
+                this.scroll_to_bottom(cx);
+            })?;
+
+            let turn_start_time = Instant::now();
+            let send = thread.update(cx, |thread, cx| {
+                thread.action_log().update(cx, |action_log, cx| {
+                    for buffer in tracked_buffers {
+                        action_log.buffer_read(buffer, cx)
+                    }
+                });
+                drop(guard);
+
+                telemetry::event!(
+                    "Agent Message Sent",
+                    agent = agent_telemetry_id,
+                    session = session_id,
+                    model = model_id,
+                    mode = mode_id
+                );
+
+                thread.send(content, cx)
+            })?;
+
+            let res = send.await;
+            let turn_time_ms = turn_start_time.elapsed().as_millis();
+            let status = if res.is_ok() {
+                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                "success"
+            } else {
+                "failure"
+            };
+
+            telemetry::event!(
+                "Agent Turn Completed",
+                agent = agent_telemetry_id,
+                session = session_id,
+                model = model_id,
+                mode = mode_id,
+                status,
+                turn_time_ms,
+            );
+            res
+        });
+
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = task.await {
+                this.update(cx, |this, cx| {
+                    this.handle_thread_error(err, cx);
+                })
+                .ok();
+            } else {
+                this.update(cx, |this, cx| {
+                    this.should_be_following = this
+                        .workspace
+                        .update(cx, |workspace, _| {
+                            workspace.is_being_followed(CollaboratorId::Agent)
+                        })
+                        .unwrap_or_default();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread().cloned() else {
             return;
@@ -1474,6 +1630,9 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+                if !self.message_queue.is_empty() {
+                    self.send_queued_message_at_index(0, window, cx);
+                }
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
