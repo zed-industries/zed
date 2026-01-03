@@ -32,12 +32,6 @@ use ui::ElementId;
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
 const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
 
-pub struct CompanionWrapData {
-    pub old_snapshot: WrapSnapshot,
-    pub new_snapshot: WrapSnapshot,
-    pub edits: WrapPatch,
-}
-
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
@@ -545,7 +539,7 @@ impl BlockMap {
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<(&HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
     ) -> BlockMapReader<'_> {
         self.sync(
             &wrap_snapshot,
@@ -572,7 +566,7 @@ impl BlockMap {
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<(&HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
     ) -> BlockMapWriter<'_> {
         self.sync(
             &wrap_snapshot,
@@ -590,7 +584,7 @@ impl BlockMap {
         wrap_snapshot: &WrapSnapshot,
         mut edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<(&HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
     ) {
         let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
 
@@ -844,13 +838,16 @@ impl BlockMap {
             ));
 
             if let Some((companion_snapshot, _)) = &companion_wrap_edits
-                && let Some((excerpts, convert)) = &companion_conversion
+                && let Some((excerpts, convert)) = companion_conversion
             {
+                let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
                 blocks_in_edit.extend(self.spacer_blocks(
+                    new_buffer_start..new_buffer_end,
+                    new_start..new_end,
                     wrap_snapshot,
                     companion_snapshot,
                     excerpts,
-                    convert,
+                    *convert,
                 ));
             }
 
@@ -1030,13 +1027,13 @@ impl BlockMap {
         // align before the hunk, if its start follows the start of the edit
         // align after the hunk, if its end precedes the end of the edit
         // align at the end of the edit
-        let mut blocks = Vec::new();
-        let mut last_companion_wrap_row;
-        for hunk in wrap_snapshot.diff_hunks_in_range(new_buffer_range) {
-            if hunk.row_range.start >= new_buffer_range.start.row() {
+        let blocks = Vec::new();
+        let last_companion_wrap_row: WrapRow = WrapRow(0);
+        for hunk in wrap_snapshot.diff_hunks_in_range(new_buffer_range.clone()) {
+            if hunk.row_range.start >= MultiBufferRow(new_buffer_range.start.row) {
                 // ...
             }
-            if hunk.row_range.end <= new_buffer_range.end.row() {
+            if hunk.row_range.end <= MultiBufferRow(new_buffer_range.end.row) {
                 // ...
             }
         }

@@ -21,7 +21,10 @@ use workspace::{
     ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
 };
 
-use crate::{DisplayMap, Editor, EditorEvent, display_map::WrapPoint};
+use crate::{
+    DisplayMap, Editor, EditorEvent,
+    display_map::{Companion, WrapPoint, WrapRow, WrapSnapshot},
+};
 
 struct SplitDiffFeatureFlag;
 
@@ -215,13 +218,11 @@ impl SplittableEditor {
                 } => {
                     if this.secondary.is_some() {
                         let primary_display_map = this.primary_editor.read(cx).display_map.read(cx);
-                        let excerpt_mapping = primary_display_map
-                            .companion
-                            .as_ref()
-                            .map(|c| &c.companion_excerpt_to_my_excerpt);
                         let primary_ids: Vec<_> = excerpt_ids
                             .iter()
-                            .filter_map(|id| excerpt_mapping?.get(id).copied())
+                            .filter_map(|id| {
+                                primary_display_map.companion_excerpt_to_my_excerpt(*id, cx)
+                            })
                             .collect();
                         this.expand_excerpts(primary_ids.into_iter(), *lines, *direction, cx);
                     }
@@ -243,87 +244,25 @@ impl SplittableEditor {
             _subscriptions: subscriptions,
         };
         // Hook up both display maps as mutual companions before syncing excerpts
+        // Primary = RHS (current/modified text), Secondary = LHS (base/diff text)
         let primary_display_map = self.primary_editor.read(cx).display_map.clone();
         let secondary_display_map = secondary.editor.read(cx).display_map.clone();
+        let rhs_display_map_id = primary_display_map.entity_id();
+
+        let companion = cx.new(|cx| {
+            Companion::new(
+                rhs_display_map_id,
+                convert_rhs_wrap_row_to_lhs,
+                convert_lhs_wrap_row_to_rhs,
+                cx,
+            )
+        });
+
         primary_display_map.update(cx, |dm, _| {
-            dm.set_companion(Some((
-                secondary_display_map.downgrade(),
-                |companion_excerpt_to_my_excerpt, my_snapshot, their_snapshot, their_row, bias| {
-                    let their_point = their_snapshot.to_point(WrapPoint::new(their_row, 0), bias);
-                    let Some((_their_buffer_snapshot, their_buffer_point, their_excerpt_id)) =
-                        their_snapshot.point_to_buffer_point(their_point)
-                    else {
-                        return my_snapshot.max_point().row();
-                    };
-                    let my_excerpt_id = companion_excerpt_to_my_excerpt
-                        .get(&their_excerpt_id)
-                        .copied()
-                        .unwrap();
-                    let my_buffer_snapshot = my_snapshot.buffer_for_excerpt(my_excerpt_id).unwrap();
-                    let diff = my_snapshot
-                        .diff_for_buffer_id(my_buffer_snapshot.remote_id())
-                        .unwrap();
-                    let my_row = diff.base_text_row_to_row(
-                        their_buffer_point.row,
-                        bias,
-                        &my_buffer_snapshot,
-                    );
-                    let my_point = Point::new(my_row, 0);
-                    let text_anchor = my_buffer_snapshot.anchor_at(my_point, bias);
-                    let ctx_range = my_snapshot
-                        .context_range_for_excerpt(my_excerpt_id)
-                        .unwrap();
-                    let text_anchor = *text_anchor
-                        .max(&ctx_range.start, &my_buffer_snapshot)
-                        .min(&ctx_range.end, &my_buffer_snapshot);
-                    let my_anchor = my_snapshot
-                        .anchor_in_excerpt(my_excerpt_id, text_anchor)
-                        .unwrap();
-                    my_snapshot
-                        .make_wrap_point(my_anchor.to_point(&my_snapshot), bias)
-                        .row()
-                },
-            )));
+            dm.set_companion(Some((secondary_display_map.downgrade(), companion.clone())));
         });
         secondary_display_map.update(cx, |dm, _| {
-            dm.set_companion(Some((
-                primary_display_map.downgrade(),
-                |companion_excerpt_to_my_excerpt, my_snapshot, their_snapshot, their_row, bias| {
-                    let their_point = their_snapshot.to_point(WrapPoint::new(their_row, 0), bias);
-                    let Some((their_buffer_snapshot, their_buffer_point, their_excerpt_id)) =
-                        their_snapshot.point_to_buffer_point(their_point)
-                    else {
-                        return my_snapshot.max_point().row();
-                    };
-                    let my_excerpt_id = companion_excerpt_to_my_excerpt
-                        .get(&their_excerpt_id)
-                        .copied()
-                        .unwrap();
-                    let my_buffer_snapshot = my_snapshot.buffer_for_excerpt(my_excerpt_id).unwrap();
-                    let diff = my_snapshot
-                        .diff_for_buffer_id(my_buffer_snapshot.remote_id())
-                        .unwrap();
-                    let my_row = diff.row_to_base_text_row(
-                        their_buffer_point.row,
-                        bias,
-                        &their_buffer_snapshot,
-                    );
-                    let my_point = Point::new(my_row, 0);
-                    let text_anchor = my_buffer_snapshot.anchor_at(my_point, bias);
-                    let ctx_range = my_snapshot
-                        .context_range_for_excerpt(my_excerpt_id)
-                        .unwrap();
-                    let text_anchor = *text_anchor
-                        .max(&ctx_range.start, &my_buffer_snapshot)
-                        .min(&ctx_range.end, &my_buffer_snapshot);
-                    let my_anchor = my_snapshot
-                        .anchor_in_excerpt(my_excerpt_id, text_anchor)
-                        .unwrap();
-                    my_snapshot
-                        .make_wrap_point(my_anchor.to_point(&my_snapshot), bias)
-                        .row()
-                },
-            )));
+            dm.set_companion(Some((primary_display_map.downgrade(), companion)));
         });
 
         self.primary_editor.update(cx, |editor, cx| {
@@ -413,10 +352,10 @@ impl SplittableEditor {
 
         let target_point = target_display_map.update(cx, |dm, cx| {
             let target_snapshot = dm.snapshot(cx);
-            let companion = dm.companion.as_ref()?;
+            let (excerpt_mapping, convert_wrap_row) = dm.companion_conversion(cx)?;
 
-            let target_wrap_row = (companion.convert_wrap_row_from_companion)(
-                &companion.companion_excerpt_to_my_excerpt,
+            let target_wrap_row = convert_wrap_row(
+                &excerpt_mapping,
                 &target_snapshot,
                 &source_snapshot,
                 source_wrap_row,
@@ -561,6 +500,82 @@ impl SplittableEditor {
                 .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
         }
     }
+}
+
+fn convert_lhs_wrap_row_to_rhs(
+    lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    rhs_snapshot: &WrapSnapshot,
+    lhs_snapshot: &WrapSnapshot,
+    lhs_row: WrapRow,
+    bias: Bias,
+) -> WrapRow {
+    let lhs_point = lhs_snapshot.to_point(WrapPoint::new(lhs_row, 0), bias);
+    let Some((_lhs_buffer_snapshot, lhs_buffer_point, lhs_excerpt_id)) =
+        lhs_snapshot.point_to_buffer_point(lhs_point)
+    else {
+        return rhs_snapshot.max_point().row();
+    };
+    let rhs_excerpt_id = lhs_excerpt_to_rhs_excerpt
+        .get(&lhs_excerpt_id)
+        .copied()
+        .unwrap();
+    let rhs_buffer_snapshot = rhs_snapshot.buffer_for_excerpt(rhs_excerpt_id).unwrap();
+    let diff = rhs_snapshot
+        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
+        .unwrap();
+    let rhs_row = diff.base_text_row_to_row(lhs_buffer_point.row, bias, &rhs_buffer_snapshot);
+    let rhs_point = Point::new(rhs_row, 0);
+    let text_anchor = rhs_buffer_snapshot.anchor_at(rhs_point, bias);
+    let ctx_range = rhs_snapshot
+        .context_range_for_excerpt(rhs_excerpt_id)
+        .unwrap();
+    let text_anchor = *text_anchor
+        .max(&ctx_range.start, &rhs_buffer_snapshot)
+        .min(&ctx_range.end, &rhs_buffer_snapshot);
+    let rhs_anchor = rhs_snapshot
+        .anchor_in_excerpt(rhs_excerpt_id, text_anchor)
+        .unwrap();
+    rhs_snapshot
+        .make_wrap_point(rhs_anchor.to_point(&rhs_snapshot), bias)
+        .row()
+}
+
+fn convert_rhs_wrap_row_to_lhs(
+    rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
+    lhs_snapshot: &WrapSnapshot,
+    rhs_snapshot: &WrapSnapshot,
+    rhs_row: WrapRow,
+    bias: Bias,
+) -> WrapRow {
+    let rhs_point = rhs_snapshot.to_point(WrapPoint::new(rhs_row, 0), bias);
+    let Some((rhs_buffer_snapshot, rhs_buffer_point, rhs_excerpt_id)) =
+        rhs_snapshot.point_to_buffer_point(rhs_point)
+    else {
+        return lhs_snapshot.max_point().row();
+    };
+    let lhs_excerpt_id = rhs_excerpt_to_lhs_excerpt
+        .get(&rhs_excerpt_id)
+        .copied()
+        .unwrap();
+    let lhs_buffer_snapshot = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id).unwrap();
+    let diff = lhs_snapshot
+        .diff_for_buffer_id(lhs_buffer_snapshot.remote_id())
+        .unwrap();
+    let lhs_row = diff.row_to_base_text_row(rhs_buffer_point.row, bias, &rhs_buffer_snapshot);
+    let lhs_point = Point::new(lhs_row, 0);
+    let text_anchor = lhs_buffer_snapshot.anchor_at(lhs_point, bias);
+    let ctx_range = lhs_snapshot
+        .context_range_for_excerpt(lhs_excerpt_id)
+        .unwrap();
+    let text_anchor = *text_anchor
+        .max(&ctx_range.start, &lhs_buffer_snapshot)
+        .min(&ctx_range.end, &lhs_buffer_snapshot);
+    let lhs_anchor = lhs_snapshot
+        .anchor_in_excerpt(lhs_excerpt_id, text_anchor)
+        .unwrap();
+    lhs_snapshot
+        .make_wrap_point(lhs_anchor.to_point(&lhs_snapshot), bias)
+        .row()
 }
 
 #[cfg(test)]
@@ -886,19 +901,19 @@ impl SecondaryEditor {
 
         // Add excerpt ID mappings to both display maps
         // Primary display map: keyed by secondary IDs (companion's IDs)
-        primary_display_map.update(cx, |dm, _| {
+        primary_display_map.update(cx, |dm, cx| {
             for (primary_id, secondary_id) in
                 primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
             {
-                dm.add_companion_excerpt_mapping(*primary_id, *secondary_id);
+                dm.add_companion_excerpt_mapping(*primary_id, *secondary_id, cx);
             }
         });
         // Secondary display map: keyed by primary IDs (companion's IDs)
-        secondary_display_map.update(cx, |dm, _| {
+        secondary_display_map.update(cx, |dm, cx| {
             for (primary_id, secondary_id) in
                 primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
             {
-                dm.add_companion_excerpt_mapping(*secondary_id, *primary_id);
+                dm.add_companion_excerpt_mapping(*secondary_id, *primary_id, cx);
             }
         });
 
@@ -929,12 +944,12 @@ impl SecondaryEditor {
             .excerpts_for_path(path_key)
             .collect();
 
-        primary_display_map.update(cx, |dm, _| {
-            dm.remove_companion_excerpt_mappings(secondary_excerpt_ids.iter().copied());
+        primary_display_map.update(cx, |dm, cx| {
+            dm.remove_companion_excerpt_mappings(secondary_excerpt_ids.iter().copied(), cx);
         });
 
-        secondary_display_map.update(cx, |dm, _| {
-            dm.remove_companion_excerpt_mappings(primary_excerpt_ids);
+        secondary_display_map.update(cx, |dm, cx| {
+            dm.remove_companion_excerpt_mappings(primary_excerpt_ids, cx);
         });
     }
 }
@@ -1184,12 +1199,8 @@ mod tests {
             let (primary_wrap, secondary_to_primary_excerpt_mapping, convert_secondary_to_primary) =
                 primary_display_map.update(cx, |dm, cx| {
                     let snapshot = dm.snapshot(cx);
-                    let companion = dm.companion.as_ref().unwrap();
-                    (
-                        (*snapshot).clone(),
-                        companion.companion_excerpt_to_my_excerpt.clone(),
-                        companion.convert_wrap_row_from_companion,
-                    )
+                    let (excerpt_mapping, convert) = dm.companion_conversion(cx).unwrap();
+                    ((*snapshot).clone(), excerpt_mapping, convert)
                 });
 
             let (
@@ -1198,12 +1209,8 @@ mod tests {
                 convert_primary_to_secondary,
             ) = secondary_display_map.update(cx, |dm, cx| {
                 let snapshot = dm.snapshot(cx);
-                let companion = dm.companion.as_ref().unwrap();
-                (
-                    (*snapshot).clone(),
-                    companion.companion_excerpt_to_my_excerpt.clone(),
-                    companion.convert_wrap_row_from_companion,
-                )
+                let (excerpt_mapping, convert) = dm.companion_conversion(cx).unwrap();
+                ((*snapshot).clone(), excerpt_mapping, convert)
             });
 
             // Primary shows modified text: "one\nTWO\nINSERTED\nthree\nfour\n"
