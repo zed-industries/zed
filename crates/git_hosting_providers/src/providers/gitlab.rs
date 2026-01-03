@@ -7,6 +7,7 @@ use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -209,6 +210,25 @@ impl GitHostingProvider for Gitlab {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let mut url = self
+            .base_url()
+            .join(&format!(
+                "{}/{}/-/merge_requests/new",
+                remote.owner, remote.repo
+            ))
+            .ok()?;
+
+        let query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
+
+        url.set_query(Some(&query));
+        Some(url)
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
@@ -374,6 +394,25 @@ mod tests {
 
         let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_gitlab_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(&remote, "feature/cool stuff")
+            .expect("create PR url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff"
+        );
     }
 
     #[test]
