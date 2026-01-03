@@ -32,9 +32,7 @@ impl HighlightMap {
                             // the final component may match the TS language name, for per-lang customization
                             let capture_parts = capture_name.split('.').chain(grammar_name);
                             for key_part in key.split('.') {
-                                // hmm, is this logic correct? Seems like it should be a zip_longest kinda thing
-                                if capture_parts.clone().any(|part| part == key_part)
-                                {
+                                if capture_parts.clone().any(|part| part == key_part) {
                                     len += 1;
                                 } else {
                                     return None;
@@ -98,6 +96,7 @@ mod tests {
                 ("function", rgba(0x100000ff)),
                 ("function.method", rgba(0x200000ff)),
                 ("function.async", rgba(0x300000ff)),
+                ("function.async.javascript", rgba(0x700000ff)),
                 ("variable.builtin.self.rust", rgba(0x400000ff)),
                 ("variable.builtin", rgba(0x500000ff)),
                 ("variable", rgba(0x600000ff)),
@@ -111,11 +110,13 @@ mod tests {
             "function.special",
             "function.async",
             "variable.builtin.self",
+            "variable.builtin",
         ];
 
         let map = HighlightMap::new(capture_names, Some("rust"), &theme);
         assert_eq!(map.get(0).name(&theme), Some("function"));
         assert_eq!(map.get(1).name(&theme), Some("function.async"));
-        assert_eq!(map.get(2).name(&theme), Some("variable.builtin"));
+        assert_eq!(map.get(2).name(&theme), Some("variable.builtin.self.rust"));
+        assert_eq!(map.get(3).name(&theme), Some("variable.builtin"));
     }
 }
