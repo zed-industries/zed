@@ -3574,7 +3574,6 @@ impl ProjectPanel {
                                         open_paths.get(&TriePath::new(&entry.path)).is_some()
                                     });
                             let is_editing = is_open || entry.git_summary != GitSummary::UNCHANGED;
-                            // If this directory is expanded and being edited and its ancestor is collapsing
                             if let Some(ref collapsing_dir_path) = new_state.collapsing_dir_path
                                 && worktree_id == collapsing_dir_path.worktree_id
                                 && entry.kind.is_dir()
@@ -3586,19 +3585,6 @@ impl ProjectPanel {
                                     .any(|path| *path == *collapsing_dir_path.path)
                             {
                                 expanded_dir_ids.remove(ix);
-                            }
-                            // If this entry is not being edited and its parent is collapsed
-                            if !is_editing
-                                && entry.path.parent().is_some_and(|path| {
-                                    worktree_snapshot
-                                        .entry_for_path(path)
-                                        .is_some_and(|parent| {
-                                            expanded_dir_ids.binary_search(&parent.id).is_err()
-                                        })
-                                })
-                            {
-                                entry_iter.advance_to_sibling();
-                                continue;
                             }
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
@@ -3652,6 +3638,28 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
+                            let root_folded_path =
+                                new_state.ancestors.get(&entry.id).and_then(|ancestors| {
+                                    let furthest_ancestor = ancestors.ancestors.last()?;
+                                    Some(
+                                        worktree_snapshot
+                                            .entry_for_id(*furthest_ancestor)?
+                                            .path
+                                            .as_ref(),
+                                    )
+                                });
+                            let parent_collapsed = root_folded_path
+                                .or(Some(entry.path.as_ref()))
+                                .and_then(|path| {
+                                    let parent =
+                                        worktree_snapshot.entry_for_path(path.parent()?)?;
+                                    Some(&parent.id)
+                                })
+                                .is_some_and(|id| expanded_dir_ids.binary_search(id).is_err());
+                            if !is_editing && parent_collapsed {
+                                entry_iter.advance_to_sibling();
+                                continue;
+                            }
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
                             {
@@ -3701,19 +3709,12 @@ impl ProjectPanel {
                                 let depth = entry.path.ancestors().count() - 1;
                                 (depth, path_name.chars().count())
                             } else {
-                                let path = new_state
-                                    .ancestors
-                                    .get(&entry.id)
-                                    .and_then(|ancestors| {
-                                        let outermost_ancestor = ancestors.ancestors.last()?;
-                                        let root_folded_entry = worktree_snapshot
-                                            .entry_for_id(*outermost_ancestor)?
-                                            .path
-                                            .as_ref();
-                                        entry.path.strip_prefix(root_folded_entry).ok().and_then(
+                                let path = root_folded_path
+                                    .and_then(|root_folded_path| {
+                                        entry.path.strip_prefix(root_folded_path).ok().and_then(
                                             |suffix| {
                                                 Some(
-                                                    RelPath::unix(root_folded_entry.file_name()?)
+                                                    RelPath::unix(root_folded_path.file_name()?)
                                                         .unwrap()
                                                         .join(suffix),
                                                 )
