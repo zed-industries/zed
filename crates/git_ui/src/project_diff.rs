@@ -41,7 +41,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -910,18 +910,6 @@ impl Item for ProjectDiff {
         } else {
             None
         }
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor
-            .read(cx)
-            .last_selected_editor()
-            .read(cx)
-            .breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(
