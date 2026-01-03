@@ -7,10 +7,7 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::{AuthRequired, ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, channel::mpsc, future::join_all};
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
-    actions,
-};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
@@ -755,6 +752,30 @@ impl ContextServerStore {
             }
         })
         .detach();
+    }
+
+    pub async fn handle_oauth_callback(
+        &self,
+        callback: &context_server::OAuthCallback,
+    ) -> Result<()> {
+        let server = self.get_server(&callback.server_id).with_context(|| {
+            format!(
+                "got MCP OAuth callback for unknown context server {}",
+                callback.server_id
+            )
+        })?;
+
+        server
+            .handle_oauth_callback(callback)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to handle MCP OAuth callback for {}",
+                    callback.server_id
+                )
+            })?; // todo! set status on failure
+
+        Ok(())
     }
 }
 

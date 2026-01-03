@@ -20683,6 +20683,7 @@ dependencies = [
  "command_palette",
  "component",
  "component_preview",
+ "context_server",
  "copilot",
  "crashes",
  "dap",

@@ -11,11 +11,11 @@ use parking_lot::Mutex as SyncMutex;
 use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
-use crate::transport::Transport;
+use crate::{ContextServerId, transport::Transport};
 use auth::OAuthClient;
 use www_authenticate::WwwAuthenticate;
 
-pub use auth::AuthorizeUrl;
+pub use auth::{AuthorizeUrl, OAuthCallback};
 
 #[derive(Debug)]
 pub struct AuthRequired {
@@ -259,6 +259,18 @@ impl HttpTransport {
         let url = client.authorize_url()?;
 
         Ok(url)
+    }
+
+    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
+        let mut client_guard = self.oauth_client.lock().await;
+        let client = match client_guard.as_mut() {
+            Some(client) => client,
+            None => return Err(anyhow!("oauth client is not initialized; start auth first")),
+        };
+
+        client.exchange_token(&callback.code).await?;
+
+        Ok(())
     }
 }
 

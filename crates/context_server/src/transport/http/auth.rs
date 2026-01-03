@@ -18,8 +18,6 @@ use url::Url;
 use crate::{ContextServerId, transport::http::www_authenticate::WwwAuthenticate};
 use abs_uri::AbsUri;
 
-pub const CALLBACK_URI: &str = "zed://mcp/auth/callback";
-
 pub struct OAuthClient {
     registration: ClientRegistration,
     server: AuthorizationServer,
@@ -109,7 +107,7 @@ impl OAuthClient {
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.registration.client_id)
-            .append_pair("redirect_uri", CALLBACK_URI)
+            .append_pair("redirect_uri", OAuthCallback::URI)
             .append_pair("code_challenge", &code_challenge)
             .append_pair("code_challenge_method", "S256")
             .extend_pairs(self.scope.iter().map(|value| ("scope", value)));
@@ -119,7 +117,13 @@ impl OAuthClient {
         anyhow::Ok(AuthorizeUrl { url })
     }
 
-    pub async fn exchange_token(&mut self, code: &str, code_verifier: &str) -> Result<()> {
+    pub async fn exchange_token(&mut self, code: &str) -> Result<()> {
+        let State::WaitingForCode { code_verifier } = &self.state else {
+            anyhow::bail!(
+                "cannot exchange token: oauth client is not waiting for an authorization code"
+            );
+        };
+
         let token_endpoint = self
             .server
             .token_endpoint
@@ -130,7 +134,7 @@ impl OAuthClient {
         let form = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("grant_type", "authorization_code")
             .append_pair("code", code)
-            .append_pair("redirect_uri", CALLBACK_URI)
+            .append_pair("redirect_uri", OAuthCallback::URI)
             .append_pair("client_id", &self.registration.client_id)
             .append_pair("code_verifier", code_verifier)
             .finish();
@@ -164,7 +168,7 @@ impl OAuthClient {
         http_client: &Arc<dyn HttpClient>,
     ) -> Result<ClientRegistration> {
         let metadata = json!({
-            "redirect_uris": [CALLBACK_URI],
+            "redirect_uris": [OAuthCallback::URI],
             "token_endpoint_auth_method": "none",
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -188,6 +192,53 @@ impl AuthorizeUrl {
             .query_pairs_mut()
             .append_pair("state", &server_id.0);
         self.url
+    }
+}
+
+#[derive(Debug)]
+pub struct OAuthCallback {
+    pub server_id: ContextServerId,
+    pub code: String,
+}
+
+impl OAuthCallback {
+    pub const URI: &str = "zed://mcp/oauth/callback";
+
+    pub fn parse_query(query: &str) -> Result<Self> {
+        let mut code: Option<String> = None;
+        let mut state: Option<String> = None;
+
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "code" => {
+                    if !value.is_empty() {
+                        code = Some(value.into_owned());
+                    }
+                }
+                "state" => {
+                    if !value.is_empty() {
+                        state = Some(value.into_owned());
+                    }
+                }
+                _ => {}
+            }
+
+            if code.is_some() && state.is_some() {
+                break;
+            }
+        }
+
+        let code = code.context("invalid oauth callback query: missing code")?;
+        let state = state.context("invalid oauth callback query: missing state")?;
+
+        let state = state.trim();
+        if state.is_empty() {
+            anyhow::bail!("invalid oauth callback state: missing server id");
+        }
+
+        let server_id = ContextServerId(Arc::<str>::from(state.to_string()));
+
+        Ok(Self { server_id, code })
     }
 }
 

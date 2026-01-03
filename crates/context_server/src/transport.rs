@@ -4,7 +4,7 @@ mod stdio_transport;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::Stream;
-use std::{error::Error, fmt, pin::Pin};
+use std::pin::Pin;
 
 pub use http::*;
 pub use stdio_transport::*;

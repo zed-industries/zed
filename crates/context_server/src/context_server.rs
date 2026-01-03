@@ -22,7 +22,7 @@ use url::Url;
 use crate::transport::{AuthRequiredCallback, HttpTransport};
 
 pub use crate::transport::AuthRequired;
-pub use crate::transport::http::AuthorizeUrl;
+pub use crate::transport::http::{AuthorizeUrl, OAuthCallback};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -173,5 +173,13 @@ impl ContextServer {
         };
 
         http.start_auth(www_auth_header).await
+    }
+
+    pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
+        let ContextServerTransport::Http(http) = &self.configuration else {
+            anyhow::bail!("authorization is only supported for HTTP context servers");
+        };
+
+        http.handle_oauth_callback(&callback).await
     }
 }

@@ -5,6 +5,7 @@ use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use collections::HashMap;
+use context_server::transport::http::OAuthCallback as McpOAuthCallback;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
@@ -65,6 +66,9 @@ pub enum OpenRequestKind {
     GitCommit {
         sha: String,
     },
+    McpOAuthCallback {
+        callback: McpOAuthCallback,
+    },
 }
 
 impl OpenRequest {
@@ -105,6 +109,12 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
+            } else if let Some(callback) = url.strip_prefix(McpOAuthCallback::URI) {
+                let query = callback
+                    .strip_prefix('?')
+                    .context("invalid oauth callback url: missing query")?;
+                let callback = McpOAuthCallback::parse_query(query)?;
+                this.kind = Some(OpenRequestKind::McpOAuthCallback { callback });
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
