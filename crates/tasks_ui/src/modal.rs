@@ -10,7 +10,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{InventoryEvent, TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
     ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
@@ -19,7 +19,9 @@ use ui::{
 };
 
 use util::{ResultExt, truncate_and_trailoff};
-use workspace::{ModalView, Workspace};
+use workspace::{
+    ModalView, Workspace, notifications::ErrorMessagePrompt, notifications::NotificationId,
+};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -99,7 +101,7 @@ impl TasksModalDelegate {
         }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, active_context)?,
+            new_oneshot.resolve_task(&id_base, active_context).ok()?,
         ))
     }
 
@@ -124,7 +126,7 @@ impl TasksModalDelegate {
 
 pub struct TasksModal {
     pub picker: Entity<Picker<TasksModalDelegate>>,
-    _subscription: [Subscription; 2],
+    _subscriptions: Vec<Subscription>,
 }
 
 impl TasksModal {
@@ -139,13 +141,18 @@ impl TasksModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store.clone(),
+                    task_contexts,
+                    task_overrides,
+                    workspace.clone(),
+                ),
                 window,
                 cx,
             )
             .modal(is_modal)
         });
-        let _subscription = [
+        let mut _subscriptions = Vec::from([
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
                 cx.emit(DismissEvent);
             }),
@@ -154,10 +161,33 @@ impl TasksModal {
                     debug_config: event.debug_config.clone(),
                 });
             }),
-        ];
+        ]);
+
+        if let Some(task_inventory) = task_store.read(cx).task_inventory().cloned() {
+            _subscriptions.push(cx.subscribe(&task_inventory, {
+                let workspace = workspace.clone();
+                move |_, _, event: &InventoryEvent, cx| {
+                    let InventoryEvent::TaskResolutionFailed(message) = event;
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            let id = NotificationId::unique::<InventoryEvent>();
+                            workspace.show_notification(id, cx, |cx| {
+                                cx.new(|cx| {
+                                    ErrorMessagePrompt::new(message, cx).with_link_button(
+                                        "See documentation for task variables",
+                                        "https://zed.dev/docs/tasks#variables",
+                                    )
+                                })
+                            });
+                        });
+                    }
+                }
+            }));
+        }
+
         Self {
             picker,
-            _subscription,
+            _subscriptions,
         }
     }
 

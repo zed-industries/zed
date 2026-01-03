@@ -857,6 +857,7 @@ impl RunnableTasks {
         self.templates.iter().filter_map(|(kind, template)| {
             template
                 .resolve_task(&kind.to_id_base(), cx)
+                .ok()
                 .map(|task| (kind.clone(), task))
         })
     }
