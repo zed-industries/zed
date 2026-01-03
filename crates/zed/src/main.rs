@@ -799,14 +799,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         let context_server_store =
                             workspace.project().read(cx).context_server_store();
 
-                        cx.spawn(async move |_, cx: &mut AsyncApp| {
-                            context_server_store
-                                .update(cx, |store, _cx| store.handle_oauth_callback(&callback))?
-                                .await?;
-
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                        context_server_store.update(cx, |store, cx| {
+                            store.handle_oauth_callback(callback, cx);
+                        });
                     });
                 });
             }

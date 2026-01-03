@@ -3669,6 +3669,7 @@ dependencies = [
  "smol",
  "tempfile",
  "terminal",
+ "thiserror 2.0.17",
  "url",
  "util",
 ]

@@ -38,6 +38,7 @@ tempfile.workspace = true
 terminal.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

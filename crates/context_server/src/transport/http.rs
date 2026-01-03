@@ -89,13 +89,25 @@ impl HttpTransport {
             request_builder = request_builder.header(key.as_str(), value.as_str());
         }
 
-        if let Some(access_token) = self
-            .oauth_client
-            .lock()
-            .await
-            .as_ref()
-            .and_then(|client| client.access_token())
-        {
+        let access_token: Option<String> = {
+            let mut oauth_client_guard = self.oauth_client.lock().await;
+            if let Some(oauth_client) = oauth_client_guard.as_mut() {
+                match oauth_client.access_token().await {
+                    Ok(Some(access_token)) => Some(access_token.to_owned()),
+                    Ok(None) => None,
+                    Err(error) => {
+                        (self.on_auth_required)(AuthRequired {
+                            www_authenticate_header: None,
+                        });
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(access_token) = access_token {
             request_builder =
                 request_builder.header("Authorization", format!("Bearer {}", access_token));
         }
@@ -253,6 +265,7 @@ impl HttpTransport {
     }
 
     pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
+        // todo! bg
         let www_authenticate = www_auth_header.and_then(WwwAuthenticate::parse);
 
         let mut client_guard = self.oauth_client.lock().await;
@@ -273,6 +286,7 @@ impl HttpTransport {
     }
 
     pub async fn handle_oauth_callback(&self, callback: &OAuthCallback) -> Result<()> {
+        // todo! bg
         let mut client_guard = self.oauth_client.lock().await;
         let client = match client_guard.as_mut() {
             Some(client) => client,

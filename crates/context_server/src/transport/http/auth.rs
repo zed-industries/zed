@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use smol::io::AsyncReadExt;
+use thiserror::Error;
 use url::Url;
 
 use crate::{ContextServerId, transport::http::www_authenticate::WwwAuthenticate};
@@ -39,14 +40,31 @@ enum State {
     },
 }
 
-impl OAuthClient {
-    pub fn access_token(&self) -> Option<&str> {
-        match &self.state {
-            State::Authenticated { access_token, .. } => Some(access_token.as_str()),
-            State::Init | State::WaitingForCode { .. } => None,
-        }
-    }
+#[derive(Debug, Error)]
+pub enum OAuthError {
+    #[error("OAuth access token is expired and no refresh token is available")]
+    AccessTokenExpiredNoRefreshToken,
 
+    #[error("cannot refresh: OAuth client is waiting for an authorization code")]
+    WaitingForAuthorizationCode,
+
+    #[error("cannot refresh: OAuth client is not authenticated")]
+    NotAuthenticated,
+
+    #[error("cannot refresh: missing refresh token")]
+    MissingRefreshToken,
+
+    #[error("cannot refresh: authorization server metadata does not specify a token_endpoint")]
+    MissingTokenEndpoint,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State::Init
+    }
+}
+
+impl OAuthClient {
     pub async fn init(
         server_endpoint: &str,
         www_authenticate: Option<&WwwAuthenticate<'_>>,
@@ -185,6 +203,98 @@ impl OAuthClient {
         });
 
         post_json(&registration_endpoint.to_string(), metadata, http_client).await
+    }
+
+    pub async fn access_token(&mut self) -> Result<Option<&str>> {
+        let State::Authenticated {
+            expires_at,
+            refresh_token,
+            ..
+        } = &self.state
+        else {
+            return Ok(None);
+        };
+
+        if expires_at.is_some_and(|expires_at| expires_at <= Instant::now()) {
+            if refresh_token.is_none() {
+                return Err(OAuthError::AccessTokenExpiredNoRefreshToken.into());
+            }
+
+            self.refresh_access_token().await?;
+        }
+
+        let State::Authenticated { access_token, .. } = &self.state else {
+            return Ok(None);
+        };
+
+        Ok(Some(access_token.as_str()))
+    }
+
+    async fn refresh_access_token(&mut self) -> Result<()> {
+        if matches!(self.state, State::WaitingForCode { .. }) {
+            return Err(OAuthError::WaitingForAuthorizationCode.into());
+        }
+
+        let State::Authenticated {
+            refresh_token: previous_refresh_token,
+            token_type: previous_token_type,
+            ..
+        } = std::mem::take(&mut self.state)
+        else {
+            return Err(OAuthError::NotAuthenticated.into());
+        };
+
+        let refresh_token = previous_refresh_token
+            .as_deref()
+            .ok_or(OAuthError::MissingRefreshToken)?
+            .to_string();
+
+        let token_endpoint = self
+            .server
+            .token_endpoint
+            .as_ref()
+            .ok_or(OAuthError::MissingTokenEndpoint)?;
+
+        let form = {
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            serializer
+                .append_pair("grant_type", "refresh_token")
+                .append_pair("refresh_token", &refresh_token)
+                .append_pair("client_id", &self.registration.client_id);
+
+            if let Some(scope) = self.scope.as_ref() {
+                serializer.append_pair("scope", scope);
+            }
+
+            serializer.finish()
+        };
+
+        let request = Request::builder()
+            .uri(token_endpoint.clone())
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .body(AsyncBody::from(form))
+            .context("Failed to build token refresh request")?;
+
+        let requested_at = Instant::now();
+
+        let mut response = self.http_client.send(request).await?;
+        let token_response: TokenResponse = decode_response_json(&mut response).await?;
+
+        self.state = State::Authenticated {
+            access_token: token_response.access_token,
+            token_type: if token_response.token_type.is_empty() {
+                previous_token_type
+            } else {
+                token_response.token_type
+            },
+            expires_at: token_response
+                .expires_in
+                .map(|expires_in| requested_at + Duration::from_secs(expires_in)),
+            refresh_token: token_response.refresh_token.or(previous_refresh_token),
+        };
+
+        Ok(())
     }
 }
 

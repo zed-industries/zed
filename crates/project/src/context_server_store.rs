@@ -754,28 +754,35 @@ impl ContextServerStore {
         .detach();
     }
 
-    pub async fn handle_oauth_callback(
-        &self,
-        callback: &context_server::OAuthCallback,
-    ) -> Result<()> {
-        let server = self.get_server(&callback.server_id).with_context(|| {
-            format!(
-                "got MCP OAuth callback for unknown context server {}",
-                callback.server_id
-            )
-        })?;
-
-        server
-            .handle_oauth_callback(callback)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to handle MCP OAuth callback for {}",
+    pub fn handle_oauth_callback(
+        &mut self,
+        callback: context_server::OAuthCallback,
+        cx: &mut Context<Self>,
+    ) {
+        let server = match self.get_server(&callback.server_id) {
+            Some(server) => server,
+            None => {
+                log::error!(
+                    "got MCP OAuth callback for unknown context server {}",
                     callback.server_id
-                )
-            })?; // todo! set status on failure
+                );
+                return;
+            }
+        };
 
-        Ok(())
+        cx.spawn(async move |_, _cx| {
+            server
+                .handle_oauth_callback(&callback)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to handle MCP OAuth callback for {}",
+                        callback.server_id
+                    )
+                })
+                .log_err();
+        })
+        .detach();
     }
 }
 
