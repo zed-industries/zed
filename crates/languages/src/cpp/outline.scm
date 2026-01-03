@@ -9,6 +9,11 @@
         "(" @context
         ")" @context)) @item
 
+(namespace_definition
+    "inline"? @context
+    "namespace" @context
+    name: (_) @name) @item
+
 (type_definition
     "typedef" @context
     declarator: (_) @name) @item
