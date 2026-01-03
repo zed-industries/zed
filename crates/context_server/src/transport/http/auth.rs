@@ -40,6 +40,13 @@ enum State {
 }
 
 impl OAuthClient {
+    pub fn access_token(&self) -> Option<&str> {
+        match &self.state {
+            State::Authenticated { access_token, .. } => Some(access_token.as_str()),
+            State::Init | State::WaitingForCode { .. } => None,
+        }
+    }
+
     pub async fn init(
         server_endpoint: &str,
         www_authenticate: Option<&WwwAuthenticate<'_>>,

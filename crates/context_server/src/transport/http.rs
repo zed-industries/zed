@@ -11,7 +11,7 @@ use parking_lot::Mutex as SyncMutex;
 use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
-use crate::{ContextServerId, transport::Transport};
+use crate::transport::Transport;
 use auth::OAuthClient;
 use www_authenticate::WwwAuthenticate;
 
@@ -87,6 +87,17 @@ impl HttpTransport {
 
         for (key, value) in &self.headers {
             request_builder = request_builder.header(key.as_str(), value.as_str());
+        }
+
+        if let Some(access_token) = self
+            .oauth_client
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|client| client.access_token())
+        {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", access_token));
         }
 
         // Add session ID if we have one (except for initialize)
