@@ -687,7 +687,7 @@ impl Platform for MacPlatform {
         }
 
         self.background_executor()
-            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
+            .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {

@@ -316,7 +316,14 @@ impl X11Client {
                             let start = Instant::now();
                             let mut timing = match runnable {
                                 RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
+                                    let metadata = runnable.metadata();
+                                    let location = metadata.location;
+
+                                    if !metadata.is_app_alive() {
+                                        drop(runnable);
+                                        return;
+                                    }
+
                                     let timing = TaskTiming {
                                         location,
                                         start,

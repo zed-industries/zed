@@ -32,7 +32,11 @@ impl HeadlessClient {
             .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(runnable) = event {
                     match runnable {
-                        crate::RunnableVariant::Meta(runnable) => runnable.run(),
+                        crate::RunnableVariant::Meta(runnable) => {
+                            if runnable.metadata().is_app_alive() {
+                                runnable.run();
+                            }
+                        }
                         crate::RunnableVariant::Compat(runnable) => runnable.run(),
                     };
                 }
