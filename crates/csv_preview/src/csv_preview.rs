@@ -10,12 +10,11 @@ use std::{
 
 use crate::{
     cell_editor::CellEditorCtx, data_table::TableInteractionState,
-    table_data_engine::TableDataEngine,
+    table_data_engine::TableDataEngine, types::data_table::TableColumnWidths,
 };
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
-use crate::renderer::nasty_code_duplication::ColumnWidths;
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
 pub use types::data_table;
@@ -261,5 +260,23 @@ impl PerformanceMetrics {
     /// Get timing for a specific metric
     pub fn get_timing(&self, name: &str) -> Option<Duration> {
         self.timings.get(name).map(|(duration, _)| *duration)
+    }
+}
+
+////// todo: move to separate file
+pub(crate) struct ColumnWidths {
+    pub widths: Entity<TableColumnWidths>,
+}
+
+impl ColumnWidths {
+    pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
+        Self {
+            widths: cx.new(|cx| TableColumnWidths::new(cx, cols)),
+        }
+    }
+    /// Replace the current `TableColumnWidths` entity with a new one for the given column count.
+    pub(crate) fn replace(&self, cx: &mut Context<CsvPreviewView>, cols: usize) {
+        self.widths
+            .update(cx, |entity, cx| *entity = TableColumnWidths::new(cx, cols));
     }
 }
