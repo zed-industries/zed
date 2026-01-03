@@ -108,6 +108,7 @@ pub struct LanguageServer {
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
     root_uri: Uri,
+    io_history_buffer: Arc<Mutex<Vec<(String, IoKind)>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -411,6 +412,7 @@ impl LanguageServer {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
+        let io_history_buffer = Arc::new(Mutex::new(Vec::new()));
 
         let stdout_input_task = cx.spawn({
             let unhandled_notification_wrapper = {
@@ -437,6 +439,7 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
+            let io_history_buffer = io_history_buffer.clone();
             async move |cx| {
                 Self::handle_incoming_messages(
                     stdout,
@@ -444,6 +447,7 @@ impl LanguageServer {
                     notification_handlers,
                     response_handlers,
                     io_handlers,
+                    io_history_buffer,
                     cx,
                 )
                 .log_err()
@@ -466,12 +470,14 @@ impl LanguageServer {
             stdout.or(stderr)
         });
         let output_task = cx.background_spawn({
+            let io_history_buffer = io_history_buffer.clone();
             Self::handle_outgoing_messages(
                 stdin,
                 outbound_rx,
                 output_done_tx,
                 response_handlers.clone(),
                 io_handlers.clone(),
+                io_history_buffer,
             )
             .log_err()
         });
@@ -520,6 +526,7 @@ impl LanguageServer {
             server: Arc::new(Mutex::new(server)),
             workspace_folders,
             root_uri,
+            io_history_buffer,
         }
     }
 
@@ -534,6 +541,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        io_history_buffer: Arc<Mutex<Vec<(String, IoKind)>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
@@ -551,6 +559,7 @@ impl LanguageServer {
             stdout,
             response_handlers,
             io_handlers,
+            io_history_buffer,
             cx.background_executor().clone(),
         );
 
@@ -616,6 +625,7 @@ impl LanguageServer {
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        io_history_buffer: Arc<Mutex<Vec<(String, IoKind)>>>,
     ) -> anyhow::Result<()>
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
@@ -629,6 +639,11 @@ impl LanguageServer {
         });
         let mut content_len_buffer = Vec::new();
         while let Ok(message) = outbound_rx.recv().await {
+            // Store in history buffer
+            io_history_buffer
+                .lock()
+                .push((message.clone(), IoKind::StdIn));
+
             log::trace!("outgoing message:{}", message);
             for handler in io_handlers.lock().values_mut() {
                 handler(IoKind::StdIn, &message);
@@ -1026,10 +1041,20 @@ impl LanguageServer {
 
     /// Registers a handler to inspect all language server process stdio.
     #[must_use]
-    pub fn on_io<F>(&self, f: F) -> Subscription
+    pub fn on_io<F>(&self, mut f: F) -> Subscription
     where
         F: 'static + Send + FnMut(IoKind, &str),
     {
+        // Replay historical messages to the handler
+        let mut history = self.io_history_buffer.lock();
+        for (message, kind) in history.iter() {
+            f(*kind, message);
+        }
+        // Clear the history buffer after replaying. Only the first subscriber gets the full history.
+        // If multiple subscribers needed history, we would not clear here.
+        history.clear();
+        drop(history); // Explicitly drop the lock before potentially taking another in io_handlers.lock()
+
         let id = self.next_id.fetch_add(1, SeqCst);
         self.io_handlers.lock().insert(id, Box::new(f));
         Subscription::Io {
