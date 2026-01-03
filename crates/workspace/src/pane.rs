@@ -247,6 +247,10 @@ actions!(
         GoBack,
         /// Navigates forward in history.
         GoForward,
+        /// Navigates back in the tag stack.
+        GoToOlderTag,
+        /// Navigates forward in the tag stack.
+        GoToNewerTag,
         /// Joins this pane into the next pane.
         JoinIntoNext,
         /// Joins all panes into one.
@@ -445,6 +449,8 @@ struct NavHistoryState {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
+    tag_stack: VecDeque<TagStackEntry>,
+    tag_stack_pos: usize,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
@@ -461,12 +467,25 @@ pub enum NavigationMode {
     Disabled,
 }
 
+#[derive(Debug, Default, Copy, Clone)]
+pub enum TagNavigationMode {
+    #[default]
+    Older,
+    Newer,
+}
+
 #[derive(Clone)]
 pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle + Send + Sync>,
     pub data: Option<Arc<dyn Any + Send + Sync>>,
     pub timestamp: usize,
     pub is_preview: bool,
+}
+
+#[derive(Clone)]
+pub struct TagStackEntry {
+    pub origin: NavigationEntry,
+    pub target: NavigationEntry,
 }
 
 #[derive(Clone)]
@@ -537,6 +556,8 @@ impl Pane {
                 backward_stack: Default::default(),
                 forward_stack: Default::default(),
                 closed_stack: Default::default(),
+                tag_stack: Default::default(),
+                tag_stack_pos: Default::default(),
                 paths_by_item: Default::default(),
                 pane: handle,
                 next_timestamp,
@@ -886,6 +907,42 @@ impl Pane {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .go_forward(pane, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_older_tag(
+        &mut self,
+        _: &GoToOlderTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_tag_history(pane, TagNavigationMode::Older, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_newer_tag(
+        &mut self,
+        _: &GoToNewerTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_tag_history(pane, TagNavigationMode::Newer, window, cx)
                         .detach_and_log_err(cx)
                 })
             })
@@ -4028,6 +4085,8 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
+            .on_action(cx.listener(Self::go_to_older_tag))
+            .on_action(cx.listener(Self::go_to_newer_tag))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -4271,6 +4330,21 @@ impl ItemNavHistory {
         }
     }
 
+    pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
+        NavigationEntry {
+            item: self.item.clone(),
+            data: data,
+            timestamp: 0, // not used
+            is_preview: self.is_preview,
+        }
+    }
+
+    pub fn push_tag(&mut self, origin: Option<NavigationEntry>, target: Option<NavigationEntry>) {
+        if let (Some(origin_entry), Some(target_entry)) = (origin, target) {
+            self.history.push_tag(origin_entry, target_entry);
+        }
+    }
+
     pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
@@ -4328,6 +4402,7 @@ impl NavHistory {
             && state.forward_stack.is_empty()
             && state.closed_stack.is_empty()
             && state.paths_by_item.is_empty()
+            && state.tag_stack.is_empty()
         {
             return;
         }
@@ -4337,6 +4412,8 @@ impl NavHistory {
         state.forward_stack.clear();
         state.closed_stack.clear();
         state.paths_by_item.clear();
+        state.tag_stack.clear();
+        state.tag_stack_pos = 0;
         state.did_update(cx);
     }
 
@@ -4429,6 +4506,9 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+        state
+            .tag_stack
+            .retain(|entry| entry.origin.item.id() != item_id && entry.target.item.id() != item_id);
     }
 
     pub fn rename_item(
@@ -4447,6 +4527,41 @@ impl NavHistory {
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
+    }
+
+    pub fn push_tag(&mut self, origin: NavigationEntry, target: NavigationEntry) {
+        let mut state = self.0.lock();
+        let truncate_to = state.tag_stack_pos;
+        state.tag_stack.truncate(truncate_to);
+        state.tag_stack.push_back(TagStackEntry { origin, target });
+        state.tag_stack_pos = state.tag_stack.len();
+    }
+
+    pub fn pop_tag(&mut self, mode: TagNavigationMode) -> Option<NavigationEntry> {
+        let mut state = self.0.lock();
+        match mode {
+            TagNavigationMode::Older => {
+                if state.tag_stack_pos > 0 {
+                    state.tag_stack_pos -= 1;
+                    state
+                        .tag_stack
+                        .get(state.tag_stack_pos)
+                        .map(|e| e.origin.clone())
+                } else {
+                    None
+                }
+            }
+            TagNavigationMode::Newer => {
+                let entry = state
+                    .tag_stack
+                    .get(state.tag_stack_pos)
+                    .map(|e| e.target.clone());
+                if state.tag_stack_pos < state.tag_stack.len() {
+                    state.tag_stack_pos += 1;
+                }
+                entry
+            }
+        }
     }
 }
 
