@@ -954,7 +954,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
-                Box::new(NavigationData {
+                Arc::new(NavigationData {
                     cursor_anchor: invalid_anchor,
                     cursor_position: invalid_point,
                     scroll_anchor: ScrollAnchor {

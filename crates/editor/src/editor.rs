@@ -1678,7 +1678,7 @@ enum SelectSyntaxNodeScrollBehavior {
     CursorBottom,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
     cursor_position: Point,
