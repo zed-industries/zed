@@ -1478,6 +1478,20 @@ impl Thread {
                     last_message.reasoning_details = Some(details);
                 }
             }
+            ReasoningDetailsAccumulable(details_arr) => {
+                let last_message = self.pending_message();
+                match last_message.reasoning_details {
+                    None => {
+                        last_message.reasoning_details = Some(serde_json::Value::Array(details_arr));
+                    }
+                    Some(serde_json::Value::Array(ref mut last_details) ) => {
+                        last_details.extend(details_arr);
+                    }
+                    _ => {
+                        return Err(anyhow!("Inconsistent reasoning_details type across events"));
+                    }
+                }
+            }
             ToolUse(tool_use) => {
                 return Ok(self.handle_tool_use_event(tool_use, event_stream, cx));
             }

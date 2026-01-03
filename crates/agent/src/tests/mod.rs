@@ -668,6 +668,72 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reasoning_details_accumulation(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let _ = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["test"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let chunk1 = vec![serde_json::json!({
+        "type": "reasoning.text",
+        "text": "First",
+        "format": "test",
+        "index": 0
+    })];
+    let chunk2 = vec![serde_json::json!({
+        "type": "reasoning.text",
+        "text": "Second",
+        "format": "test",
+        "index": 1
+    })];
+    let chunk3 = vec![serde_json::json!({
+        "type": "reasoning.text",
+        "text": "Third",
+        "format": "test",
+        "index": 2
+    })];
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(
+        chunk1.clone(),
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(
+        chunk2.clone(),
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ReasoningDetailsAccumulable(
+        chunk3.clone(),
+    ));
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Response".into(),
+    ));
+    fake_model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let expected_details = serde_json::json!([
+        {"type": "reasoning.text", "text": "First", "format": "test", "index": 0},
+        {"type": "reasoning.text", "text": "Second", "format": "test", "index": 1},
+        {"type": "reasoning.text", "text": "Third", "format": "test", "index": 2}
+    ]);
+
+    thread.read_with(cx, |thread, _| {
+        let last_message = thread.last_message().unwrap();
+        let agent_message = last_message.as_agent_message().unwrap();
+
+        assert_eq!(
+            agent_message.reasoning_details,
+            Some(expected_details),
+            "All reasoning details chunks should be accumulated"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_tool_authorization(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
