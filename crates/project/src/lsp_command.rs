@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use language::{
@@ -38,6 +38,17 @@ use text::{BufferId, LineEnding};
 use util::{ResultExt as _, debug_panic};
 
 pub use signature_help::SignatureHelp;
+
+fn code_action_kind_matches(requested: &lsp::CodeActionKind, actual: &lsp::CodeActionKind) -> bool {
+    let requested_str = requested.as_str();
+    let actual_str = actual.as_str();
+
+    // Exact match or hierarchical match
+    actual_str == requested_str
+        || actual_str
+            .strip_prefix(requested_str)
+            .is_some_and(|suffix| suffix.starts_with('.'))
+}
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -2554,8 +2565,11 @@ impl LspCommand for GetCodeActions {
                     .as_ref()
                     .zip(Self::supported_code_action_kinds(capabilities))
                 {
-                    let server_supported = supported.into_iter().collect::<HashSet<_>>();
-                    requested.iter().any(|kind| server_supported.contains(kind))
+                    requested.iter().any(|requested_kind| {
+                        supported.iter().any(|supported_kind| {
+                            code_action_kind_matches(requested_kind, supported_kind)
+                        })
+                    })
                 } else {
                     true
                 }
@@ -2583,11 +2597,13 @@ impl LspCommand for GetCodeActions {
 
         let only = if let Some(requested) = &self.kinds {
             if let Some(supported_kinds) = supported {
-                let server_supported = supported_kinds.into_iter().collect::<HashSet<_>>();
-
                 let filtered = requested
                     .iter()
-                    .filter(|kind| server_supported.contains(kind))
+                    .filter(|requested_kind| {
+                        supported_kinds.iter().any(|supported_kind| {
+                            code_action_kind_matches(requested_kind, supported_kind)
+                        })
+                    })
                     .cloned()
                     .collect();
                 Some(filtered)
@@ -2619,9 +2635,7 @@ impl LspCommand for GetCodeActions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
-        let requested_kinds_set = self
-            .kinds
-            .map(|kinds| kinds.into_iter().collect::<HashSet<_>>());
+        let requested_kinds = self.kinds.as_ref();
 
         let language_server = cx.update(|cx| {
             lsp_store
@@ -2660,9 +2674,10 @@ impl LspCommand for GetCodeActions {
                     }
                 };
 
-                if let Some((requested_kinds, kind)) =
-                    requested_kinds_set.as_ref().zip(lsp_action.action_kind())
-                    && !requested_kinds.contains(&kind)
+                if let Some((kinds, kind)) = requested_kinds.zip(lsp_action.action_kind())
+                    && !kinds
+                        .iter()
+                        .any(|requested_kind| code_action_kind_matches(requested_kind, &kind))
                 {
                     return None;
                 }
