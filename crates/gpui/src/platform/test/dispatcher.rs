@@ -177,7 +177,14 @@ impl TestDispatcher {
 
         // todo(localcc): add timings to tests
         match runnable {
-            RunnableVariant::Meta(runnable) => runnable.run(),
+            RunnableVariant::Meta(runnable) => {
+                if !runnable.metadata().is_app_alive() {
+                    drop(runnable);
+                    self.state.lock().is_main_thread = was_main_thread;
+                    return true;
+                }
+                runnable.run()
+            }
             RunnableVariant::Compat(runnable) => runnable.run(),
         };
 
