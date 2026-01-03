@@ -125,6 +125,15 @@ impl PtyProcessInfo {
         self.system.process(pid)
     }
 
+    #[cfg(unix)]
+    pub(crate) fn kill_current_process(&mut self) -> bool {
+        let Some(pid) = self.pid_getter.pid() else {
+            return false;
+        };
+        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGKILL) == 0 }
+    }
+
+    #[cfg(not(unix))]
     pub(crate) fn kill_current_process(&mut self) -> bool {
         self.refresh().is_some_and(|process| process.kill())
     }
