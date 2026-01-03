@@ -306,22 +306,26 @@ async fn copy_extension_resources(
         }
     }
 
-    if let Some(snippets_path) = manifest.snippets.as_ref() {
-        let parent = snippets_path.parent();
-        if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
-            fs::create_dir_all(output_dir.join(parent))?;
+    if let Some(snippets) = manifest.snippets.as_ref() {
+        for snippets_path in snippets.paths() {
+            let parent = snippets_path.parent();
+            if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
+                fs::create_dir_all(output_dir.join(parent))?;
+            }
+            copy_recursive(
+                fs.as_ref(),
+                &extension_path.join(&snippets_path),
+                &output_dir.join(&snippets_path),
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| {
+                format!("failed to copy snippets from '{}'", snippets_path.display())
+            })?;
         }
-        copy_recursive(
-            fs.as_ref(),
-            &extension_path.join(&snippets_path),
-            &output_dir.join(&snippets_path),
-            CopyOptions {
-                overwrite: true,
-                ignore_if_exists: false,
-            },
-        )
-        .await
-        .with_context(|| format!("failed to copy snippets from '{}'", snippets_path.display()))?;
     }
 
     Ok(())
