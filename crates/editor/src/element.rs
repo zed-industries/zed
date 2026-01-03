@@ -3947,7 +3947,7 @@ impl EditorElement {
                         let editor = self.editor.clone();
                         let buffer_id = for_excerpt.buffer_id;
                         let toggle_chevron_icon =
-                            FileIcons::get_chevron_icon(!is_folded, false, cx).map(Icon::from_path);
+                            FileIcons::get_chevron_icon(false, !is_folded, cx).map(Icon::from_path);
                         let button_size = rems_from_px(28.);
 
                         header.child(

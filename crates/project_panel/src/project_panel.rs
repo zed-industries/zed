@@ -95,6 +95,8 @@ struct State {
     edit_state: Option<EditState>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    pinned_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    expanding_dir_path: Option<ProjectPath>,
     collapsing_dir_path: Option<ProjectPath>,
     open_paths: HashMap<WorktreeId, RootPathTrie<()>>,
 }
@@ -110,6 +112,8 @@ impl State {
             unfolded_dir_ids: old.unfolded_dir_ids.clone(),
             selection: old.selection,
             expanded_dir_ids: old.expanded_dir_ids.clone(),
+            pinned_dir_ids: old.pinned_dir_ids.clone(),
+            expanding_dir_path: old.expanding_dir_path.clone(),
             collapsing_dir_path: old.collapsing_dir_path.clone(),
             open_paths: old.open_paths.clone(),
         }
@@ -224,7 +228,7 @@ struct EntryDetails {
     kind: EntryKind,
     is_ignored: bool,
     is_expanded: bool,
-    is_open: bool,
+    is_pinned: bool,
     is_selected: bool,
     is_marked: bool,
     is_editing: bool,
@@ -859,6 +863,8 @@ impl ProjectPanel {
                     visible_entries: Default::default(),
                     ancestors: Default::default(),
                     expanded_dir_ids: Default::default(),
+                    pinned_dir_ids: Default::default(),
+                    expanding_dir_path: None,
                     collapsing_dir_path: None,
                     open_paths: Default::default(),
                     unfolded_dir_ids: Default::default(),
@@ -1427,16 +1433,23 @@ impl ProjectPanel {
     ) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx)
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
+            && let Some(pinned_dir_ids) = self.state.pinned_dir_ids.get_mut(&worktree_id)
         {
             self.project.update(cx, |project, cx| {
                 match expanded_dir_ids.binary_search(&entry_id) {
-                    Ok(ix) => {
-                        expanded_dir_ids.remove(ix);
-                        self.state.collapsing_dir_path = project.path_for_entry(entry_id, cx);
-                    }
+                    Ok(ix) => match pinned_dir_ids.binary_search(&entry_id) {
+                        Ok(_) => {
+                            self.state.expanding_dir_path = project.path_for_entry(entry_id, cx);
+                        }
+                        Err(_) => {
+                            expanded_dir_ids.remove(ix);
+                            self.state.collapsing_dir_path = project.path_for_entry(entry_id, cx);
+                        }
+                    },
                     Err(ix) => {
                         project.expand_entry(worktree_id, entry_id, cx);
                         expanded_dir_ids.insert(ix, entry_id);
+                        self.state.expanding_dir_path = project.path_for_entry(entry_id, cx);
                     }
                 }
             });
@@ -1454,15 +1467,29 @@ impl ProjectPanel {
     ) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx)
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
+            && let Some(pinned_dir_ids) = self.state.pinned_dir_ids.get_mut(&worktree_id)
         {
+            let expand: bool;
             match expanded_dir_ids.binary_search(&entry_id) {
-                Ok(_ix) => {
-                    self.collapse_all_for_entry(worktree_id, entry_id, cx);
-                }
-                Err(_ix) => {
+                Ok(_) => match pinned_dir_ids.binary_search(&entry_id) {
+                    Ok(_) => {
+                        expand = true;
+                        self.expand_all_for_entry(worktree_id, entry_id, cx);
+                    }
+                    Err(_) => {
+                        expand = false;
+                        self.collapse_all_for_entry(worktree_id, entry_id, cx);
+                    }
+                },
+                Err(_) => {
+                    expand = true;
                     self.expand_all_for_entry(worktree_id, entry_id, cx);
                 }
             }
+            self.project.update(cx, |project, cx| match expand {
+                false => self.state.collapsing_dir_path = project.path_for_entry(entry_id, cx),
+                true => self.state.expanding_dir_path = project.path_for_entry(entry_id, cx),
+            });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
             window.focus(&self.focus_handle, cx);
             cx.notify();
@@ -3546,6 +3573,14 @@ impl ProjectPanel {
                                 }
                             };
 
+                        let pinned_dir_ids = match new_state.pinned_dir_ids.get_mut(&worktree_id) {
+                            Some(expanded_dir_ids) => expanded_dir_ids,
+                            None => {
+                                new_state.pinned_dir_ids.insert(worktree_id, vec![]);
+                                new_state.pinned_dir_ids.get_mut(&worktree_id).unwrap()
+                            }
+                        };
+
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
                         if let Some(edit_state) = &new_state.edit_state
@@ -3566,25 +3601,70 @@ impl ProjectPanel {
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
-                            let is_open =
+                            let editing =
                                 new_state
                                     .open_paths
                                     .get(&worktree_id)
                                     .is_some_and(|open_paths| {
                                         open_paths.get(&TriePath::new(&entry.path)).is_some()
-                                    });
-                            let is_editing = is_open || entry.git_summary != GitSummary::UNCHANGED;
-                            if let Some(ref collapsing_dir_path) = new_state.collapsing_dir_path
-                                && worktree_id == collapsing_dir_path.worktree_id
-                                && entry.kind.is_dir()
-                                && is_editing
-                                && let Ok(ix) = expanded_dir_ids.binary_search(&entry.id)
-                                && entry
-                                    .path
-                                    .ancestors()
-                                    .any(|path| *path == *collapsing_dir_path.path)
-                            {
-                                expanded_dir_ids.remove(ix);
+                                    })
+                                    || entry.git_summary != GitSummary::UNCHANGED;
+                            if entry.kind.is_dir() {
+                                let pinned = pinned_dir_ids.binary_search(&entry.id);
+                                let expanded = expanded_dir_ids.binary_search(&entry.id);
+                                // Unpin directory if it is not editing
+                                if !editing && let Ok(ix) = pinned {
+                                    pinned_dir_ids.remove(ix);
+                                }
+                                // Pin directory if it is editing and collapsed
+                                else if editing
+                                    && expanded.is_err()
+                                    && let Err(ix) = pinned
+                                {
+                                    pinned_dir_ids.insert(ix, entry.id);
+                                }
+                                // Unpin directory if its lineage is expanding and it is expanded
+                                else if let Some(ref expanding_dir_path) =
+                                    new_state.expanding_dir_path
+                                    && worktree_id == expanding_dir_path.worktree_id
+                                    && expanded.is_ok()
+                                    && let Ok(ix) = pinned
+                                    && (entry.path == expanding_dir_path.path
+                                        || entry
+                                            .path
+                                            .ancestors()
+                                            .any(|path| path == expanding_dir_path.path.as_ref()))
+                                {
+                                    pinned_dir_ids.remove(ix);
+                                }
+                                // Collapse directory if its lineage is collapsing and it is already pinned
+                                else if let Some(ref collapsing_dir_path) =
+                                    new_state.collapsing_dir_path
+                                    && worktree_id == collapsing_dir_path.worktree_id
+                                    && pinned.is_ok()
+                                    && let Ok(ix) = expanded
+                                    && (entry.path == collapsing_dir_path.path
+                                        || entry
+                                            .path
+                                            .ancestors()
+                                            .any(|path| path == collapsing_dir_path.path.as_ref()))
+                                {
+                                    expanded_dir_ids.remove(ix);
+                                }
+                                // Pin directory if its lineage is collapsing and it is editing
+                                else if let Some(ref collapsing_dir_path) =
+                                    new_state.collapsing_dir_path
+                                    && worktree_id == collapsing_dir_path.worktree_id
+                                    && editing
+                                    && let Err(ix) = pinned
+                                    && (entry.path == collapsing_dir_path.path
+                                        || entry
+                                            .path
+                                            .ancestors()
+                                            .any(|path| path == collapsing_dir_path.path.as_ref()))
+                                {
+                                    pinned_dir_ids.insert(ix, entry.id);
+                                }
                             }
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
@@ -3648,15 +3728,15 @@ impl ProjectPanel {
                                             .as_ref(),
                                     )
                                 });
-                            let parent_collapsed = root_folded_path
+                            let parent_pinned = root_folded_path
                                 .or(Some(entry.path.as_ref()))
                                 .and_then(|path| {
                                     let parent =
                                         worktree_snapshot.entry_for_path(path.parent()?)?;
                                     Some(&parent.id)
                                 })
-                                .is_some_and(|id| expanded_dir_ids.binary_search(id).is_err());
-                            if !is_editing && parent_collapsed {
+                                .is_some_and(|id| pinned_dir_ids.binary_search(id).is_ok());
+                            if !editing && parent_pinned {
                                 entry_iter.advance_to_sibling();
                                 continue;
                             }
@@ -3748,7 +3828,7 @@ impl ProjectPanel {
                             }
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
-                                && !is_editing
+                                && pinned_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
                             {
                                 continue;
@@ -3766,6 +3846,7 @@ impl ProjectPanel {
                             index: OnceCell::new(),
                         })
                     }
+                    new_state.expanding_dir_path = None;
                     new_state.collapsing_dir_path = None;
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
                         let mut visited_worktrees_length = 0;
@@ -5341,11 +5422,13 @@ impl ProjectPanel {
             .unwrap_or(&[]);
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
-        let is_open = self
+        let pinned_entry_ids = self
             .state
-            .open_paths
+            .pinned_dir_ids
             .get(&worktree_id)
-            .is_some_and(|open_paths| open_paths.get(&TriePath::new(&entry.path)).is_some());
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let is_pinned = pinned_entry_ids.binary_search(&entry.id).is_ok();
 
         let icon = match entry.kind {
             EntryKind::File => {
@@ -5357,18 +5440,9 @@ impl ProjectPanel {
             }
             _ => {
                 if show_folder_icons {
-                    FileIcons::get_folder_icon(
-                        is_expanded,
-                        is_open || git_status != GitSummary::UNCHANGED,
-                        entry.path.as_std_path(),
-                        cx,
-                    )
+                    FileIcons::get_folder_icon(is_pinned, is_expanded, entry.path.as_std_path(), cx)
                 } else {
-                    FileIcons::get_chevron_icon(
-                        is_expanded,
-                        is_open || git_status != GitSummary::UNCHANGED,
-                        cx,
-                    )
+                    FileIcons::get_chevron_icon(is_pinned, is_expanded, cx)
                 }
             }
         };
@@ -5420,7 +5494,7 @@ impl ProjectPanel {
             kind: entry.kind,
             is_ignored: entry.is_ignored,
             is_expanded,
-            is_open,
+            is_pinned,
             is_selected,
             is_marked,
             is_editing: false,
