@@ -110,7 +110,7 @@
       "ctrl-alt-n": "file_finder::Toggle",
       "ctrl-n": "project_symbols::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
-      "shift shift": "command_palette::Toggle",
+      "shift shift": "search_everywhere::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
       "alt-0": "git_panel::ToggleFocus",
       "alt-1": "project_panel::ToggleFocus",
@@ -182,6 +182,13 @@
     "bindings": {
       "escape": "editor::ToggleFocus",
       "shift-escape": "workspace::CloseActiveDock",
+    },
+  },
+  {
+    "context": "SearchEverywhere",
+    "bindings": {
+      "tab": "search_everywhere::NextTab",
+      "shift-tab": "search_everywhere::PreviousTab",
     },
   },
 ]
