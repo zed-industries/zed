@@ -10,7 +10,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::ops::Range;
+use std::{f64, ops::Range};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -1018,7 +1018,7 @@ impl Motion {
             ),
             EndOfLine { display_lines } => (
                 end_of_line(map, *display_lines, point, times),
-                SelectionGoal::None,
+                SelectionGoal::HorizontalPosition(f64::INFINITY),
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
@@ -3565,6 +3565,60 @@ mod test {
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");
         cx.simulate_shared_keystrokes("2 g _").await;
         cx.shared_state().await.assert_eq(" one \n twˇo \nthree");
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_vertical_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test $ followed by k maintains end-of-line position
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fˇox
+            jumps over the
+            lazy dog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick browˇn
+            fox
+            jumps over the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("j j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox
+            jumps over thˇe
+            lazy dog
+            "});
+
+        // test horizontal movement resets the end-of-line behavior
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy ˇdog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("b b").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps ˇover the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quˇick brown fox
+            jumps over the
+            lazy dog
+            "});
     }
 
     #[gpui::test]
