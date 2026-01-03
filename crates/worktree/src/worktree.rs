@@ -5880,20 +5880,31 @@ async fn decode_file_text(
         .open_sync(&abs_path)
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
-    let mut prefix = vec![0u8; FILE_ANALYSIS_BYTES];
-    let prefix_len = file
-        .read(&mut prefix)
-        .with_context(|| format!("reading first bytes of the file {abs_path:?}"))?;
-    prefix.truncate(prefix_len);
 
-    let (byte_content, bom_encoding) = decode_byte_header(&prefix);
+    let mut file_first_bytes = Vec::with_capacity(FILE_ANALYSIS_BYTES);
+    let mut buf = [0u8; FILE_ANALYSIS_BYTES];
+    let mut reached_eof = false;
+    loop {
+        if file_first_bytes.len() >= FILE_ANALYSIS_BYTES {
+            break;
+        }
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("reading bytes of the file {abs_path:?}"))?;
+        if n == 0 {
+            reached_eof = true;
+            break;
+        }
+        file_first_bytes.extend_from_slice(&buf[..n]);
+    }
+    let (bom_encoding, byte_content) = decode_byte_header(&file_first_bytes);
     anyhow::ensure!(
         byte_content != ByteContent::Binary,
         "Binary files are not supported"
     );
 
-    let mut content = prefix;
-    if prefix_len > 0 {
+    let mut content = file_first_bytes;
+    if !reached_eof {
         let mut buf = [0u8; 8 * 1024];
         loop {
             let n = file
@@ -5908,11 +5919,11 @@ async fn decode_file_text(
     decode_byte_full(content, bom_encoding, byte_content)
 }
 
-fn decode_byte_header(prefix: &[u8]) -> (ByteContent, Option<&'static Encoding>) {
+fn decode_byte_header(prefix: &[u8]) -> (Option<&'static Encoding>, ByteContent) {
     if let Some((encoding, _bom_len)) = Encoding::for_bom(prefix) {
-        return (ByteContent::Unknown, Some(encoding));
+        return (Some(encoding), ByteContent::Unknown);
     }
-    (analyze_byte_content(prefix), None)
+    (None, analyze_byte_content(prefix))
 }
 
 fn decode_byte_full(
