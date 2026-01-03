@@ -69,7 +69,8 @@ use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, Usag
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
     CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    OpenAgentDiff, OpenHistory, QueueMessage, RejectAll, RejectOnce, SendNextQueuedMessage,
+    ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -288,6 +289,7 @@ pub struct AcpThreadView {
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
+    queue_expanded: bool,
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
@@ -454,6 +456,7 @@ impl AcpThreadView {
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
+            queue_expanded: true,
             prompt_capabilities,
             available_commands,
             editor_expanded: false,
@@ -468,6 +471,7 @@ impl AcpThreadView {
             resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
             in_flight_prompt: None,
+            message_queue: Vec::new(),
         }
     }
 
@@ -3990,7 +3994,7 @@ impl AcpThreadView {
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
 
-        if changed_buffers.is_empty() && plan.is_empty() {
+        if changed_buffers.is_empty() && plan.is_empty() && self.message_queue.is_empty() {
             return None;
         }
 
@@ -4039,6 +4043,15 @@ impl AcpThreadView {
                         pending_edits,
                         cx,
                     ))
+                })
+            })
+            .when(!self.message_queue.is_empty(), |this| {
+                this.when(!plan.is_empty() || !changed_buffers.is_empty(), |this| {
+                    this.child(Divider::horizontal().color(DividerColor::Border))
+                })
+                .child(self.render_message_queue_summary(window, cx))
+                .when(self.queue_expanded, |parent| {
+                    parent.child(self.render_message_queue_entries(window, cx))
                 })
             })
             .into_any()
@@ -4511,6 +4524,140 @@ impl AcpThreadView {
                             );
 
                         Some(element)
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_message_queue_summary(
+        &self,
+        _window: &mut Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let queue_count = self.message_queue.len();
+        let title: SharedString = if queue_count == 1 {
+            "1 Queued Message".into()
+        } else {
+            format!("{} Queued Messages", queue_count).into()
+        };
+
+        h_flex()
+            .id("message_queue_summary")
+            .p_1()
+            .w_full()
+            .gap_1()
+            .when(self.queue_expanded, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(Disclosure::new("queue_disclosure", self.queue_expanded))
+            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.queue_expanded = !this.queue_expanded;
+                cx.notify();
+            }))
+    }
+
+    fn render_message_queue_entries(
+        &self,
+        _window: &mut Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let message_editor = self.message_editor.read(cx);
+        let focus_handle = message_editor.focus_handle(cx);
+
+        v_flex()
+            .id("message_queue_list")
+            .max_h_40()
+            .overflow_y_scroll()
+            .children(
+                self.message_queue
+                    .iter()
+                    .enumerate()
+                    .map(|(index, queued)| {
+                        let is_next = index == 0;
+                        let icon_color = if is_next { Color::Accent } else { Color::Muted };
+                        let queue_len = self.message_queue.len();
+
+                        let preview = queued
+                            .content
+                            .iter()
+                            .find_map(|block| match block {
+                                acp::ContentBlock::Text(text) => {
+                                    text.text.lines().next().map(str::to_owned)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+
+                        h_flex()
+                            .group("queue_entry")
+                            .w_full()
+                            .p_1()
+                            .pl_2()
+                            .gap_1()
+                            .justify_between()
+                            .bg(cx.theme().colors().editor_background)
+                            .when(index < queue_len - 1, |parent| {
+                                parent.border_color(cx.theme().colors().border).border_b_1()
+                            })
+                            .child(
+                                h_flex()
+                                    .id(("queued_prompt", index))
+                                    .min_w_0()
+                                    .w_full()
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(IconName::Circle)
+                                            .size(IconSize::Small)
+                                            .color(icon_color),
+                                    )
+                                    .child(
+                                        Label::new(preview)
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx)
+                                            .truncate(),
+                                    )
+                                    .when(is_next, |this| {
+                                        this.tooltip(Tooltip::text("Next Prompt in the Queue"))
+                                    }),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .gap_1()
+                                    .visible_on_hover("queue_entry")
+                                    .child(
+                                        Button::new(("delete", index), "Remove")
+                                            .label_size(LabelSize::Small)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if index < this.message_queue.len() {
+                                                    this.message_queue.remove(index);
+                                                    cx.notify();
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(("send_now", index), "Send Now")
+                                            .style(ButtonStyle::Outlined)
+                                            .label_size(LabelSize::Small)
+                                            .when(is_next, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &SendNextQueuedMessage,
+                                                        &focus_handle.clone(),
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.send_queued_message_at_index(
+                                                    index, window, cx,
+                                                );
+                                            })),
+                                    ),
+                            )
                     }),
             )
             .into_any_element()
