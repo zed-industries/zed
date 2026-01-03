@@ -2081,12 +2081,39 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
+        self.navigate_history_impl(pane, mode, window, |history, cx| history.pop(mode, cx), cx)
+    }
+
+    fn navigate_tag_history(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        mode: TagNavigationMode,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history_impl(
+            pane,
+            NavigationMode::Normal,
+            window,
+            |history, _cx| history.pop_tag(mode),
+            cx,
+        )
+    }
+
+    fn navigate_history_impl(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        mode: NavigationMode,
+        window: &mut Window,
+        mut cb: impl FnMut(&mut NavHistory, &mut App) -> Option<NavigationEntry>,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
                 window.focus(&pane.focus_handle(cx), cx);
                 loop {
                     // Retrieve the weak item handle from the history.
-                    let entry = pane.nav_history_mut().pop(mode, cx)?;
+                    let entry = cb(pane.nav_history_mut(), cx)?;
 
                     // If the item is still present in this pane, then activate it.
                     if let Some(index) = entry
