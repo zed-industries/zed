@@ -18092,6 +18092,7 @@ dependencies = [
  "util_macros",
  "walkdir",
  "which 6.0.3",
+ "windows 0.61.3",
 ]
 
 [[package]]
