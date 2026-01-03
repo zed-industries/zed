@@ -4287,6 +4287,264 @@ async fn test_drag_entries_between_different_worktrees(cx: &mut gpui::TestAppCon
     );
 }
 
+/// Regression test for issue #45555:
+/// When a parent folder and its child are both selected and dragged,
+/// only the parent folder should be moved (not the child file separately).
+#[gpui::test]
+async fn test_drag_folder_and_child_together(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "folder1": {
+                    "mod.rs": "// folder1 mod"
+                },
+                "folder2": {
+                    "mod.rs": "// folder2 mod"
+                },
+                "folder3": {
+                    "mod.rs": "// folder3 mod"
+                },
+                "main.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Expand src directory
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/folder1", cx);
+    toggle_expand_dir(&panel, "root/src/folder2", cx);
+    cx.run_until_parked();
+
+    // Verify initial structure
+    assert!(
+        find_project_entry(&panel, "root/src/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should exist initially"
+    );
+    assert!(
+        find_project_entry(&panel, "root/src/folder2/mod.rs", cx).is_some(),
+        "folder2/mod.rs should exist initially"
+    );
+
+    // Select folder1 (the parent directory)
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder1", cx);
+    // Also select folder2/mod.rs (a file from a different sibling folder)
+    select_path_with_mark(&panel, "root/src/folder2/mod.rs", cx);
+
+    // Drag both selections to root
+    drag_selection_to(&panel, "root", false, cx);
+
+    // The expected behavior (matching VSCode):
+    // - folder1 should move to root (with its mod.rs intact inside)
+    // - folder2/mod.rs should move to root (since folder2 was not selected, just its child)
+    //
+    // The bug behavior was:
+    // - Empty folder1 moves to root
+    // - mod.rs from folder1 gets lost due to name collision with mod.rs from folder2
+
+    // Verify folder1 moved intact with its contents
+    assert!(
+        find_project_entry(&panel, "root/folder1", cx).is_some(),
+        "folder1 should be at root after drag"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still be inside folder1 after drag"
+    );
+
+    // folder1 should no longer be in src
+    assert_eq!(
+        find_project_entry(&panel, "root/src/folder1", cx),
+        None,
+        "folder1 should no longer be in src"
+    );
+
+    // folder2/mod.rs should have moved to root level
+    assert!(
+        find_project_entry(&panel, "root/mod.rs", cx).is_some(),
+        "mod.rs from folder2 should be at root"
+    );
+
+    // folder3 should be unaffected
+    assert!(
+        find_project_entry(&panel, "root/src/folder3/mod.rs", cx).is_some(),
+        "folder3 should be unaffected"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_parent_folder_with_explicitly_selected_child(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "folder1": {
+                    "mod.rs": "// folder1 mod",
+                    "helper.rs": "// helper",
+                },
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/folder1", cx);
+
+    // Select both folder1 (parent) and folder1/mod.rs (child)
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder1", cx);
+    select_path_with_mark(&panel, "root/src/folder1/mod.rs", cx);
+
+    // Drag to root
+    drag_selection_to(&panel, "root", false, cx);
+
+    // Only folder1 should move (mod.rs should NOT be moved separately)
+    assert!(
+        find_project_entry(&panel, "root/folder1", cx).is_some(),
+        "folder1 should be at root after drag"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still be inside folder1"
+    );
+    assert!(
+        find_project_entry(&panel, "root/mod.rs", cx).is_none(),
+        "mod.rs should NOT exist at root level (not moved separately)"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_name_collision(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "folder1": {
+                    "mod.rs": "// folder1-mod"
+                },
+                "folder2": {
+                    "mod.rs": "// folder2-mod"
+                },
+            },
+            "dest": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/folder1", cx);
+    toggle_expand_dir(&panel, "root/src/folder2", cx);
+    toggle_expand_dir(&panel, "root/dest", cx);
+    cx.run_until_parked();
+
+    // Select folder1/mod.rs and folder2/mod.rs
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/folder1/mod.rs", cx);
+    select_path_with_mark(&panel, "root/src/folder2/mod.rs", cx);
+
+    // Drag both to dest
+    drag_selection_to(&panel, "root/dest", false, cx);
+    cx.run_until_parked();
+
+    // Prompt blocks the move; original files should remain intact.
+    assert!(
+        find_project_entry(&panel, "root/src/folder1/mod.rs", cx).is_some(),
+        "folder1/mod.rs should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/src/folder2/mod.rs", cx).is_some(),
+        "folder2/mod.rs should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/dest/mod.rs", cx).is_none(),
+        "dest/mod.rs should not exist (move blocked)"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_folder_collision(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "src": {
+                "group1": {
+                    "common_folder": { "file1.txt": "" }
+                },
+                "group2": {
+                    "common_folder": { "file2.txt": "" }
+                },
+            },
+            "dest": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+    toggle_expand_dir(&panel, "root/src", cx);
+    toggle_expand_dir(&panel, "root/src/group1", cx);
+    toggle_expand_dir(&panel, "root/src/group2", cx);
+    toggle_expand_dir(&panel, "root/dest", cx);
+    cx.run_until_parked();
+
+    // Select group1/common_folder and group2/common_folder
+    panel.update(cx, |panel, _| panel.marked_entries.clear());
+    select_path_with_mark(&panel, "root/src/group1/common_folder", cx);
+    select_path_with_mark(&panel, "root/src/group2/common_folder", cx);
+
+    // Drag both to dest
+    drag_selection_to(&panel, "root/dest", false, cx);
+    cx.run_until_parked();
+
+    // Prompt blocks the move; original folders should remain intact.
+    assert!(
+        find_project_entry(&panel, "root/src/group1/common_folder", cx).is_some(),
+        "group1/common_folder should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/src/group2/common_folder", cx).is_some(),
+        "group2/common_folder should still exist"
+    );
+    assert!(
+        find_project_entry(&panel, "root/dest/common_folder", cx).is_none(),
+        "dest/common_folder should not exist (move blocked)"
+    );
+}
+
 #[gpui::test]
 async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
