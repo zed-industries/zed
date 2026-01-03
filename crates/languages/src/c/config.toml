@@ -1,6 +1,6 @@
 name = "C"
 grammar = "c"
-path_suffixes = ["c"]
+path_suffixes = ["c", "m"]
 line_comments = ["// "]
 decrease_indent_patterns = [
   { pattern = "^\\s*\\{.*\\}?\\s*$", valid_after = ["if", "for", "while", "do", "switch", "else"] },
