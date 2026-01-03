@@ -1,8 +1,6 @@
 use std::{
-    borrow::Cow,
     error::Error,
     fmt::{self, Display},
-    ops::Deref,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -11,11 +9,14 @@ use anyhow::{Context as _, Result};
 use base64::Engine as _;
 use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
 use rand::distr::Distribution;
-use serde::{Deserialize, Serialize, de::DeserializeOwned, ser};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use smol::io::AsyncReadExt;
 use url::Url;
+
+use crate::{ContextServerId, transport::http::www_authenticate::WwwAuthenticate};
+use abs_uri::AbsUri;
 
 pub const CALLBACK_URI: &str = "zed://mcp/auth/callback";
 
@@ -23,15 +24,21 @@ pub struct OAuthClient {
     registration: ClientRegistration,
     server: AuthorizationServer,
     scope: Option<String>,
-    token: Option<Token>,
+    state: State,
     http_client: Arc<dyn HttpClient>,
 }
 
-struct Token {
-    access_token: String,
-    token_type: String,
-    expires_at: Option<Instant>,
-    refresh_token: Option<String>,
+enum State {
+    Init,
+    WaitingForCode {
+        code_verifier: String,
+    },
+    Authenticated {
+        access_token: String,
+        token_type: String,
+        expires_at: Option<Instant>,
+        refresh_token: Option<String>,
+    },
 }
 
 impl OAuthClient {
@@ -82,12 +89,12 @@ impl OAuthClient {
             registration,
             server,
             scope,
-            token: None,
+            state: State::Init,
             http_client: http_client.clone(),
         })
     }
 
-    pub fn authorize_url(&self) -> Result<(Url, String)> {
+    pub fn authorize_url(&mut self) -> Result<AuthorizeUrl> {
         let auth_endpoint =
             self.server.authorization_endpoint.as_ref().context(
                 "Authorization server metadata does not specify an authorization_endpoint",
@@ -97,10 +104,9 @@ impl OAuthClient {
         let code_challenge =
             base64::engine::general_purpose::URL_SAFE.encode(Sha256::digest(&code_verifier));
 
-        let mut authorize_url = Url::parse(&auth_endpoint.to_string())?;
+        let mut url = Url::parse(&auth_endpoint.to_string())?;
 
-        authorize_url
-            .query_pairs_mut()
+        url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.registration.client_id)
             .append_pair("redirect_uri", CALLBACK_URI)
@@ -108,7 +114,9 @@ impl OAuthClient {
             .append_pair("code_challenge_method", "S256")
             .extend_pairs(self.scope.iter().map(|value| ("scope", value)));
 
-        anyhow::Ok((authorize_url, code_verifier))
+        self.state = State::WaitingForCode { code_verifier };
+
+        anyhow::Ok(AuthorizeUrl { url })
     }
 
     pub async fn exchange_token(&mut self, code: &str, code_verifier: &str) -> Result<()> {
@@ -139,14 +147,14 @@ impl OAuthClient {
         let mut response = self.http_client.send(request).await?;
         let token_response: TokenResponse = decode_response_json(&mut response).await?;
 
-        self.token = Some(Token {
+        self.state = State::Authenticated {
             access_token: token_response.access_token,
             token_type: token_response.token_type,
             expires_at: token_response
                 .expires_in
                 .map(|expires_in| requested_at + Duration::from_secs(expires_in)),
             refresh_token: token_response.refresh_token,
-        });
+        };
 
         anyhow::Ok(())
     }
@@ -166,6 +174,20 @@ impl OAuthClient {
         });
 
         post_json(&registration_endpoint.to_string(), metadata, http_client).await
+    }
+}
+
+#[derive(Debug)]
+pub struct AuthorizeUrl {
+    url: Url,
+}
+
+impl AuthorizeUrl {
+    pub fn url(mut self, server_id: ContextServerId) -> Url {
+        self.url
+            .query_pairs_mut()
+            .append_pair("state", &server_id.0);
+        self.url
     }
 }
 
@@ -366,8 +388,11 @@ async fn get_json<Out: DeserializeOwned>(
     url: &str,
     http_client: &Arc<dyn HttpClient>,
 ) -> Result<Out> {
-    let mut response = http_client.get(url, AsyncBody::empty(), true).await?;
-    decode_response_json(&mut response).await
+    {
+        let mut response = http_client.get(url, AsyncBody::empty(), true).await?;
+        decode_response_json(&mut response).await
+    }
+    .with_context(|| format!("GET {url}"))
 }
 
 async fn post_json<In: Serialize, Out: DeserializeOwned>(
@@ -375,10 +400,13 @@ async fn post_json<In: Serialize, Out: DeserializeOwned>(
     payload: In,
     http_client: &Arc<dyn HttpClient>,
 ) -> Result<Out> {
-    let mut response = http_client
-        .post_json(url, serde_json::to_string(&payload)?.into())
-        .await?;
-    decode_response_json(&mut response).await
+    {
+        let mut response = http_client
+            .post_json(url, serde_json::to_string(&payload)?.into())
+            .await?;
+        decode_response_json(&mut response).await
+    }
+    .with_context(|| format!("POST {url}"))
 }
 
 async fn decode_response_json<T: DeserializeOwned>(
@@ -397,9 +425,6 @@ async fn decode_response_json<T: DeserializeOwned>(
     }
 }
 
-use abs_uri::AbsUri;
-
-use crate::transport::http::www_authenticate::WwwAuthenticate;
 mod abs_uri {
     use std::{
         error::Error,

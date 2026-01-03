@@ -703,6 +703,10 @@ impl AgentConfiguration {
                 Indicator::dot().color(Color::Success).into_any_element(),
                 "Server is active.",
             ),
+            ContextServerStatus::AuthRequired => (
+                Indicator::dot().color(Color::Warning).into_any_element(),
+                "Authentication required",
+            ),
             ContextServerStatus::Error(_) => (
                 Indicator::dot().color(Color::Error).into_any_element(),
                 "Server has an error.",
@@ -831,6 +835,60 @@ impl AgentConfiguration {
                 }
             });
 
+        let action = if matches!(server_status, ContextServerStatus::AuthRequired) {
+            Button::new("context-server-authenticate", "Authenticate")
+                .style(ButtonStyle::Filled)
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.context_server_store.update(cx, |store, cx| {
+                        store.start_auth(context_server_id.clone(), cx);
+                    });
+                }))
+                .into_any_element()
+        } else {
+            Switch::new("context-server-switch", is_running.into())
+                .on_click({
+                    let context_server_manager = self.context_server_store.clone();
+                    let fs = self.fs.clone();
+
+                    move |state, _window, cx| {
+                        let is_enabled = match state {
+                            ToggleState::Unselected | ToggleState::Indeterminate => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    this.stop_server(&context_server_id, cx).log_err();
+                                });
+                                false
+                            }
+                            ToggleState::Selected => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    if let Some(server) = this.get_server(&context_server_id) {
+                                        this.start_server(server, cx);
+                                    }
+                                });
+                                true
+                            }
+                        };
+                        update_settings_file(fs.clone(), cx, {
+                            let context_server_id = context_server_id.clone();
+
+                            move |settings, _| {
+                                settings
+                                    .project
+                                    .context_servers
+                                    .entry(context_server_id.0)
+                                    .or_insert_with(|| {
+                                        settings::ContextServerSettingsContent::Extension {
+                                            enabled: is_enabled,
+                                            settings: serde_json::json!({}),
+                                        }
+                                    })
+                                    .set_enabled(is_enabled);
+                            }
+                        });
+                    }
+                })
+                .into_any_element()
+        };
+
         v_flex()
             .id(item_id.clone())
             .child(
@@ -881,53 +939,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .flex_none()
                             .child(context_server_configuration_menu)
-                            .child(
-                            Switch::new("context-server-switch", is_running.into())
-                                .on_click({
-                                    let context_server_manager = self.context_server_store.clone();
-                                    let fs = self.fs.clone();
-
-                                    move |state, _window, cx| {
-                                        let is_enabled = match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(&context_server_id, cx)
-                                                        .log_err();
-                                                });
-                                                false
-                                            }
-                                            ToggleState::Selected => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    if let Some(server) =
-                                                        this.get_server(&context_server_id)
-                                                    {
-                                                        this.start_server(server, cx);
-                                                    }
-                                                });
-                                                true
-                                            }
-                                        };
-                                        update_settings_file(fs.clone(), cx, {
-                                            let context_server_id = context_server_id.clone();
-
-                                            move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .entry(context_server_id.0)
-                                                    .or_insert_with(|| {
-                                                        settings::ContextServerSettingsContent::Extension {
-                                                            enabled: is_enabled,
-                                                            settings: serde_json::json!({}),
-                                                        }
-                                                    })
-                                                    .set_enabled(is_enabled);
-                                            }
-                                        });
-                                    }
-                                }),
-                        ),
+                            .child(action),
                     ),
             )
             .map(|parent| {

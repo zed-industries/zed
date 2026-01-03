@@ -245,7 +245,7 @@ impl ContextServerRegistry {
         match event {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
-                    ContextServerStatus::Starting => {}
+                    ContextServerStatus::Starting | ContextServerStatus::AuthRequired => {}
                     ContextServerStatus::Running => {
                         self.reload_tools_for_server(server_id.clone(), cx);
                         self.reload_prompts_for_server(server_id.clone(), cx);

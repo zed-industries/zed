@@ -4,17 +4,25 @@ mod www_authenticate;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, lock::Mutex};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
 use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
-use crate::transport::{
-    Transport,
-    http::{auth::OAuthClient, www_authenticate::WwwAuthenticate},
-};
+use crate::transport::Transport;
+use auth::OAuthClient;
+use www_authenticate::WwwAuthenticate;
+
+pub use auth::AuthorizeUrl;
+
+#[derive(Debug)]
+pub struct AuthRequired {
+    pub www_authenticate_header: Option<String>,
+}
+
+pub type AuthRequiredCallback = Arc<dyn Fn(AuthRequired) + Send + Sync>;
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
@@ -33,6 +41,8 @@ pub struct HttpTransport {
     error_rx: channel::Receiver<String>,
     // Authentication headers to include in requests
     headers: HashMap<String, String>,
+    on_auth_required: AuthRequiredCallback,
+    oauth_client: Arc<Mutex<Option<OAuthClient>>>,
 }
 
 impl HttpTransport {
@@ -41,6 +51,7 @@ impl HttpTransport {
         endpoint: String,
         headers: HashMap<String, String>,
         executor: BackgroundExecutor,
+        on_auth_required: AuthRequiredCallback,
     ) -> Self {
         let (response_tx, response_rx) = channel::unbounded();
         let (error_tx, error_rx) = channel::unbounded();
@@ -55,6 +66,8 @@ impl HttpTransport {
             error_tx,
             error_rx,
             headers,
+            on_auth_required,
+            oauth_client: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -137,16 +150,16 @@ impl HttpTransport {
                 log::debug!("Notification accepted");
             }
             status if status.as_u16() == 401 => {
-                // todo! stateful
-                let www_authenticate_header = response.headers().get("WWW-Authenticate");
+                let www_authenticate_header = response
+                    .headers()
+                    .get("WWW-Authenticate")
+                    .and_then(|value| Some(value.to_str().ok()?.to_string()));
 
-                let www_authenticate = www_authenticate_header
-                    .and_then(|value| WwwAuthenticate::parse(value.to_str().ok()?));
-                let client =
-                    OAuthClient::init(&self.endpoint, www_authenticate.as_ref(), &self.http_client)
-                        .await?;
-                let (url, code_verifier) = client.authorize_url()?;
-                dbg!(url);
+                (self.on_auth_required)(AuthRequired {
+                    www_authenticate_header,
+                });
+
+                anyhow::bail!("Unauthorized");
             }
             _ => {
                 let mut error_body = String::new();
@@ -226,6 +239,26 @@ impl HttpTransport {
         .detach();
 
         Ok(())
+    }
+
+    pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
+        let www_authenticate = www_auth_header.and_then(WwwAuthenticate::parse);
+
+        let mut client_guard = self.oauth_client.lock().await;
+        let client = match client_guard.as_mut() {
+            Some(client) => client,
+            None => {
+                let new_client =
+                    OAuthClient::init(&self.endpoint, www_authenticate.as_ref(), &self.http_client)
+                        .await?;
+                client_guard.replace(new_client);
+                client_guard.as_mut().unwrap()
+            }
+        };
+
+        let url = client.authorize_url()?;
+
+        Ok(url)
     }
 }
 

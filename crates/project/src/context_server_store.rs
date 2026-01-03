@@ -5,11 +5,15 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::{FutureExt as _, future::join_all};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use context_server::{AuthRequired, ContextServer, ContextServerCommand, ContextServerId};
+use futures::{FutureExt as _, channel::mpsc, future::join_all};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    actions,
+};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
+use smol::stream::StreamExt;
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
@@ -34,6 +38,7 @@ actions!(
 pub enum ContextServerStatus {
     Starting,
     Running,
+    AuthRequired,
     Stopped,
     Error(Arc<str>),
 }
@@ -43,6 +48,7 @@ impl ContextServerStatus {
         match state {
             ContextServerState::Starting { .. } => ContextServerStatus::Starting,
             ContextServerState::Running { .. } => ContextServerStatus::Running,
+            ContextServerState::AuthRequired { .. } => ContextServerStatus::AuthRequired,
             ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
             ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
         }
@@ -58,6 +64,11 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
+    },
+    AuthRequired {
+        server: Arc<ContextServer>,
+        configuration: Arc<ContextServerConfiguration>,
+        www_auth_header: Option<String>,
     },
     Stopped {
         server: Arc<ContextServer>,
@@ -77,6 +88,7 @@ impl ContextServerState {
             ContextServerState::Running { server, .. } => server.clone(),
             ContextServerState::Stopped { server, .. } => server.clone(),
             ContextServerState::Error { server, .. } => server.clone(),
+            ContextServerState::AuthRequired { server, .. } => server.clone(),
         }
     }
 
@@ -86,6 +98,7 @@ impl ContextServerState {
             ContextServerState::Running { configuration, .. } => configuration.clone(),
             ContextServerState::Stopped { configuration, .. } => configuration.clone(),
             ContextServerState::Error { configuration, .. } => configuration.clone(),
+            ContextServerState::AuthRequired { configuration, .. } => configuration.clone(),
         }
     }
 }
@@ -171,6 +184,8 @@ pub struct ContextServerStore {
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
     needs_server_update: bool,
+    auth_required_tx: mpsc::UnboundedSender<AuthRequiredEvent>,
+    _auth_required_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -179,6 +194,12 @@ pub enum Event {
         server_id: ContextServerId,
         status: ContextServerStatus,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthRequiredEvent {
+    pub server_id: ContextServerId,
+    pub www_authenticate_header: Option<String>,
 }
 
 impl EventEmitter<Event> for ContextServerStore {}
@@ -262,6 +283,26 @@ impl ContextServerStore {
             Vec::new()
         };
 
+        let (auth_required_tx, mut auth_required_rx) = mpsc::unbounded::<AuthRequiredEvent>();
+        let auth_required_task = cx.spawn(async move |this, cx| {
+            while let Some(event) = auth_required_rx.next().await {
+                this.update(cx, |this, cx| {
+                    if let Some(state) = this.servers.get(&event.server_id) {
+                        this.update_server_state(
+                            event.server_id.clone(),
+                            ContextServerState::AuthRequired {
+                                server: state.server(),
+                                configuration: state.configuration(),
+                                www_auth_header: event.www_authenticate_header,
+                            },
+                            cx,
+                        );
+                    }
+                })
+                .ok();
+            }
+        });
+
         let mut this = Self {
             _subscriptions: subscriptions,
             context_server_settings: Self::resolve_context_server_settings(&worktree_store, cx)
@@ -273,6 +314,8 @@ impl ContextServerStore {
             servers: HashMap::default(),
             update_servers_task: None,
             context_server_factory,
+            auth_required_tx,
+            _auth_required_task: auth_required_task,
         };
         if maintain_server_loop {
             this.available_context_servers_changed(cx);
@@ -487,13 +530,29 @@ impl ContextServerStore {
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Http { url, headers } => Ok(Arc::new(ContextServer::http(
-                id,
-                url,
-                headers.clone(),
-                cx.http_client(),
-                cx.background_executor().clone(),
-            )?)),
+            ContextServerConfiguration::Http { url, headers } => {
+                let on_auth_required = {
+                    let auth_required_tx = self.auth_required_tx.clone();
+                    let id = id.clone();
+
+                    Arc::new(move |auth_required: AuthRequired| {
+                        auth_required_tx
+                            .unbounded_send(AuthRequiredEvent {
+                                server_id: id.clone(),
+                                www_authenticate_header: auth_required.www_authenticate_header,
+                            })
+                            .log_err();
+                    })
+                };
+                Ok(Arc::new(ContextServer::http(
+                    id,
+                    url,
+                    headers.clone(),
+                    cx.http_client(),
+                    cx.background_executor().clone(),
+                    on_auth_required,
+                )?))
+            }
             _ => {
                 let root_path = self
                     .project
@@ -655,6 +714,47 @@ impl ContextServerStore {
             }
             anyhow::Ok(())
         })?
+    }
+
+    pub fn start_auth(&self, server_id: ContextServerId, cx: &mut Context<ContextServerStore>) {
+        let Some(server) = self.servers.get(&server_id) else {
+            return;
+        };
+
+        let ContextServerState::AuthRequired {
+            server,
+            www_auth_header: www_authenticate_header,
+            ..
+        } = server
+        else {
+            return;
+        };
+
+        let server = server.clone();
+        // todo! move out of authrequired already?
+        let www_auth_header = www_authenticate_header.clone();
+
+        cx.spawn(async move |_, cx| {
+            // todo! show error somehow?
+            match server.start_auth(www_auth_header.as_deref()).await {
+                Ok(auth_url) => {
+                    let url = auth_url.url(server_id);
+                    cx.update(|cx| {
+                        cx.open_url(url.as_str());
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    log::error!(
+                        "{} context server failed to authenticate: {}",
+                        server_id,
+                        err
+                    );
+                    // set server status to err
+                }
+            }
+        })
+        .detach();
     }
 }
 

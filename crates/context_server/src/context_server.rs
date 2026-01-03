@@ -14,12 +14,15 @@ use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
-use gpui::AsyncApp;
+use gpui::{AsyncApp, BackgroundExecutor};
 use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
 use url::Url;
 
-use crate::transport::HttpTransport;
+use crate::transport::{AuthRequiredCallback, HttpTransport};
+
+pub use crate::transport::AuthRequired;
+pub use crate::transport::http::AuthorizeUrl;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -32,6 +35,7 @@ impl Display for ContextServerId {
 
 enum ContextServerTransport {
     Stdio(ContextServerCommand, Option<PathBuf>),
+    Http(Arc<HttpTransport>),
     Custom(Arc<dyn crate::transport::Transport>),
 }
 
@@ -62,18 +66,28 @@ impl ContextServer {
         endpoint: &Url,
         headers: HashMap<String, String>,
         http_client: Arc<dyn HttpClient>,
-        executor: gpui::BackgroundExecutor,
+        executor: BackgroundExecutor,
+        on_auth_required: AuthRequiredCallback,
     ) -> Result<Self> {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
                 log::info!("Using HTTP transport for {}", endpoint);
-                let transport =
-                    HttpTransport::new(http_client, endpoint.to_string(), headers, executor);
-                Arc::new(transport) as _
+                Arc::new(HttpTransport::new(
+                    http_client,
+                    endpoint.to_string(),
+                    headers,
+                    executor,
+                    on_auth_required,
+                ))
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
         };
-        Ok(Self::new(id, transport))
+
+        Ok(Self {
+            id,
+            client: RwLock::new(None),
+            configuration: ContextServerTransport::Http(transport),
+        })
     }
 
     pub fn new(id: ContextServerId, transport: Arc<dyn crate::transport::Transport>) -> Self {
@@ -107,6 +121,13 @@ impl ContextServer {
                     timeout: command.timeout,
                 },
                 working_directory,
+                cx.clone(),
+            )?,
+            ContextServerTransport::Http(transport) => Client::new(
+                client::ContextServerId(self.id.0.clone()),
+                self.id().0,
+                transport.clone(),
+                None,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(
@@ -144,5 +165,13 @@ impl ContextServer {
             drop(protocol);
         }
         Ok(())
+    }
+
+    pub async fn start_auth(&self, www_auth_header: Option<&str>) -> Result<AuthorizeUrl> {
+        let ContextServerTransport::Http(http) = &self.configuration else {
+            anyhow::bail!("authorization is only supported for HTTP context servers");
+        };
+
+        http.start_auth(www_auth_header).await
     }
 }
