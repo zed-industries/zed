@@ -4315,10 +4315,15 @@ impl Editor {
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
+        let mut has_adjacent_edits = false;
+        let mut in_adjacent_group = false;
 
-        for (selection, autoclose_region) in
-            self.selections_with_autoclose_regions(selections, &snapshot)
-        {
+        let mut regions = self
+            .selections_with_autoclose_regions(selections, &snapshot)
+            .into_iter()
+            .peekable();
+
+        while let Some((selection, autoclose_region)) = regions.next() {
             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
@@ -4564,10 +4569,21 @@ impl Editor {
                 continue;
             }
 
+            let next_is_adjacent = regions
+                .peek()
+                .is_some_and(|(next, _)| selection.end == next.start);
+
             // If not handling any auto-close operation, then just replace the selected
             // text with the given input and move the selection to the end of the
             // newly inserted text.
-            let anchor = snapshot.anchor_after(selection.end);
+            let anchor = if in_adjacent_group || next_is_adjacent {
+                // After edits the right bias would shift those anchor to the next visible fragment
+                // but we want to resolve to the previous one
+                snapshot.anchor_before(selection.end)
+            } else {
+                snapshot.anchor_after(selection.end)
+            };
+
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
@@ -4596,23 +4612,36 @@ impl Editor {
 
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
+
+            if next_is_adjacent {
+                has_adjacent_edits = true;
+            }
+
+            in_adjacent_group = next_is_adjacent;
         }
 
+        drop(regions);
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
             if clear_linked_edit_ranges {
                 this.linked_edit_ranges.clear();
             }
+
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                if has_adjacent_edits {
+                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                } else {
+                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                }
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
+
                     let edits = edits
                         .into_iter()
                         .map(|(range, text)| {
@@ -4622,12 +4651,14 @@ impl Editor {
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
+
                     buffer.edit(edits, None, cx);
                 })
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+
             let new_selections = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
                 new_anchor_selections,
                 &map,
