@@ -1,6 +1,9 @@
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use gpui::http_client::AsyncBody;
 use gpui::{
     Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
 };
@@ -8,11 +11,13 @@ use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use smol::fs;
+use smol::io::AsyncReadExt;
 use ui::{
-    AnyElement, App, Color, Context, Headline, HeadlineSize, Icon, IconName, InteractiveElement,
-    IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable, NavigableEntry,
-    ParentElement, Render, Styled, StyledExt, Toggleable, Window, div, rems,
+    AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
+    InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
+    NavigableEntry, ParentElement, Render, Styled, StyledExt, Toggleable, Window, div, rems,
 };
+use util::ResultExt;
 use workspace::{ModalView, Workspace, with_active_or_new_workspace};
 
 use crate::remote_connections::Connection;
@@ -295,20 +300,113 @@ pub fn init(cx: &mut App) {
     });
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum DevContainerState {
-    Initial,
-    Activated,
+#[derive(Clone)]
+pub struct TemplateEntry {
+    name: String,
+    entry: NavigableEntry,
 }
 
+impl Eq for TemplateEntry {}
+impl PartialEq for TemplateEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl Debug for TemplateEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TemplateEntry")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+// Things we still need:
+// 1. An HTTP layer to query for templates
+// 2. The user-options specified so far in the devcontainer state
+// 3. A template rendering process (can possibly use the CLI for this)
+//
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TemplateResponse {
+    // _outcome: String,
+    // container_id: String,
+    // _remote_user: String,
+    // remote_workspace_folder: String,
+}
+// Ok, time to generalize this a bit more:
+// - Need the initial token call (https://ghcr.io/token?service=ghcr.io&scope=repository:devcontainers/templates:pull)
+// - Need the tags list response (maybe? Or just go to latest): https://ghcr.io/v2/devcontainers/templates/tags/list
+// - Need the manifest: https://ghcr.io/v2/devcontainers/templates/manifests/latest
+// - Need the digest from the layers: https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
+// - SO we probably need a basic GetFromAStructuredResponse type thing
+// - Maybe look at github.rs (line 49 or so) for some example code
+
+pub async fn fetch_templates(cx: &mut App) -> Result<Vec<TemplateEntry>, String> {
+    let client = cx.http_client();
+
+    let Ok(response) = client
+        .get("https://todo", AsyncBody::default(), false)
+        .await
+    else {
+        return Err("Failed to fetch templates".to_string());
+    };
+
+    let mut output = String::new();
+    response
+        .into_body()
+        .read_to_string(&mut output)
+        .await
+        .unwrap(); // TODO
+
+    let structured_response: TemplateResponse = serde_json::from_str(&output).unwrap();
+
+    Err("todo".to_string())
+}
+
+/**
+*
+let latest_release = delegate
+    .http_client()
+    .get(
+        "https://pypi.org/pypi/debugpy/json",
+        AsyncBody::empty(),
+        false,
+    )
+    .await
+    .log_err();
+let response = latest_release
+    .filter(|response| response.status().is_success())
+    .context("getting latest release")?;
+
+let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
+std::fs::create_dir_all(&download_dir)?;
+
+let mut output = String::new();
+response.into_body().read_to_string(&mut output).await?;
+let as_json = serde_json::Value::from_str(&output)?;
+let latest_version = as_json
+*
+*/
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevContainerState {
+    Initial,
+    QueryingTemplates,
+    TemplateQueryReturned(Result<Vec<TemplateEntry>, String>), // TODO, it's either a successful query manifest or an error
+    UserOptionsSpecifying,
+    ConfirmingWriteDevContainer,
+}
+
+#[derive(Debug, Clone)]
 pub enum DevContainerMessage {
-    SingleMessage,
+    SearchTemplates,
+    TemplatesRetrieved(Vec<String>),
+    GoBack,
 }
 
 pub struct DevContainerModal {
     focus_handle: FocusHandle,
     search_navigable_entry: NavigableEntry,
-    other_navigable_entry: NavigableEntry,
+    back_entry: NavigableEntry,
     state: DevContainerState,
 }
 
@@ -318,8 +416,157 @@ impl DevContainerModal {
             state: DevContainerState::Initial,
             focus_handle: cx.focus_handle(),
             search_navigable_entry: NavigableEntry::focusable(cx),
-            other_navigable_entry: NavigableEntry::focusable(cx),
+            back_entry: NavigableEntry::focusable(cx),
         }
+    }
+
+    fn render_initial(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut view = Navigable::new(
+            div()
+                .child(
+                    div().track_focus(&self.focus_handle).child(
+                        ModalHeader::new().child(
+                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                        ),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.search_navigable_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::SearchTemplates, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-search-containers")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.search_navigable_entry
+                                        .focus_handle
+                                        .contains_focused(window, cx),
+                                )
+                                .child(Label::new("Create dev container from template")),
+                        ),
+                )
+                .into_any_element(),
+        );
+        view = view.entry(self.search_navigable_entry.clone());
+        view.render(window, cx).into_any_element()
+    }
+
+    fn render_retrieved_templates(
+        &self,
+        items: &Vec<TemplateEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut view =
+            Navigable::new(
+                div()
+                    .child(div().track_focus(&self.focus_handle).child(
+                        ModalHeader::new().child(
+                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                        ),
+                    ))
+                    .child(ListSeparator)
+                    .children(items.iter().map(|template_entry| {
+                        div()
+                            .track_focus(&template_entry.entry.focus_handle)
+                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                // TODO
+                                this.accept_message(DevContainerMessage::GoBack, window, cx);
+                            }))
+                            .child(
+                                ListItem::new("li-todo")
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::Box))
+                                    .toggle_state(
+                                        template_entry
+                                            .entry
+                                            .focus_handle
+                                            .contains_focused(window, cx),
+                                    )
+                                    .child(Label::new(template_entry.name.clone())),
+                            )
+                    }))
+                    .child(ListSeparator)
+                    .child(
+                        div()
+                            .track_focus(&self.back_entry.focus_handle)
+                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                this.accept_message(DevContainerMessage::GoBack, window, cx);
+                            }))
+                            .child(
+                                ListItem::new("li-goback")
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                    .toggle_state(
+                                        self.back_entry.focus_handle.contains_focused(window, cx),
+                                    )
+                                    .child(Label::new("Go Back")),
+                            ),
+                    )
+                    .into_any_element(),
+            )
+            .entry(self.back_entry.clone());
+
+        for item in items {
+            view = view.entry(item.entry.clone());
+        }
+        view.render(window, cx).into_any_element()
+    }
+
+    fn render_querying_templates(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        Navigable::new(
+            div()
+                .child(
+                    div().track_focus(&self.focus_handle).child(
+                        ModalHeader::new().child(
+                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                        ),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div().child(
+                        ListItem::new("li-querying")
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(
+                                Icon::new(IconName::ArrowCircle)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(2),
+                            )
+                            .child(Label::new("Querying template registry...")),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.back_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.back_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .child(Label::new("Go Back")),
+                        ),
+                )
+                .into_any_element(),
+        )
+        .entry(self.back_entry.clone())
+        .render(window, cx)
+        .into_any_element()
     }
 }
 
@@ -327,12 +574,8 @@ impl ElmLikeModalV2 for DevContainerModal {
     type State = DevContainerState;
     type Message = DevContainerMessage;
 
-    fn state_for_message(&self, message: &Self::Message) -> Self::State {
-        todo!()
-    }
-
     fn state(&self) -> Self::State {
-        self.state
+        self.state.clone()
     }
 
     fn render_for_state(
@@ -342,66 +585,69 @@ impl ElmLikeModalV2 for DevContainerModal {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match state {
-            DevContainerState::Initial => {
-                let mut view = Navigable::new(
-                    div()
-                        .child(div().track_focus(&self.focus_handle).child(
-                            ModalHeader::new().child(
-                                Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
-                            ),
-                        ))
-                        .child(ListSeparator)
-                        .child(
-                            div()
-                                .track_focus(&self.search_navigable_entry.focus_handle)
-                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    println!("action on search containers");
-                                }))
-                                .child(
-                                    ListItem::new("li-search-containers")
-                                        .inset(true)
-                                        .spacing(ui::ListItemSpacing::Sparse)
-                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                        .toggle_state(
-                                            self.search_navigable_entry
-                                                .focus_handle
-                                                .contains_focused(window, cx),
-                                        )
-                                        .child(Label::new("Search for dev containers in registry")),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .track_focus(&self.other_navigable_entry.focus_handle)
-                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    println!("action on other containers");
-                                }))
-                                .child(
-                                    ListItem::new("li-search-containers")
-                                        .inset(true)
-                                        .spacing(ui::ListItemSpacing::Sparse)
-                                        .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                        .toggle_state(
-                                            self.other_navigable_entry
-                                                .focus_handle
-                                                .contains_focused(window, cx),
-                                        )
-                                        .child(Label::new("Do another thing")),
-                                ),
-                        )
-                        .into_any_element(),
-                );
-                view = view.entry(self.search_navigable_entry.clone());
-                view = view.entry(self.other_navigable_entry.clone());
-                view.render(window, cx).into_any_element()
+            DevContainerState::Initial => self.render_initial(window, cx),
+            DevContainerState::QueryingTemplates => self.render_querying_templates(window, cx),
+            DevContainerState::TemplateQueryReturned(Ok(items)) => {
+                self.render_retrieved_templates(items, window, cx)
             }
-            DevContainerState::Activated => div().into_any_element(),
+            _ => div().into_any_element(),
         }
+    }
+
+    fn accept_message(
+        &mut self,
+        message: Self::Message,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let message = match message {
+            DevContainerMessage::SearchTemplates => {
+                // Test for now, but basically demonstrating that a call must be made from the render side of things
+                dbg!("spawning");
+                cx.spawn_in(window, async move |this, cx| {
+                    let timer = smol::Timer::after(Duration::from_millis(5000));
+                    timer.await;
+                    let message = DevContainerMessage::TemplatesRetrieved(vec![
+                        "Template1".to_string(),
+                        "Template2".to_string(),
+                    ]);
+                    this.update_in(cx, |this, window, cx| {
+                        this.accept_message(message, window, cx);
+                    })
+                    .log_err();
+                })
+                .detach();
+                Some(DevContainerState::QueryingTemplates)
+            }
+            DevContainerMessage::GoBack => match self.state {
+                DevContainerState::Initial => Some(DevContainerState::Initial),
+                DevContainerState::QueryingTemplates => Some(DevContainerState::Initial),
+                _ => Some(DevContainerState::Initial),
+            },
+            DevContainerMessage::TemplatesRetrieved(items) => {
+                if self.state == DevContainerState::QueryingTemplates {
+                    Some(DevContainerState::TemplateQueryReturned(Ok(items
+                        .into_iter()
+                        .map(|item| TemplateEntry {
+                            name: item,
+                            entry: NavigableEntry::focusable(cx),
+                        })
+                        .collect())))
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(state) = message {
+            self.state = state;
+            self.focus_handle.focus(window, cx);
+        }
+        cx.notify();
     }
 }
 impl EventEmitter<DismissEvent> for DevContainerModal {}
 impl Focusable for DevContainerModal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -417,8 +663,6 @@ pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
     type State;
     type Message;
 
-    fn state_for_message(&self, message: &Self::Message) -> Self::State;
-
     fn state(&self) -> Self::State;
 
     fn render_for_state(
@@ -428,10 +672,12 @@ pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
         cx: &mut Context<Self>,
     ) -> AnyElement;
 
-    fn accept_message(&mut self, message: Self::Message, cx: &mut Context<Self>) {
-        // self.state = self.state_for_message(&message);
-        cx.notify();
-    }
+    fn accept_message(
+        &mut self,
+        message: Self::Message,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
 
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
@@ -443,129 +689,11 @@ pub trait ElmLikeModalV2: ModalView + EventEmitter<DismissEvent> + Render {
         div()
             .elevation_3(cx)
             .w(rems(34.))
-            // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
             .key_context("ContainerModal")
             .on_action(cx.listener(Self::dismiss))
             .child(element)
     }
 }
-
-// This doesn't work because render isn't owned in this crate.
-// impl<T: ElmLikeModalV2> Render for T {
-//     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-//         let element = self.render_for_state(&self.state(), window, cx);
-//         div()
-//             .elevation_3(cx)
-//             .w(rems(34.))
-//             // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
-//             .key_context("ContainerModal")
-//             .on_action(cx.listener(Self::dismiss))
-//             .child(element)
-//     }
-// }
-
-// struct DevContainerModal {
-//     focus_handle: FocusHandle,
-//     search_navigable_entry: NavigableEntry,
-//     other_navigable_entry: NavigableEntry,
-// }
-
-// impl DevContainerModal {
-//     fn new(window: &mut Window, cx: &mut App) -> Self {
-//         let search_navigable_entry = NavigableEntry::focusable(cx);
-//         let other_navigable_entry = NavigableEntry::focusable(cx);
-//         let focus_handle = cx.focus_handle();
-//         DevContainerModal {
-//             focus_handle,
-//             search_navigable_entry,
-//             other_navigable_entry,
-//         }
-//     }
-
-//     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-//         cx.emit(DismissEvent);
-//     }
-// }
-
-// impl ModalView for DevContainerModal {}
-// impl EventEmitter<DismissEvent> for DevContainerModal {}
-// impl Focusable for DevContainerModal {
-//     fn focus_handle(&self, _cx: &App) -> FocusHandle {
-//         self.focus_handle.clone()
-//     }
-// }
-
-// impl Render for DevContainerModal {
-//     fn render(
-//         &mut self,
-//         window: &mut ui::Window,
-//         cx: &mut ui::Context<Self>,
-//     ) -> impl ui::IntoElement {
-//         let mut view =
-//             Navigable::new(
-//                 div()
-//                     .child(div().track_focus(&self.focus_handle).child(
-//                         ModalHeader::new().child(
-//                             Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
-//                         ),
-//                     ))
-//                     .child(ListSeparator)
-//                     .child(
-//                         div()
-//                             .track_focus(&self.search_navigable_entry.focus_handle)
-//                             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-//                                 println!("action on search containers");
-//                             }))
-//                             .child(
-//                                 ListItem::new("li-search-containers")
-//                                     .inset(true)
-//                                     .spacing(ui::ListItemSpacing::Sparse)
-//                                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-//                                     .toggle_state(
-//                                         self.search_navigable_entry
-//                                             .focus_handle
-//                                             .contains_focused(window, cx),
-//                                     )
-//                                     .child(Label::new("Search for dev containers in registry")),
-//                             ),
-//                     )
-//                     .child(
-//                         div()
-//                             .track_focus(&self.other_navigable_entry.focus_handle)
-//                             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-//                                 println!("action on other containers");
-//                             }))
-//                             .child(
-//                                 ListItem::new("li-search-containers")
-//                                     .inset(true)
-//                                     .spacing(ui::ListItemSpacing::Sparse)
-//                                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-//                                     .toggle_state(
-//                                         self.other_navigable_entry
-//                                             .focus_handle
-//                                             .contains_focused(window, cx),
-//                                     )
-//                                     .child(Label::new("Do another thing")),
-//                             ),
-//                     )
-//                     .into_any_element(),
-//             );
-//         view = view.entry(self.search_navigable_entry.clone());
-//         view = view.entry(self.other_navigable_entry.clone());
-
-//         // // This is an interesting edge. Can't focus in render, or you'll just override whatever was focused before.
-//         // // self.search_navigable_entry.focus_handle.focus(window, cx);
-
-//         // view.render(window, cx).into_any_element()
-//         div()
-//             .elevation_3(cx)
-//             .w(rems(34.))
-//             // WHY IS THIS NEEDED FOR ACTION DISPATCH OMG
-//             .key_context("ContainerModal")
-//             .on_action(cx.listener(Self::dismiss))
-//             .child(view.render(window, cx).into_any_element())
-//     }
-// }
 
 #[cfg(test)]
 mod test {
