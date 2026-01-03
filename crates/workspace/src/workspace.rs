@@ -4433,7 +4433,9 @@ impl Workspace {
             if let Some(clone) = task.await {
                 this.update_in(cx, |this, window, cx| {
                     let new_pane = this.add_pane(window, cx);
+                    let nav_history = pane.read(cx).fork_nav_history();
                     new_pane.update(cx, |pane, cx| {
+                        pane.set_nav_history(nav_history, cx);
                         pane.add_item(clone, true, true, None, window, cx)
                     });
                     this.center.split(&pane, &new_pane, direction, cx).unwrap();
