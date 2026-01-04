@@ -7,15 +7,14 @@ use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
 use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
-use project::Project;
+use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
-use text::{BufferSnapshot as TextBufferSnapshot, ToOffset as _};
+use text::BufferSnapshot as TextBufferSnapshot;
 
 pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
-    last_event_is_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
     let ep_store = EditPredictionStore::try_global(cx)?;
@@ -43,8 +42,26 @@ pub fn capture_example(
     let git_store = project.read(cx).git_store().clone();
 
     Some(cx.spawn(async move |mut cx| {
-        let snapshots_by_path = collect_snapshots(&project, &git_store, &events, &mut cx).await?;
-        let cursor_excerpt = cx
+        let snapshots_by_path =
+            collect_snapshots(&project, &git_store, worktree_id, &events, &mut cx).await?;
+
+        events.retain(|stored_event| {
+            match stored_event.event.as_ref() {
+                zeta_prompt::Event::BufferChange { path, .. } => {
+                    if !snapshots_by_path.contains_key(path) {
+                        return false;
+                    }
+                }
+            }
+            true
+        });
+
+        let line_comment_prefix = snapshot
+            .language()
+            .and_then(|lang| lang.config().line_comments.first())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let (cursor_excerpt, cursor_offset) = cx
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
@@ -54,13 +71,6 @@ pub fn capture_example(
             .await;
 
         let mut edit_history = String::new();
-        let mut expected_patch = String::new();
-        if last_event_is_expected_patch {
-            if let Some(stored_event) = events.pop() {
-                zeta_prompt::write_event(&mut expected_patch, &stored_event.event);
-            }
-        }
-
         for stored_event in &events {
             zeta_prompt::write_event(&mut edit_history, &stored_event.event);
             if !edit_history.ends_with('\n') {
@@ -68,57 +78,62 @@ pub fn capture_example(
             }
         }
 
-        let name = generate_timestamp_name();
-
-        Ok(ExampleSpec {
-            name,
+        let mut spec = ExampleSpec {
+            name: generate_timestamp_name(),
             repository_url,
             revision,
+            tags: Vec::new(),
+            reasoning: None,
             uncommitted_diff,
             cursor_path: cursor_path.as_std_path().into(),
-            cursor_position: cursor_excerpt,
+            cursor_position: String::new(),
             edit_history,
-            expected_patch,
-        })
+            expected_patches: Vec::new(),
+        };
+        spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
+        Ok(spec)
     }))
 }
 
 fn compute_cursor_excerpt(
     snapshot: &language::BufferSnapshot,
     cursor_anchor: language::Anchor,
-) -> String {
+) -> (String, usize) {
+    use text::ToOffset as _;
+
     let cursor_point = cursor_anchor.to_point(snapshot);
     let (_editable_range, context_range) =
         editable_and_context_ranges_for_cursor_position(cursor_point, snapshot, 100, 50);
-
     let context_start_offset = context_range.start.to_offset(snapshot);
     let cursor_offset = cursor_anchor.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset.saturating_sub(context_start_offset);
-    let mut excerpt = snapshot.text_for_range(context_range).collect::<String>();
-    if cursor_offset_in_excerpt <= excerpt.len() {
-        excerpt.insert_str(cursor_offset_in_excerpt, zeta_prompt::CURSOR_MARKER);
-    }
-    excerpt
+    let excerpt = snapshot.text_for_range(context_range).collect::<String>();
+    (excerpt, cursor_offset_in_excerpt)
 }
 
 async fn collect_snapshots(
     project: &Entity<Project>,
     git_store: &Entity<project::git_store::GitStore>,
+    worktree_id: WorktreeId,
     events: &[StoredEvent],
     cx: &mut gpui::AsyncApp,
 ) -> Result<HashMap<Arc<Path>, (TextBufferSnapshot, BufferDiffSnapshot)>> {
     let mut snapshots_by_path = HashMap::default();
+    let root_name = project.read_with(cx, |project, cx| {
+        project
+            .worktree_for_id(worktree_id, cx)
+            .unwrap()
+            .read(cx)
+            .root_name()
+            .to_owned()
+    })?;
     for stored_event in events {
         let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
         if let Some((project_path, full_path)) = project.read_with(cx, |project, cx| {
-            let project_path = project.find_project_path(path, cx)?;
-            let full_path = project
-                .worktree_for_id(project_path.worktree_id, cx)?
-                .read(cx)
-                .root_name()
-                .join(&project_path.path)
-                .as_std_path()
-                .into();
+            let project_path = project
+                .find_project_path(path, cx)
+                .filter(|path| path.worktree_id == worktree_id)?;
+            let full_path = root_name.join(&project_path.path).as_std_path().into();
             Some((project_path, full_path))
         })? {
             if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(full_path) {
@@ -289,9 +304,7 @@ mod tests {
         cx.run_until_parked();
 
         let mut example = cx
-            .update(|cx| {
-                capture_example(project.clone(), buffer.clone(), Anchor::MIN, false, cx).unwrap()
-            })
+            .update(|cx| capture_example(project.clone(), buffer.clone(), Anchor::MIN, cx).unwrap())
             .await
             .unwrap();
         example.name = "test".to_string();
@@ -302,6 +315,8 @@ mod tests {
                 name: "test".to_string(),
                 repository_url: "https://github.com/test/repo.git".to_string(),
                 revision: "abc123def456".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
                 uncommitted_diff: indoc! {"
                     --- a/project/src/main.rs
                     +++ b/project/src/main.rs
@@ -322,7 +337,8 @@ mod tests {
                 .to_string(),
                 cursor_path: Path::new("project/src/main.rs").into(),
                 cursor_position: indoc! {"
-                    <|user_cursor|>fn main() {
+                    fn main() {
+                    ^[CURSOR_POSITION]
                         // comment 1
                         one();
                         two();
@@ -355,7 +371,7 @@ mod tests {
                          seven();
                 "}
                 .to_string(),
-                expected_patch: "".to_string(),
+                expected_patches: Vec::new()
             }
         );
     }

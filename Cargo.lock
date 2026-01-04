@@ -5253,6 +5253,7 @@ dependencies = [
  "text",
  "thiserror 2.0.17",
  "time",
+ "toml 0.8.23",
  "ui",
  "util",
  "uuid",
