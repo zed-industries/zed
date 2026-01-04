@@ -553,7 +553,7 @@ impl TitleBar {
         } else {
             "Open Recent Project".to_string()
         };
-        let new_window_by_default = false;
+
         let focus_handle = workspace
             .upgrade()
             .map(|w| w.read(cx).focus_handle(cx))
@@ -564,7 +564,7 @@ impl TitleBar {
                 Some(
                     recent_projects::RecentProjects::popover(
                         workspace.clone(),
-                        new_window_by_default,
+                        false,
                         focus_handle.clone(),
                         window,
                         cx,
@@ -653,7 +653,7 @@ impl TitleBar {
                 .menu(move |window, cx| {
                     let repository = project.read(cx).active_repository(cx);
                     Some(
-                        git_ui::branch_picker::popover_full(
+                        git_ui::branch_picker::popover(
                             workspace.downgrade(),
                             repository,
                             window,

@@ -397,7 +397,7 @@ pub struct RecentProjectsDelegate {
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
-    new_window_by_default: bool,
+    create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
     has_any_non_local_projects: bool,
@@ -416,7 +416,7 @@ impl RecentProjectsDelegate {
             workspaces: Vec::new(),
             selected_match_index: 0,
             matches: Default::default(),
-            new_window_by_default,
+            create_new_window: new_window_by_default,
             render_paths,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
@@ -440,7 +440,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
-        let (create_window, reuse_window) = if self.new_window_by_default {
+        let (create_window, reuse_window) = if self.create_new_window {
             (
                 window.keystroke_text_for(&menu::Confirm),
                 window.keystroke_text_for(&menu::SecondaryConfirm),
@@ -533,7 +533,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         {
             let (candidate_workspace_id, candidate_workspace_location, candidate_workspace_paths) =
                 &self.workspaces[selected_match.candidate_id];
-            let replace_current_window = if self.new_window_by_default {
+            let replace_current_window = if self.create_new_window {
                 secondary
             } else {
                 !secondary
