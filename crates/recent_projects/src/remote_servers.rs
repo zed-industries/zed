@@ -665,10 +665,10 @@ impl RemoteServerProjects {
     }
 
     pub fn popover(
-        create_new_window: bool,
         fs: Arc<dyn Fs>,
-        window: &mut Window,
         workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {

@@ -403,32 +403,34 @@ impl TitleBar {
                     let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
                     Some(
                         recent_projects::RemoteServerProjects::popover(
-                            false,
                             fs,
-                            window,
                             workspace.clone(),
+                            false,
+                            window,
                             cx,
                         )
                         .into(),
                     )
                 })
                 .trigger_with_tooltip(
-                    ButtonLike::new("remote_project").child(
-                        h_flex()
-                            .gap_2()
-                            .max_w_32()
-                            .child(
-                                IconWithIndicator::new(
-                                    Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                    Some(Indicator::dot().color(indicator_color)),
+                    ButtonLike::new("remote_project")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .max_w_32()
+                                .child(
+                                    IconWithIndicator::new(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        Some(Indicator::dot().color(indicator_color)),
+                                    )
+                                    .indicator_border_color(Some(
+                                        cx.theme().colors().title_bar_background,
+                                    ))
+                                    .into_any_element(),
                                 )
-                                .indicator_border_color(Some(
-                                    cx.theme().colors().title_bar_background,
-                                ))
-                                .into_any_element(),
-                            )
-                            .child(Label::new(nickname).size(LabelSize::Small).truncate()),
-                    ),
+                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                        ),
                     move |_window, cx| {
                         Tooltip::with_meta(
                             tooltip_title,
@@ -574,6 +576,7 @@ impl TitleBar {
             .trigger_with_tooltip(
                 Button::new("project_name_trigger", name)
                     .label_size(LabelSize::Small)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
                     Tooltip::for_action(
@@ -664,6 +667,7 @@ impl TitleBar {
                 })
                 .trigger_with_tooltip(
                     Button::new("project_branch_trigger", branch_name)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .label_size(LabelSize::Small)
                         .color(Color::Muted)
                         .when(settings.show_branch_icon, |branch_button| {
