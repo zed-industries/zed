@@ -62,6 +62,8 @@ actions!(
         EditBinding,
         /// Creates a new key binding for the selected action.
         CreateBinding,
+        /// Creates a new key binding from scratch, prompting for the action.
+        OpenCreateKeybindingModal,
         /// Deletes the selected key binding.
         DeleteBinding,
         /// Copies the action name to clipboard.
@@ -1258,7 +1260,12 @@ impl KeymapEditor {
         self.open_edit_keybinding_modal(true, window, cx);
     }
 
-    fn open_create_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_create_keybinding_modal(
+        &mut self,
+        _: &OpenCreateKeybindingModal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let keymap_editor = cx.entity();
 
         let action_information = ActionInformation::new(
@@ -1703,6 +1710,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::focus_search))
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
+            .on_action(cx.listener(Self::open_create_keybinding_modal))
             .on_action(cx.listener(Self::delete_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
@@ -1743,7 +1751,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_80()
+                                    .min_w_96()
                                     .child(
                                         IconButton::new(
                                             "KeymapEditorToggleFiltersIcon",
@@ -1874,9 +1882,16 @@ impl Render for KeymapEditor {
                                             .child(
                                                 Button::new("create", "Create Keybinding")
                                                     .style(ButtonStyle::Outlined)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.open_create_modal(window, cx);
-                                                    }))
+                                                    .key_binding(
+                                                        ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
+                                                            .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            OpenCreateKeybindingModal.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    })
                                             )
 
                                     )
@@ -1889,7 +1904,7 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(div().min_w_80()), // Spacer div to align with the search input
+                                    .child(div().min_w_96()), // Spacer div to align with the search input
                             )
                         },
                     ),
