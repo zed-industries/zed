@@ -15,8 +15,6 @@ pub struct Model {
     pub email_address: Option<String>,
     pub name: Option<String>,
     pub admin: bool,
-    pub invite_code: Option<String>,
-    pub invite_count: i32,
     pub connected_once: bool,
     pub metrics_id: Uuid,
     pub created_at: NaiveDateTime,
