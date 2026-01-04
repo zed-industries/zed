@@ -834,7 +834,33 @@ impl ContextMenu {
     }
 
     pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected_index else {
+            return;
+        };
+
+        if let Some(ContextMenuItem::Submenu { builder, .. }) = self.items.get(ix) {
+            self.open_submenu(
+                ix,
+                builder.clone(),
+                SubmenuOpenTrigger::Keyboard,
+                window,
+                cx,
+            );
+
+            if let SubmenuState::Open(open_submenu) = &self.submenu_state {
+                let focus_handle = open_submenu.entity.read(cx).focus_handle.clone();
+                window.focus(&focus_handle, cx);
+                open_submenu.entity.update(cx, |submenu, cx| {
+                    submenu.select_first(&SelectFirst, window, cx);
+                });
+            }
+
+            cx.notify();
+            return;
+        }
+
         let context = self.action_context.as_ref();
+
         if let Some(
             ContextMenuItem::Entry(ContextMenuEntry {
                 handler,
@@ -842,7 +868,7 @@ impl ContextMenu {
                 ..
             })
             | ContextMenuItem::CustomEntry { handler, .. },
-        ) = self.selected_index.and_then(|ix| self.items.get(ix))
+        ) = self.items.get(ix)
         {
             (handler)(context, window, cx)
         }
