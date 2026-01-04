@@ -40,24 +40,6 @@ enum State {
     },
 }
 
-#[derive(Debug, Error)]
-pub enum OAuthError {
-    #[error("OAuth access token is expired and no refresh token is available")]
-    AccessTokenExpiredNoRefreshToken,
-
-    #[error("cannot refresh: OAuth client is waiting for an authorization code")]
-    WaitingForAuthorizationCode,
-
-    #[error("cannot refresh: OAuth client is not authenticated")]
-    NotAuthenticated,
-
-    #[error("cannot refresh: missing refresh token")]
-    MissingRefreshToken,
-
-    #[error("cannot refresh: authorization server metadata does not specify a token_endpoint")]
-    MissingTokenEndpoint,
-}
-
 impl Default for State {
     fn default() -> Self {
         State::Init
@@ -83,7 +65,7 @@ impl OAuthClient {
             .authorization_servers
             // todo! try others?
             .first()
-            .context("Resource metadata specified 0 authorization servers")?;
+            .ok_or(InitError::NoAuthorizationServers)?;
 
         let server = AuthorizationServer::fetch(auth_server_url, http_client).await?;
 
@@ -118,10 +100,11 @@ impl OAuthClient {
     }
 
     pub fn authorize_url(&mut self) -> Result<AuthorizeUrl> {
-        let auth_endpoint =
-            self.server.authorization_endpoint.as_ref().context(
-                "Authorization server metadata does not specify an authorization_endpoint",
-            )?;
+        let auth_endpoint = self
+            .server
+            .authorization_endpoint
+            .as_ref()
+            .ok_or(AuthorizeUrlError::MissingAuthorizationEndpoint)?;
 
         let code_verifier = generate_code_verifier();
         let code_challenge =
@@ -144,9 +127,7 @@ impl OAuthClient {
 
     pub async fn exchange_token(&mut self, code: &str) -> Result<()> {
         let State::WaitingForCode { code_verifier } = &self.state else {
-            anyhow::bail!(
-                "cannot exchange token: oauth client is not waiting for an authorization code"
-            );
+            return Err(ExchangeTokenError::NotWaitingForAuthorizationCode.into());
         };
 
         let token_endpoint = self
@@ -154,7 +135,7 @@ impl OAuthClient {
             .token_endpoint
             .as_ref()
             // todo! implicit?
-            .context("Authorization server metadata does not specify a token_endpoint")?;
+            .ok_or(ExchangeTokenError::MissingTokenEndpoint)?;
 
         let form = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("grant_type", "authorization_code")
@@ -169,7 +150,7 @@ impl OAuthClient {
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(AsyncBody::from(form))
-            .context("Failed to build token exchange request")?;
+            .context(ExchangeTokenError::BuildTokenExchangeRequest)?;
 
         let requested_at = Instant::now();
 
@@ -217,7 +198,7 @@ impl OAuthClient {
 
         if expires_at.is_some_and(|expires_at| expires_at <= Instant::now()) {
             if refresh_token.is_none() {
-                return Err(OAuthError::AccessTokenExpiredNoRefreshToken.into());
+                return Err(AccessTokenError::AccessTokenExpiredNoRefreshToken.into());
             }
 
             self.refresh_access_token().await?;
@@ -232,7 +213,7 @@ impl OAuthClient {
 
     async fn refresh_access_token(&mut self) -> Result<()> {
         if matches!(self.state, State::WaitingForCode { .. }) {
-            return Err(OAuthError::WaitingForAuthorizationCode.into());
+            return Err(RefreshTokenError::WaitingForAuthorizationCode.into());
         }
 
         let State::Authenticated {
@@ -241,19 +222,18 @@ impl OAuthClient {
             ..
         } = std::mem::take(&mut self.state)
         else {
-            return Err(OAuthError::NotAuthenticated.into());
+            return Err(RefreshTokenError::NotAuthenticated.into());
         };
 
         let refresh_token = previous_refresh_token
-            .as_deref()
-            .ok_or(OAuthError::MissingRefreshToken)?
-            .to_string();
+            .clone()
+            .ok_or(RefreshTokenError::MissingRefreshToken)?;
 
         let token_endpoint = self
             .server
             .token_endpoint
             .as_ref()
-            .ok_or(OAuthError::MissingTokenEndpoint)?;
+            .ok_or(RefreshTokenError::MissingTokenEndpoint)?;
 
         let form = {
             let mut serializer = url::form_urlencoded::Serializer::new(String::new());
@@ -274,7 +254,7 @@ impl OAuthClient {
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(AsyncBody::from(form))
-            .context("Failed to build token refresh request")?;
+            .context(RefreshTokenError::BuildTokenRefreshRequest)?;
 
         let requested_at = Instant::now();
 
@@ -296,6 +276,66 @@ impl OAuthClient {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Error)]
+pub enum InitError {
+    #[error("resource metadata specified 0 authorization servers")]
+    NoAuthorizationServers,
+}
+
+#[derive(Debug, Error)]
+pub enum AuthorizeUrlError {
+    #[error("authorization server metadata does not specify an authorization_endpoint")]
+    MissingAuthorizationEndpoint,
+}
+
+#[derive(Debug, Error)]
+pub enum ExchangeTokenError {
+    #[error("cannot exchange token: oauth client is not waiting for an authorization code")]
+    NotWaitingForAuthorizationCode,
+
+    #[error("authorization server metadata does not specify a token_endpoint")]
+    MissingTokenEndpoint,
+
+    #[error("failed to build token exchange request")]
+    BuildTokenExchangeRequest,
+}
+
+#[derive(Debug, Error)]
+pub enum AccessTokenError {
+    #[error("OAuth access token is expired and no refresh token is available")]
+    AccessTokenExpiredNoRefreshToken,
+}
+
+#[derive(Debug, Error)]
+pub enum RefreshTokenError {
+    #[error("cannot refresh: OAuth client is waiting for an authorization code")]
+    WaitingForAuthorizationCode,
+
+    #[error("cannot refresh: OAuth client is not authenticated")]
+    NotAuthenticated,
+
+    #[error("cannot refresh: missing refresh token")]
+    MissingRefreshToken,
+
+    #[error("cannot refresh: authorization server metadata does not specify a token_endpoint")]
+    MissingTokenEndpoint,
+
+    #[error("failed to build token refresh request")]
+    BuildTokenRefreshRequest,
+}
+
+#[derive(Debug, Error)]
+pub enum CallbackParseError {
+    #[error("invalid oauth callback query: missing code")]
+    MissingCode,
+
+    #[error("invalid oauth callback query: missing state")]
+    MissingState,
+
+    #[error("invalid oauth callback state: missing server id")]
+    MissingServerId,
 }
 
 #[derive(Debug)]
@@ -345,12 +385,12 @@ impl OAuthCallback {
             }
         }
 
-        let code = code.context("invalid oauth callback query: missing code")?;
-        let state = state.context("invalid oauth callback query: missing state")?;
+        let code = code.ok_or(CallbackParseError::MissingCode)?;
+        let state = state.ok_or(CallbackParseError::MissingState)?;
 
         let state = state.trim();
         if state.is_empty() {
-            anyhow::bail!("invalid oauth callback state: missing server id");
+            return Err(CallbackParseError::MissingServerId.into());
         }
 
         let server_id = ContextServerId(Arc::<str>::from(state.to_string()));
