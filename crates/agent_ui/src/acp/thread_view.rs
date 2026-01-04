@@ -1297,6 +1297,16 @@ impl AcpThreadView {
     }
 
     fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let is_idle = self
+            .thread()
+            .map(|t| t.read(cx).status() == acp_thread::ThreadStatus::Idle)
+            .unwrap_or(true);
+
+        if is_idle {
+            self.send_impl(self.message_editor.clone(), window, cx);
+            return;
+        }
+
         let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
             let thread = thread.read(cx);
             AgentSettings::get_global(cx)
