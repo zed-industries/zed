@@ -4643,7 +4643,9 @@ impl BackgroundScanner {
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
-        for ((path, metadata), abs_path) in relative_paths.iter().zip(metadata.iter()).zip(abs_paths) {
+        for ((path, metadata), abs_path) in
+            relative_paths.iter().zip(metadata.iter()).zip(abs_paths)
+        {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
                 state.remove_path(path);
                 self.watcher.remove(&abs_path).log_err();
