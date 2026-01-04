@@ -4330,6 +4330,21 @@ impl Editor {
             .peekable();
 
         while let Some((selection, autoclose_region)) = regions.next() {
+            if snapshot
+                .point_to_buffer_point(selection.head())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                continue;
+            }
+            if snapshot
+                .point_to_buffer_point(selection.tail())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                // note, ideally we'd clip the tail to the closest writeable region towards the head
+                continue;
+            }
+            all_selections_read_only = false;
+
             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
@@ -4618,10 +4633,13 @@ impl Editor {
 
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
-        }
 
             has_adjacent_edits |= next_is_adjacent;
             in_adjacent_group = next_is_adjacent;
+        }
+
+        if all_selections_read_only {
+            return;
         }
 
         drop(regions);
