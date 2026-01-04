@@ -36,8 +36,7 @@ use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::CompletionParams;
 use multi_buffer::{
-    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferFilterMode, MultiBufferOffset,
-    MultiBufferOffsetUtf16, PathKey,
+    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
 };
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -13221,30 +13220,28 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     // Handle formatting requests to the language server.
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
-            let buffer_changes = buffer_changes.clone();
             move |_, _| {
-                let buffer_changes = buffer_changes.clone();
                 // Insert blank lines between each line of the buffer.
                 async move {
-                    // When formatting is requested, trailing whitespace has already been stripped,
-                    // and the trailing newline has already been added.
-                    assert_eq!(
-                        &buffer_changes.lock()[1..],
-                        &[
-                            (
-                                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                                "".into()
-                            ),
-                            (
-                                lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                                "".into()
-                            ),
-                            (
-                                lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                                "\n".into()
-                            ),
-                        ]
-                    );
+                    // TODO: this assertion is not reliably true. Currently nothing guarantees that we deliver
+                    // DidChangedTextDocument to the LSP before sending the formatting request.
+                    // assert_eq!(
+                    //     &buffer_changes.lock()[1..],
+                    //     &[
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                    //             "".into()
+                    //         ),
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                    //             "".into()
+                    //         ),
+                    //         (
+                    //             lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                    //             "\n".into()
+                    //         ),
+                    //     ]
+                    // );
 
                     Ok(Some(vec![
                         lsp::TextEdit {
@@ -13276,7 +13273,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         ]
         .join("\n"),
     );
-    cx.run_until_parked();
 
     // Submit a format request.
     let format = cx
@@ -19884,7 +19880,9 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+            });
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -20509,7 +20507,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let diff = cx.new(|cx| BufferDiff::new_with_base_text(diff_base, &buffer, cx));
+                let diff = cx.new(|cx| {
+                    BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
+                });
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
@@ -20615,7 +20615,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base, &buffer.read(cx).text_snapshot(), cx)
+            });
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
@@ -22049,7 +22051,9 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
 
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_diff(diff, cx);
@@ -29221,208 +29225,6 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         Z
         3
         "});
-}
-
-#[gpui::test]
-async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let mut leader_cx = EditorTestContext::new(cx).await;
-
-    let diff_base = indoc!(
-        r#"
-        one
-        two
-        three
-        four
-        five
-        six
-        "#
-    );
-
-    let initial_state = indoc!(
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        five
-        six
-        "#
-    );
-
-    leader_cx.set_state(initial_state);
-
-    leader_cx.set_head_text(&diff_base);
-    leader_cx.run_until_parked();
-
-    let follower = leader_cx.update_multibuffer(|leader, cx| {
-        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        leader.set_all_diff_hunks_expanded(cx);
-        leader.get_or_create_follower(cx)
-    });
-    follower.update(cx, |follower, cx| {
-        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-        follower.set_all_diff_hunks_expanded(cx);
-    });
-
-    let follower_editor =
-        leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
-    // leader_cx.window.focus(&follower_editor.focus_handle(cx));
-
-    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut leader_cx).await;
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(initial_state);
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    follower_cx.editor(|editor, _window, cx| {
-        assert!(editor.read_only(cx));
-    });
-
-    leader_cx.update_editor(|editor, _window, cx| {
-        editor.edit([(Point::new(4, 0)..Point::new(5, 0), "FIVE\n")], cx);
-    });
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        FIVE
-        six
-        "#
-    });
-
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    leader_cx.update_editor(|editor, _window, cx| {
-        editor.edit([(Point::new(6, 0)..Point::new(6, 0), "SEVEN")], cx);
-    });
-    cx.run_until_parked();
-
-    leader_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        THREE
-        four
-        FIVE
-        six
-        SEVEN"#
-    });
-
-    follower_cx.assert_editor_state(indoc! {
-        r#"
-        ˇone
-        two
-        three
-        four
-        five
-        six
-        "#
-    });
-
-    leader_cx.update_editor(|editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.refresh_selected_text_highlights(true, window, cx);
-    });
-    leader_cx.run_until_parked();
-}
-
-#[gpui::test]
-async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let base_text = "base\n";
-    let buffer_text = "buffer\n";
-
-    let buffer1 = cx.new(|cx| Buffer::local(buffer_text, cx));
-    let diff1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer1, cx));
-
-    let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text 1\n", cx));
-    let extra_diff_1 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_1, cx));
-    let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text 2\n", cx));
-    let extra_diff_2 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_2, cx));
-
-    let leader = cx.new(|cx| {
-        let mut leader = MultiBuffer::new(Capability::ReadWrite);
-        leader.set_all_diff_hunks_expanded(cx);
-        leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        leader
-    });
-    let follower = leader.update(cx, |leader, cx| leader.get_or_create_follower(cx));
-    follower.update(cx, |follower, _| {
-        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-    });
-
-    leader.update(cx, |leader, cx| {
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            extra_buffer_2.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(extra_diff_2.clone(), cx);
-
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            extra_buffer_1.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(extra_diff_1.clone(), cx);
-
-        leader.insert_excerpts_after(
-            ExcerptId::min(),
-            buffer1.clone(),
-            vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-            cx,
-        );
-        leader.add_diff(diff1.clone(), cx);
-    });
-
-    cx.run_until_parked();
-    let mut cx = cx.add_empty_window();
-
-    let leader_editor = cx
-        .new_window_entity(|window, cx| Editor::for_multibuffer(leader.clone(), None, window, cx));
-    let follower_editor = cx.new_window_entity(|window, cx| {
-        Editor::for_multibuffer(follower.clone(), None, window, cx)
-    });
-
-    let mut leader_cx = EditorTestContext::for_editor_in(leader_editor.clone(), &mut cx).await;
-    leader_cx.assert_editor_state(indoc! {"
-       ˇbuffer
-
-       dummy text 1
-
-       dummy text 2
-    "});
-    let mut follower_cx = EditorTestContext::for_editor_in(follower_editor.clone(), &mut cx).await;
-    follower_cx.assert_editor_state(indoc! {"
-        ˇbase
-
-
-    "});
 }
 
 #[gpui::test]

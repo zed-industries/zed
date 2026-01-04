@@ -2381,7 +2381,6 @@ dependencies = [
 name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clock",
  "ctor",
  "futures 0.3.31",
@@ -5254,6 +5253,7 @@ dependencies = [
  "text",
  "thiserror 2.0.17",
  "time",
+ "toml 0.8.23",
  "ui",
  "util",
  "uuid",
@@ -8654,7 +8654,6 @@ dependencies = [
  "extension",
  "gpui",
  "language",
- "lsp",
  "paths",
  "project",
  "schemars",

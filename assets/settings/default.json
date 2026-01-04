@@ -1323,6 +1323,9 @@
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
+  // Globs to match files that will be opened as read-only. You can still view these files,
+  // but cannot edit them. This is useful for generated files or external dependencies.
+  "read_only_files": [],
   // Git gutter behavior configuration.
   "git": {
     // Global switch to enable or disable all git integration features.
