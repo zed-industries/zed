@@ -1872,6 +1872,10 @@ impl Render for KeymapEditor {
                                             .child(
                                                 Button::new("edit-in-json", "Edit in JSON")
                                                     .style(ButtonStyle::Subtle)
+                                                    .key_binding(
+                                                        ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
+                                                            .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
                                                             zed_actions::OpenKeymapFile.boxed_clone(),
