@@ -1158,7 +1158,10 @@ impl ProjectPanel {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                                menu.action(
+                                    "Delete Permanently",
+                                    Box::new(Delete { skip_prompt: false }),
+                                )
                             })
                             .when(!is_remote && is_root, |menu| {
                                 menu.separator()
@@ -2186,7 +2189,7 @@ impl ProjectPanel {
                 return None;
             }
             let answer = if !skip_prompt {
-                let operation = if trash { "Trash" } else { "Delete" };
+                let operation = if trash { "Trash" } else { "Permanently Delete" };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2234,7 +2237,18 @@ impl ProjectPanel {
                         )
                     }
                 };
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"], cx))
+                let message = if trash {
+                    None
+                } else {
+                    Some("This cannot be undone!")
+                };
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    message,
+                    &[operation, "Cancel"],
+                    cx,
+                ))
             } else {
                 None
             };
