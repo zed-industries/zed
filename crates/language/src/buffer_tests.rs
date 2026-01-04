@@ -704,6 +704,19 @@ fn test_trim_final_newlines(cx: &mut gpui::App) {
 }
 
 #[gpui::test]
+async fn test_save_whitespace_pipeline(cx: &mut gpui::TestAppContext) {
+    let buffer = cx.new(|cx| Buffer::local("code  \n  \n\n", cx));
+
+    let diff = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx)).await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        buffer.trim_final_newlines(cx);
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n");
+    });
+}
+
+#[gpui::test]
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
