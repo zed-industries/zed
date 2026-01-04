@@ -4326,7 +4326,6 @@ impl Editor {
 
         let mut regions = self
             .selections_with_autoclose_regions(selections, &snapshot)
-            .into_iter()
             .peekable();
 
         while let Some((selection, autoclose_region)) = regions.next() {
