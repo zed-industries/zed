@@ -19,7 +19,7 @@ pub use theme::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
-use gpui::{App, SharedString};
+use gpui::{App, Hsla, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -149,6 +149,9 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub vim_mode: Option<bool>,
+
+    /// Settings related to Helix mode overlays.
+    pub helix: Option<HelixSettingsContent>,
 
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
@@ -685,6 +688,16 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+}
+
+/// Settings that control Helix-specific behaviour.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema, MergeFrom)]
+pub struct HelixSettingsContent {
+    /// Accent color used when rendering Helix jump labels.
+    ///
+    /// Default: `#e63333`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_label_accent: Option<Hsla>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
