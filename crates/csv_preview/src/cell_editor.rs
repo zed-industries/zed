@@ -227,8 +227,7 @@ pub fn distance_to_nearest_real_cell_left(row: &TableRow<TableCell>, from_col: A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table_cell::{CellContentSpan, TableCell};
-    use crate::types::{AnyColumn, IntoTableRow};
+    use crate::types::{AnyColumn, CellContentSpan, IntoTableRow, TableCell};
     use text::{Anchor, BufferId};
     use ui::SharedString;
 

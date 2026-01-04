@@ -1232,7 +1232,7 @@ mod test {
         expected_cols: usize,
     ) -> Vec<TableResizeBehavior> {
         let mut resize_behavior = Vec::new();
-        for (index, col) in input.split('|').enumerate() {
+        for (_index, col) in input.split('|').enumerate() {
             if col.starts_with('X') || col.is_empty() {
                 resize_behavior.push(TableResizeBehavior::None);
             } else if col.starts_with('*') {
@@ -1446,7 +1446,7 @@ mod test {
         fn parse(input: &str) -> (Vec<f32>, f32, Option<usize>) {
             let mut widths = Vec::new();
             let column_index = input.replace("*", "").find("I");
-            for (index, col) in input.replace("I", "|").split('|').enumerate() {
+            for (_index, col) in input.replace("I", "|").split('|').enumerate() {
                 widths.push(col.len() as f32);
             }
 
@@ -1462,7 +1462,7 @@ mod test {
 
         #[track_caller]
         fn check(distance: i32, widths: &str, expected: &str, resize_behavior: &str) {
-            let (mut widths, total_1, Some(column_index)) = parse(widths) else {
+            let (widths, total_1, Some(column_index)) = parse(widths) else {
                 panic!("invalid test input: widths should be marked");
             };
             let (expected, total_2, None) = parse(expected) else {
