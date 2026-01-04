@@ -2648,7 +2648,7 @@ impl KeybindingEditorModal {
         let keybind_for_save = if create {
             ProcessedBinding::Unmapped(action_information)
         } else {
-            existing_keybind.clone()
+            existing_keybind
         };
 
         cx.spawn(async move |this, cx| {

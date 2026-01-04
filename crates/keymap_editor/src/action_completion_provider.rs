@@ -73,7 +73,6 @@ impl CompletionProvider for ActionCompletionProvider {
         let executor_for_fuzzy = executor.clone();
         let action_names = self.action_names.clone();
         let humanized_names = self.humanized_names.clone();
-        let replace_range_clone = replace_range.clone();
 
         executor.spawn(async move {
             let matches = fuzzy::match_strings(
@@ -98,7 +97,7 @@ impl CompletionProvider for ActionCompletionProvider {
                         .unwrap_or_else(|| action_name.into());
 
                     project::Completion {
-                        replace_range: replace_range_clone.clone(),
+                        replace_range: replace_range.clone(),
                         label: language::CodeLabel::plain(humanized.to_string(), None),
                         new_text: action_name.to_string(),
                         documentation: None,
