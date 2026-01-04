@@ -60,7 +60,7 @@ impl FileHistoryView {
         let file_history_task = git_store
             .update(cx, |git_store, cx| {
                 repo.upgrade().map(|repo| {
-                    git_store.file_history_paginated(&repo, path.clone(), 0, Some(PAGE_SIZE), cx)
+                    git_store.file_history_paginated(&repo, path.clone(), None, Some(PAGE_SIZE), cx)
                 })
             })
             .ok()
@@ -154,7 +154,7 @@ impl FileHistoryView {
         self.loading_more = true;
         cx.notify();
 
-        let current_count = self.history.entries.len();
+        let last_commit_hash = self.history.entries.last().map(|entry| entry.sha.clone());
         let path = self.history.path.clone();
         let git_store = self.git_store.clone();
         let repo = self.repository.clone();
@@ -167,7 +167,7 @@ impl FileHistoryView {
                         git_store.file_history_paginated(
                             &repo,
                             path,
-                            current_count,
+                            last_commit_hash,
                             Some(PAGE_SIZE),
                             cx,
                         )

@@ -498,7 +498,7 @@ pub trait GitRepository: Send + Sync {
     fn file_history_paginated(
         &self,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
 
@@ -1543,13 +1543,13 @@ impl GitRepository for RealGitRepository {
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
-        self.file_history_paginated(path, 0, None)
+        self.file_history_paginated(path, None, None)
     }
 
     fn file_history_paginated(
         &self,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>> {
         let working_directory = self.working_directory();
@@ -1569,17 +1569,17 @@ impl GitRepository for RealGitRepository {
 
                 let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
 
-                let skip_str;
                 let limit_str;
-                if skip > 0 {
-                    skip_str = skip.to_string();
-                    args.push("--skip");
-                    args.push(&skip_str);
-                }
                 if let Some(n) = limit {
                     limit_str = n.to_string();
                     args.push("-n");
                     args.push(&limit_str);
+                }
+
+                let cursor_str;
+                if let Some(last_commit_hash) = last_commit_hash {
+                    cursor_str = format!("{}^", last_commit_hash.as_ref());
+                    args.push(&cursor_str);
                 }
 
                 args.push("--");
@@ -3125,6 +3125,151 @@ mod tests {
                 }
             ]
         )
+    }
+
+    #[gpui::test]
+    async fn test_file_history_pagination_with_rename(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create commits with a file rename in the middle to trigger --follow behavior.
+        // The bug is that git log --follow --skip=N ignores the --skip flag.
+        let old_file_path = repo_dir.path().join("old_name.txt");
+        let new_file_path = repo_dir.path().join("new_name.txt");
+
+        // Create 30 commits with old filename
+        for i in 0..30 {
+            smol::fs::write(&old_file_path, format!("content version {}", i))
+                .await
+                .unwrap();
+
+            repo.stage_paths(
+                vec![repo_path("old_name.txt")],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap();
+
+            repo.commit(
+                format!("Commit {} (old name)", i).into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Rename the file using git mv
+        smol::process::Command::new("git")
+            .current_dir(repo_dir.path())
+            .args(["mv", "old_name.txt", "new_name.txt"])
+            .output()
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Rename old_name.txt to new_name.txt".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Create 30 more commits with new filename (total: 61 commits)
+        for i in 30..60 {
+            smol::fs::write(&new_file_path, format!("content version {}", i))
+                .await
+                .unwrap();
+
+            repo.stage_paths(
+                vec![repo_path("new_name.txt")],
+                Arc::new(HashMap::default()),
+            )
+            .await
+            .unwrap();
+
+            repo.commit(
+                format!("Commit {} (new name)", i).into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        }
+
+        let total_commits = 61; // 30 old + 1 rename + 30 new
+
+        // Get first page (skip=0, limit=50)
+        let first_page = repo
+            .file_history_paginated(repo_path("new_name.txt"), 0, Some(50))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            first_page.entries.len(),
+            50,
+            "First page should have 50 entries"
+        );
+
+        // Get second page (skip=50, limit=50)
+        let second_page = repo
+            .file_history_paginated(repo_path("new_name.txt"), 50, Some(50))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            second_page.entries.len(),
+            11,
+            "Second page should have 11 entries (61 total - 50 from first page)"
+        );
+
+        // Verify no duplicates between pages by checking SHAs
+        let first_page_shas: std::collections::HashSet<_> =
+            first_page.entries.iter().map(|e| e.sha.clone()).collect();
+        let second_page_shas: std::collections::HashSet<_> =
+            second_page.entries.iter().map(|e| e.sha.clone()).collect();
+
+        let duplicates: Vec<_> = first_page_shas
+            .intersection(&second_page_shas)
+            .cloned()
+            .collect();
+
+        assert!(
+            duplicates.is_empty(),
+            "Found duplicate commits between pages: {:?}",
+            duplicates
+        );
+
+        // Also verify that all 61 unique commits are accounted for
+        let all_shas: std::collections::HashSet<_> = first_page_shas
+            .union(&second_page_shas)
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            all_shas.len(),
+            total_commits,
+            "Should have {} unique commits total",
+            total_commits
+        );
     }
 
     impl RealGitRepository {

@@ -1075,11 +1075,13 @@ impl GitStore {
         &self,
         repo: &Entity<Repository>,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
         cx: &mut App,
     ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| repo.file_history_paginated(path, skip, limit));
+        let rx = repo.update(cx, |repo, _| {
+            repo.file_history_paginated(path, last_commit_hash, limit)
+        });
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
@@ -2387,12 +2389,12 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let path = RepoPath::from_proto(&envelope.payload.path)?;
-        let skip = envelope.payload.skip as usize;
+        let last_commit_hash = envelope.payload.last_commit_hash.map(|hash| hash.into());
         let limit = envelope.payload.limit.map(|l| l as usize);
 
         let file_history = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.file_history_paginated(path, skip, limit)
+                repository_handle.file_history_paginated(path, last_commit_hash, limit)
             })?
             .await??;
 
@@ -4121,20 +4123,22 @@ impl Repository {
         &mut self,
         path: RepoPath,
     ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
+        self.file_history_paginated(path, None, None)
     }
 
     pub fn file_history_paginated(
         &mut self,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
     ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
         let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.file_history_paginated(path, skip, limit).await
+                    backend
+                        .file_history_paginated(path, last_commit_hash, limit)
+                        .await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                     let response = client
@@ -4142,7 +4146,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             path: path.to_proto(),
-                            skip: skip as u64,
+                            last_commit_hash: last_commit_hash.map(String::from),
                             limit: limit.map(|l| l as u64),
                         })
                         .await?;
