@@ -901,7 +901,7 @@ impl CompletionsMenu {
                                     range.start.max(filter_range.start) - filter_range.start;
                                 let clamped_end =
                                     range.end.min(filter_range.end) - filter_range.start;
-                                Some((clamped_start..clamped_end, highlight.clone()))
+                                Some((clamped_start..clamped_end, (*highlight)))
                             })
                             .collect();
                         let main_label = StyledText::new(main_text)
@@ -911,14 +911,12 @@ impl CompletionsMenu {
                         let suffix_highlights: Vec<_> = highlights
                             .iter()
                             .filter_map(|(range, highlight)| {
-                                // Only include highlights that are in the suffix area
                                 if range.end <= filter_range.end {
                                     return None;
                                 }
-                                // Shift the range to start from 0 of suffix
                                 let shifted_start = range.start.saturating_sub(filter_range.end);
                                 let shifted_end = range.end - filter_range.end;
-                                Some((shifted_start..shifted_end, highlight.clone()))
+                                Some((shifted_start..shifted_end, (*highlight)))
                             })
                             .collect();
                         let suffix_label = if !suffix_text.is_empty() {
