@@ -22,19 +22,23 @@ use crate::types::{IntoTableRow, IntoTableRowForArray as _, TableRow};
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
+/// Represents an unchecked table row, which is a vector of elements.
+/// Will be converted into `TableRow<T>` internally
+pub type UncheckedTableRow<T> = Vec<T>;
+
 #[derive(Debug)]
 struct DraggedColumn(usize);
 
 struct UniformListData {
     render_list_of_rows_fn:
-        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<TableRow<AnyElement>>>,
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<UncheckedTableRow<AnyElement>>>,
     element_id: ElementId,
     row_count: usize,
 }
 
 struct VariableRowHeightListData {
     /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own height
-    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> TableRow<AnyElement>>,
+    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> UncheckedTableRow<AnyElement>>,
     list_state: ListState,
     row_count: usize,
 }
@@ -525,13 +529,15 @@ pub struct Table {
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     disable_base_cell_style: bool,
+    /// The number of columns in the table. Used to assert column numbers in `TableRow` collections
+    cols: usize,
 }
 
 impl Table {
     /// Creates a new table with the specified number of columns.
-    // TODO: Use cols to enforce column number in other table configuration hooks instead of providing `TableRow` directly
-    pub fn new(_cols: usize) -> Self {
+    pub fn new(cols: usize) -> Self {
         Self {
+            cols,
             striped: false,
             width: None,
             headers: None,
@@ -560,7 +566,11 @@ impl Table {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<TableRow<AnyElement>>
+        render_item_fn: impl Fn(
+            Range<usize>,
+            &mut Window,
+            &mut App,
+        ) -> Vec<UncheckedTableRow<AnyElement>>
         + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
@@ -577,7 +587,7 @@ impl Table {
         mut self,
         row_count: usize,
         list_state: ListState,
-        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> TableRow<AnyElement> + 'static,
+        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> UncheckedTableRow<AnyElement> + 'static,
     ) -> Self {
         self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
             render_row_fn: Box::new(render_row_fn),
@@ -587,7 +597,7 @@ impl Table {
         self
     }
 
-    /// Enables row striping.
+    /// Enables row striping (alternating row colors)
     pub fn striped(mut self) -> Self {
         self.striped = true;
         self
@@ -613,14 +623,22 @@ impl Table {
         self
     }
 
-    pub fn header(mut self, headers: TableRow<impl IntoElement>) -> Self {
-        self.headers = Some(headers.map(IntoElement::into_any_element));
+    pub fn header(mut self, headers: UncheckedTableRow<impl IntoElement>) -> Self {
+        self.headers = Some(
+            headers
+                .into_table_row(self.cols)
+                .map(IntoElement::into_any_element),
+        );
         self
     }
 
-    pub fn row(mut self, items: TableRow<impl IntoElement>) -> Self {
+    pub fn row(mut self, items: UncheckedTableRow<impl IntoElement>) -> Self {
         if let Some(rows) = self.rows.rows_mut() {
-            rows.push(items.map(IntoElement::into_any_element));
+            rows.push(
+                items
+                    .into_table_row(self.cols)
+                    .map(IntoElement::into_any_element),
+            );
         }
         self
     }
@@ -634,12 +652,12 @@ impl Table {
 
     pub fn resizable_columns(
         mut self,
-        resizable: TableRow<TableResizeBehavior>,
+        resizable: UncheckedTableRow<TableResizeBehavior>,
         column_widths: &Entity<TableColumnWidths>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
-            table_widths.resizable = resizable;
+            table_widths.resizable = resizable.into_table_row(self.cols);
             let column_widths = table_widths
                 .current
                 .get_or_insert_with(|| column_widths.clone());
@@ -950,7 +968,10 @@ impl RenderOnce for Table {
                                 {
                                     let render_item_fn = uniform_list_data.render_list_of_rows_fn;
                                     move |range: Range<usize>, window, cx| {
-                                        let elements = render_item_fn(range.clone(), window, cx);
+                                        let elements = render_item_fn(range.clone(), window, cx)
+                                            .into_iter()
+                                            .map(|raw_row| raw_row.into_table_row(self.cols))
+                                            .collect::<Vec<_>>();
                                         elements
                                             .into_iter()
                                             .zip(range)
@@ -988,7 +1009,8 @@ impl RenderOnce for Table {
                             list(variable_list_data.list_state.clone(), {
                                 let render_item_fn = variable_list_data.render_row_fn;
                                 move |row_index: usize, window: &mut Window, cx: &mut App| {
-                                    let row = render_item_fn(row_index, window, cx);
+                                    let row = render_item_fn(row_index, window, cx)
+                                        .into_table_row(self.cols);
                                     render_table_row(
                                         row_index,
                                         row,
@@ -1088,20 +1110,20 @@ impl Component for Table {
                                 "Simple Table",
                                 Table::new(3)
                                     .width(px(400.))
-                                    .header(["Name", "Age", "City"].into_table_row())
-                                    .row(["Alice", "28", "New York"].into_table_row())
-                                    .row(["Bob", "32", "San Francisco"].into_table_row())
-                                    .row(["Charlie", "25", "London"].into_table_row())
+                                    .header(["Name", "Age", "City"].into())
+                                    .row(["Alice", "28", "New York"].into())
+                                    .row(["Bob", "32", "San Francisco"].into())
+                                    .row(["Charlie", "25", "London"].into())
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Two Column Table",
                                 Table::new(3)
-                                    .header(["Category", "Value"].into_table_row())
+                                    .header(["Category", "Value"].into())
                                     .width(px(300.))
-                                    .row(["Revenue", "$100,000"].into_table_row())
-                                    .row(["Expenses", "$75,000"].into_table_row())
-                                    .row(["Profit", "$25,000"].into_table_row())
+                                    .row(["Revenue", "$100,000"].into())
+                                    .row(["Expenses", "$75,000"].into())
+                                    .row(["Profit", "$25,000"].into())
                                     .into_any_element(),
                             ),
                         ],
@@ -1113,10 +1135,10 @@ impl Component for Table {
                                 "Default",
                                 Table::new(3)
                                     .width(px(400.))
-                                    .header(["Product", "Price", "Stock"].into_table_row())
-                                    .row(["Laptop", "$999", "In Stock"].into_table_row())
-                                    .row(["Phone", "$599", "Low Stock"].into_table_row())
-                                    .row(["Tablet", "$399", "Out of Stock"].into_table_row())
+                                    .header(["Product", "Price", "Stock"].into())
+                                    .row(["Laptop", "$999", "In Stock"].into())
+                                    .row(["Phone", "$599", "Low Stock"].into())
+                                    .row(["Tablet", "$399", "Out of Stock"].into())
                                     .into_any_element(),
                             ),
                             single_example(
@@ -1124,11 +1146,11 @@ impl Component for Table {
                                 Table::new(3)
                                     .width(px(400.))
                                     .striped()
-                                    .header(["Product", "Price", "Stock"].into_table_row())
-                                    .row(["Laptop", "$999", "In Stock"].into_table_row())
-                                    .row(["Phone", "$599", "Low Stock"].into_table_row())
-                                    .row(["Tablet", "$399", "Out of Stock"].into_table_row())
-                                    .row(["Headphones", "$199", "In Stock"].into_table_row())
+                                    .header(["Product", "Price", "Stock"].into())
+                                    .row(["Laptop", "$999", "In Stock"].into())
+                                    .row(["Phone", "$599", "Low Stock"].into())
+                                    .row(["Tablet", "$399", "Out of Stock"].into())
+                                    .row(["Headphones", "$199", "In Stock"].into())
                                     .into_any_element(),
                             ),
                         ],
@@ -1139,10 +1161,7 @@ impl Component for Table {
                             "Table with Elements",
                             Table::new(3)
                                 .width(px(840.))
-                                .header(
-                                    ["Status", "Name", "Priority", "Deadline", "Action"]
-                                        .into_table_row(),
-                                )
+                                .header(["Status", "Name", "Priority", "Deadline", "Action"].into())
                                 .row(
                                     [
                                         Indicator::dot().color(Color::Success).into_any_element(),
@@ -1154,7 +1173,7 @@ impl Component for Table {
                                             .full_width()
                                             .into_any_element(),
                                     ]
-                                    .into_table_row(),
+                                    .into(),
                                 )
                                 .row(
                                     [
@@ -1167,7 +1186,7 @@ impl Component for Table {
                                             .full_width()
                                             .into_any_element(),
                                     ]
-                                    .into_table_row(),
+                                    .into(),
                                 )
                                 .row(
                                     [
@@ -1180,7 +1199,7 @@ impl Component for Table {
                                             .full_width()
                                             .into_any_element(),
                                     ]
-                                    .into_table_row(),
+                                    .into(),
                                 )
                                 .into_any_element(),
                         )],
@@ -1200,31 +1219,35 @@ mod test {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
     }
 
-    fn cols_to_str<const COLS: usize>(cols: &[f32; COLS], total_size: f32) -> String {
-        cols.map(|f| "*".repeat(f32::round(f * total_size) as usize))
+    fn cols_to_str(cols: &[f32], total_size: f32) -> String {
+        cols.iter()
+            .map(|f| "*".repeat(f32::round(f * total_size) as usize))
+            .collect::<Vec<String>>()
             .join("|")
     }
 
-    fn parse_resize_behavior<const COLS: usize>(
+    fn parse_resize_behavior(
         input: &str,
         total_size: f32,
-    ) -> [TableResizeBehavior; COLS] {
-        let mut resize_behavior = [TableResizeBehavior::None; COLS];
-        let mut max_index = 0;
+        expected_cols: usize,
+    ) -> Vec<TableResizeBehavior> {
+        let mut resize_behavior = Vec::new();
         for (index, col) in input.split('|').enumerate() {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = TableResizeBehavior::None;
+                resize_behavior.push(TableResizeBehavior::None);
             } else if col.starts_with('*') {
-                resize_behavior[index] =
-                    TableResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior.push(TableResizeBehavior::MinSize(col.len() as f32 / total_size));
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
-            max_index = index;
         }
 
-        if max_index + 1 != COLS {
-            panic!("invalid test input: too many columns");
+        if resize_behavior.len() != expected_cols {
+            panic!(
+                "invalid test input: expected {} columns, got {}",
+                expected_cols,
+                resize_behavior.len()
+            );
         }
         resize_behavior
     }
@@ -1232,17 +1255,17 @@ mod test {
     mod reset_column_size {
         use super::*;
 
-        fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
-            let mut widths = [f32::NAN; COLS];
+        fn parse(input: &str) -> (Vec<f32>, f32, Option<usize>) {
+            let mut widths = Vec::new();
             let mut column_index = None;
             for (index, col) in input.split('|').enumerate() {
-                widths[index] = col.len() as f32;
+                widths.push(col.len() as f32);
                 if col.starts_with('X') {
                     column_index = Some(index);
                 }
             }
 
-            for w in widths {
+            for w in &widths {
                 assert!(w.is_finite(), "incorrect number of columns");
             }
             let total = widths.iter().sum::<f32>();
@@ -1253,54 +1276,57 @@ mod test {
         }
 
         #[track_caller]
-        fn check_reset_size<const COLS: usize>(
+        fn check_reset_size(
             initial_sizes: &str,
             widths: &str,
             expected: &str,
             resize_behavior: &str,
         ) {
-            let (initial_sizes, total_1, None) = parse::<COLS>(initial_sizes) else {
+            let (initial_sizes, total_1, None) = parse(initial_sizes) else {
                 panic!("invalid test input: initial sizes should not be marked");
             };
-            let (widths, total_2, Some(column_index)) = parse::<COLS>(widths) else {
+            let (widths, total_2, Some(column_index)) = parse(widths) else {
                 panic!("invalid test input: widths should be marked");
             };
             assert_eq!(
                 total_1, total_2,
                 "invalid test input: total width not the same {total_1}, {total_2}"
             );
-            let (expected, total_3, None) = parse::<COLS>(expected) else {
+            let (expected, total_3, None) = parse(expected) else {
                 panic!("invalid test input: expected should not be marked: {expected:?}");
             };
             assert_eq!(
                 total_2, total_3,
                 "invalid test input: total width not the same"
             );
-            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
+            let cols = initial_sizes.len();
+            let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
+            let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
             let result = TableColumnWidths::reset_to_initial_size(
                 column_index,
-                widths,
-                initial_sizes,
+                TableRow::from_vec(widths, cols),
+                TableRow::from_vec(initial_sizes, cols),
                 &resize_behavior,
             );
-            let is_eq = is_almost_eq(&result, &expected);
+            let result_slice = result.as_slice();
+            let is_eq = is_almost_eq(result_slice, &expected);
             if !is_eq {
-                let result_str = cols_to_str(&result, total_1);
+                let result_str = cols_to_str(result_slice, total_1);
                 let expected_str = cols_to_str(&expected, total_1);
                 panic!(
-                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result_slice:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
                 );
             }
         }
 
         macro_rules! check_reset_size {
             (columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-                check_reset_size::<$cols>($initial, $current, $expected, $resizing);
+                check_reset_size($initial, $current, $expected, $resizing);
             };
             ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
                 #[test]
                 fn $name() {
-                    check_reset_size::<$cols>($initial, $current, $expected, $resizing);
+                    check_reset_size($initial, $current, $expected, $resizing);
                 }
             };
         }
@@ -1417,14 +1443,14 @@ mod test {
     mod drag_handle {
         use super::*;
 
-        fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
-            let mut widths = [f32::NAN; COLS];
+        fn parse(input: &str) -> (Vec<f32>, f32, Option<usize>) {
+            let mut widths = Vec::new();
             let column_index = input.replace("*", "").find("I");
             for (index, col) in input.replace("I", "|").split('|').enumerate() {
-                widths[index] = col.len() as f32;
+                widths.push(col.len() as f32);
             }
 
-            for w in widths {
+            for w in &widths {
                 assert!(w.is_finite(), "incorrect number of columns");
             }
             let total = widths.iter().sum::<f32>();
@@ -1435,51 +1461,50 @@ mod test {
         }
 
         #[track_caller]
-        fn check<const COLS: usize>(
-            distance: i32,
-            widths: &str,
-            expected: &str,
-            resize_behavior: &str,
-        ) {
-            let (mut widths, total_1, Some(column_index)) = parse::<COLS>(widths) else {
+        fn check(distance: i32, widths: &str, expected: &str, resize_behavior: &str) {
+            let (mut widths, total_1, Some(column_index)) = parse(widths) else {
                 panic!("invalid test input: widths should be marked");
             };
-            let (expected, total_2, None) = parse::<COLS>(expected) else {
+            let (expected, total_2, None) = parse(expected) else {
                 panic!("invalid test input: expected should not be marked: {expected:?}");
             };
             assert_eq!(
                 total_1, total_2,
                 "invalid test input: total width not the same"
             );
-            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
+            let cols = widths.len();
+            let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
+            let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
 
             let distance = distance as f32 / total_1;
 
-            let result = TableColumnWidths::drag_column_handle(
+            let mut widths_table_row = TableRow::from_vec(widths.clone(), cols);
+            TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
-                &mut widths,
+                &mut widths_table_row,
                 &resize_behavior,
             );
 
-            let is_eq = is_almost_eq(&widths, &expected);
+            let result_widths = widths_table_row.as_slice();
+            let is_eq = is_almost_eq(result_widths, &expected);
             if !is_eq {
-                let result_str = cols_to_str(&widths, total_1);
+                let result_str = cols_to_str(result_widths, total_1);
                 let expected_str = cols_to_str(&expected, total_1);
                 panic!(
-                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result_widths:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
                 );
             }
         }
 
         macro_rules! check {
             (columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-                check!($cols, $dist, $snapshot, $expected, $resizing);
+                check($dist, $current, $expected, $resizing);
             };
             ($name:ident, columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
                 #[test]
                 fn $name() {
-                    check::<$cols>($dist, $current, $expected, $resizing);
+                    check($dist, $current, $expected, $resizing);
                 }
             };
         }
