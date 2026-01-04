@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AnyProtoClient(Arc<State>);
 
 type RequestIds = Arc<
@@ -43,6 +43,15 @@ struct State {
     client: Arc<dyn ProtoClient>,
     next_lsp_request_id: Arc<AtomicU64>,
     request_ids: RequestIds,
+}
+
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("next_lsp_request_id", &self.next_lsp_request_id)
+            .field("request_ids", &self.request_ids)
+            .finish_non_exhaustive()
+    }
 }
 
 pub trait ProtoClient: Send + Sync {

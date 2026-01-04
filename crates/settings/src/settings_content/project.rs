@@ -13,6 +13,19 @@ use crate::{
 };
 
 #[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LspSettingsMap(pub HashMap<Arc<str>, LspSettings>);
+
+impl IntoIterator for LspSettingsMap {
+    type Item = (Arc<str>, LspSettings);
+    type IntoIter = std::collections::hash_map::IntoIter<Arc<str>, LspSettings>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+#[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
@@ -30,7 +43,7 @@ pub struct ProjectSettingsContent {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
+    pub lsp: LspSettingsMap,
 
     pub terminal: Option<ProjectTerminalSettingsContent>,
 
@@ -98,6 +111,12 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
+
+    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
+    /// but cannot be edited. This is useful for generated files, build outputs, or files from
+    /// external dependencies that should not be modified directly.
+    /// Default: []
+    pub read_only_files: Option<Vec<String>>,
 }
 
 #[with_fallible_options]
@@ -268,6 +287,12 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
+    /// Whether or not to skip worktree trust checks.
+    /// When trusted, project settings are synchronized automatically,
+    /// language and MCP servers are downloaded and started automatically.
+    ///
+    /// Default: false
+    pub trust_all_worktrees: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
@@ -363,6 +388,11 @@ impl std::fmt::Debug for ContextServerCommand {
 #[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    /// Whether or not to enable git integration.
+    ///
+    /// Default: true
+    #[serde(flatten)]
+    pub enabled: Option<GitEnabledSettings>,
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
@@ -390,6 +420,25 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct GitEnabledSettings {
+    pub disable_git: Option<bool>,
+    pub enable_status: Option<bool>,
+    pub enable_diff: Option<bool>,
+}
+
+impl GitEnabledSettings {
+    pub fn is_git_status_enabled(&self) -> bool {
+        !self.disable_git.unwrap_or(false) && self.enable_status.unwrap_or(true)
+    }
+
+    pub fn is_git_diff_enabled(&self) -> bool {
+        !self.disable_git.unwrap_or(false) && self.enable_diff.unwrap_or(true)
+    }
 }
 
 #[derive(

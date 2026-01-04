@@ -66,7 +66,7 @@ jobs:
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
       (inputs.force-bump == 'true' || needs.check_bump_needed.outputs.needs_bump == 'true')
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -79,7 +79,7 @@ jobs:
       with:
         clean: false
     - name: extension_bump::install_bump_2_version
-      run: pip install bump2version
+      run: pip install bump2version --break-system-packages
       shell: bash -euxo pipefail {0}
     - id: bump-version
       name: extension_bump::bump_version
@@ -113,12 +113,13 @@ jobs:
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
+        assignees: ${{ github.actor }}
     timeout-minutes: 1
   create_version_label:
     needs:
     - check_bump_needed
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_bump_needed.outputs.needs_bump == 'false'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
       name: extension_bump::generate_token

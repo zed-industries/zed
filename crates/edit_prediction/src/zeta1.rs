@@ -78,6 +78,19 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
+    let (uri, require_auth) = match &store.custom_predict_edits_url {
+        Some(custom_url) => (custom_url.clone(), false),
+        None => {
+            match client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/v2", &[])
+            {
+                Ok(url) => (url.into(), true),
+                Err(err) => return Task::ready(Err(err)),
+            }
+        }
+    };
+
     cx.spawn(async move |this, cx| {
         let GatherContextOutput {
             mut body,
@@ -102,25 +115,16 @@ pub(crate) fn request_prediction_with_zeta1(
             body.input_excerpt
         );
 
-        let http_client = client.http_client();
-
         let response = EditPredictionStore::send_api_request::<PredictEditsResponse>(
             |request| {
-                let uri = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
-                    predict_edits_url
-                } else {
-                    http_client
-                        .build_zed_llm_url("/predict_edits/v2", &[])?
-                        .as_str()
-                        .into()
-                };
                 Ok(request
-                    .uri(uri)
+                    .uri(uri.as_str())
                     .body(serde_json::to_string(&body)?.into())?)
             },
             client,
             llm_token,
             app_version,
+            require_auth,
         )
         .await;
 

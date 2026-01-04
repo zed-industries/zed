@@ -83,6 +83,8 @@ pub enum BedrockAuthMethodContent {
     NamedProfile,
     #[serde(rename = "sso")]
     SingleSignOn,
+    #[serde(rename = "api_key")]
+    ApiKey,
     /// IMDSv2, PodIdentity, env vars, etc.
     #[serde(rename = "default")]
     Automatic,
@@ -92,6 +94,7 @@ pub enum BedrockAuthMethodContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
+    pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
 }
 

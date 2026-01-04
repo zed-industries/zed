@@ -1045,7 +1045,7 @@ impl VisualContext for VisualTestContext {
     fn focus<V: crate::Focusable>(&mut self, view: &Entity<V>) -> Self::Result<()> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                view.read(cx).focus_handle(cx).focus(window)
+                view.read(cx).focus_handle(cx).focus(window, cx)
             })
             .unwrap()
     }

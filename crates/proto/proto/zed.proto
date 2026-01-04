@@ -450,9 +450,12 @@ message Envelope {
         GitCreateRemote git_create_remote = 402;
         GitRemoveRemote git_remove_remote = 403;
 
-        SemanticTokens semantic_tokens = 404;
-        SemanticTokensResponse semantic_tokens_response = 405;
-        RefreshSemanticTokens refresh_semantic_tokens = 406; // current max
+        TrustWorktrees trust_worktrees = 404;
+        RestrictWorktrees restrict_worktrees = 405;
+        
+        SemanticTokens semantic_tokens = 406;
+        SemanticTokensResponse semantic_tokens_response = 407;
+        RefreshSemanticTokens refresh_semantic_tokens = 408; // current max
     }
 
     reserved 87 to 88, 396;

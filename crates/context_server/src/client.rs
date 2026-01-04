@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 use postage::barrier;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
+use slotmap::SlotMap;
 use smol::channel;
 use std::{
     fmt,
@@ -50,7 +51,7 @@ pub(crate) struct Client {
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
     name: Arc<str>,
-    notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+    subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
@@ -191,21 +192,20 @@ impl Client {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
-        let notification_handlers =
-            Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
+        let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
 
         let receive_input_task = cx.spawn({
-            let notification_handlers = notification_handlers.clone();
+            let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
-                    notification_handlers,
+                    subscription_set,
                     request_handlers,
                     response_handlers,
                     cx,
@@ -236,7 +236,7 @@ impl Client {
 
         Ok(Self {
             server_id,
-            notification_handlers,
+            subscription_set,
             response_handlers,
             name: server_name,
             next_id: Default::default(),
@@ -257,7 +257,7 @@ impl Client {
     /// to pending requests) and notifications (which trigger registered handlers).
     async fn handle_input(
         transport: Arc<dyn Transport>,
-        notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         cx: &mut AsyncApp,
@@ -282,10 +282,11 @@ impl Client {
                     handler(Ok(message.to_string()));
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
-                let mut notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
-                    handler(notification.params.unwrap_or(Value::Null), cx.clone());
-                }
+                subscription_set.lock().notify(
+                    &notification.method,
+                    notification.params.unwrap_or(Value::Null),
+                    cx,
+                )
             } else {
                 log::error!("Unhandled JSON from context_server: {}", message);
             }
@@ -451,12 +452,18 @@ impl Client {
         Ok(())
     }
 
+    #[must_use]
     pub fn on_notification(
         &self,
         method: &'static str,
         f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
-    ) {
-        self.notification_handlers.lock().insert(method, f);
+    ) -> NotificationSubscription {
+        let mut notification_subscriptions = self.subscription_set.lock();
+
+        NotificationSubscription {
+            id: notification_subscriptions.add_handler(method, f),
+            set: self.subscription_set.clone(),
+        }
     }
 }
 
@@ -483,5 +490,75 @@ impl fmt::Debug for Client {
             .field("id", &self.server_id.0)
             .field("name", &self.name)
             .finish_non_exhaustive()
+    }
+}
+
+slotmap::new_key_type! {
+    struct NotificationSubscriptionId;
+}
+
+#[derive(Default)]
+pub struct NotificationSubscriptionSet {
+    // we have very few subscriptions at the moment
+    methods: Vec<(&'static str, Vec<NotificationSubscriptionId>)>,
+    handlers: SlotMap<NotificationSubscriptionId, NotificationHandler>,
+}
+
+impl NotificationSubscriptionSet {
+    #[must_use]
+    fn add_handler(
+        &mut self,
+        method: &'static str,
+        handler: NotificationHandler,
+    ) -> NotificationSubscriptionId {
+        let id = self.handlers.insert(handler);
+        if let Some((_, handler_ids)) = self
+            .methods
+            .iter_mut()
+            .find(|(probe_method, _)| method == *probe_method)
+        {
+            debug_assert!(
+                handler_ids.len() < 20,
+                "Too many MCP handlers for {}. Consider using a different data structure.",
+                method
+            );
+
+            handler_ids.push(id);
+        } else {
+            self.methods.push((method, vec![id]));
+        };
+        id
+    }
+
+    fn notify(&mut self, method: &str, payload: Value, cx: &mut AsyncApp) {
+        let Some((_, handler_ids)) = self
+            .methods
+            .iter_mut()
+            .find(|(probe_method, _)| method == *probe_method)
+        else {
+            return;
+        };
+
+        for handler_id in handler_ids {
+            if let Some(handler) = self.handlers.get_mut(*handler_id) {
+                handler(payload.clone(), cx.clone());
+            }
+        }
+    }
+}
+
+pub struct NotificationSubscription {
+    id: NotificationSubscriptionId,
+    set: Arc<Mutex<NotificationSubscriptionSet>>,
+}
+
+impl Drop for NotificationSubscription {
+    fn drop(&mut self) {
+        let mut set = self.set.lock();
+        set.handlers.remove(self.id);
+        set.methods.retain_mut(|(_, handler_ids)| {
+            handler_ids.retain(|id| *id != self.id);
+            !handler_ids.is_empty()
+        });
     }
 }

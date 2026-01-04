@@ -97,17 +97,20 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
 }
 
 fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
+    let (authenticate, token) = steps::authenticate_as_zippy();
+
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
             .cond(Expression::new(indoc::indoc!(
                 r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')"#
             )))
+            .add_step(authenticate)
             .add_step(
                 steps::script(
                     r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
                 )
-                .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+                .add_env(("GITHUB_TOKEN", &token)),
             )
     )
 }
