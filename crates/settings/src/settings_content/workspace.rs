@@ -623,6 +623,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Whether to keep open or edited entries visible when collapsed.
+    ///
+    /// Default: true
+    pub partial_collapse: Option<bool>,
     /// Whether the project panel should open on startup.
     ///
     /// Default: true

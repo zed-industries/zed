@@ -3828,6 +3828,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Partial Collapse",
+                    description: "Whether to keep open or edited entries visible when collapsed.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.partial_collapse"),
+                        pick: |settings_content| {
+                            settings_content
+                                .project_panel
+                                .as_ref()?
+                                .partial_collapse
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .partial_collapse = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Scrollbar",
                     description: "Show the scrollbar in the project panel.",
                     field: Box::new(SettingField {

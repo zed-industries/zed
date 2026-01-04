@@ -3529,6 +3529,7 @@ impl ProjectPanel {
         let now = Instant::now();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_fold_dirs = settings.auto_fold_dirs;
+        let partial_collapse = settings.partial_collapse;
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
         let project = self.project.read(cx);
@@ -3842,7 +3843,8 @@ impl ProjectPanel {
                             }
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
-                                && pinned_dir_ids.binary_search(&entry.id).is_err()
+                                && (!partial_collapse
+                                    || pinned_dir_ids.binary_search(&entry.id).is_err())
                                 && entry_iter.advance_to_sibling()
                             {
                                 continue;
@@ -5423,9 +5425,13 @@ impl ProjectPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
-        let (show_file_icons, show_folder_icons) = {
+        let (show_file_icons, show_folder_icons, partial_collapse) = {
             let settings = ProjectPanelSettings::get_global(cx);
-            (settings.file_icons, settings.folder_icons)
+            (
+                settings.file_icons,
+                settings.folder_icons,
+                settings.partial_collapse,
+            )
         };
 
         let expanded_entry_ids = self
@@ -5442,7 +5448,7 @@ impl ProjectPanel {
             .get(&worktree_id)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        let is_pinned = pinned_entry_ids.binary_search(&entry.id).is_ok();
+        let is_pinned = partial_collapse && pinned_entry_ids.binary_search(&entry.id).is_ok();
 
         let icon = match entry.kind {
             EntryKind::File => {
