@@ -81,12 +81,6 @@ fn should_defer_scanning(abs_path: &Path) -> bool {
     false
 }
 
-struct MatchingEntry {
-    worktree_root: Arc<Path>,
-    path: ProjectPath,
-    respond: oneshot::Sender<ProjectPath>,
-}
-
 enum WorktreeStoreState {
     Local {
         fs: Arc<dyn Fs>,
