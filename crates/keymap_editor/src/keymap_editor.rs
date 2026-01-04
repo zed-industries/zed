@@ -2177,6 +2177,7 @@ struct KeybindingEditorModal {
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<InputField>,
+    action_editor: Option<Entity<InputField>>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
@@ -2250,16 +2251,60 @@ impl KeybindingEditorModal {
             input
         });
 
-        let action_arguments_editor = editing_keybind.action().has_schema.then(|| {
-            let arguments = editing_keybind
-                .action()
-                .arguments
-                .as_ref()
-                .map(|args| args.text.clone());
+        let has_action_editor = create && editing_keybind.action().name == gpui::NoAction.name();
+
+        let all_action_names: Vec<&'static str> = if has_action_editor {
+            cx.all_action_names().to_vec()
+        } else {
+            vec![]
+        };
+
+        let humanized_names: HashMap<&'static str, SharedString> = if has_action_editor {
+            all_action_names
+                .iter()
+                .map(|&name| (name, command_palette::humanize_action_name(name).into()))
+                .collect()
+        } else {
+            HashMap::default()
+        };
+
+        let action_editor = has_action_editor.then(|| {
+            let all_action_names = all_action_names.clone();
+            let humanized_names = humanized_names.clone();
+
+            cx.new(|cx| {
+                let input = InputField::new(window, cx, "Type an action name")
+                    .label("Action")
+                    .label_size(LabelSize::Default);
+
+                let editor_entity = input.editor().clone();
+
+                cx.spawn(async move |_input_handle, cx| {
+                    let _ = editor_entity.update(cx, |editor, _cx| {
+                        editor.set_completion_provider(Some(std::rc::Rc::new(
+                            ActionCompletionProvider::new(all_action_names, humanized_names),
+                        )));
+                    });
+                })
+                .detach();
+
+                input
+            })
+        });
+
+        let action_has_schema = editing_keybind.action().has_schema;
+        let action_name_for_args = editing_keybind.action().name;
+        let action_args = editing_keybind
+            .action()
+            .arguments
+            .as_ref()
+            .map(|args| args.text.clone());
+
+        let action_arguments_editor = action_has_schema.then(|| {
             cx.new(|cx| {
                 ActionArgumentsEditor::new(
-                    editing_keybind.action().name,
-                    arguments,
+                    action_name_for_args,
+                    action_args.clone(),
                     action_args_temp_dir,
                     workspace.clone(),
                     window,
@@ -2283,6 +2328,7 @@ impl KeybindingEditorModal {
             fs,
             keybind_editor,
             context_editor,
+            action_editor,
             action_arguments_editor,
             error: None,
             keymap_editor,
