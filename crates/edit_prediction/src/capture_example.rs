@@ -11,6 +11,8 @@ use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
 use text::BufferSnapshot as TextBufferSnapshot;
 
+pub(crate) const SAMPLE_COUNT_PER_THOUSAND_PREDICTIONS: u16 = 10; // 0.10%
+
 pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
@@ -187,6 +189,10 @@ fn generate_timestamp_name() -> String {
         }
         Err(_) => "unknown-time".to_string(),
     }
+}
+
+pub(crate) fn should_sample_edit_prediction_example_capture() -> bool {
+    rand::random::<u16>() % 10_000 < SAMPLE_COUNT_PER_THOUSAND_PREDICTIONS
 }
 
 #[cfg(test)]
