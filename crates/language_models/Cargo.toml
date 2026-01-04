@@ -66,4 +66,5 @@ x_ai = { workspace = true, features = ["schemars"] }
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }

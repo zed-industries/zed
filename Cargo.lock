@@ -8983,6 +8983,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "partial-json-fixer",
+ "pretty_assertions",
  "project",
  "release_channel",
  "schemars",
