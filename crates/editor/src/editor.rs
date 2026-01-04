@@ -1218,7 +1218,6 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
-    use_base_text_line_numbers: bool,
     semantic_tokens_enabled: bool,
     update_semantic_tokens_task: Task<()>,
     semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
@@ -2426,7 +2425,6 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
-            use_base_text_line_numbers: false,
             semantic_tokens_enabled: full_mode,
             update_semantic_tokens_task: Task::ready(()),
             semantic_tokens_fetched_for_buffers: HashMap::default(),
@@ -23257,12 +23255,6 @@ impl Editor {
                 self.registered_buffers.remove(&buffer_id);
             }
         }
-    }
-
-    fn ignore_lsp_data(&self) -> bool {
-        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
-        // skip any LSP updates for it.
-        self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 
     fn create_style(&self, cx: &App) -> EditorStyle {
