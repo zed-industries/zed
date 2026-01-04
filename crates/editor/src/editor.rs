@@ -4620,12 +4620,7 @@ impl Editor {
             edits.push((selection.start..selection.end, text.clone()));
         }
 
-        if all_selections_read_only {
-            return;
-            if next_is_adjacent {
-                has_adjacent_edits = true;
-            }
-
+            has_adjacent_edits |= next_is_adjacent;
             in_adjacent_group = next_is_adjacent;
         }
 
