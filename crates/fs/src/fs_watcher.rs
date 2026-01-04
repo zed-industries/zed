@@ -134,7 +134,7 @@ impl Watcher for FsWatcher {
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
 
-        for (registration_path, registration_id) in &mut { self.registrations.lock().clone() } {
+        for (registration_path, _) in &mut { self.registrations.lock().clone() } {
             if !registration_path.starts_with(path) {
                 continue;
             }
