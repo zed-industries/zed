@@ -2229,6 +2229,7 @@ struct KeybindingEditorModal {
     context_editor: Entity<InputField>,
     action_editor: Option<Entity<InputField>>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
+    action_name_to_static: HashMap<String, &'static str>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -2306,44 +2307,37 @@ impl KeybindingEditorModal {
 
         let has_action_editor = create && editing_keybind.action().name == gpui::NoAction.name();
 
-        let all_action_names: Vec<&'static str> = if has_action_editor {
-            cx.all_action_names().to_vec()
-        } else {
-            vec![]
-        };
+        let (action_editor, action_name_to_static) = if has_action_editor {
+            let actions: Vec<&'static str> = cx.all_action_names().to_vec();
 
-        let humanized_names: HashMap<&'static str, SharedString> = if has_action_editor {
-            all_action_names
+            let humanized_names: HashMap<&'static str, SharedString> = actions
                 .iter()
                 .map(|&name| (name, command_palette::humanize_action_name(name).into()))
-                .collect()
-        } else {
-            HashMap::default()
-        };
+                .collect();
 
-        let action_editor = has_action_editor.then(|| {
-            let all_action_names = all_action_names.clone();
-            let humanized_names = humanized_names.clone();
+            let action_name_to_static: HashMap<String, &'static str> = actions
+                .iter()
+                .map(|&name| (name.to_string(), name))
+                .collect();
 
-            cx.new(|cx| {
+            let editor = cx.new(|cx| {
                 let input = InputField::new(window, cx, "Type an action name")
                     .label("Action")
                     .label_size(LabelSize::Default);
 
-                let editor_entity = input.editor().clone();
-
-                cx.spawn(async move |_input_handle, cx| {
-                    let _ = editor_entity.update(cx, |editor, _cx| {
-                        editor.set_completion_provider(Some(std::rc::Rc::new(
-                            ActionCompletionProvider::new(all_action_names, humanized_names),
-                        )));
-                    });
-                })
-                .detach();
+                input.editor().update(cx, |editor, _cx| {
+                    editor.set_completion_provider(Some(std::rc::Rc::new(
+                        ActionCompletionProvider::new(actions, humanized_names),
+                    )));
+                });
 
                 input
-            })
-        });
+            });
+
+            (Some(editor), action_name_to_static)
+        } else {
+            (None, HashMap::default())
+        };
 
         let action_has_schema = editing_keybind.action().has_schema;
         let action_name_for_args = editing_keybind.action().name;
@@ -2384,6 +2378,7 @@ impl KeybindingEditorModal {
             context_editor,
             action_editor,
             action_arguments_editor,
+            action_name_to_static,
             error: None,
             keymap_editor,
             workspace,
@@ -2413,9 +2408,8 @@ impl KeybindingEditorModal {
                 anyhow::bail!("Action name is required");
             }
 
-            cx.all_action_names()
-                .iter()
-                .find(|&&name| name == action_name_str)
+            self.action_name_to_static
+                .get(&action_name_str)
                 .copied()
                 .ok_or_else(|| anyhow::anyhow!("Action '{}' not found", action_name_str))
         } else {
