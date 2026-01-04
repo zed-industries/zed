@@ -352,10 +352,13 @@ impl SplittableEditor {
 
         let target_point = target_display_map.update(cx, |dm, cx| {
             let target_snapshot = dm.snapshot(cx);
-            let (excerpt_mapping, convert_wrap_row) = dm.companion_conversion(cx)?;
+            let entity_id = dm.entity_id();
+            let companion = dm.companion()?.read(cx);
+            let excerpt_mapping = companion.companion_excerpt_to_excerpt(entity_id);
+            let convert_wrap_row = companion.convert_wrap_row_from_companion(entity_id);
 
             let target_wrap_row = convert_wrap_row(
-                &excerpt_mapping,
+                excerpt_mapping,
                 &target_snapshot,
                 &source_snapshot,
                 source_wrap_row,
@@ -523,6 +526,7 @@ fn convert_lhs_wrap_row_to_rhs(
     let diff = rhs_snapshot
         .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
         .unwrap();
+    // The diff's hunks always have anchors in rhs_buffer_snapshot (the primary/main buffer).
     let rhs_row = diff.base_text_row_to_row(lhs_buffer_point.row, bias, &rhs_buffer_snapshot);
     let rhs_point = Point::new(rhs_row, 0);
     let text_anchor = rhs_buffer_snapshot.anchor_at(rhs_point, bias);
@@ -558,8 +562,8 @@ fn convert_rhs_wrap_row_to_lhs(
         .copied()
         .unwrap();
     let lhs_buffer_snapshot = lhs_snapshot.buffer_for_excerpt(lhs_excerpt_id).unwrap();
-    let diff = lhs_snapshot
-        .diff_for_buffer_id(lhs_buffer_snapshot.remote_id())
+    let diff = rhs_snapshot
+        .diff_for_buffer_id(rhs_buffer_snapshot.remote_id())
         .unwrap();
     let lhs_row = diff.row_to_base_text_row(rhs_buffer_point.row, bias, &rhs_buffer_snapshot);
     let lhs_point = Point::new(lhs_row, 0);
@@ -899,31 +903,16 @@ impl SecondaryEditor {
 
         debug_assert_eq!(primary_excerpt_ids.len(), secondary_excerpt_ids.len());
 
-        // Add excerpt ID mappings to both display maps
-        // Primary display map: keyed by secondary IDs (companion's IDs)
-        primary_display_map.update(cx, |dm, cx| {
-            for (primary_id, secondary_id) in
-                primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
-            {
-                dm.add_companion_excerpt_mapping(*primary_id, *secondary_id, cx);
-            }
-        });
-        // Secondary display map: keyed by primary IDs (companion's IDs)
-        secondary_display_map.update(cx, |dm, cx| {
-            for (primary_id, secondary_id) in
-                primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
-            {
-                dm.add_companion_excerpt_mapping(*secondary_id, *primary_id, cx);
-            }
-        });
-
-        // Add buffer ID mappings for companion sync
-        primary_display_map.update(cx, |dm, cx| {
-            dm.add_companion_buffer_mapping(primary_buffer_id, secondary_buffer_id, cx);
-        });
-        secondary_display_map.update(cx, |dm, cx| {
-            dm.add_companion_buffer_mapping(secondary_buffer_id, primary_buffer_id, cx);
-        });
+        if let Some(companion) = primary_display_map.read(cx).companion().cloned() {
+            companion.update(cx, |c, _| {
+                for (primary_id, secondary_id) in
+                    primary_excerpt_ids.iter().zip(secondary_excerpt_ids.iter())
+                {
+                    c.add_excerpt_mapping(*secondary_id, *primary_id);
+                }
+                c.add_buffer_mapping(secondary_buffer_id, primary_buffer_id);
+            });
+        }
     }
 
     fn remove_mappings_for_path(
@@ -931,7 +920,7 @@ impl SecondaryEditor {
         path_key: &PathKey,
         primary_multibuffer: &Entity<MultiBuffer>,
         primary_display_map: &Entity<DisplayMap>,
-        secondary_display_map: &Entity<DisplayMap>,
+        _secondary_display_map: &Entity<DisplayMap>,
         cx: &mut App,
     ) {
         let primary_excerpt_ids: Vec<ExcerptId> = primary_multibuffer
@@ -944,13 +933,14 @@ impl SecondaryEditor {
             .excerpts_for_path(path_key)
             .collect();
 
-        primary_display_map.update(cx, |dm, cx| {
-            dm.remove_companion_excerpt_mappings(secondary_excerpt_ids.iter().copied(), cx);
-        });
-
-        secondary_display_map.update(cx, |dm, cx| {
-            dm.remove_companion_excerpt_mappings(primary_excerpt_ids, cx);
-        });
+        // Remove mappings from companion - it handles both directions
+        if let Some(companion) = primary_display_map.read(cx).companion().cloned() {
+            companion.update(cx, |c, _| {
+                c.remove_excerpt_mappings(
+                    primary_excerpt_ids.into_iter().chain(secondary_excerpt_ids),
+                );
+            });
+        }
     }
 }
 
@@ -1199,7 +1189,11 @@ mod tests {
             let (primary_wrap, secondary_to_primary_excerpt_mapping, convert_secondary_to_primary) =
                 primary_display_map.update(cx, |dm, cx| {
                     let snapshot = dm.snapshot(cx);
-                    let (excerpt_mapping, convert) = dm.companion_conversion(cx).unwrap();
+                    let companion = dm.companion().unwrap().read(cx);
+                    let excerpt_mapping = companion
+                        .companion_excerpt_to_excerpt(dm.entity_id())
+                        .clone();
+                    let convert = companion.convert_wrap_row_from_companion(dm.entity_id());
                     ((*snapshot).clone(), excerpt_mapping, convert)
                 });
 
@@ -1209,7 +1203,11 @@ mod tests {
                 convert_primary_to_secondary,
             ) = secondary_display_map.update(cx, |dm, cx| {
                 let snapshot = dm.snapshot(cx);
-                let (excerpt_mapping, convert) = dm.companion_conversion(cx).unwrap();
+                let companion = dm.companion().unwrap().read(cx);
+                let excerpt_mapping = companion
+                    .companion_excerpt_to_excerpt(dm.entity_id())
+                    .clone();
+                let convert = companion.convert_wrap_row_from_companion(dm.entity_id());
                 ((*snapshot).clone(), excerpt_mapping, convert)
             });
 

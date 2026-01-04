@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     EditorStyle, GutterDimensions,
-    display_map::{ConvertWrapRow, dimensions::RowDelta, wrap_map::WrapRow},
+    display_map::{Companion, dimensions::RowDelta, wrap_map::WrapRow},
 };
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
@@ -534,19 +534,14 @@ impl BlockMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn read(
+    pub(crate) fn read(
         &self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion: Option<(&Companion, EntityId)>,
     ) -> BlockMapReader<'_> {
-        self.sync(
-            &wrap_snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_conversion,
-        );
+        self.sync(&wrap_snapshot, edits, companion_wrap_edits, companion);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
         BlockMapReader {
             blocks: &self.custom_blocks,
@@ -561,19 +556,14 @@ impl BlockMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion: Option<(&Companion, EntityId)>,
     ) -> BlockMapWriter<'_> {
-        self.sync(
-            &wrap_snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_conversion,
-        );
+        self.sync(&wrap_snapshot, edits, companion_wrap_edits, companion);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter(self)
     }
@@ -584,7 +574,7 @@ impl BlockMap {
         wrap_snapshot: &WrapSnapshot,
         mut edits: WrapPatch,
         companion_wrap_edits: Option<(&WrapSnapshot, &WrapPatch)>,
-        companion_conversion: Option<&(HashMap<ExcerptId, ExcerptId>, ConvertWrapRow)>,
+        companion: Option<(&Companion, EntityId)>,
     ) {
         let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
 
@@ -609,8 +599,59 @@ impl BlockMap {
 
         // Transform companion edits to our coordinate space and compose them after our edits
         if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
-            && let Some((excerpt_map, convert)) = companion_conversion
+            && let Some((companion, display_map_id)) = companion
         {
+            let excerpt_map = companion.companion_excerpt_to_excerpt(display_map_id);
+            let convert = companion.convert_wrap_row_from_companion(display_map_id);
+            let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
+                .clone()
+                .into_inner()
+                .iter()
+                .map(|edit| {
+                    let my_start = convert(
+                        excerpt_map,
+                        wrap_snapshot,
+                        companion_new_snapshot,
+                        edit.new.start,
+                        Bias::Left,
+                    );
+                    let my_end = convert(
+                        excerpt_map,
+                        wrap_snapshot,
+                        companion_new_snapshot,
+                        edit.new.end,
+                        Bias::Right,
+                    );
+
+                    WrapEdit {
+                        old: my_start..my_end,
+                        new: my_start..my_end,
+                    }
+                })
+                .collect();
+
+            companion_edits_in_my_space.sort_by_key(|edit| edit.old.start);
+            let mut merged_edits: Vec<WrapEdit> = Vec::new();
+            for edit in companion_edits_in_my_space {
+                if let Some(last) = merged_edits.last_mut() {
+                    if edit.old.start <= last.old.end {
+                        last.old.end = last.old.end.max(edit.old.end);
+                        last.new.end = last.new.end.max(edit.new.end);
+                        continue;
+                    }
+                }
+                merged_edits.push(edit);
+            }
+
+            edits = edits.compose(merged_edits);
+        }
+
+        // Transform companion edits to our coordinate space and compose them after our edits
+        if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
+            && let Some((companion, display_map_id)) = companion
+        {
+            let excerpt_map = companion.companion_excerpt_to_excerpt(display_map_id);
+            let convert = companion.convert_wrap_row_from_companion(display_map_id);
             let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
                 .clone()
                 .into_inner()
@@ -838,7 +879,7 @@ impl BlockMap {
             ));
 
             if let Some((companion_snapshot, _)) = &companion_wrap_edits
-                && let Some((excerpts, convert)) = companion_conversion
+                && let Some((companion, display_map_id)) = companion
             {
                 let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
                 blocks_in_edit.extend(self.spacer_blocks(
@@ -846,8 +887,8 @@ impl BlockMap {
                     new_start..new_end,
                     wrap_snapshot,
                     companion_snapshot,
-                    excerpts,
-                    *convert,
+                    companion,
+                    display_map_id,
                 ));
             }
 
@@ -1015,15 +1056,17 @@ impl BlockMap {
         })
     }
 
-    fn spacer_blocks<'a>(
-        &'a self,
+    fn spacer_blocks(
+        &self,
         new_buffer_range: Range<MultiBufferPoint>,
         new_wrap_row_range: Range<WrapRow>,
-        wrap_snapshot: &'a WrapSnapshot,
-        companion_snapshot: &'a WrapSnapshot,
-        excerpts: &'a HashMap<ExcerptId, ExcerptId>,
-        convert: ConvertWrapRow,
+        wrap_snapshot: &WrapSnapshot,
+        _companion_snapshot: &WrapSnapshot,
+        companion: &Companion,
+        display_map_id: EntityId,
     ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
+        let _excerpts = companion.companion_excerpt_to_excerpt(display_map_id);
+        let _convert = companion.convert_wrap_row_from_companion(display_map_id);
         // align before the hunk, if its start follows the start of the edit
         // align after the hunk, if its end precedes the end of the edit
         // align at the end of the edit
