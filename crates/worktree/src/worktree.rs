@@ -5881,6 +5881,8 @@ async fn decode_file_text(
         .await
         .with_context(|| format!("opening file {abs_path:?}"))?;
 
+    // First, read the beginning of the file to determine its kind and encoding.
+    // We do not want to load an entire large blob into memory only to discard it.
     let mut file_first_bytes = Vec::with_capacity(FILE_ANALYSIS_BYTES);
     let mut buf = [0u8; FILE_ANALYSIS_BYTES];
     let mut reached_eof = false;
@@ -5903,6 +5905,7 @@ async fn decode_file_text(
         "Binary files are not supported"
     );
 
+    // If the file is eligible for opening, read the rest of the file.
     let mut content = file_first_bytes;
     if !reached_eof {
         let mut buf = [0u8; 8 * 1024];
