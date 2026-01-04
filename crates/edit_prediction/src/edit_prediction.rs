@@ -68,6 +68,7 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -135,6 +136,16 @@ pub struct Zeta2FeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
     const NAME: &'static str = "zeta2";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
+pub struct EditPredictionExampleCaptureFeatureFlag;
+
+impl FeatureFlag for EditPredictionExampleCaptureFeatureFlag {
+    const NAME: &'static str = "edit-prediction-example-capture";
 
     fn enabled_for_staff() -> bool {
         true
@@ -1628,6 +1639,26 @@ impl EditPredictionStore {
             debug_tx,
         };
 
+        let can_collect_example = snapshot
+            .file()
+            .is_some_and(|file| self.can_collect_file(&project, file, cx))
+            && self.can_collect_events(&inputs.events);
+
+        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+            if let Some(example_task) = capture_example::capture_example(
+                project.clone(),
+                active_buffer.clone(),
+                position,
+                cx,
+            ) {
+                cx.spawn(async move |_this, _cx| {
+                    let example = example_task.await?;
+                    telemetry::event!("Edit Prediction Example Captured", example = example);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
             EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
