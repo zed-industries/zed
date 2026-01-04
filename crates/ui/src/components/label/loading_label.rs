@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use gpui::{Animation, AnimationExt, FontWeight};
 use std::time::Duration;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(IntoElement)]
 pub struct LoadingLabel {
@@ -83,6 +84,12 @@ impl LabelCommon for LoadingLabel {
 impl RenderOnce for LoadingLabel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let text = self.text.clone();
+        // NOTE: `SharedString` is UTF-8 and `.len()` is bytes.
+        // Slice only on grapheme boundaries to avoid panics for CJK/emoji.
+        let mut grapheme_boundaries: Vec<usize> =
+            text.grapheme_indices(true).map(|(ix, _)| ix).collect();
+        grapheme_boundaries.push(text.len());
+        let text_grapheme_count = grapheme_boundaries.len().saturating_sub(1);
 
         self.base.color(Color::Muted).with_animations(
             "loading_label",
@@ -93,9 +100,11 @@ impl RenderOnce for LoadingLabel {
             move |mut label, animation_ix, delta| {
                 match animation_ix {
                     0 => {
-                        let chars_to_show = (delta * text.len() as f32).ceil() as usize;
-                        let text = SharedString::from(text[0..chars_to_show].to_string());
-                        label.set_text(text);
+                        let graphemes_to_show = (delta * text_grapheme_count as f32).ceil() as usize;
+                        let byte_end =
+                            *grapheme_boundaries.get(graphemes_to_show).unwrap_or(&text.len());
+                        let visible_text = SharedString::from(text[0..byte_end].to_string());
+                        label.set_text(visible_text);
                     }
                     1 => match delta {
                         d if d < 0.25 => label.set_text(text.clone()),
