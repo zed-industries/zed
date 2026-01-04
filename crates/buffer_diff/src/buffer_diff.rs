@@ -1293,13 +1293,28 @@ impl BufferDiff {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut Context<Self>,
     ) {
-        self.inner.base_text.update(cx, |base_text, cx| {
-            base_text.set_language(language, cx);
-            if let Some(language_registry) = language_registry {
-                base_text.set_language_registry(language_registry);
-            }
-        });
-        cx.emit(BufferDiffEvent::LanguageChanged);
+        let base_text = self.inner.base_text.downgrade();
+        cx.spawn(async move |this, cx| {
+            let fut = base_text
+                .update(cx, |base_text, cx| {
+                    if let Some(language_registry) = language_registry {
+                        base_text.set_language_registry(language_registry);
+                    }
+                    base_text.set_language(language, cx);
+                    base_text.parsing_idle()
+                })
+                .ok()?;
+
+            fut.await;
+
+            this.update(cx, |_, cx| {
+                cx.emit(BufferDiffEvent::LanguageChanged);
+            })
+            .ok()?;
+
+            Some(())
+        })
+        .detach();
     }
 
     pub fn set_snapshot(

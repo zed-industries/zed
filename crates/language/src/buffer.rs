@@ -13,7 +13,7 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
-    unified_diff,
+    unified_diff_with_offsets,
 };
 pub use crate::{
     Grammar, Language, LanguageRegistry,
@@ -85,8 +85,17 @@ pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new)
 pub enum Capability {
     /// The buffer is a mutable replica.
     ReadWrite,
+    /// The buffer is a mutable replica, but toggled to read-only.
+    Read,
     /// The buffer is a read-only replica.
     ReadOnly,
+}
+
+impl Capability {
+    /// Returns `true` if the capability is `ReadWrite`.
+    pub fn editable(self) -> bool {
+        matches!(self, Capability::ReadWrite)
+    }
 }
 
 pub type BufferRow = u32;
@@ -188,6 +197,7 @@ pub struct BufferSnapshot {
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
     tree_sitter_data: Arc<TreeSitterData>,
+    pub capability: Capability,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -773,7 +783,11 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
-    pub fn as_unified_diff(&self, edits: &[(Range<Anchor>, impl AsRef<str>)]) -> Option<String> {
+    pub fn as_unified_diff(
+        &self,
+        file: Option<&Arc<dyn File>>,
+        edits: &[(Range<Anchor>, impl AsRef<str>)],
+    ) -> Option<String> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
@@ -788,7 +802,7 @@ impl EditPreview {
         let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
         let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
-        Some(unified_diff(
+        let diff_body = unified_diff_with_offsets(
             &self
                 .old_snapshot
                 .text_for_range(start..old_end)
@@ -797,7 +811,17 @@ impl EditPreview {
                 .applied_edits_snapshot
                 .text_for_range(start..new_end)
                 .collect::<String>(),
-        ))
+            start.row,
+            start.row,
+        );
+
+        let path = file.map(|f| f.path().as_unix_str());
+        let header = match path {
+            Some(p) => format!("--- a/{}\n+++ b/{}\n", p, p),
+            None => String::new(),
+        };
+
+        Some(format!("{}{}", header, diff_body))
     }
 
     pub fn highlight_edits(
@@ -1076,7 +1100,7 @@ impl Buffer {
 
     /// Whether this buffer can only be read.
     pub fn read_only(&self) -> bool {
-        self.capability == Capability::ReadOnly
+        !self.capability.editable()
     }
 
     /// Builds a [`Buffer`] with the given underlying [`TextBuffer`], diff base, [`File`] and [`Capability`].
@@ -1149,6 +1173,7 @@ impl Buffer {
                 tree_sitter_data: Arc::new(tree_sitter_data),
                 language,
                 non_text_state_update_count: 0,
+                capability: Capability::ReadOnly,
             }
         }
     }
@@ -1174,6 +1199,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language: None,
             non_text_state_update_count: 0,
+            capability: Capability::ReadOnly,
         }
     }
 
@@ -1203,6 +1229,7 @@ impl Buffer {
             remote_selections: Default::default(),
             language,
             non_text_state_update_count: 0,
+            capability: Capability::ReadOnly,
         }
     }
 
@@ -1229,6 +1256,7 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            capability: self.capability,
         }
     }
 
@@ -5157,6 +5185,7 @@ impl Clone for BufferSnapshot {
             language: self.language.clone(),
             tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
+            capability: self.capability,
         }
     }
 }
