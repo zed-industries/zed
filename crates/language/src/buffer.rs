@@ -2201,28 +2201,61 @@ impl Buffer {
         })
     }
 
-    /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace. Skips if the buffer is empty.
+    /// Removes trailing newline characters from the end of the buffer.
+    /// Skips if the buffer is empty.
+    pub fn trim_final_newlines(&mut self, cx: &mut Context<Self>) {
+        let len = self.len();
+        if len == 0 {
+            return;
+        }
+
+        let trim_end = {
+            let rope = self.as_rope();
+            let mut trim_end = len;
+            let mut found_non_newline = false;
+
+            for chunk in rope.reversed_chunks_in_range(0..len) {
+                for ch in chunk.chars().rev() {
+                    if ch == '\n' {
+                        trim_end -= ch.len_utf8();
+                    } else {
+                        found_non_newline = true;
+                        break;
+                    }
+                }
+
+                if found_non_newline || trim_end == 0 {
+                    break;
+                }
+            }
+
+            trim_end
+        };
+
+        if trim_end < len {
+            self.edit([(trim_end..len, "")], None, cx);
+        }
+    }
+
+    /// Ensures that the buffer ends with a newline character.
+    /// Skips if the buffer is empty.
     pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
         if len == 0 {
             return;
         }
-        let mut offset = len;
-        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
-            let non_whitespace_len = chunk
-                .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                .len();
-            offset -= chunk.len();
-            offset += non_whitespace_len;
-            if non_whitespace_len != 0 {
-                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                    return;
-                }
-                break;
-            }
+
+        // Check if the buffer already ends with a newline
+        let rope = self.as_rope();
+        let last_char = rope
+            .reversed_chunks_in_range(0..len)
+            .next()
+            .and_then(|chunk| chunk.chars().next_back());
+
+        if last_char != Some('\n') {
+            // Add a newline at the end
+            self.edit([(len..len, "\n")], None, cx);
         }
-        self.edit([(offset..len, "\n")], None, cx);
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was

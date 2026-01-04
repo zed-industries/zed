@@ -606,6 +606,104 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn test_ensure_final_newline_preserves_whitespace(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    // Test that ensure_final_newline only adds a newline if missing,
+    // without stripping whitespace from blank lines at the end.
+    // This is a regression test for https://github.com/zed-industries/zed/issues/45407
+
+    // Case 1: File ending with blank line containing whitespace, no final newline
+    let buffer = cx.new(|cx| Buffer::local("code\n    ", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n    \n");
+    });
+
+    // Case 2: File already ending with newline - should not change
+    let buffer = cx.new(|cx| Buffer::local("code\n    \n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n    \n");
+    });
+
+    // Case 3: File ending with multiple newlines - should not change
+    let buffer = cx.new(|cx| Buffer::local("code\n\n\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n\n\n");
+    });
+
+    // Case 4: File ending with multiple blank lines with whitespace
+    let buffer = cx.new(|cx| Buffer::local("code\n    \n  ", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n    \n  \n");
+    });
+
+    // Case 5: Simple file without trailing whitespace, no final newline
+    let buffer = cx.new(|cx| Buffer::local("code", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n");
+    });
+
+    // Case 6: Empty buffer - should not change
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "");
+    });
+}
+
+#[gpui::test]
+fn test_trim_final_newlines(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    // Case 1: File ending with multiple newlines
+    let buffer = cx.new(|cx| Buffer::local("code\n\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "code");
+    });
+
+    // Case 2: File ending with single newline
+    let buffer = cx.new(|cx| Buffer::local("code\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "code");
+    });
+
+    // Case 3: File with no trailing newline
+    let buffer = cx.new(|cx| Buffer::local("code", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "code");
+    });
+
+    // Case 4: Preserve trailing whitespace when trimming newlines
+    let buffer = cx.new(|cx| Buffer::local("code\n  \n\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "code\n  ");
+    });
+
+    // Case 5: Buffer of only newlines
+    let buffer = cx.new(|cx| Buffer::local("\n\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "");
+    });
+
+    // Case 6: Empty buffer - should not change
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "");
+    });
+}
+
+#[gpui::test]
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
