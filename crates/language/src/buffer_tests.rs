@@ -548,7 +548,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
-    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(true, cx));
     smol::future::yield_now().await;
 
     // Edit the buffer while the normalization task is running.
@@ -3642,7 +3642,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     }
 
     let rope = Rope::from(text.as_str());
-    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let actual_ranges = trailing_whitespace_ranges(&rope, false);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)
         .map(|m| m.range())
@@ -3652,6 +3652,168 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         expected_ranges,
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
+    );
+}
+
+#[gpui::test]
+fn test_trailing_whitespace_ranges_skip_empty_lines(_: &mut gpui::App) {
+    // Test that skip_whitespace_only_lines=true preserves whitespace on empty lines
+    // while still removing trailing whitespace from lines with content
+
+    // Edge case: File with just a tab (no newline)
+    let text_single_tab = "\t";
+    let rope_single_tab = Rope::from(text_single_tab);
+
+    let ranges_tab_remove = trailing_whitespace_ranges(&rope_single_tab, false);
+    assert_eq!(
+        ranges_tab_remove,
+        vec![0..1],
+        "skip=false should remove single tab"
+    );
+
+    let ranges_tab_skip = trailing_whitespace_ranges(&rope_single_tab, true);
+    let empty: Vec<Range<usize>> = vec![];
+    assert_eq!(
+        ranges_tab_skip, empty,
+        "skip=true should preserve single tab on whitespace-only line"
+    );
+
+    // Edge case: First line is tab, followed by newline
+    let text_tab_newline = "\t\n";
+    let rope_tab_newline = Rope::from(text_tab_newline);
+
+    let ranges_tab_nl_remove = trailing_whitespace_ranges(&rope_tab_newline, false);
+    assert_eq!(
+        ranges_tab_nl_remove,
+        vec![0..1],
+        "skip=false should remove tab before newline"
+    );
+
+    let ranges_tab_nl_skip = trailing_whitespace_ranges(&rope_tab_newline, true);
+    assert_eq!(
+        ranges_tab_nl_skip, empty,
+        "skip=true should preserve tab on whitespace-only first line"
+    );
+
+    // Input: "hello   \n    \nworld  \n"
+    // With skip_whitespace_only_lines=false: removes whitespace from all lines
+    // With skip_whitespace_only_lines=true: preserves "    " on the empty line
+    let text = "hello   \n    \nworld  \n";
+    let rope = Rope::from(text);
+
+    // Test with skip_whitespace_only_lines=false (original behavior)
+    let ranges_remove_all = trailing_whitespace_ranges(&rope, false);
+    assert_eq!(
+        ranges_remove_all,
+        vec![5..8, 9..13, 19..21],
+        "skip=false should remove all trailing whitespace"
+    );
+
+    // Test with skip_whitespace_only_lines=true (new behavior)
+    let ranges_skip_empty = trailing_whitespace_ranges(&rope, true);
+    assert_eq!(
+        ranges_skip_empty,
+        vec![5..8, 19..21],
+        "skip=true should preserve whitespace on empty lines (line 2)"
+    );
+
+    // Test with multiple whitespace-only lines in a row
+    let text2 = "line1  \n  \n\t\t\nline4   \n";
+    let rope2 = Rope::from(text2);
+
+    let ranges_skip = trailing_whitespace_ranges(&rope2, true);
+    assert_eq!(
+        ranges_skip,
+        vec![5..7, 19..22],
+        "skip=true should preserve whitespace on all whitespace-only lines"
+    );
+
+    // Test with trailing whitespace-only line at end
+    let text3 = "content  \n   ";
+    let rope3 = Rope::from(text3);
+
+    let ranges_skip_end = trailing_whitespace_ranges(&rope3, true);
+    assert_eq!(
+        ranges_skip_end,
+        vec![7..9],
+        "skip=true should preserve final whitespace-only line"
+    );
+}
+
+#[gpui::test]
+fn test_trailing_whitespace_chunk_boundaries(_: &mut gpui::App) {
+    // Test chunk boundary edge cases by creating ropes with specific chunk sizes
+    // This simulates how Rope might split content across multiple chunks
+
+    // Case 1: Line with content in first chunk, trailing whitespace in second chunk
+    // When skip_whitespace_only_lines=true, this should still be removed because the
+    // full line has content
+    let text1 = "hello";
+    let text2 = "   \n";
+    let mut rope = Rope::new();
+    rope.push(text1);
+    rope.push(text2);
+    // Full content: "hello   \n"
+
+    let ranges_remove_all = trailing_whitespace_ranges(&rope, false);
+    assert_eq!(
+        ranges_remove_all,
+        vec![5..8],
+        "should remove trailing whitespace on line with content"
+    );
+
+    let ranges_skip = trailing_whitespace_ranges(&rope, true);
+    assert_eq!(
+        ranges_skip,
+        vec![5..8],
+        "line has content, so trailing whitespace should still be removed"
+    );
+
+    // Case 2: Whitespace-only line split across chunks
+    let text1 = "  ";
+    let text2 = "  \n";
+    let mut rope = Rope::new();
+    rope.push(text1);
+    rope.push(text2);
+    // Full content: "    \n"
+
+    let ranges_remove_all = trailing_whitespace_ranges(&rope, false);
+    assert_eq!(
+        ranges_remove_all,
+        vec![0..4],
+        "should remove all whitespace when skip=false"
+    );
+
+    let ranges_skip = trailing_whitespace_ranges(&rope, true);
+    let empty: Vec<Range<usize>> = vec![];
+    assert_eq!(
+        ranges_skip, empty,
+        "should preserve whitespace-only line when skip=true"
+    );
+
+    // Case 3: Mixed content - line with content followed by whitespace-only line, split across chunks
+    let text1 = "hello  \n  ";
+    let text2 = "  \nworld  \n";
+    let mut rope = Rope::new();
+    rope.push(text1);
+    rope.push(text2);
+    // Full content: "hello  \n    \nworld  \n"
+    // Line 1: "hello  " -> trailing whitespace at 5..7
+    // Line 2: "    " -> whitespace-only line
+    // Line 3: "world  " -> trailing whitespace at 18..20
+
+    let ranges_remove_all = trailing_whitespace_ranges(&rope, false);
+    assert_eq!(
+        ranges_remove_all,
+        vec![5..7, 8..12, 18..20],
+        "should remove all trailing whitespace when skip=false"
+    );
+
+    let ranges_skip = trailing_whitespace_ranges(&rope, true);
+    assert_eq!(
+        ranges_skip,
+        vec![5..7, 18..20],
+        "should preserve whitespace-only line but remove trailing whitespace from content lines"
     );
 }
 

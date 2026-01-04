@@ -1176,6 +1176,10 @@
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
+  // Whether or not to remove whitespace from lines that contain only whitespace
+  // when saving. When set to `false`, indentation on empty lines is preserved.
+  // This setting only takes effect when `remove_trailing_whitespace_on_save` is `true`.
+  "remove_whitespace_on_empty_lines": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
   // Whether to continue markdown lists when pressing enter.

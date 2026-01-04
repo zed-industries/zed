@@ -306,6 +306,13 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub remove_trailing_whitespace_on_save: Option<bool>,
+    /// Whether or not to remove whitespace from lines that contain only
+    /// whitespace when saving. When set to `false`, indentation on empty
+    /// lines is preserved. This setting only takes effect when
+    /// `remove_trailing_whitespace_on_save` is `true`.
+    ///
+    /// Default: true
+    pub remove_whitespace_on_empty_lines: Option<bool>,
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     ///

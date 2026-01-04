@@ -6658,6 +6658,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Remove Whitespace On Empty Lines",
+            description: "Whether to remove whitespace from lines containing only whitespace. When disabled, indentation on empty lines is preserved. Only applies when 'Remove Trailing Whitespace On Save' is enabled.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).remove_whitespace_on_empty_lines"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.remove_whitespace_on_empty_lines.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.remove_whitespace_on_empty_lines = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
             description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it.",
             field: Box::new(SettingField {

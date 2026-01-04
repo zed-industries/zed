@@ -846,6 +846,7 @@ impl SettingsPageItem {
                 v_flex()
                     .group("setting-item")
                     .px_8()
+                    .pl(px(32.0))
                     .child(field_with_padding)
                     .when(!is_last, |this| this.child(Divider::horizontal()))
                     .into_any_element()
