@@ -3369,7 +3369,6 @@ dependencies = [
  "sqlx",
  "strum 0.27.2",
  "subtle",
- "supermaven_api",
  "task",
  "telemetry_events",
  "text",

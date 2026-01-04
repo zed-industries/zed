@@ -218,9 +218,6 @@ message Envelope {
 
         OpenNewBuffer open_new_buffer = 196;
 
-        GetSupermavenApiKey get_supermaven_api_key = 198;
-        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
-
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
 
@@ -464,6 +461,7 @@ message Envelope {
     reserved 189 to 192;
     reserved 193 to 195;
     reserved 197;
+    reserved 198 to 199;
     reserved 200 to 202;
     reserved 205 to 206;
     reserved 221;
