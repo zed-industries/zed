@@ -1971,6 +1971,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_commits_for_repo(&self, dot_git: &Path, commits: Vec<git::repository::CommitSummary>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commits = commits;
+        })
+        .unwrap();
+    }
+
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {

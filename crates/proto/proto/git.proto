@@ -96,6 +96,7 @@ message CommitSummary {
     string subject = 2;
     int64 commit_timestamp = 3;
     string author_name = 4;
+    string author_email = 5;
 }
 
 message GitBranches {

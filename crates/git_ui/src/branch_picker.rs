@@ -1268,6 +1268,7 @@ mod tests {
                 sha: "abc123".into(),
                 commit_timestamp: ts,
                 author_name: "Test Author".into(),
+                author_email: "test@example.com".into(),
                 subject: "Test commit".into(),
                 has_parent: true,
             }),

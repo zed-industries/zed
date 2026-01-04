@@ -204,6 +204,7 @@ pub struct CommitSummary {
     /// This is a unix timestamp
     pub commit_timestamp: i64,
     pub author_name: SharedString,
+    pub author_email: SharedString,
     pub has_parent: bool,
 }
 
@@ -501,6 +502,13 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
+
+    /// Returns paginated commit history for the current branch (HEAD).
+    fn branch_history(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<CommitSummary>>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1301,6 +1309,7 @@ impl GitRepository for RealGitRepository {
                     "%(upstream:track)",
                     "%(committerdate:unix)",
                     "%(authorname)",
+                    "%(authoremail)",
                     "%(contents:subject)",
                 ]
                 .join("%00");
@@ -1626,6 +1635,79 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(FileHistory { entries, path })
+            })
+            .boxed()
+    }
+
+    fn branch_history(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<CommitSummary>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+
+                // Format: SHA, subject, timestamp, author_name, author_email, parent_count
+                // Using %P to get parent SHAs (empty for root commits)
+                let format_string = "--pretty=format:%H%x00%s%x00%at%x00%an%x00%ae%x00%P";
+
+                let mut args = vec!["--no-optional-locks", "log", format_string, "HEAD"];
+
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = format!("--skip={}", skip);
+                    args.push(&skip_str);
+                }
+                if let Some(n) = limit {
+                    limit_str = format!("-n{}", n);
+                    args.push(&limit_str);
+                }
+
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut commits = Vec::new();
+
+                for line in stdout.lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = line.split('\0').collect();
+                    if fields.len() >= 6 {
+                        let sha: SharedString = fields[0].trim().to_string().into();
+                        let subject: SharedString = fields[1].trim().to_string().into();
+                        let commit_timestamp = fields[2].trim().parse().unwrap_or(0);
+                        let author_name: SharedString = fields[3].trim().to_string().into();
+                        let author_email: SharedString = fields[4].trim().to_string().into();
+                        let parents = fields[5].trim();
+                        let has_parent = !parents.is_empty();
+
+                        commits.push(CommitSummary {
+                            sha,
+                            subject,
+                            commit_timestamp,
+                            author_name,
+                            author_email,
+                            has_parent,
+                        });
+                    }
+                }
+
+                Ok(commits)
             })
             .boxed()
     }
@@ -2742,6 +2824,12 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let Some(author_name) = fields.next().map(|f| f.to_string().into()) else {
             continue;
         };
+        let Some(author_email) = fields.next().map(|f| {
+            // Strip the angle brackets from git's authoremail format: <email@example.com>
+            f.trim_start_matches('<').trim_end_matches('>').to_string().into()
+        }) else {
+            continue;
+        };
         let Some(subject) = fields.next().map(|f| f.to_string().into()) else {
             continue;
         };
@@ -2753,7 +2841,8 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 sha: head_sha,
                 subject,
                 commit_timestamp: commiterdate,
-                author_name: author_name,
+                author_name,
+                author_email,
                 has_parent: !parent_sha.is_empty(),
             }),
             upstream: if upstream_name.is_empty() {
@@ -3065,7 +3154,7 @@ mod tests {
     fn test_branches_parsing() {
         // suppress "help: octal escapes are not supported, `\0` is always null"
         #[allow(clippy::octal_escapes)]
-        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0John Doe\0generated protobuf\n";
+        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0John Doe\0john@example.com\0generated protobuf\n";
         assert_eq!(
             parse_branch_input(input).unwrap(),
             vec![Branch {
@@ -3083,6 +3172,7 @@ mod tests {
                     subject: "generated protobuf".into(),
                     commit_timestamp: 1733187470,
                     author_name: SharedString::new("John Doe"),
+                    author_email: SharedString::new("john@example.com"),
                     has_parent: false,
                 })
             }]
@@ -3092,7 +3182,7 @@ mod tests {
     #[test]
     fn test_branches_parsing_containing_refs_with_missing_fields() {
         #[allow(clippy::octal_escapes)]
-        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0refs/heads/broken\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\0\01762948725\0Zed\0Add feature\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\0\01762948695\0Zed\0Initial commit\n";
+        let input = " \090012116c03db04344ab10d50348553aa94f1ea0\0refs/heads/broken\n \0eb0cae33272689bd11030822939dd2701c52f81e\0895951d681e5561478c0acdd6905e8aacdfd2249\0refs/heads/dev\0\0\01762948725\0Zed\0zed@example.com\0Add feature\n*\0895951d681e5561478c0acdd6905e8aacdfd2249\0\0refs/heads/main\0\0\01762948695\0Zed\0zed@example.com\0Initial commit\n";
 
         let branches = parse_branch_input(input).unwrap();
         assert_eq!(branches.len(), 2);
@@ -3108,6 +3198,7 @@ mod tests {
                         subject: "Add feature".into(),
                         commit_timestamp: 1762948725,
                         author_name: SharedString::new("Zed"),
+                        author_email: SharedString::new("zed@example.com"),
                         has_parent: true,
                     })
                 },
@@ -3120,6 +3211,7 @@ mod tests {
                         subject: "Initial commit".into(),
                         commit_timestamp: 1762948695,
                         author_name: SharedString::new("Zed"),
+                        author_email: SharedString::new("zed@example.com"),
                         has_parent: false,
                     })
                 }

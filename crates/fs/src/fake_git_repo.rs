@@ -6,8 +6,8 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        AskPassDelegate, Branch, CommitDetails, CommitOptions, CommitSummary, FetchOptions,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -55,6 +55,8 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
+    /// Commit history for branch_history queries
+    pub commits: Vec<CommitSummary>,
 }
 
 impl FakeGitRepositoryState {
@@ -72,6 +74,7 @@ impl FakeGitRepositoryState {
             merge_base_contents: Default::default(),
             oids: Default::default(),
             remotes: HashMap::default(),
+            commits: Vec::new(),
         }
     }
 }
@@ -135,6 +138,23 @@ impl GitRepository for FakeGitRepository {
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
         unimplemented!()
+    }
+
+    fn branch_history(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<CommitSummary>>> {
+        self.with_state_async(false, move |state| {
+            let commits = state
+                .commits
+                .iter()
+                .skip(skip)
+                .take(limit.unwrap_or(usize::MAX))
+                .cloned()
+                .collect();
+            Ok(commits)
+        })
     }
 
     fn set_index_text(

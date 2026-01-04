@@ -250,6 +250,7 @@ impl Render for CommitTooltip {
                 }),
             commit_timestamp: self.commit.commit_time.unix_timestamp(),
             author_name: self.commit.author_name.clone(),
+            author_email: self.commit.author_email.clone(),
             has_parent: false,
         };
 

@@ -244,6 +244,7 @@ impl BlameRenderer for GitBlameRenderer {
                 .unwrap_or_default(),
             commit_timestamp: commit_time.unix_timestamp(),
             author_name: author.clone(),
+            author_email: author_email.to_string().into(),
             has_parent: false,
         };
 
