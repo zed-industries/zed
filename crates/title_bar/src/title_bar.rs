@@ -401,16 +401,13 @@ impl TitleBar {
                 .menu(move |window, cx| {
                     let workspace_entity = workspace.upgrade()?;
                     let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
-                    Some(
-                        recent_projects::RemoteServerProjects::popover(
-                            fs,
-                            workspace.clone(),
-                            false,
-                            window,
-                            cx,
-                        )
-                        .into(),
-                    )
+                    Some(recent_projects::RemoteServerProjects::popover(
+                        fs,
+                        workspace.clone(),
+                        false,
+                        window,
+                        cx,
+                    ))
                 })
                 .trigger_with_tooltip(
                     ButtonLike::new("remote_project")
@@ -441,7 +438,6 @@ impl TitleBar {
                             meta.clone(),
                             cx,
                         )
-                        .into()
                     },
                 )
                 .anchor(gpui::Corner::TopLeft)
@@ -562,16 +558,13 @@ impl TitleBar {
 
         PopoverMenu::new("recent-projects-menu")
             .menu(move |window, cx| {
-                Some(
-                    recent_projects::RecentProjects::popover(
-                        workspace.clone(),
-                        false,
-                        focus_handle.clone(),
-                        window,
-                        cx,
-                    )
-                    .into(),
-                )
+                Some(recent_projects::RecentProjects::popover(
+                    workspace.clone(),
+                    false,
+                    focus_handle.clone(),
+                    window,
+                    cx,
+                ))
             })
             .trigger_with_tooltip(
                 Button::new("project_name_trigger", name)
@@ -586,7 +579,6 @@ impl TitleBar {
                         },
                         cx,
                     )
-                    .into()
                 },
             )
             .anchor(gpui::Corner::TopLeft)
@@ -654,16 +646,13 @@ impl TitleBar {
             PopoverMenu::new("branch-menu")
                 .menu(move |window, cx| {
                     let repository = project.read(cx).active_repository(cx);
-                    Some(
-                        git_ui::branch_picker::popover(
-                            workspace.downgrade(),
-                            true,
-                            repository,
-                            window,
-                            cx,
-                        )
-                        .into(),
-                    )
+                    Some(git_ui::branch_picker::popover(
+                        workspace.downgrade(),
+                        true,
+                        repository,
+                        window,
+                        cx,
+                    ))
                 })
                 .trigger_with_tooltip(
                     Button::new("project_branch_trigger", branch_name)
@@ -685,7 +674,6 @@ impl TitleBar {
                             "Local branches only",
                             cx,
                         )
-                        .into()
                     },
                 )
                 .anchor(gpui::Corner::TopLeft),
