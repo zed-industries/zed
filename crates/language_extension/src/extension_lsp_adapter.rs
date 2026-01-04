@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
+use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegateAdapter};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
@@ -18,38 +18,9 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
+use util::{ResultExt, fs::make_file_executable, maybe};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
-
-/// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
-struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
-
-#[async_trait]
-impl WorktreeDelegate for WorktreeDelegateAdapter {
-    fn id(&self) -> u64 {
-        self.0.worktree_id().to_proto()
-    }
-
-    fn root_path(&self) -> String {
-        self.0.worktree_root_path().to_string_lossy().into_owned()
-    }
-
-    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
-        self.0.read_text_file(path).await
-    }
-
-    async fn which(&self, binary_name: String) -> Option<String> {
-        self.0
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().into_owned())
-    }
-
-    async fn shell_env(&self) -> Vec<(String, String)> {
-        self.0.shell_env().await.into_iter().collect()
-    }
-}
 
 impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn register_language_server(

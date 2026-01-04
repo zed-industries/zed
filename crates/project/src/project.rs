@@ -29,6 +29,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
+use extension;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -158,6 +159,47 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+#[derive(Default)]
+struct GlobalProjectRegistry(Vec<WeakEntity<Project>>);
+
+impl gpui::Global for GlobalProjectRegistry {}
+
+struct ProjectWorktreeProxy;
+
+impl extension::ExtensionWorktreeProxy for ProjectWorktreeProxy {
+    fn worktree_delegate(
+        &self,
+        worktree_id: u64,
+        cx: &mut App,
+    ) -> Option<Arc<dyn extension::WorktreeDelegate>> {
+        let worktree_id = WorktreeId::from_proto(worktree_id);
+        let projects = cx
+            .try_global::<GlobalProjectRegistry>()
+            .map(|registry| registry.0.clone())?;
+
+        for project_handle in projects {
+            if let Some(project) = project_handle.upgrade() {
+                let (lsp_store, worktree) = project.read_with(cx, |project, app| {
+                    (
+                        project.lsp_store.clone(),
+                        project.worktree_for_id(worktree_id, app),
+                    )
+                });
+
+                if let Some(worktree) = worktree {
+                    let delegate = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.lsp_adapter_delegate(worktree, cx)
+                    });
+                    if let Some(delegate) = delegate {
+                        return Some(Arc::new(extension::WorktreeDelegateAdapter(delegate)));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -1066,6 +1108,10 @@ impl Project {
         DapStore::init(&client, cx);
         BreakpointStore::init(&client);
         context_server_store::init(cx);
+
+        let proxy = extension::ExtensionHostProxy::global(cx);
+        proxy.register_worktree_proxy(ProjectWorktreeProxy);
+        cx.default_global::<GlobalProjectRegistry>();
     }
 
     pub fn local(
@@ -1079,6 +1125,13 @@ impl Project {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
+            let weak_project = cx.weak_entity();
+            cx.defer(move |cx| {
+                cx.update_global::<GlobalProjectRegistry, _>(|registry, _| {
+                    registry.0.push(weak_project);
+                });
+            });
+
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
@@ -1270,6 +1323,13 @@ impl Project {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
+            let weak_project = cx.weak_entity();
+            cx.defer(move |cx| {
+                cx.update_global::<GlobalProjectRegistry, _>(|registry, _| {
+                    registry.0.push(weak_project);
+                });
+            });
+
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
@@ -1665,6 +1725,13 @@ impl Project {
         let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
+            let weak_project = cx.weak_entity();
+            cx.defer(move |cx| {
+                cx.update_global::<GlobalProjectRegistry, _>(|registry, _| {
+                    registry.0.push(weak_project);
+                });
+            });
+
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
@@ -1922,6 +1989,7 @@ impl Project {
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
+        cx.update(|cx| Self::init(&client, cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(

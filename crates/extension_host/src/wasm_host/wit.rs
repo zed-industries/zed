@@ -1007,6 +1007,20 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<DebugAdapterBinary, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let dap_binary = ext
+                    .call_get_dap_binary(
+                        store,
+                        &adapter_name,
+                        &task.try_into()?,
+                        user_installed_path.as_ref().and_then(|p| p.to_str()),
+                        resource,
+                    )
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary))
+            }
             Extension::V0_6_0(ext) => {
                 let dap_binary = ext
                     .call_get_dap_binary(
@@ -1032,15 +1046,25 @@ impl Extension {
         config: serde_json::Value,
     ) -> Result<Result<StartDebuggingRequestArgumentsRequest, String>> {
         match self {
-            Extension::V0_6_0(ext) => {
+            Extension::V0_8_0(ext) => {
                 let config =
                     serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
-                let dap_binary = ext
+                let kind = ext
                     .call_dap_request_kind(store, &adapter_name, &config)
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(kind))
+            }
+            Extension::V0_6_0(ext) => {
+                let config =
+                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
+                let kind = ext
+                    .call_dap_request_kind(store, &adapter_name, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(kind))
             }
             _ => anyhow::bail!("`dap_request_kind` not available prior to v0.6.0"),
         }
@@ -1052,14 +1076,23 @@ impl Extension {
         config: ZedDebugConfig,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
-            Extension::V0_6_0(ext) => {
+            Extension::V0_8_0(ext) => {
                 let config = config.into();
-                let dap_binary = ext
+                let scenario = ext
                     .call_dap_config_to_scenario(store, &config)
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary.try_into()?))
+                Ok(Ok(scenario.try_into()?))
+            }
+            Extension::V0_6_0(ext) => {
+                let config = config.into();
+                let scenario = ext
+                    .call_dap_config_to_scenario(store, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(scenario.try_into()?))
             }
             _ => anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0"),
         }
@@ -1074,9 +1107,9 @@ impl Extension {
         debug_adapter_name: String,
     ) -> Result<Option<DebugScenario>> {
         match self {
-            Extension::V0_6_0(ext) => {
+            Extension::V0_8_0(ext) => {
                 let build_config_template = build_config_template.into();
-                let dap_binary = ext
+                let scenario = ext
                     .call_dap_locator_create_scenario(
                         store,
                         &locator_name,
@@ -1086,7 +1119,21 @@ impl Extension {
                     )
                     .await?;
 
-                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+                Ok(scenario.map(TryInto::try_into).transpose()?)
+            }
+            Extension::V0_6_0(ext) => {
+                let build_config_template = build_config_template.into();
+                let scenario = ext
+                    .call_dap_locator_create_scenario(
+                        store,
+                        &locator_name,
+                        &build_config_template,
+                        &resolved_label,
+                        &debug_adapter_name,
+                    )
+                    .await?;
+
+                Ok(scenario.map(TryInto::try_into).transpose()?)
             }
             _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
         }
@@ -1099,6 +1146,15 @@ impl Extension {
         resolved_build_task: SpawnInTerminal,
     ) -> Result<Result<DebugRequest, String>> {
         match self {
+            Extension::V0_8_0(ext) => {
+                let build_config_template = resolved_build_task.try_into()?;
+                let dap_request = ext
+                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_request.into()))
+            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
@@ -1108,7 +1164,39 @@ impl Extension {
 
                 Ok(Ok(dap_request.into()))
             }
-            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
+            _ => anyhow::bail!("`run_dap_locator` not available prior to v0.6.0"),
+        }
+    }
+
+    pub async fn call_build_context(
+        &self,
+        store: &mut Store<WasmState>,
+        language_name: &str,
+        location: latest::TaskContextLocation,
+        worktree: Resource<latest::ExtensionWorktree>,
+    ) -> Result<Result<Vec<latest::TaskVariable>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_build_context(store, language_name, &location, worktree)
+                    .await
+            }
+            _ => Ok(Ok(Vec::new())),
+        }
+    }
+
+    pub async fn call_associated_tasks(
+        &self,
+        store: &mut Store<WasmState>,
+        language_name: &str,
+        file: Option<latest::TaskContextFile>,
+        worktree: Resource<latest::ExtensionWorktree>,
+    ) -> Result<Result<Vec<latest::TaskDefinition>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_associated_tasks(store, language_name, file.as_ref(), worktree)
+                    .await
+            }
+            _ => Ok(Ok(Vec::new())),
         }
     }
 }

@@ -172,7 +172,7 @@ impl HeadlessExtensionStore {
         }
 
         let wasm_extension: Arc<dyn Extension> =
-            Arc::new(WasmExtension::load(&extension_dir, &manifest, wasm_host.clone(), cx).await?);
+            WasmExtension::load(&extension_dir, &manifest, wasm_host.clone(), cx).await?;
 
         for (language_server_id, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {

@@ -47,10 +47,10 @@ impl ExtensionDapAdapter {
 }
 
 /// An adapter that allows an [`dap::adapters::DapDelegate`] to be used as a [`WorktreeDelegate`].
-struct WorktreeDelegateAdapter(pub Arc<dyn DapDelegate>);
+struct DapWorktreeDelegateAdapter(pub Arc<dyn DapDelegate>);
 
 #[async_trait]
-impl WorktreeDelegate for WorktreeDelegateAdapter {
+impl WorktreeDelegate for DapWorktreeDelegateAdapter {
     fn id(&self) -> u64 {
         self.0.worktree_id().to_proto()
     }
@@ -101,7 +101,7 @@ impl DebugAdapter for ExtensionDapAdapter {
                 self.debug_adapter_name.clone(),
                 config.clone(),
                 user_installed_path,
-                Arc::new(WorktreeDelegateAdapter(delegate.clone())),
+                Arc::new(DapWorktreeDelegateAdapter(delegate.clone())),
             )
             .await
     }

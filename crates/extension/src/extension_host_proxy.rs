@@ -33,6 +33,8 @@ pub struct ExtensionHostProxy {
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
+    extension_provider_proxy: RwLock<Option<Arc<dyn ExtensionProviderProxy>>>,
+    worktree_proxy: RwLock<Option<Arc<dyn ExtensionWorktreeProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -59,6 +61,8 @@ impl ExtensionHostProxy {
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
+            extension_provider_proxy: RwLock::default(),
+            worktree_proxy: RwLock::default(),
         }
     }
 
@@ -103,6 +107,40 @@ impl ExtensionHostProxy {
         self.language_model_provider_proxy
             .write()
             .replace(Arc::new(proxy));
+    }
+
+    pub fn register_extension_provider_proxy(&self, proxy: impl ExtensionProviderProxy) {
+        self.extension_provider_proxy
+            .write()
+            .replace(Arc::new(proxy));
+    }
+
+    pub fn register_worktree_proxy(&self, proxy: impl ExtensionWorktreeProxy) {
+        self.worktree_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn extension_by_id(&self, extension_id: &str) -> Option<Arc<dyn Extension>> {
+        let proxy = self.extension_provider_proxy.read().clone()?;
+        proxy.extension_by_id(extension_id)
+    }
+}
+
+pub trait ExtensionWorktreeProxy: Send + Sync + 'static {
+    fn worktree_delegate(
+        &self,
+        worktree_id: u64,
+        cx: &mut App,
+    ) -> Option<Arc<dyn crate::WorktreeDelegate>>;
+}
+
+impl ExtensionWorktreeProxy for ExtensionHostProxy {
+    fn worktree_delegate(
+        &self,
+        worktree_id: u64,
+        cx: &mut App,
+    ) -> Option<Arc<dyn crate::WorktreeDelegate>> {
+        let proxy = self.worktree_proxy.read().clone()?;
+        proxy.worktree_delegate(worktree_id, cx)
     }
 }
 
@@ -276,6 +314,10 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
 
         proxy.remove_languages(languages_to_remove, grammars_to_remove)
     }
+}
+
+pub trait ExtensionProviderProxy: Send + Sync + 'static {
+    fn extension_by_id(&self, extension_id: &str) -> Option<Arc<dyn Extension>>;
 }
 
 pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
