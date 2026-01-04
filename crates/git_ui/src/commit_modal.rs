@@ -378,7 +378,7 @@ impl CommitModal {
 
         let branch_picker = PopoverMenu::new("popover-button")
             .menu(move |window, cx| {
-                Some(branch_picker::popover(
+                Some(branch_picker::popover_simplified(
                     workspace.clone(),
                     active_repo.clone(),
                     window,
