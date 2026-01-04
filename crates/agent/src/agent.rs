@@ -4,6 +4,7 @@ mod history_store;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
+mod plan_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -14,6 +15,7 @@ use context_server::ContextServerId;
 pub use db::*;
 pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
+pub use plan_parser::*;
 pub use templates::*;
 pub use thread::*;
 pub use tools::*;
@@ -1023,6 +1025,11 @@ impl NativeAgentConnection {
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
+                                })?;
+                            }
+                            ThreadEvent::PlanUpdate(plan) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_plan(plan, cx);
                                 })?;
                             }
                             ThreadEvent::Stop(stop_reason) => {

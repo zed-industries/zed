@@ -1,7 +1,7 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, PlanParser, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SystemPromptTemplate, Template, Templates, TerminalTool,
     ThinkingTool, WebSearchTool,
 };
@@ -560,6 +560,8 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+    /// Plan update detected from agent response
+    PlanUpdate(acp::Plan),
 }
 
 #[derive(Debug)]
@@ -622,6 +624,10 @@ pub struct Thread {
     pub(crate) action_log: Entity<ActionLog>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
+    /// Accumulated agent text for plan detection across streaming chunks
+    accumulated_agent_text: String,
+    /// The currently detected plan from agent responses
+    current_plan: Option<acp::Plan>,
 }
 
 impl Thread {
@@ -678,6 +684,8 @@ impl Thread {
             project,
             action_log,
             file_read_times: HashMap::default(),
+            accumulated_agent_text: String::new(),
+            current_plan: None,
         }
     }
 
@@ -866,6 +874,8 @@ impl Thread {
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
+            accumulated_agent_text: String::new(),
+            current_plan: None,
         }
     }
 
@@ -1253,6 +1263,8 @@ impl Thread {
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
         self.clear_summary();
+        // Clear accumulated text for fresh plan detection
+        self.accumulated_agent_text.clear();
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
@@ -1532,6 +1544,44 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         event_stream.send_text(&new_text);
+
+        // Accumulate text for plan detection
+        self.accumulated_agent_text.push_str(&new_text);
+
+        // Try to detect a plan in the accumulated text
+        if let Some(new_plan) = PlanParser::try_parse(&self.accumulated_agent_text) {
+            // Only emit update if the plan has changed
+            let should_update = match &self.current_plan {
+                Some(current) => {
+                    // Compare entry counts or content to detect changes
+                    current.entries.len() != new_plan.entries.len()
+                        || current
+                            .entries
+                            .iter()
+                            .zip(new_plan.entries.iter())
+                            .any(|(a, b)| a.content != b.content || a.status != b.status)
+                }
+                None => true,
+            };
+
+            if should_update {
+                // If no entry is marked as InProgress, automatically mark the first pending one
+                let has_in_progress = new_plan
+                    .entries
+                    .iter()
+                    .any(|e| e.status == acp::PlanEntryStatus::InProgress);
+
+                let plan_to_send = if !has_in_progress {
+                    // Use our helper to mark the first pending as in-progress
+                    PlanParser::start_next_entry(&new_plan)
+                } else {
+                    new_plan
+                };
+
+                self.current_plan = Some(plan_to_send.clone());
+                event_stream.send_plan_update(plan_to_send);
+            }
+        }
 
         let last_message = self.pending_message();
         if let Some(AgentMessageContent::Text(text)) = last_message.content.last_mut() {
@@ -2488,6 +2538,12 @@ impl ThreadEventStream {
 
     fn send_error(&self, error: impl Into<anyhow::Error>) {
         self.0.unbounded_send(Err(error.into())).ok();
+    }
+
+    fn send_plan_update(&self, plan: acp::Plan) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::PlanUpdate(plan)))
+            .ok();
     }
 }
 
