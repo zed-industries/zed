@@ -379,7 +379,7 @@ fn convert_dib_to_bmp(dib_data: &[u8]) -> Option<Vec<u8>> {
     let pixel_data_offset = 14 + header_size + color_table_size;
 
     // Build BITMAPFILEHEADER (14 bytes)
-    let mut bmp_data = Vec::with_capacity(14 + dib_data.len());
+    let mut bmp_data = Vec::with_capacity(file_size as usize);
     bmp_data.extend_from_slice(b"BM"); // Signature
     bmp_data.extend_from_slice(&file_size.to_le_bytes()); // File size
     bmp_data.extend_from_slice(&[0u8; 4]); // Reserved
