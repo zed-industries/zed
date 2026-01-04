@@ -86,7 +86,10 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             {
                 let preview = buffer
                     .update(cx, |this, cx| {
-                        this.preview_edits(Arc::from([(trimmed_range.clone(), trimmed_text.clone())].as_slice()), cx)
+                        this.preview_edits(
+                            Arc::from([(trimmed_range.clone(), trimmed_text.clone())].as_slice()),
+                            cx,
+                        )
                     })?
                     .await;
                 this.update(cx, |this, cx| {
@@ -166,8 +169,8 @@ fn trim_completion(
         None
     } else {
         let snapshot = buffer.snapshot();
-        let completion_range =
-            snapshot.anchor_after(completion_range.start)..snapshot.anchor_after(completion_range.end);
+        let completion_range = snapshot.anchor_after(completion_range.start)
+            ..snapshot.anchor_after(completion_range.end);
 
         Some((completion_range, Arc::from(completion_text), snapshot))
     }
