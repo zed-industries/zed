@@ -628,6 +628,7 @@ schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+serde_yaml = "0.9"
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
