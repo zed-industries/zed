@@ -1384,8 +1384,8 @@
   "indent_list_on_tab": true,
   // Ensures there's a newline at the end of the file.
   "ensure_final_newline_on_save": true,
-  // Removes trailing newline characters at the end of the file. When combined
-  // with ensure_final_newline_on_save, this collapses multiple blank lines to one.
+  // Removes extra trailing newline characters at the end of the file,
+  // leaving at most one final newline.
   "trim_final_newlines_on_save": false,
   // How line endings should be handled for new files and during format and save.
   // This setting can take five values:
