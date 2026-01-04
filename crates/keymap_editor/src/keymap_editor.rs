@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod action_completion_provider;
 mod ui_components;
 
 use anyhow::{Context as _, anyhow};
@@ -45,6 +46,7 @@ pub use ui_components::*;
 use zed_actions::{ChangeKeybinding, OpenKeymap};
 
 use crate::{
+    action_completion_provider::ActionCompletionProvider,
     persistence::KEYBINDING_EDITORS,
     ui_components::keystroke_input::{
         ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording,
@@ -1245,6 +1247,46 @@ impl KeymapEditor {
         self.open_edit_keybinding_modal(true, window, cx);
     }
 
+    fn open_create_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let keymap_editor = cx.entity();
+
+        let action_information = ActionInformation::new(
+            gpui::NoAction.name(),
+            None,
+            &HashSet::default(),
+            cx.action_documentation(),
+            &self.humanized_action_names,
+        );
+
+        let dummy_binding = ProcessedBinding::Unmapped(action_information);
+        let dummy_index = self.keybindings.len();
+
+        let temp_dir = self.action_args_temp_dir.as_ref().map(|dir| dir.path());
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let fs = workspace.app_state().fs.clone();
+                let workspace_weak = cx.weak_entity();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    let modal = KeybindingEditorModal::new(
+                        true,
+                        dummy_binding,
+                        dummy_index,
+                        keymap_editor,
+                        temp_dir,
+                        workspace_weak,
+                        fs,
+                        window,
+                        cx,
+                    );
+
+                    window.focus(&modal.focus_handle(cx), cx);
+                    modal
+                });
+            })
+            .log_err();
+    }
+
     fn delete_binding(&mut self, _: &DeleteBinding, window: &mut Window, cx: &mut Context<Self>) {
         let Some(to_remove) = self.selected_binding().cloned() else {
             return;
@@ -1690,7 +1732,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_64()
+                                    .min_w_80()
                                     .child(
                                         IconButton::new(
                                             "KeymapEditorToggleFiltersIcon",
@@ -1765,7 +1807,7 @@ impl Render for KeymapEditor {
                                     .child(
                                         h_flex()
                                             .w_full()
-                                            .pl_2()
+                                            .px_1p5()
                                             .gap_1()
                                             .justify_end()
                                             .child(
@@ -1809,15 +1851,23 @@ impl Render for KeymapEditor {
                                                     ),
                                             )
                                             .child(
-                                                Button::new("edit-in-json", "Edit in keymap.json")
-                                                    .style(ButtonStyle::Outlined)
+                                                Button::new("edit-in-json", "Edit in JSON")
+                                                    .style(ButtonStyle::Subtle)
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
                                                             zed_actions::OpenKeymapFile.boxed_clone(),
                                                             cx,
                                                         );
                                                     })
-                                            ),
+                                            )
+                                            .child(
+                                                Button::new("create", "Create Keybinding")
+                                                    .style(ButtonStyle::Outlined)
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.open_create_modal(window, cx);
+                                                    }))
+                                            )
+
                                     )
                             ),
                     )
