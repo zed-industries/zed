@@ -1,22 +1,32 @@
+#![allow(clippy::clone_on_copy)]
+
 mod boundary;
 mod duplicate;
+mod jump_list;
 mod object;
 mod paste;
 mod select;
 
+pub use jump_list::{
+    JumpEntry, JumpList, JumpLocation, JumpSelections, SelectionAnchors, SelectionPoints,
+};
+
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBuffer, MultiBufferOffset,
     SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{Context, Window};
+use gpui::{Context, Entity, Window};
 use language::{CharClassifier, CharKind, Point};
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
+use std::path::Path;
+use std::sync::Arc;
 use text::{Bias, SelectionGoal};
 use workspace::searchable::FilteredSearchRange;
 use workspace::searchable::{self, Direction};
+use workspace::{self, OpenOptions};
 
 use crate::motion::{self, MotionKind};
 use crate::state::SearchState;
@@ -56,6 +66,12 @@ actions!(
         HelixSelectNext,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSelectPrevious,
+        /// Saves the current selection to the jump list (Ctrl-s in Helix).
+        HelixSaveSelection,
+        /// Jumps backward in the jump list (Ctrl-o in Helix).
+        HelixJumpBackward,
+        /// Jumps forward in the jump list (Ctrl-i in Helix).
+        HelixJumpForward,
     ]
 );
 
@@ -80,6 +96,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, Vim::helix_save_selection);
+    Vim::action(editor, cx, Vim::helix_jump_backward);
+    Vim::action(editor, cx, Vim::helix_jump_forward);
 }
 
 impl Vim {
@@ -830,6 +849,305 @@ impl Vim {
                 })
             });
         }
+    }
+
+    fn helix_save_selection(
+        &mut self,
+        _: &HelixSaveSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((entry, buffer)) = self.update_editor(cx, |_, editor, _cx| {
+            let buffer = editor.buffer().clone();
+            let buffer_id = buffer.entity_id();
+            let selections: Vec<_> = editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|s| SelectionAnchors::new(s.start.clone(), s.end.clone()))
+                .collect();
+
+            (JumpEntry::new(buffer_id, selections), buffer)
+        }) else {
+            return;
+        };
+
+        self.watch_buffer_for_jump_list(&buffer, window, cx);
+
+        Vim::update_globals(cx, |globals, _| {
+            globals.helix_jump_list.push(entry);
+        });
+    }
+
+    fn watch_buffer_for_jump_list(
+        &self,
+        buffer: &Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_id = buffer.entity_id();
+
+        let already_watching = Vim::update_globals(cx, |globals, _| {
+            globals.helix_watched_buffers.contains_key(&buffer_id)
+        });
+
+        if already_watching {
+            return;
+        }
+
+        // Get file path for conversion when buffer closes
+        let path = self.get_buffer_abs_path(buffer, window, cx);
+
+        let subscription = cx.observe_release(buffer, move |_vim, released_buffer, cx| {
+            let released_id = released_buffer.entity_id();
+
+            Vim::update_globals(cx, |globals, _| {
+                globals.helix_watched_buffers.remove(&released_id);
+
+                if let Some(ref path) = path {
+                    let snapshot = released_buffer.snapshot(cx);
+                    globals.helix_jump_list.convert_buffer_to_path(
+                        released_id,
+                        path.clone(),
+                        |anchors| {
+                            SelectionPoints::new(
+                                anchors.start.to_point(&snapshot),
+                                anchors.end.to_point(&snapshot),
+                            )
+                        },
+                    );
+                } else {
+                    globals.helix_jump_list.remove_buffer(released_id);
+                }
+            });
+        });
+
+        Vim::update_globals(cx, |globals, _| {
+            globals
+                .helix_watched_buffers
+                .insert(buffer_id, subscription);
+        });
+    }
+
+    fn get_buffer_abs_path(
+        &self,
+        buffer: &Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<Path>> {
+        let workspace = self.workspace(window)?;
+        let project = workspace.read(cx).project().clone();
+
+        let singleton = buffer.read(cx).as_singleton()?;
+        let project_path = singleton.read(cx).project_path(cx)?;
+        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
+
+        Some(abs_path.into())
+    }
+
+    fn helix_jump_backward(
+        &mut self,
+        _: &HelixJumpBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        // If at present (end of list), save current position first before jumping
+        let at_present = Vim::update_globals(cx, |globals, _| globals.helix_jump_list.at_present());
+
+        if at_present {
+            // Save current position
+            self.helix_save_selection(&HelixSaveSelection, window, cx);
+            // Go back one more since we just pushed
+            Vim::update_globals(cx, |globals, _| {
+                globals.helix_jump_list.step_back();
+            });
+        }
+
+        let entry = Vim::update_globals(cx, |globals, _| {
+            globals.helix_jump_list.backward(count).cloned()
+        });
+
+        if let Some(entry) = entry {
+            self.helix_jump_to_entry(entry, window, cx);
+        }
+    }
+
+    fn helix_jump_forward(
+        &mut self,
+        _: &HelixJumpForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        let entry = Vim::update_globals(cx, |globals, _| {
+            globals.helix_jump_list.forward(count).cloned()
+        });
+
+        if let Some(entry) = entry {
+            self.helix_jump_to_entry(entry, window, cx);
+        }
+    }
+
+    fn helix_jump_to_entry(
+        &mut self,
+        entry: JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &entry.location {
+            JumpLocation::Buffer(buffer_id) => {
+                // Check if we're already in the target buffer
+                let current_buffer =
+                    self.update_editor(cx, |_, editor, _| editor.buffer().entity_id());
+
+                if current_buffer == Some(*buffer_id) {
+                    // Same buffer - just update selections
+                    self.restore_selections_from_entry(&entry, window, cx);
+                } else {
+                    // Different buffer - find and activate it
+                    self.helix_jump_to_buffer(entry, window, cx);
+                }
+            }
+            JumpLocation::Path(path) => {
+                // File is closed - need to reopen it
+                self.helix_jump_to_path(path.clone(), entry, window, cx);
+            }
+        }
+    }
+
+    fn restore_selections_from_entry(
+        &mut self,
+        entry: &JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let JumpSelections::Anchors(selections) = &entry.selections {
+            self.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(
+                        selections
+                            .iter()
+                            .map(|sel| sel.start.clone()..sel.end.clone()),
+                    );
+                });
+            });
+        }
+    }
+
+    fn helix_jump_to_buffer(
+        &mut self,
+        entry: JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer_id) = entry.buffer_id() else {
+            return;
+        };
+
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+
+        let selections = match &entry.selections {
+            JumpSelections::Anchors(sels) => sels.clone(),
+            JumpSelections::Points(_) => return, // Shouldn't happen for buffer entries
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            // Find item with matching buffer
+            let item = workspace
+                .items(cx)
+                .find(|item| {
+                    item.act_as::<Editor>(cx)
+                        .is_some_and(|e| e.read(cx).buffer().entity_id() == buffer_id)
+                })
+                .cloned();
+
+            if let Some(item) = item {
+                // Activate pane containing this item
+                if let Some(pane) = workspace.pane_for(&*item) {
+                    pane.update(cx, |pane, cx| {
+                        if let Some(idx) = pane.index_for_item(&*item) {
+                            pane.activate_item(idx, true, true, window, cx);
+                        }
+                    });
+                }
+
+                // Update selections in the editor
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_anchor_ranges(
+                                selections
+                                    .iter()
+                                    .map(|sel| sel.start.clone()..sel.end.clone()),
+                            );
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    fn helix_jump_to_path(
+        &mut self,
+        path: std::sync::Arc<std::path::Path>,
+        entry: JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+
+        let selections = match entry.selections {
+            JumpSelections::Points(points) => points,
+            JumpSelections::Anchors(_) => return, // Shouldn't happen for path entries
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.open_abs_path(
+                path.to_path_buf(),
+                OpenOptions {
+                    visible: Some(workspace::OpenVisible::All),
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let item = task.await?;
+            cx.update(|cx| {
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        // Clip points to valid positions in case file content changed
+                        let ranges: Vec<_> = selections
+                            .iter()
+                            .map(|sel| {
+                                let start = snapshot.clip_point(sel.start, Bias::Left);
+                                let end = snapshot.clip_point(sel.end, Bias::Right);
+                                start..end
+                            })
+                            .collect();
+                        // Use select_ranges directly without window (async context)
+                        editor
+                            .selections
+                            .change_with(&editor.display_snapshot(cx), |selections| {
+                                selections.select_ranges(ranges);
+                            });
+                    });
+                }
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -1664,6 +1982,136 @@ mod test {
                 first linˇe
                 second line
                 third line"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_basic(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Set initial position and save it
+        cx.set_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Move to a different position and save
+        cx.simulate_keystrokes("j j");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Jump backward should go to first saved position
+        cx.simulate_keystrokes("ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+
+        // Jump forward should return to second position
+        cx.simulate_keystrokes("ctrl-i");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line ˇthree"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_auto_save_on_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Save a position
+        cx.set_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Move to a new position (but don't save)
+        cx.simulate_keystrokes("j j $");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line threˇe"},
+            Mode::HelixNormal,
+        );
+
+        // Jump backward - should auto-save current position first
+        cx.simulate_keystrokes("ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+
+        // Jump forward should go to the auto-saved position
+        cx.simulate_keystrokes("ctrl-i");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line threˇe"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Create multiple jump entries
+        cx.set_state(
+            indoc! {"
+                ˇposition one
+                position two
+                position three
+                position four"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Now at position four, jump back by 2
+        cx.simulate_keystrokes("2 ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                position one
+                ˇposition two
+                position three
+                position four"},
             Mode::HelixNormal,
         );
     }
