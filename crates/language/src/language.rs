@@ -101,11 +101,7 @@ where
     F: FnOnce(&mut Parser) -> R,
 {
     let mut parser = PARSERS.lock().pop().unwrap_or_else(|| {
-        let mut parser = Parser::new();
-        parser
-            .set_wasm_store(WasmStore::new(&WASM_ENGINE).unwrap())
-            .unwrap();
-        parser
+        Parser::new()
     });
     parser.set_included_ranges(&[]).unwrap();
     let result = func(&mut parser);
@@ -126,6 +122,16 @@ static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
+
+pub(crate) fn take_or_create_wasm_store(parser: &mut Parser) -> Result<WasmStore> {
+    if let Some(store) = parser.take_wasm_store() {
+        return Ok(store);
+    }
+    if std::env::var("ZED_DISABLE_TREE_SITTER_WASM").is_ok() {
+        anyhow::bail!("Tree-sitter WASM support is disabled by ZED_DISABLE_TREE_SITTER_WASM");
+    }
+    WasmStore::new(&WASM_ENGINE).context("Failed to create tree-sitter WasmStore")
+}
 
 /// A shared grammar for plain text, exposed for reuse by downstream crates.
 pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {

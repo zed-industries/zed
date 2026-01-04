@@ -1381,6 +1381,12 @@ fn parse_text(
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
         let mut chunks = text.chunks_in_range(start_byte..text.len());
+        if grammar.ts_language.is_wasm() {
+            let store = crate::take_or_create_wasm_store(parser)?;
+            parser
+                .set_wasm_store(store)
+                .context("Failed to attach tree-sitter WasmStore")?;
+        }
         parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
         parser

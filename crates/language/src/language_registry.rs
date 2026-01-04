@@ -1048,11 +1048,21 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .context("invalid grammar filename")?;
-                                anyhow::Ok(with_parser(|parser| {
-                                    let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
-                                    parser.set_wasm_store(store).unwrap();
-                                    grammar
+                                anyhow::Ok(with_parser(|parser| -> anyhow::Result<tree_sitter::Language> {
+                                    let mut store = match crate::take_or_create_wasm_store(parser) {
+                                        Ok(store) => store,
+                                        Err(err) => {
+                                            log::error!("Failed to create WasmStore: {err}");
+                                            return Err(err);
+                                        }
+                                    };
+                                    let grammar = store
+                                        .load_language(grammar_name, &wasm_bytes)
+                                        .map_err(|err| anyhow!(err))?;
+                                    parser
+                                        .set_wasm_store(store)
+                                        .context("Failed to restore tree-sitter WasmStore")?;
+                                    Ok(grammar)
                                 })?)
                             })
                             .map_err(Arc::new);
