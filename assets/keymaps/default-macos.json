@@ -364,6 +364,7 @@
       "cmd-enter": "agent::ChatWithFollow",
       "cmd-shift-enter": "agent::QueueMessage",
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "cmd-shift-backspace": "agent::ClearMessageQueue",
       "cmd-shift-v": "agent::PasteRaw",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",

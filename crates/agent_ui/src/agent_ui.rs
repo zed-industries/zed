@@ -128,6 +128,8 @@ actions!(
         QueueMessage,
         /// Sends the next queued message immediately.
         SendNextQueuedMessage,
+        /// Clears all messages from the queue.
+        ClearMessageQueue,
     ]
 );
 

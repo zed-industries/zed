@@ -319,6 +319,7 @@
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::QueueMessage",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
+      "ctrl-shift-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",

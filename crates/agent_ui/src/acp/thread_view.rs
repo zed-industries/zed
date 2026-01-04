@@ -67,10 +67,10 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
-    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAgentDiff, OpenHistory, QueueMessage, RejectAll, RejectOnce, SendNextQueuedMessage,
-    ToggleBurnMode, ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
+    ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
+    KeepAll, NewThread, OpenAgentDiff, OpenHistory, QueueMessage, RejectAll, RejectOnce,
+    SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -4581,19 +4581,33 @@ impl AcpThreadView {
         };
 
         h_flex()
-            .id("message_queue_summary")
             .p_1()
             .w_full()
             .gap_1()
+            .justify_between()
             .when(self.queue_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .child(Disclosure::new("queue_disclosure", self.queue_expanded))
-            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.queue_expanded = !this.queue_expanded;
-                cx.notify();
-            }))
+            .child(
+                h_flex()
+                    .id("queue_summary")
+                    .gap_1()
+                    .child(Disclosure::new("queue_disclosure", self.queue_expanded))
+                    .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.queue_expanded = !this.queue_expanded;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("clear_queue", "Clear All")
+                    .label_size(LabelSize::Small)
+                    .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.message_queue.clear();
+                        cx.notify();
+                    })),
+            )
     }
 
     fn render_message_queue_entries(
@@ -6454,6 +6468,10 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
+                this.message_queue.clear();
+                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
