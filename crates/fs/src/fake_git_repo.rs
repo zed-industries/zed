@@ -495,6 +495,20 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn commit_graph(
+        &self,
+        _skip: usize,
+        _limit: usize,
+    ) -> BoxFuture<'_, Result<git::repository::CommitGraph>> {
+        async move {
+            Ok(git::repository::CommitGraph {
+                commits: Vec::new(),
+                has_more: false,
+            })
+        }
+        .boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,

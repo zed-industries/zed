@@ -8,6 +8,7 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
+    git_graph_view::GraphLayout,
 };
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
@@ -28,6 +29,7 @@ use git::repository::{
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
+use git::repository::CommitGraph;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
@@ -616,6 +618,9 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    recent_commits: Option<CommitGraph>,
+    recent_commits_layout: GraphLayout,
+    recent_commits_collapsed: bool,
     _settings_subscription: Subscription,
 }
 
@@ -719,6 +724,7 @@ impl GitPanel {
                 move |this, _git_store, event, window, cx| match event {
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.active_repository = this.project.read(cx).active_repository(cx);
+                        this.fetch_recent_commits(cx);
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
@@ -785,12 +791,290 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                recent_commits: None,
+                recent_commits_layout: GraphLayout::default(),
+                recent_commits_collapsed: false,
                 _settings_subscription,
             };
 
             this.schedule_update(window, cx);
+            this.fetch_recent_commits(cx);
             this
         })
+    }
+
+    fn fetch_recent_commits(&mut self, cx: &mut Context<Self>) {
+        const RECENT_COMMITS_COUNT: usize = 10;
+        
+        let Some(repo) = self.active_repository.clone() else {
+            self.recent_commits = None;
+            self.recent_commits_layout = GraphLayout::default();
+            cx.notify();
+            return;
+        };
+        
+        let git_store = self.project.read(cx).git_store().clone();
+        
+        cx.spawn(async move |this, cx| {
+            let graph_task = git_store.update(cx, |git_store, cx| {
+                git_store.commit_graph(&repo, 0, RECENT_COMMITS_COUNT, cx)
+            }).ok();
+            
+            if let Some(task) = graph_task {
+                if let Ok(graph) = task.await {
+                    this.update(cx, |this, cx| {
+                        let layout = GraphLayout::compute(&graph.commits);
+                        this.recent_commits = Some(graph);
+                        this.recent_commits_layout = layout;
+                        cx.notify();
+                    }).ok();
+                }
+            }
+        }).detach();
+    }
+
+    fn render_recent_commits(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let commits = self.recent_commits.as_ref()?;
+        if commits.commits.is_empty() {
+            return None;
+        }
+        
+        let collapsed = self.recent_commits_collapsed;
+        let lane_count = self.recent_commits_layout.lane_count.max(1);
+        let lane_width = px(16.);
+        let graph_width = lane_width * lane_count as f32;
+        
+        Some(
+            v_flex()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .pt_1()
+                // Collapsible header
+                .child(
+                    div()
+                        .id("recent-commits-header")
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.recent_commits_collapsed = !this.recent_commits_collapsed;
+                            cx.notify();
+                        }))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(
+                                    Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new("Recent Commits")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        ),
+                )
+                // Commit list (hidden when collapsed)
+                .when(!collapsed, |this| {
+                    this.children(
+                        commits.commits.iter().take(10).enumerate().map(|(row, commit)| {
+                            let sha = commit.sha.to_string();
+                            let (lane, _) = self.recent_commits_layout.positions
+                                .get(&sha)
+                                .copied()
+                                .unwrap_or((0, row));
+                            
+                            // Get active lanes for this row
+                            let active_lanes = self.recent_commits_layout.lanes_per_row
+                                .get(row)
+                                .cloned()
+                                .unwrap_or_default();
+                            let prev_active = if row > 0 {
+                                self.recent_commits_layout.lanes_per_row.get(row - 1).cloned().unwrap_or_default()
+                            } else {
+                                std::collections::HashSet::new()
+                            };
+                            let next_active = self.recent_commits_layout.lanes_per_row
+                                .get(row + 1)
+                                .cloned()
+                                .unwrap_or_default();
+                            
+                            // Get merge connections for this row (horizontal lines)
+                            let merge_connections: Vec<_> = self.recent_commits_layout.merge_connections
+                                .iter()
+                                .filter(|mc| mc.child_row == row)
+                                .collect();
+                            
+                            // Get branch terminations for this row
+                            let branch_terminations: Vec<_> = self.recent_commits_layout.branch_terminations
+                                .iter()
+                                .filter(|bt| bt.row == row)
+                                .collect();
+                            
+                            div()
+                                .id(SharedString::from(format!("commit-{}", row)))
+                                .px_2()
+                                .py_0p5()
+                                .cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    // Open commit graph view
+                                    if let Some(repo) = this.active_repository.clone() {
+                                        let git_store = this.project.read(cx).git_store().clone();
+                                        crate::git_graph_view::GitGraphView::open(
+                                            git_store.downgrade(),
+                                            repo.downgrade(),
+                                            this.workspace.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        // Graph lane visualization
+                                        .child(
+                                            div()
+                                                .w(graph_width)
+                                                .h(px(20.))
+                                                .flex_none()
+                                                .relative()
+                                                .children(
+                                                    active_lanes.iter().map(|&l| {
+                                                        let lane_color = GraphLayout::lane_color(l);
+                                                        let x = lane_width * l as f32;
+                                                        let is_commit_lane = l == lane;
+                                                        let has_top = prev_active.contains(&l);
+                                                        let has_bottom = next_active.contains(&l);
+                                                        
+                                                        div()
+                                                            .absolute()
+                                                            .left(x)
+                                                            .top_0()
+                                                            .w(lane_width)
+                                                            .h_full()
+                                                            .child(
+                                                                // Vertical line
+                                                                div()
+                                                                    .absolute()
+                                                                    .left(px(7.))
+                                                                    .w(px(2.))
+                                                                    .bg(lane_color)
+                                                                    .map(|d| {
+                                                                        if is_commit_lane {
+                                                                            // Line goes around the node
+                                                                            if has_top && has_bottom {
+                                                                                d.top_0().h_full()
+                                                                            } else if has_top {
+                                                                                d.top_0().h(px(10.))
+                                                                            } else if has_bottom {
+                                                                                d.top(px(10.)).h(px(10.))
+                                                                            } else {
+                                                                                d.h_0()
+                                                                            }
+                                                                        } else {
+                                                                            // Full height for non-commit lanes
+                                                                            if has_top || has_bottom {
+                                                                                d.top_0().h_full()
+                                                                            } else {
+                                                                                d.h_0()
+                                                                            }
+                                                                        }
+                                                                    }),
+                                                            )
+                                                            .when(is_commit_lane, |d| {
+                                                                // Commit node circle
+                                                                d.child(
+                                                                    div()
+                                                                        .absolute()
+                                                                        .left(px(4.))
+                                                                        .top(px(7.))
+                                                                        .w(px(8.))
+                                                                        .h(px(8.))
+                                                                        .rounded_full()
+                                                                        .bg(lane_color),
+                                                                )
+                                                            })
+                                                    }),
+                                                )
+                                                // Merge connections (horizontal lines from child to parent)
+                                                .children(
+                                                    merge_connections.iter().map(|mc| {
+                                                        let from_lane = mc.child_lane;
+                                                        let to_lane = mc.parent_lane;
+                                                        let color = GraphLayout::lane_color(from_lane);
+                                                        let from_x = lane_width * from_lane as f32 + px(8.);
+                                                        let to_x = lane_width * to_lane as f32 + px(8.);
+                                                        let (left, width) = if from_x < to_x {
+                                                            (from_x, to_x - from_x)
+                                                        } else {
+                                                            (to_x, from_x - to_x)
+                                                        };
+                                                        div()
+                                                            .absolute()
+                                                            .left(left)
+                                                            .top(px(9.))
+                                                            .w(width)
+                                                            .h(px(2.))
+                                                            .bg(color)
+                                                    })
+                                                )
+                                                // Branch terminations (horizontal lines from terminating lane to target)
+                                                .children(
+                                                    branch_terminations.iter().map(|bt| {
+                                                        let from_lane = bt.lane;
+                                                        let to_lane = bt.connect_to;
+                                                        let color = GraphLayout::lane_color(from_lane);
+                                                        let from_x = lane_width * from_lane as f32 + px(8.);
+                                                        let to_x = lane_width * to_lane as f32 + px(8.);
+                                                        let (left, width) = if from_x < to_x {
+                                                            (from_x, to_x - from_x)
+                                                        } else {
+                                                            (to_x, from_x - to_x)
+                                                        };
+                                                        div()
+                                                            .absolute()
+                                                            .left(left)
+                                                            .top(px(9.))
+                                                            .w(width)
+                                                            .h(px(2.))
+                                                            .bg(color)
+                                                    })
+                                                ),
+                                        )
+                                        // Author and message
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .w(px(80.))
+                                                        .flex_none()
+                                                        .child(
+                                                            Label::new(commit.author_name.clone())
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Default),
+                                                        ),
+                                                )
+                                                .child(
+                                                    Label::new(&commit.subject)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .truncate(),
+                                                ),
+                                        ),
+                                )
+                        }),
+                    )
+                })
+        )
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
@@ -5419,6 +5703,7 @@ impl Render for GitPanel {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
                     })
+                    .children(self.render_recent_commits(cx))
                     .children(self.render_footer(window, cx))
                     .when(self.amend_pending, |this| {
                         this.child(self.render_pending_amend(cx))

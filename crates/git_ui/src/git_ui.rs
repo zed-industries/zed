@@ -38,6 +38,7 @@ pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
 pub mod file_history_view;
+pub mod git_graph_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -61,6 +62,7 @@ pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     file_history_view::init(cx);
+    git_graph_view::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -259,6 +261,20 @@ pub fn init(cx: &mut App) {
             };
             file_history_view::FileHistoryView::open(
                 repo_path,
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
+            );
+        });
+        workspace.register_action(|workspace, _: &git::CommitGraph, window, cx| {
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            let Some(repo) = git_store.read(cx).active_repository() else {
+                return;
+            };
+            git_graph_view::GitGraphView::open(
                 git_store.downgrade(),
                 repo.downgrade(),
                 workspace.weak_handle(),

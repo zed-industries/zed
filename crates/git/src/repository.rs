@@ -124,6 +124,47 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
     worktrees
 }
 
+/// Parses git decoration string (from %D format) into GitRef enums.
+/// Example input: "HEAD -> main, origin/main, tag: v1.0.0"
+pub fn parse_git_refs(decoration: &str) -> Vec<GitRef> {
+    if decoration.is_empty() {
+        return Vec::new();
+    }
+
+    let mut refs = Vec::new();
+
+    for part in decoration.split(", ") {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        // Handle "HEAD -> branch" format
+        if part.starts_with("HEAD -> ") {
+            refs.push(GitRef::Head);
+            let branch = part.strip_prefix("HEAD -> ").unwrap_or("");
+            if !branch.is_empty() {
+                refs.push(GitRef::LocalBranch(branch.to_string().into()));
+            }
+        } else if part == "HEAD" {
+            refs.push(GitRef::Head);
+        } else if part.starts_with("tag: ") {
+            let tag = part.strip_prefix("tag: ").unwrap_or("");
+            if !tag.is_empty() {
+                refs.push(GitRef::Tag(tag.to_string().into()));
+            }
+        } else if part.contains('/') {
+            // Remote branch (e.g., "origin/main")
+            refs.push(GitRef::RemoteBranch(part.to_string().into()));
+        } else {
+            // Local branch
+            refs.push(GitRef::LocalBranch(part.to_string().into()));
+        }
+    }
+
+    refs
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
@@ -230,6 +271,49 @@ pub struct FileHistoryEntry {
 pub struct FileHistory {
     pub entries: Vec<FileHistoryEntry>,
     pub path: RepoPath,
+}
+
+/// Represents a Git reference (branch, tag, or HEAD).
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum GitRef {
+    /// A local branch reference.
+    LocalBranch(SharedString),
+    /// A remote branch reference.
+    RemoteBranch(SharedString),
+    /// A tag reference.
+    Tag(SharedString),
+    /// The HEAD reference.
+    Head,
+}
+
+/// A node in the commit graph, representing a single commit with its relationships.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitGraphNode {
+    /// Full SHA of the commit.
+    pub sha: SharedString,
+    /// Short SHA (first 7 characters).
+    pub short_sha: SharedString,
+    /// First line of the commit message.
+    pub subject: SharedString,
+    /// Author's name.
+    pub author_name: SharedString,
+    /// Author's email.
+    pub author_email: SharedString,
+    /// Unix timestamp of the commit.
+    pub commit_timestamp: i64,
+    /// Parent commit SHAs (empty for root commits, multiple for merge commits).
+    pub parent_shas: Vec<SharedString>,
+    /// Git references pointing to this commit (branches, tags, HEAD).
+    pub refs: Vec<GitRef>,
+}
+
+/// The commit graph structure containing all commits and pagination info.
+#[derive(Debug, Clone)]
+pub struct CommitGraph {
+    /// List of commit nodes in topological order.
+    pub commits: Vec<CommitGraphNode>,
+    /// Whether there are more commits to load.
+    pub has_more: bool,
 }
 
 #[derive(Debug)]
@@ -501,6 +585,14 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
+
+    /// Returns the commit graph for visualization.
+    /// Includes all commits from all branches with parent relationships.
+    fn commit_graph(
+        &self,
+        skip: usize,
+        limit: usize,
+    ) -> BoxFuture<'_, Result<CommitGraph>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1626,6 +1718,104 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(FileHistory { entries, path })
+            })
+            .boxed()
+    }
+
+    fn commit_graph(
+        &self,
+        skip: usize,
+        limit: usize,
+    ) -> BoxFuture<'_, Result<CommitGraph>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+
+                // Use a unique delimiter to separate commits
+                let commit_delimiter =
+                    concat!("<<GRAPH_COMMIT_END-", "9a7b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p>>");
+
+                // Format: SHA, short SHA, subject, author name, author email, timestamp, parent SHAs, decorations
+                let format_string = format!(
+                    "--pretty=format:%H%x00%h%x00%s%x00%an%x00%ae%x00%at%x00%P%x00%D{}",
+                    commit_delimiter
+                );
+
+                let skip_str = skip.to_string();
+                let limit_str = limit.to_string();
+
+                let args = vec![
+                    "--no-optional-locks",
+                    "log",
+                    "--all",
+                    "--topo-order",
+                    &format_string,
+                    "--skip",
+                    &skip_str,
+                    "-n",
+                    &limit_str,
+                ];
+
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut commits = Vec::new();
+
+                for commit_block in stdout.split(commit_delimiter) {
+                    let commit_block = commit_block.trim();
+                    if commit_block.is_empty() {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = commit_block.split('\0').collect();
+                    if fields.len() >= 7 {
+                        let sha: SharedString = fields[0].trim().to_string().into();
+                        let short_sha: SharedString = fields[1].trim().to_string().into();
+                        let subject: SharedString = fields[2].trim().to_string().into();
+                        let author_name: SharedString = fields[3].trim().to_string().into();
+                        let author_email: SharedString = fields[4].trim().to_string().into();
+                        let commit_timestamp: i64 = fields[5].trim().parse().unwrap_or(0);
+
+                        // Parse parent SHAs (space-separated)
+                        let parent_shas: Vec<SharedString> = fields[6]
+                            .trim()
+                            .split_whitespace()
+                            .map(|s| s.to_string().into())
+                            .collect();
+
+                        // Parse decorations (refs)
+                        let refs = if fields.len() > 7 {
+                            parse_git_refs(fields[7].trim())
+                        } else {
+                            Vec::new()
+                        };
+
+                        commits.push(CommitGraphNode {
+                            sha,
+                            short_sha,
+                            subject,
+                            author_name,
+                            author_email,
+                            commit_timestamp,
+                            parent_shas,
+                            refs,
+                        });
+                    }
+                }
+
+                let has_more = commits.len() >= limit;
+                Ok(CommitGraph { commits, has_more })
             })
             .boxed()
     }
@@ -3058,6 +3248,59 @@ mod tests {
         assert_eq!(
             smol::fs::read_to_string(&bin_path).await.unwrap(),
             "Modified binary file"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_refs_empty() {
+        let refs = parse_git_refs("");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_git_refs_head_only() {
+        let refs = parse_git_refs("HEAD");
+        assert_eq!(refs, vec![GitRef::Head]);
+    }
+
+    #[test]
+    fn test_parse_git_refs_head_to_branch() {
+        let refs = parse_git_refs("HEAD -> main");
+        assert_eq!(
+            refs,
+            vec![GitRef::Head, GitRef::LocalBranch("main".into())]
+        );
+    }
+
+    #[test]
+    fn test_parse_git_refs_tag() {
+        let refs = parse_git_refs("tag: v1.0.0");
+        assert_eq!(refs, vec![GitRef::Tag("v1.0.0".into())]);
+    }
+
+    #[test]
+    fn test_parse_git_refs_remote_branch() {
+        let refs = parse_git_refs("origin/main");
+        assert_eq!(refs, vec![GitRef::RemoteBranch("origin/main".into())]);
+    }
+
+    #[test]
+    fn test_parse_git_refs_local_branch() {
+        let refs = parse_git_refs("feature-branch");
+        assert_eq!(refs, vec![GitRef::LocalBranch("feature-branch".into())]);
+    }
+
+    #[test]
+    fn test_parse_git_refs_mixed() {
+        let refs = parse_git_refs("HEAD -> main, origin/main, tag: v1.0.0");
+        assert_eq!(
+            refs,
+            vec![
+                GitRef::Head,
+                GitRef::LocalBranch("main".into()),
+                GitRef::RemoteBranch("origin/main".into()),
+                GitRef::Tag("v1.0.0".into()),
+            ]
         );
     }
 
