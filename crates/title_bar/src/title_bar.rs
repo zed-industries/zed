@@ -395,7 +395,6 @@ impl TitleBar {
         };
 
         let meta = SharedString::from(meta);
-        let create_new_window = false;
 
         Some(
             PopoverMenu::new("remote-project-menu")
@@ -404,7 +403,7 @@ impl TitleBar {
                     let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
                     Some(
                         recent_projects::RemoteServerProjects::popover(
-                            create_new_window,
+                            false,
                             fs,
                             window,
                             workspace.clone(),
@@ -655,6 +654,7 @@ impl TitleBar {
                     Some(
                         git_ui::branch_picker::popover(
                             workspace.downgrade(),
+                            true,
                             repository,
                             window,
                             cx,
