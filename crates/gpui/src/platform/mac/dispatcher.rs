@@ -52,16 +52,7 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> Vec<TaskTiming> {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = &timings.lock().timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-            vec
-        })
+        THREAD_TIMINGS.with(|timings| timings.lock().copy_timings())
     }
 
     fn is_main_thread(&self) -> bool {
@@ -262,26 +253,14 @@ extern "C" fn trampoline(runnable: *mut c_void) {
 
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
+        timings.add_task_timing(timing);
     });
 
     task.run();
-    let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
+        timings.end_last_task();
     });
 }
 
@@ -298,25 +277,13 @@ extern "C" fn trampoline_compat(runnable: *mut c_void) {
     };
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
+        timings.add_task_timing(timing);
     });
 
     task.run();
-    let end = Instant::now();
 
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
+        timings.end_last_task();
     });
 }

@@ -1,7 +1,7 @@
 use std::{
     cell::LazyCell,
-    hash::Hasher,
-    hash::{DefaultHasher, Hash},
+    collections::VecDeque,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     thread::ThreadId,
     time::Instant,
@@ -151,10 +151,12 @@ impl<'a> SerializedThreadTaskTimings<'a> {
     }
 }
 
-// Allow 20mb of task timing entries
+// Allow 20mb of task timing entries.
+// VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid
+// wasting memory.
 const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
-pub(crate) type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
+pub(crate) type TaskTimings = VecDeque<TaskTiming>;
 pub(crate) type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
 
 pub(crate) struct GlobalThreadTimings {
@@ -189,7 +191,7 @@ thread_local! {
 pub(crate) struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
-    pub timings: Box<TaskTimings>,
+    timings: TaskTimings,
 }
 
 impl ThreadTimings {
@@ -197,8 +199,37 @@ impl ThreadTimings {
         ThreadTimings {
             thread_name,
             thread_id,
-            timings: TaskTimings::boxed(),
+            timings: TaskTimings::new(),
         }
+    }
+
+    /// If this task is the same as the last task, update the end time of the last task.
+    ///
+    /// Otherwise, add the new task timing to the list.
+    fn add_task_timing(&mut self, timing: TaskTiming) {
+        if let Some(last_timing) = self.timings.back_mut()
+            && last_timing.location == timing.location
+        {
+            last_timing.end = timing.end;
+        } else {
+            while self.timings.len() + 1 >= MAX_TASK_TIMINGS {
+                // This should only ever pop one element because it matches the insertion below.
+                self.timings.pop_front();
+            }
+            self.timings.push_back(timing);
+        }
+    }
+
+    /// Set the end time on the last task timing.
+    #[cfg_attr(not(target_os = "macos"), allow(unused))]
+    fn end_last_task(&mut self) {
+        if let Some(last_timing) = self.timings.back_mut() {
+            last_timing.end = Some(Instant::now());
+        }
+    }
+
+    pub fn copy_timings(&self) -> Vec<TaskTiming> {
+        self.timings.iter().cloned().collect()
     }
 }
 
@@ -219,16 +250,12 @@ impl Drop for ThreadTimings {
 
 pub(crate) fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                last_timing.end = timing.end;
-                return;
-            }
-        }
-
-        timings.push_back(timing);
+        timings.lock().add_task_timing(timing);
     });
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(unused))]
+pub(crate) fn get_all_thread_task_timings() -> Vec<ThreadTaskTimings> {
+    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskTimings::convert(&global_timings)
 }
