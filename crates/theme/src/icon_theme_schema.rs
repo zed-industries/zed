@@ -36,12 +36,14 @@ pub struct IconThemeContent {
 pub struct DirectoryIconsContent {
     pub collapsed: Option<SharedString>,
     pub expanded: Option<SharedString>,
+    pub pinned: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ChevronIconsContent {
     pub collapsed: Option<SharedString>,
     pub expanded: Option<SharedString>,
+    pub pinned: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

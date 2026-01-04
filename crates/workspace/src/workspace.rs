@@ -4270,6 +4270,9 @@ impl Workspace {
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
+                self.project.update(cx, |project, cx| {
+                    project.set_open_path(item.project_path(cx), cx)
+                });
             }
             pane::Event::Split { direction, mode } => {
                 match mode {
@@ -4338,6 +4341,9 @@ impl Workspace {
                 }
                 cx.emit(Event::ItemRemoved {
                     item_id: item.item_id(),
+                });
+                self.project.update(cx, |project, cx| {
+                    project.set_closed_path(item.project_path(cx), cx)
                 });
             }
             pane::Event::Focus => {

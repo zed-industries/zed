@@ -47,6 +47,8 @@ pub struct DirectoryIcons {
     pub collapsed: Option<SharedString>,
     /// The path to the icon to use for an expanded directory.
     pub expanded: Option<SharedString>,
+    /// The path to the icon to use for a pinned directory.
+    pub pinned: Option<SharedString>,
 }
 
 /// The icons used for chevrons.
@@ -56,6 +58,8 @@ pub struct ChevronIcons {
     pub collapsed: Option<SharedString>,
     /// The path to the icon to use for an expanded chevron.
     pub expanded: Option<SharedString>,
+    /// The path to the icon to use for a pinned chevron.
+    pub pinned: Option<SharedString>,
 }
 
 /// An icon definition.
@@ -397,11 +401,13 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
         directory_icons: DirectoryIcons {
             collapsed: Some("icons/file_icons/folder.svg".into()),
             expanded: Some("icons/file_icons/folder_open.svg".into()),
+            pinned: Some("icons/pin.svg".into()),
         },
         named_directory_icons: HashMap::default(),
         chevron_icons: ChevronIcons {
             collapsed: Some("icons/file_icons/chevron_right.svg".into()),
             expanded: Some("icons/file_icons/chevron_down.svg".into()),
+            pinned: Some("icons/dash.svg".into()),
         },
         file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
         file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
