@@ -5738,7 +5738,7 @@ impl RenderOnce for PanelRepoFooter {
             .menu(move |window, cx| {
                 let workspace = workspace.clone()?;
                 let repo = repo.clone().flatten();
-                Some(branch_picker::popover(workspace, repo, window, cx))
+                Some(branch_picker::popover(workspace, false, repo, window, cx))
             })
             .trigger_with_tooltip(
                 branch_selector_button,
