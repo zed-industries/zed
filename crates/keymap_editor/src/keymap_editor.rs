@@ -1889,7 +1889,7 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
-                                    .child(div().min_w_64()), // Spacer div to align with the search input
+                                    .child(div().min_w_80()), // Spacer div to align with the search input
                             )
                         },
                     ),
