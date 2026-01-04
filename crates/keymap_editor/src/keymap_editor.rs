@@ -2351,7 +2351,26 @@ impl KeybindingEditorModal {
         }
     }
 
+    fn get_selected_action_name(&self, cx: &App) -> anyhow::Result<&'static str> {
+        if let Some(selector) = self.action_editor.as_ref() {
+            let action_name_str = selector.read(cx).editor.read(cx).text(cx);
+
+            if action_name_str.is_empty() {
+                anyhow::bail!("Action name is required");
+            }
+
+            cx.all_action_names()
+                .iter()
+                .find(|&&name| name == action_name_str)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Action '{}' not found", action_name_str))
+        } else {
+            Ok(self.editing_keybind.action().name)
+        }
+    }
+
     fn validate_action_arguments(&self, cx: &App) -> anyhow::Result<Option<String>> {
+        let action_name = self.get_selected_action_name(cx)?;
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
@@ -2365,7 +2384,7 @@ impl KeybindingEditorModal {
             })
             .transpose()?;
 
-        cx.build_action(self.editing_keybind.action().name, value)
+        cx.build_action(action_name, value)
             .context("Failed to validate action arguments")?;
         Ok(action_arguments)
     }
@@ -2465,13 +2484,31 @@ impl KeybindingEditorModal {
         let create = self.creating;
         let keyboard_mapper = cx.keyboard_mapper().clone();
 
-        cx.spawn(async move |this, cx| {
-            let action_name = existing_keybind.action().name;
-            let humanized_action_name = existing_keybind.action().humanized_name.clone();
+        let action_name = self
+            .get_selected_action_name(cx)
+            .map_err(InputError::error)?;
 
+        let humanized_action_name: SharedString =
+            command_palette::humanize_action_name(action_name).into();
+
+        let action_information = ActionInformation::new(
+            action_name,
+            None,
+            &HashSet::default(),
+            cx.action_documentation(),
+            &self.keymap_editor.read(cx).humanized_action_names,
+        );
+
+        let keybind_for_save = if create {
+            ProcessedBinding::Unmapped(action_information)
+        } else {
+            existing_keybind.clone()
+        };
+
+        cx.spawn(async move |this, cx| {
             match save_keybinding_update(
                 create,
-                existing_keybind,
+                keybind_for_save,
                 &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
@@ -2520,13 +2557,57 @@ impl KeybindingEditorModal {
         Ok(())
     }
 
+    fn is_any_editor_showing_completions(&self, window: &Window, cx: &App) -> bool {
+        let is_editor_showing_completions =
+            |focus_handle: &FocusHandle, editor_entity: &Entity<Editor>| -> bool {
+                focus_handle.contains_focused(window, cx)
+                    && editor_entity.read_with(cx, |editor, _cx| {
+                        editor
+                            .context_menu()
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|menu| menu.visible())
+                    })
+            };
+
+        self.action_editor.as_ref().is_some_and(|action_editor| {
+            let focus_handle = action_editor.read(cx).focus_handle(cx);
+            let editor_entity = action_editor.read(cx).editor();
+            is_editor_showing_completions(&focus_handle, editor_entity)
+        }) || {
+            let focus_handle = self.context_editor.read(cx).focus_handle(cx);
+            let editor_entity = self.context_editor.read(cx).editor();
+            is_editor_showing_completions(&focus_handle, editor_entity)
+        } || self
+            .action_arguments_editor
+            .as_ref()
+            .is_some_and(|args_editor| {
+                let focus_handle = args_editor.read(cx).focus_handle(cx);
+                let editor_entity = &args_editor.read(cx).editor;
+                is_editor_showing_completions(&focus_handle, editor_entity)
+            })
+    }
+
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("KeybindEditorModal");
         key_context
     }
 
+    fn key_context_internal(&self, window: &Window, cx: &App) -> KeyContext {
+        let mut key_context = self.key_context();
+
+        if self.is_any_editor_showing_completions(window, cx) {
+            key_context.add("showing_completions");
+        }
+
+        key_context
+    }
+
     fn focus_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_any_editor_showing_completions(window, cx) {
+            return;
+        }
         self.focus_state.focus_next(window, cx);
     }
 
@@ -2536,6 +2617,9 @@ impl KeybindingEditorModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_any_editor_showing_completions(window, cx) {
+            return;
+        }
         self.focus_state.focus_previous(window, cx);
     }
 
@@ -2594,18 +2678,22 @@ impl KeybindingEditorModal {
 }
 
 impl Render for KeybindingEditorModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
         let matching_bindings_count = self.get_matching_bindings_count(cx);
+        let key_context = self.key_context_internal(window, cx);
+        let showing_completions = key_context.contains("showing_completions");
 
         v_flex()
             .w(rems(34.))
             .elevation_3(cx)
-            .key_context(self.key_context())
-            .on_action(cx.listener(Self::focus_next))
-            .on_action(cx.listener(Self::focus_prev))
+            .key_context(key_context)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .when(!showing_completions, |this| {
+                this.on_action(cx.listener(Self::focus_next))
+                    .on_action(cx.listener(Self::focus_prev))
+            })
             .child(
                 Modal::new("keybinding_editor_modal", None)
                     .header(
@@ -2617,25 +2705,36 @@ impl Render for KeybindingEditorModal {
                                 .gap_0p5()
                                 .border_b_1()
                                 .border_color(theme.border_variant)
-                                .child(Label::new(
-                                    self.editing_keybind.action().humanized_name.clone(),
-                                ))
-                                .when_some(
-                                    self.editing_keybind.action().documentation,
-                                    |this, docs| {
-                                        this.child(
-                                            Label::new(docs)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                    },
-                                ),
+                                .when(!self.creating, |this| {
+                                    this.child(Label::new(
+                                        self.editing_keybind.action().humanized_name.clone(),
+                                    ))
+                                    .when_some(
+                                        self.editing_keybind.action().documentation,
+                                        |this, docs| {
+                                            this.child(
+                                                Label::new(docs)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        },
+                                    )
+                                })
+                                .when(self.creating, |this| {
+                                    this.child(Label::new("Create Keybinding"))
+                                }),
                         ),
                     )
                     .section(
                         Section::new().child(
                             v_flex()
                                 .gap_2p5()
+                                .when_some(
+                                    self.creating
+                                        .then_some(())
+                                        .and_then(|_| self.action_editor.as_ref()),
+                                    |this, selector| this.child(selector.clone()),
+                                )
                                 .child(
                                     v_flex()
                                         .gap_1()
