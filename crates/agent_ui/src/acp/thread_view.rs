@@ -303,6 +303,8 @@ pub struct AcpThreadView {
     show_codex_windows_warning: bool,
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     message_queue: Vec<QueuedMessage>,
+    skip_queue_processing_count: usize,
+    user_interrupted_generation: bool,
 }
 
 struct QueuedMessage {
@@ -472,6 +474,8 @@ impl AcpThreadView {
             show_codex_windows_warning,
             in_flight_prompt: None,
             message_queue: Vec::new(),
+            skip_queue_processing_count: 0,
+            user_interrupted_generation: false,
         }
     }
 
@@ -1154,6 +1158,9 @@ impl AcpThreadView {
             return;
         };
 
+        self.skip_queue_processing_count = 0;
+        self.user_interrupted_generation = true;
+
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         cx.spawn_in(window, async move |this, cx| {
@@ -1329,6 +1336,7 @@ impl AcpThreadView {
     fn send_queued_message_at_index(
         &mut self,
         index: usize,
+        is_send_now: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1340,21 +1348,26 @@ impl AcpThreadView {
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
-        let Some(thread) = self.thread() else {
+        let Some(thread) = self.thread().cloned() else {
             return;
         };
+
+        // Only increment skip count for "Send Now" operations (out-of-order sends)
+        // Normal auto-processing from the Stopped handler doesn't need to skip
+        if is_send_now {
+            let is_generating = thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+            self.skip_queue_processing_count += if is_generating { 2 } else { 1 };
+        }
+
+        // Ensure we don't end up with multiple concurrent generations
+        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         let session_id = thread.read(cx).session_id().clone();
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let thread = thread.downgrade();
 
-        if self.should_be_following {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.follow(CollaboratorId::Agent, window, cx);
-                })
-                .ok();
-        }
+        let should_be_following = self.should_be_following;
+        let workspace = self.workspace.clone();
 
         self.is_loading_contents = true;
         let model_id = self.current_model_id(cx);
@@ -1368,7 +1381,16 @@ impl AcpThreadView {
         .detach();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            this.update_in(cx, |this, _window, cx| {
+            cancelled.await;
+            this.update_in(cx, |this, window, cx| {
+                if should_be_following {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.follow(CollaboratorId::Agent, window, cx);
+                        })
+                        .ok();
+                }
+
                 this.in_flight_prompt = Some(content.clone());
                 this.set_editor_is_expanded(false, cx);
                 this.scroll_to_bottom(cx);
@@ -1634,8 +1656,15 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
-                if !self.message_queue.is_empty() {
-                    self.send_queued_message_at_index(0, window, cx);
+
+                if self.skip_queue_processing_count > 0 {
+                    self.skip_queue_processing_count -= 1;
+                } else if self.user_interrupted_generation {
+                    // Manual interruption: don't auto-process queue.
+                    // Reset the flag so future completions can process normally.
+                    self.user_interrupted_generation = false;
+                } else if !self.message_queue.is_empty() {
+                    self.send_queued_message_at_index(0, false, window, cx);
                 }
             }
             AcpThreadEvent::Refusal => {
@@ -4653,7 +4682,7 @@ impl AcpThreadView {
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.send_queued_message_at_index(
-                                                    index, window, cx,
+                                                    index, true, window, cx,
                                                 );
                                             })),
                                     ),
@@ -6414,7 +6443,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
-                this.send_queued_message_at_index(0, window, cx);
+                this.send_queued_message_at_index(0, true, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(profile_selector) = this.profile_selector.as_ref() {
