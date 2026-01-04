@@ -1,7 +1,7 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus, ToolCall, ToolCallContent,
-    ToolCallStatus, UserMessageId,
+    ToolCallStatus, ToolSource, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
@@ -2553,6 +2553,30 @@ impl AcpThreadView {
                                     .into_any_element()
                             },
                         ))
+                        .map(|this| {
+                            if should_show_tool_call_input(tool_call)
+                                && let Some(raw_input) = tool_call.raw_input_markdown.clone()
+                            {
+                                this.child(
+                                    v_flex()
+                                        .gap_1()
+                                        .p_2()
+                                        .child(input_output_header("Raw Input:".into()))
+                                        .child(
+                                            div()
+                                                .id(("tool-call-raw-input-markdown", entry_ix))
+                                                .child(self.render_markdown(
+                                                    raw_input,
+                                                    default_markdown_style(
+                                                        false, false, window, cx,
+                                                    ),
+                                                )),
+                                        ),
+                                )
+                            } else {
+                                this
+                            }
+                        })
                         .child(self.render_permission_buttons(
                             tool_call.kind,
                             options,
@@ -6193,6 +6217,10 @@ impl Render for AcpThreadView {
             )
             .child(self.render_message_editor(window, cx))
     }
+}
+
+fn should_show_tool_call_input(tool_call: &ToolCall) -> bool {
+    tool_call.source == ToolSource::Mcp
 }
 
 fn default_markdown_style(
