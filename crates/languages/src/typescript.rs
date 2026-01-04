@@ -56,6 +56,9 @@ const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
 const TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_PACKAGE_PATH"));
 
+const TYPESCRIPT_BUN_TEST_NAME_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_TEST_NAME"));
+
 const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
 
@@ -237,7 +240,7 @@ impl PackageJsonData {
                 args: vec![
                     "test".to_owned(),
                     "--test-name-pattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    format!("\"{}\"", TYPESCRIPT_BUN_TEST_NAME_VARIABLE.template_value()),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -486,6 +489,10 @@ impl ContextProvider for TypeScriptContextProvider {
             );
             vars.insert(
                 TYPESCRIPT_VITEST_TEST_NAME_VARIABLE,
+                replace_test_name_parameters(symbol),
+            );
+            vars.insert(
+                TYPESCRIPT_BUN_TEST_NAME_VARIABLE,
                 replace_test_name_parameters(symbol),
             );
         }

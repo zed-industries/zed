@@ -46,6 +46,7 @@ pub enum Step {
     FormatPrompt,
     Predict,
     Score,
+    Synthesize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +63,7 @@ impl Step {
             Step::FormatPrompt => "Format",
             Step::Predict => "Predict",
             Step::Score => "Score",
+            Step::Synthesize => "Synthesize",
         }
     }
 
@@ -72,6 +74,7 @@ impl Step {
             Step::FormatPrompt => "\x1b[34m",
             Step::Predict => "\x1b[32m",
             Step::Score => "\x1b[31m",
+            Step::Synthesize => "\x1b[36m",
         }
     }
 }

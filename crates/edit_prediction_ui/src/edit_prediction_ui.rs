@@ -150,7 +150,7 @@ fn capture_example_as_markdown(
         .buffer()
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
-    let example = capture_example(project.clone(), buffer, cursor_anchor, true, cx)?;
+    let example = capture_example(project.clone(), buffer, cursor_anchor, cx)?;
 
     let examples_dir = AllLanguageSettings::get_global(cx)
         .edit_predictions

@@ -22,10 +22,11 @@ use rpc::{
     proto::{self},
 };
 
+use settings::Settings;
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
-use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
+use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 /// A set of open buffers.
 pub struct BufferStore {
@@ -661,15 +662,28 @@ impl LocalBufferStore {
                 this.add_buffer(buffer.clone(), cx)?;
                 let buffer_id = buffer.read(cx).remote_id();
                 if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    this.path_to_buffer_id.insert(
-                        ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        },
-                        buffer_id,
-                    );
+                    let project_path = ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path.clone(),
+                    };
+                    let entry_id = file.entry_id;
+
+                    // Check if the file should be read-only based on settings
+                    let settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                    let is_read_only = if project_path.path.is_empty() {
+                        settings.is_std_path_read_only(&file.full_path(cx))
+                    } else {
+                        settings.is_path_read_only(&project_path.path)
+                    };
+                    if is_read_only {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_capability(Capability::Read, cx);
+                        });
+                    }
+
+                    this.path_to_buffer_id.insert(project_path, buffer_id);
                     let this = this.as_local_mut().unwrap();
-                    if let Some(entry_id) = file.entry_id {
+                    if let Some(entry_id) = entry_id {
                         this.local_buffer_ids_by_entry_id
                             .insert(entry_id, buffer_id);
                     }

@@ -56,6 +56,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true

@@ -1,6 +1,6 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
+    Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
+    ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
     ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
@@ -803,6 +803,29 @@ impl Item for Editor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.buffer().read(cx).read(cx).is_dirty()
+    }
+
+    fn is_read_only(&self, cx: &App) -> bool {
+        self.read_only(cx)
+    }
+
+    // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
+    // without relying on focus-based action dispatch.
+    fn toggle_read_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(
+                    match buffer.capability() {
+                        Capability::ReadWrite => Capability::Read,
+                        Capability::Read => Capability::ReadWrite,
+                        Capability::ReadOnly => Capability::ReadOnly,
+                    },
+                    cx,
+                );
+            });
+        }
+        cx.notify();
+        window.refresh();
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {

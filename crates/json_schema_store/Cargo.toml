@@ -20,7 +20,6 @@ dap.workspace = true
 extension.workspace = true
 gpui.workspace = true
 language.workspace = true
-lsp.workspace = true
 paths.workspace = true
 project.workspace = true
 schemars.workspace = true
@@ -31,11 +30,3 @@ snippet_provider.workspace = true
 task.workspace = true
 theme.workspace = true
 util.workspace = true
-
-
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true
-# settings.workspace = true

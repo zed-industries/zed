@@ -1,29 +1,19 @@
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
+    git,
     headless::EpAppState,
-    paths::{REPOS_DIR, WORKTREES_DIR},
+    paths::WORKTREES_DIR,
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
-use collections::HashMap;
 use edit_prediction::EditPredictionStore;
 use edit_prediction::udiff::OpenedBuffers;
-use futures::{
-    AsyncWriteExt as _,
-    lock::{Mutex, OwnedMutexGuard},
-};
+use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use project::Project;
 use project::buffer_store::BufferStoreEvent;
-use project::{Project, ProjectPath};
-use std::{
-    cell::RefCell,
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use util::{paths::PathStyle, rel_path::RelPath};
-use zeta_prompt::CURSOR_MARKER;
+use std::{fs, path::PathBuf, sync::Arc};
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -86,37 +76,22 @@ async fn cursor_position(
         return Err(error);
     }
 
-    let worktree = project.read_with(cx, |project, cx| {
-        project
-            .visible_worktrees(cx)
-            .next()
-            .context("No visible worktrees")
-    })??;
-
-    let cursor_path = RelPath::new(&example.spec.cursor_path, PathStyle::Posix)
-        .context("Failed to create RelPath")?
-        .into_arc();
-    let cursor_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer(
-                ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: cursor_path,
-                },
-                cx,
-            )
+    let cursor_path = project
+        .read_with(cx, |project, cx| {
+            project.find_project_path(&example.spec.cursor_path, cx)
         })?
+        .with_context(|| {
+            format!(
+                "failed to find cursor path {}",
+                example.spec.cursor_path.display()
+            )
+        })?;
+    let cursor_buffer = project
+        .update(cx, |project, cx| project.open_buffer(cursor_path, cx))?
         .await?;
-    let cursor_offset_within_excerpt = example
-        .spec
-        .cursor_position
-        .find(CURSOR_MARKER)
-        .context("missing cursor marker")?;
-    let mut cursor_excerpt = example.spec.cursor_position.clone();
-    cursor_excerpt.replace_range(
-        cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
-        "",
-    );
+
+    let (cursor_excerpt, cursor_offset_within_excerpt) = example.spec.cursor_excerpt()?;
+
     let excerpt_offset = cursor_buffer.read_with(cx, |buffer, _cx| {
         let text = buffer.text();
 
@@ -212,17 +187,17 @@ async fn setup_project(
 
 async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Result<PathBuf> {
     let (repo_owner, repo_name) = example.repo_name().context("failed to get repo name")?;
-    let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
+    let repo_dir = git::repo_path_for_url(&example.spec.repository_url)?;
     let worktree_path = WORKTREES_DIR
         .join(repo_owner.as_ref())
         .join(repo_name.as_ref());
-    let repo_lock = lock_repo(&repo_dir).await;
+    let repo_lock = git::lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
         step_progress.set_substatus(format!("cloning {}", repo_name));
         fs::create_dir_all(&repo_dir)?;
-        run_git(&repo_dir, &["init"]).await?;
-        run_git(
+        git::run_git(&repo_dir, &["init"]).await?;
+        git::run_git(
             &repo_dir,
             &["remote", "add", "origin", &example.spec.repository_url],
         )
@@ -230,53 +205,26 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     }
 
     // Resolve the example to a revision, fetching it if needed.
-    let revision = run_git(
-        &repo_dir,
-        &[
-            "rev-parse",
-            &format!("{}^{{commit}}", example.spec.revision),
-        ],
-    )
-    .await;
-    let revision = if let Ok(revision) = revision {
-        revision
-    } else {
-        step_progress.set_substatus("fetching");
-        if run_git(
-            &repo_dir,
-            &["fetch", "--depth", "1", "origin", &example.spec.revision],
-        )
-        .await
-        .is_err()
-        {
-            run_git(&repo_dir, &["fetch", "origin"]).await?;
-        }
-        let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
-        revision
-    };
+    step_progress.set_substatus("fetching");
+    let revision = git::fetch_if_needed(&repo_dir, &example.spec.revision).await?;
 
     // Create the worktree for this example if needed.
     step_progress.set_substatus("preparing worktree");
     if worktree_path.is_dir() {
-        run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-        run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-        run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
+        git::run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+        git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+        git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
     } else {
         let worktree_path_string = worktree_path.to_string_lossy();
-        run_git(
+        let branch_name = example.spec.filename();
+        git::run_git(
             &repo_dir,
-            &["branch", "-f", &example.spec.name, revision.as_str()],
+            &["branch", "-f", &branch_name, revision.as_str()],
         )
         .await?;
-        run_git(
+        git::run_git(
             &repo_dir,
-            &[
-                "worktree",
-                "add",
-                "-f",
-                &worktree_path_string,
-                &example.spec.name,
-            ],
+            &["worktree", "add", "-f", &worktree_path_string, &branch_name],
         )
         .await?;
     }
@@ -318,40 +266,4 @@ async fn apply_edit_history(
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
     edit_prediction::udiff::apply_diff(&example.spec.edit_history, project, cx).await
-}
-
-thread_local! {
-    static REPO_LOCKS: RefCell<HashMap<PathBuf, Arc<Mutex<()>>>> = RefCell::new(HashMap::default());
-}
-
-#[must_use]
-pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
-    REPO_LOCKS
-        .with(|cell| {
-            cell.borrow_mut()
-                .entry(path.as_ref().to_path_buf())
-                .or_default()
-                .clone()
-        })
-        .lock_owned()
-        .await
-}
-
-async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = smol::process::Command::new("git")
-        .current_dir(repo_path)
-        .args(args)
-        .output()
-        .await?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
-        args.join(" "),
-        repo_path.display(),
-        output.status,
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout),
-    );
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }

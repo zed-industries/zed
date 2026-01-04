@@ -72,7 +72,7 @@ several features:
 - Runnable code detection
 - Selecting classes, functions, etc.
 
-The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax) enable these
+The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
 
 ### Syntax highlighting

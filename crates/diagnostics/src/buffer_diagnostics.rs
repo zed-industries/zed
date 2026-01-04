@@ -763,6 +763,10 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
+    fn is_read_only(&self, cx: &App) -> bool {
+        self.multibuffer.read(cx).read_only()
+    }
+
     fn navigate(
         &mut self,
         data: Box<dyn Any>,

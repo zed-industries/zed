@@ -124,6 +124,12 @@ actions!(
         ContinueWithBurnMode,
         /// Toggles burn mode for faster responses.
         ToggleBurnMode,
+        /// Queues a message to be sent when generation completes.
+        QueueMessage,
+        /// Sends the next queued message immediately.
+        SendNextQueuedMessage,
+        /// Clears all messages from the queue.
+        ClearMessageQueue,
     ]
 );
 
