@@ -6678,7 +6678,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Trim Final Newlines On Save",
-            description: "Whether or not to trim newline characters at the end of a buffer when saving it.",
+            description: "Whether or not to trim extra newline characters at the end of a buffer when saving it.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).trim_final_newlines_on_save"),
                 pick: |settings_content| {

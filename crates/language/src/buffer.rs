@@ -2201,42 +2201,33 @@ impl Buffer {
         })
     }
 
-    /// Removes trailing newline characters from the end of the buffer.
+    /// Removes extra trailing newline characters from the end of the buffer,
+    /// leaving a single final newline if present.
     /// Skips if the buffer is empty.
-    pub fn trim_final_newlines(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn trim_final_newlines(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
         if len == 0 {
-            return false;
+            return;
         }
 
-        let (trim_end, found_non_newline) = {
-            let rope = self.as_rope();
-            let mut trim_end = len;
-            let mut found_non_newline = false;
-
-            for chunk in rope.reversed_chunks_in_range(0..len) {
-                for ch in chunk.chars().rev() {
-                    if ch == '\n' {
-                        trim_end -= ch.len_utf8();
-                    } else {
-                        found_non_newline = true;
-                        break;
-                    }
-                }
-
-                if found_non_newline || trim_end == 0 {
-                    break;
+        let rope = self.as_rope();
+        let mut trailing_newlines = 0usize;
+        'outer: for chunk in rope.reversed_chunks_in_range(0..len) {
+            for ch in chunk.chars().rev() {
+                if ch == '\n' {
+                    trailing_newlines += 1;
+                } else {
+                    break 'outer;
                 }
             }
-
-            (trim_end, found_non_newline)
-        };
-
-        if trim_end < len {
-            self.edit([(trim_end..len, "")], None, cx);
         }
 
-        !found_non_newline && trim_end == 0
+        if trailing_newlines <= 1 {
+            return;
+        }
+
+        let trim_start = len - (trailing_newlines - 1);
+        self.edit([(trim_start..len, "")], None, cx);
     }
 
     /// Ensures that the buffer ends with a newline character.

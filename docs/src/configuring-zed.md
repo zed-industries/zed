@@ -1557,7 +1557,7 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Trim Final Newlines On Save
 
-- Description: Removes trailing newline characters at the end of the file when saving. When combined with `ensure_final_newline_on_save`, this collapses multiple trailing blank lines to a single newline.
+- Description: Removes extra trailing newline characters at the end of the file when saving, leaving at most one final newline.
 - Setting: `trim_final_newlines_on_save`
 - Default: `false`
 

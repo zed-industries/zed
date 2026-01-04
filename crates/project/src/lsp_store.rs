@@ -1538,10 +1538,7 @@ impl LocalLspStore {
         if settings.trim_final_newlines_on_save {
             zlog::trace!(logger => "trimming final newlines");
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
-                let trimmed_all_newlines = buffer.trim_final_newlines(cx);
-                if trimmed_all_newlines && settings.ensure_final_newline_on_save {
-                    buffer.edit([(0..0, "\n")], None, cx);
-                }
+                buffer.trim_final_newlines(cx);
             })?;
         }
 
