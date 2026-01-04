@@ -5218,7 +5218,6 @@ impl Workspace {
                         && let Some(variant) = item.to_state_proto(window, cx)
                     {
                         let view = Some(proto::View {
-                            id: id.clone(),
                             leader_id: leader_peer_id,
                             variant: Some(variant),
                             panel_id: panel_id.map(|id| id as i32),
