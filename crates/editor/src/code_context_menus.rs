@@ -1,9 +1,9 @@
 use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, HighlightStyle, ListSizingBehavior, ScrollHandle,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, Task,
-    UniformListScrollHandle, div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
+    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -41,9 +41,9 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use crate::{CodeActionSource, CompletionDetailAlignment, EditorSettings};
+use crate::{CodeActionSource, EditorSettings};
 use collections::{HashSet, VecDeque};
-use settings::{Settings, SnippetSortOrder};
+use settings::{CompletionDetailAlignment, Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -834,101 +834,13 @@ impl CompletionsMenu {
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
                         let completion = &completions_guard[mat.candidate_id];
-
-                        let is_deprecated = completion
-                            .source
-                            .lsp_completion(false)
-                            .and_then(|lsp_completion| {
-                                match (lsp_completion.deprecated, &lsp_completion.tags) {
-                                    (Some(true), _) => Some(true),
-                                    (_, Some(tags)) => {
-                                        Some(tags.contains(&CompletionItemTag::DEPRECATED))
-                                    }
-                                    _ => None,
-                                }
-                            })
-                            .unwrap_or(false);
+                        let documentation = if show_completion_documentation {
+                            &completion.documentation
+                        } else {
+                            &None
+                        };
 
                         let filter_start = completion.label.filter_range.start;
-                        let label_text_full = completion.label.text.as_str();
-                        let filter_end = completion.label.filter_range.end;
-                        let label_text = label_text_full
-                            .get(..filter_end)
-                            .unwrap_or(label_text_full);
-                        let label_suffix = label_text_full.get(filter_end..).unwrap_or("");
-                        let detail_text_full = completion
-                            .source
-                            .lsp_completion(false)
-                            .and_then(|lsp_completion| lsp_completion.detail.clone())
-                            .filter(|detail| !detail.trim().is_empty());
-
-                        let apply_deprecated_style = |highlight: &mut HighlightStyle| {
-                            highlight.font_weight = None;
-                            if is_deprecated {
-                                highlight.strikethrough = Some(StrikethroughStyle {
-                                    thickness: 1.0.into(),
-                                    ..Default::default()
-                                });
-                                highlight.color = Some(cx.theme().colors().text_muted);
-                            }
-                        };
-
-                        let label_suffix_trimmed = label_suffix.trim();
-                        let label_suffix_info = if label_suffix_trimmed.is_empty() {
-                            None
-                        } else {
-                            let trim_offset = label_suffix
-                                .find(label_suffix_trimmed)
-                                .unwrap_or_default();
-                            let detail_range_in_label = (filter_end + trim_offset)
-                                ..(filter_end + trim_offset + label_suffix_trimmed.len());
-                            Some((label_suffix_trimmed, detail_range_in_label))
-                        };
-
-                        let detail_highlights_for_range = |detail_range_in_label: &Range<usize>| {
-                            styled_runs_for_code_label(
-                                &completion.label,
-                                &style.syntax,
-                                &style.local_player,
-                            )
-                            .filter_map(|(range, mut highlight)| {
-                                let clamped_start =
-                                    range.start.max(detail_range_in_label.start);
-                                let clamped_end = range.end.min(detail_range_in_label.end);
-                                if clamped_start >= clamped_end {
-                                    return None;
-                                }
-                                let adjusted_range = (clamped_start
-                                    - detail_range_in_label.start)
-                                    ..(clamped_end - detail_range_in_label.start);
-                                apply_deprecated_style(&mut highlight);
-                                Some((adjusted_range, highlight))
-                            })
-                            .collect()
-                        };
-
-                        let detail_info = match (detail_text_full.as_deref(), label_suffix_info) {
-                            (Some(detail_text), None) => {
-                                Some((detail_text.trim().to_string(), Vec::new()))
-                            }
-                            (_, Some((label_suffix_trimmed, detail_range_in_label))) => {
-                                let detail_highlights =
-                                    detail_highlights_for_range(&detail_range_in_label);
-                                Some((label_suffix_trimmed.to_string(), detail_highlights))
-                            }
-                            _ => None,
-                        };
-
-                        let name_highlights = styled_runs_for_code_label(
-                            &completion.label,
-                            &style.syntax,
-                            &style.local_player,
-                        )
-                        .filter(|(range, _)| range.end <= filter_end)
-                        .map(|(range, mut highlight)| {
-                            apply_deprecated_style(&mut highlight);
-                            (range, highlight)
-                        });
 
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| {
@@ -937,79 +849,113 @@ impl CompletionsMenu {
                                     FontWeight::BOLD.into(),
                                 )
                             }),
-                            name_highlights,
+                            styled_runs_for_code_label(
+                                &completion.label,
+                                &style.syntax,
+                                &style.local_player,
+                            )
+                            .map(|(range, mut highlight)| {
+                                // Ignore font weight for syntax highlighting, as we'll use it
+                                // for fuzzy matches.
+                                highlight.font_weight = None;
+                                if completion
+                                    .source
+                                    .lsp_completion(false)
+                                    .and_then(|lsp_completion| {
+                                        match (lsp_completion.deprecated, &lsp_completion.tags) {
+                                            (Some(true), _) => Some(true),
+                                            (_, Some(tags)) => {
+                                                Some(tags.contains(&CompletionItemTag::DEPRECATED))
+                                            }
+                                            _ => None,
+                                        }
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    highlight.strikethrough = Some(StrikethroughStyle {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    });
+                                    highlight.color = Some(cx.theme().colors().text_muted);
+                                }
+
+                                (range, highlight)
+                            }),
                         );
 
-                        let completion_label = StyledText::new(label_text.to_string())
-                            .with_default_highlights(&style.text, highlights);
+                        let highlights: Vec<_> = highlights.collect();
 
-                        let detail_label = detail_info.map(|(text, highlights)| {
-                            div()
-                                .when(
-                                    matches!(
-                                        completion_detail_alignment,
-                                        CompletionDetailAlignment::Right
-                                    ),
-                                    |this| this.ml_6(),
-                                )
-                                .when(
-                                    matches!(
-                                        completion_detail_alignment,
-                                        CompletionDetailAlignment::Inline
-                                    ),
-                                    |this| this.ml_4(),
-                                )
-                                .flex_shrink()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .when(!is_deprecated, |this| this.opacity(0.85))
-                                .text_sm()
-                                .text_color(if is_deprecated {
-                                    cx.theme().colors().text_muted
+                        let filter_range = &completion.label.filter_range;
+                        let full_text = &completion.label.text;
+
+                        let main_text: String = full_text[filter_range.clone()].to_string();
+                        let main_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                if range.end <= filter_range.start
+                                    || range.start >= filter_range.end
+                                {
+                                    return None;
+                                }
+                                let clamped_start =
+                                    range.start.max(filter_range.start) - filter_range.start;
+                                let clamped_end =
+                                    range.end.min(filter_range.end) - filter_range.start;
+                                Some((clamped_start..clamped_end, highlight.clone()))
+                            })
+                            .collect();
+                        let main_label = StyledText::new(main_text)
+                            .with_default_highlights(&style.text, main_highlights);
+
+                        let suffix_text: String = full_text[filter_range.end..].to_string();
+                        let suffix_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                // Only include highlights that are in the suffix area
+                                if range.end <= filter_range.end {
+                                    return None;
+                                }
+                                // Shift the range to start from 0 of suffix
+                                let shifted_start = range.start.saturating_sub(filter_range.end);
+                                let shifted_end = range.end - filter_range.end;
+                                Some((shifted_start..shifted_end, highlight.clone()))
+                            })
+                            .collect();
+                        let suffix_label = if !suffix_text.is_empty() {
+                            Some(
+                                StyledText::new(suffix_text)
+                                    .with_default_highlights(&style.text, suffix_highlights),
+                            )
+                        } else {
+                            None
+                        };
+
+                        let left_aligned_suffix =
+                            matches!(completion_detail_alignment, CompletionDetailAlignment::Left);
+
+                        let right_aligned_suffix = matches!(
+                            completion_detail_alignment,
+                            CompletionDetailAlignment::Right,
+                        );
+
+                        let documentation_label = match documentation {
+                            Some(CompletionDocumentation::SingleLine(text))
+                            | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: text,
+                                ..
+                            }) => {
+                                if text.trim().is_empty() {
+                                    None
                                 } else {
-                                    cx.theme().colors().text
-                                })
-                                .child(
-                                    StyledText::new(text).with_default_highlights(
-                                        &style.text,
-                                        gpui::combine_highlights(highlights, std::iter::empty()),
-                                    ),
-                                )
-                                .into_any_element()
-                        });
-
-                        // Keep the left label intact; the detail column yields space first.
-                        let completion_row = match completion_detail_alignment {
-                            CompletionDetailAlignment::Right => h_flex()
-                                .flex_grow()
-                                .min_w_0()
-                                .justify_between()
-                                .child(
-                                    h_flex()
-                                        .flex_shrink_0()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .child(completion_label),
-                                )
-                                .when_some(detail_label, |this, detail_label| {
-                                    this.child(detail_label)
-                                }),
-                            CompletionDetailAlignment::Inline => h_flex()
-                                .flex_grow()
-                                .min_w_0()
-                                .child(
-                                    h_flex()
-                                        .flex_shrink_0()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .child(completion_label),
-                                )
-                                .when_some(detail_label, |this, detail_label| {
-                                    this.child(detail_label)
-                                }),
+                                    Some(
+                                        Label::new(text.trim().to_string())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }
+                            }
+                            _ => None,
                         };
 
                         let start_slot = completion
@@ -1051,7 +997,25 @@ impl CompletionsMenu {
                                         }
                                     }))
                                     .start_slot::<AnyElement>(start_slot)
-                                    .child(completion_row),
+                                    .child(
+                                        h_flex()
+                                            .min_w_0()
+                                            .w_full()
+                                            .when(left_aligned_suffix, |this| this.justify_start())
+                                            .when(right_aligned_suffix, |this| {
+                                                this.justify_between()
+                                            })
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .whitespace_nowrap()
+                                                    .child(main_label),
+                                            )
+                                            .when_some(suffix_label, |this, suffix| {
+                                                this.child(div().truncate().child(suffix))
+                                            }),
+                                    )
+                                    .end_slot::<Label>(documentation_label),
                             )
                     })
                     .collect()

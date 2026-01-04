@@ -258,7 +258,7 @@ pub enum RelativeLineNumbers {
 #[serde(rename_all = "snake_case")]
 pub enum CompletionDetailAlignment {
     Right,
-    Inline,
+    Left,
 }
 
 impl RelativeLineNumbers {
