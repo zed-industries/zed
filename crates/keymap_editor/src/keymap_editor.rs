@@ -3200,12 +3200,14 @@ impl ActionArgumentsEditor {
 }
 
 impl Render for ActionArgumentsEditor {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = theme::ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
         let border_color = if self.is_loading {
             colors.border_disabled
+        } else if self.focus_handle.contains_focused(window, cx) {
+            colors.border_focused
         } else {
             colors.border_variant
         };
