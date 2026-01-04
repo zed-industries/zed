@@ -22,7 +22,7 @@ use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use vim_mode_setting::{HelixModeSetting, VimModeSetting};
+use vim_mode_setting::ModalEditing;
 use workspace::item::ItemBufferKind;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
@@ -315,8 +315,7 @@ impl Render for QuickActionBar {
         let editor_focus_handle = editor.focus_handle(cx);
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
-            let vim_mode_enabled = VimModeSetting::get_global(cx).0;
-            let helix_mode_enabled = HelixModeSetting::get_global(cx).0;
+            let modal_editing = *ModalEditing::get_global(cx);
 
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
@@ -585,29 +584,37 @@ impl Render for QuickActionBar {
                             menu = menu.separator();
 
                             menu = menu.toggleable_entry(
-                                "Vim Mode",
-                                vim_mode_enabled,
+                                "No Modal Editing",
+                                modal_editing == ModalEditing::None,
                                 IconPosition::Start,
                                 None,
                                 {
                                     move |window, cx| {
-                                        let new_value = !vim_mode_enabled;
-                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
-                                        HelixModeSetting::override_global(HelixModeSetting(false), cx);
+                                        ModalEditing::override_global(ModalEditing::None, cx);
+                                        window.refresh();
+                                    }
+                                },
+                            );
+                            menu = menu.toggleable_entry(
+                                "Vim Mode",
+                                modal_editing == ModalEditing::Vim,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |window, cx| {
+                                        ModalEditing::override_global(ModalEditing::Vim, cx);
                                         window.refresh();
                                     }
                                 },
                             );
                             menu = menu.toggleable_entry(
                                 "Helix Mode",
-                                helix_mode_enabled,
+                                modal_editing == ModalEditing::Helix,
                                 IconPosition::Start,
                                 None,
                                 {
                                     move |window, cx| {
-                                        let new_value = !helix_mode_enabled;
-                                        HelixModeSetting::override_global(HelixModeSetting(new_value), cx);
-                                        VimModeSetting::override_global(VimModeSetting(false), cx);
+                                        ModalEditing::override_global(ModalEditing::Helix, cx);
                                         window.refresh();
                                     }
                                 }
