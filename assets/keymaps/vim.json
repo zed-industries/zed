@@ -1066,6 +1066,8 @@
     "context": "MessageEditor > Editor && VimControl",
     "bindings": {
       "enter": "agent::Chat",
+      "ctrl-shift-enter": "agent::Chat",
+      "cmd-shift-enter": "agent::Chat",
     },
   },
   {

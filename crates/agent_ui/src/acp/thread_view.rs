@@ -291,6 +291,8 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
+    waiting_to_send: bool,
+    waiting_task: Option<Task<()>>,
     prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
@@ -446,6 +448,8 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
+            waiting_to_send: false,
+            waiting_task: None,
             edits_expanded: false,
             plan_expanded: false,
             prompt_capabilities,
@@ -990,7 +994,9 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            MessageEditorEvent::Send => self.send(window, cx),
+            MessageEditorEvent::Send { wait_for_agent } => {
+                self.send_with_wait(*wait_for_agent, window, cx)
+            }
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1042,8 +1048,14 @@ impl AcpThreadView {
                     }
                 }
             }
-            ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
-                self.regenerate(event.entry_index, editor.clone(), window, cx);
+            ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send { wait_for_agent }) => {
+                self.regenerate_with_wait(
+                    event.entry_index,
+                    editor.clone(),
+                    *wait_for_agent,
+                    window,
+                    cx,
+                );
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1134,6 +1146,66 @@ impl AcpThreadView {
         }
 
         self.send_impl(self.message_editor.clone(), window, cx)
+    }
+
+    fn send_with_wait(
+        &mut self,
+        wait_for_agent: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        if self.is_loading_contents {
+            return;
+        }
+
+        // If Ctrl+Shift was pressed and agent is currently generating a response,
+        // queue the message to send automatically once the agent finishes.
+        // This prevents interrupting the agent mid-response.
+        let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
+        if wait_for_agent && is_generating {
+            self.waiting_to_send = true;
+            cx.notify();
+
+            let task = cx.spawn_in(window, async move |this, cx| {
+                // Poll the thread status every 100ms until it becomes idle.
+                // We use polling rather than event-driven approach because:
+                // 1. ThreadStatus changes happen internally in the thread
+                // 2. We don't have a direct subscription mechanism to thread status changes
+                // 3. 100ms provides responsive UX without excessive CPU usage
+                loop {
+                    let is_idle = thread
+                        .read_with(cx, |thread, _cx| thread.status() == ThreadStatus::Idle)
+                        .ok()
+                        .unwrap_or(true); // Treat errors as idle to unblock the user
+
+                    if is_idle {
+                        break;
+                    }
+
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                }
+
+                // Agent has finished - now send the queued message
+                this.update_in(cx, |this, window, cx| {
+                    this.waiting_to_send = false;
+                    this.waiting_task = None;
+                    this.send(window, cx);
+                })
+                .ok();
+            });
+
+            self.waiting_task = Some(task);
+            return;
+        }
+
+        // Otherwise, proceed with normal send logic
+        self.send(window, cx);
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1302,6 +1374,53 @@ impl AcpThreadView {
         };
         self.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    fn regenerate_with_wait(
+        &mut self,
+        entry_ix: usize,
+        message_editor: Entity<MessageEditor>,
+        wait_for_agent: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        // If Ctrl+Shift was pressed and agent is currently generating a response,
+        // queue the regeneration to happen automatically once the agent finishes.
+        if wait_for_agent && thread.read(cx).status() != ThreadStatus::Idle {
+            cx.spawn_in(window, async move |this, cx| {
+                // Poll the thread status every 100ms until it becomes idle.
+                // See send_with_wait() for rationale on polling approach.
+                loop {
+                    let is_idle = thread
+                        .read_with(cx, |thread, _cx| thread.status() == ThreadStatus::Idle)
+                        .ok()
+                        .unwrap_or(true); // Treat errors as idle to unblock the user
+
+                    if is_idle {
+                        break;
+                    }
+
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                }
+
+                // Agent has finished - now regenerate the message
+                this.update_in(cx, |this, window, cx| {
+                    this.regenerate(entry_ix, message_editor, window, cx);
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+
+        // Otherwise, proceed with normal regenerate logic
+        self.regenerate(entry_ix, message_editor, window, cx);
     }
 
     fn regenerate(
@@ -4429,6 +4548,45 @@ impl AcpThreadView {
                             ),
                     ),
             )
+            .when(self.waiting_to_send, |parent| {
+                parent.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_md()
+                        .mb_1()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::TodoPending)
+                                        .size(IconSize::Small)
+                                        .color(Color::Modified),
+                                )
+                                .child(
+                                    Label::new("Message queued - will send when agent finishes")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Button::new("cancel-queue", "Cancel")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.waiting_to_send = false;
+                                    this.waiting_task = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .flex_none()
@@ -4452,7 +4610,7 @@ impl AcpThreadView {
                                 this.children(self.mode_selector().cloned())
                                     .children(self.model_selector.clone())
                             })
-                            .child(self.render_send_button(cx)),
+                            .child(self.render_send_button(window, cx)),
                     ),
             )
             .when(!enable_editor, |this| this.child(backdrop))
@@ -4638,7 +4796,7 @@ impl AcpThreadView {
         )
     }
 
-    fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
         let is_generating = self
             .thread()
@@ -4664,24 +4822,44 @@ impl AcpThreadView {
             let send_btn_tooltip = if is_editor_empty && !is_generating {
                 "Type to Send"
             } else if is_generating {
-                "Stop and Send Message"
+                if self.waiting_to_send {
+                    "Waiting for Agent to Finish..."
+                } else {
+                    "Stop and Send Message (Ctrl+Shift: Wait for Response)"
+                }
             } else {
-                "Send"
+                "Send (Ctrl+Shift: Wait for Response)"
             };
 
-            IconButton::new("send-message", IconName::Send)
-                .style(ButtonStyle::Filled)
-                .map(|this| {
+            div()
+                .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
+                .child({
+                    let mut button = IconButton::new("send-message", IconName::Send)
+                        .style(ButtonStyle::Filled)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action(send_btn_tooltip, &Chat, cx)
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let modifiers = window.modifiers();
+                            let wait_for_agent = modifiers.control && modifiers.shift;
+                            this.send_with_wait(wait_for_agent, window, cx);
+                        }));
+
                     if is_editor_empty && !is_generating {
-                        this.disabled(true).icon_color(Color::Muted)
+                        button = button.disabled(true).icon_color(Color::Muted);
                     } else {
-                        this.icon_color(Color::Accent)
+                        // Check modifiers in the render context
+                        let modifiers = window.modifiers();
+                        let wait_mode = modifiers.control && modifiers.shift;
+                        button = if wait_mode {
+                            button.icon_color(Color::Success)
+                        } else {
+                            button.icon_color(Color::Accent)
+                        };
                     }
+
+                    button
                 })
-                .tooltip(move |_window, cx| Tooltip::for_action(send_btn_tooltip, &Chat, cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.send(window, cx);
-                }))
                 .into_any_element()
         }
     }

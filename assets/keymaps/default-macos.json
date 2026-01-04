@@ -369,17 +369,19 @@
     },
   },
   {
-    "context": "AcpThread > Editor && !use_modifier_to_send",
+    "context": "MessageEditor > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
+      "cmd-shift-enter": "agent::Chat",
     },
   },
   {
-    "context": "AcpThread > Editor && use_modifier_to_send",
+    "context": "MessageEditor > Editor && use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "agent::Chat",
+      "cmd-shift-enter": "agent::Chat",
       "enter": "editor::Newline",
     },
   },
