@@ -3354,7 +3354,6 @@ dependencies = [
  "remote",
  "remote_server",
  "reqwest 0.11.27",
- "reqwest_client",
  "rpc",
  "scrypt",
  "sea-orm",
