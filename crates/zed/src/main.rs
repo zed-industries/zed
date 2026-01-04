@@ -614,6 +614,7 @@ fn main() {
             cx,
         );
         agent_ui_v2::agents_panel::init(cx);
+        agent::TerminalJobManager::init_global(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
