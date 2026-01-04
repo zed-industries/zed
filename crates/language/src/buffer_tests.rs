@@ -663,8 +663,9 @@ fn test_trim_final_newlines(cx: &mut gpui::App) {
     // Case 1: File ending with multiple newlines
     let buffer = cx.new(|cx| Buffer::local("code\n\n", cx));
     buffer.update(cx, |buffer, cx| {
-        buffer.trim_final_newlines(cx);
+        let trimmed_all_newlines = buffer.trim_final_newlines(cx);
         assert_eq!(buffer.text(), "code");
+        assert!(!trimmed_all_newlines);
     });
 
     // Case 2: File ending with single newline
@@ -691,8 +692,9 @@ fn test_trim_final_newlines(cx: &mut gpui::App) {
     // Case 5: Buffer of only newlines
     let buffer = cx.new(|cx| Buffer::local("\n\n", cx));
     buffer.update(cx, |buffer, cx| {
-        buffer.trim_final_newlines(cx);
+        let trimmed_all_newlines = buffer.trim_final_newlines(cx);
         assert_eq!(buffer.text(), "");
+        assert!(trimmed_all_newlines);
     });
 
     // Case 6: Empty buffer - should not change

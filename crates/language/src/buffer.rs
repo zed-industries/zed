@@ -2203,13 +2203,13 @@ impl Buffer {
 
     /// Removes trailing newline characters from the end of the buffer.
     /// Skips if the buffer is empty.
-    pub fn trim_final_newlines(&mut self, cx: &mut Context<Self>) {
+    pub fn trim_final_newlines(&mut self, cx: &mut Context<Self>) -> bool {
         let len = self.len();
         if len == 0 {
-            return;
+            return false;
         }
 
-        let trim_end = {
+        let (trim_end, found_non_newline) = {
             let rope = self.as_rope();
             let mut trim_end = len;
             let mut found_non_newline = false;
@@ -2229,12 +2229,14 @@ impl Buffer {
                 }
             }
 
-            trim_end
+            (trim_end, found_non_newline)
         };
 
         if trim_end < len {
             self.edit([(trim_end..len, "")], None, cx);
         }
+
+        !found_non_newline && trim_end == 0
     }
 
     /// Ensures that the buffer ends with a newline character.
