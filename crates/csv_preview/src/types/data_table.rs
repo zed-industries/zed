@@ -489,18 +489,19 @@ impl TableColumnWidths {
     }
 }
 
-pub struct TableWidths {
+/// Describes width of columns in a table.
+pub struct TableColumnsWidths {
     initial: TableRow<DefiniteLength>,
     current: Option<Entity<TableColumnWidths>>,
     resizable: TableRow<TableResizeBehavior>,
 }
 
-impl TableWidths {
+impl TableColumnsWidths {
     pub fn new(widths: TableRow<impl Into<DefiniteLength>>) -> Self {
         let widths = widths.map(Into::into);
 
         let expected_length = widths.cols();
-        TableWidths {
+        TableColumnsWidths {
             initial: widths,
             current: None,
             resizable: vec![TableResizeBehavior::None; expected_length]
@@ -524,7 +525,7 @@ pub struct Table {
     headers: Option<TableRow<AnyElement>>,
     rows: TableContents,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    col_widths: Option<TableWidths>,
+    col_widths: Option<TableColumnsWidths>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
@@ -645,7 +646,7 @@ impl Table {
 
     pub fn column_widths(mut self, widths: UncheckedTableRow<impl Into<DefiniteLength>>) -> Self {
         if self.col_widths.is_none() {
-            self.col_widths = Some(TableWidths::new(widths.into_table_row(self.cols)));
+            self.col_widths = Some(TableColumnsWidths::new(widths.into_table_row(self.cols)));
         }
         self
     }
