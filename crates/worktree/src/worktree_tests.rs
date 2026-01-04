@@ -2843,3 +2843,109 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
         );
     }
 }
+
+#[gpui::test]
+async fn test_fs_watcher(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({}));
+
+    let worktree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    #[cfg(not(target_os = "macos"))]
+    fs::fs_watcher::global(|_| {}).unwrap();
+
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    worktree.flush_fs_events(cx).await;
+
+    let abc_dir = dir.path().join("abc");
+
+    std::fs::create_dir(&abc_dir).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc")).is_some());
+    });
+
+    std::fs::remove_dir(&abc_dir).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc")).is_none());
+    });
+
+    std::fs::create_dir(&abc_dir).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc")).is_some());
+    });
+
+    std::fs::write(&abc_dir.join("new_file"), "new file contents")
+        .unwrap_or_else(|e| panic!("Failed to create in {abc_dir:?} a new file: {e}"));
+    worktree.flush_fs_events(cx).await;
+
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc/new_file")).is_some());
+    });
+}
+
+#[gpui::test]
+async fn test_fs_watcher_2(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({}));
+
+    let worktree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    #[cfg(not(target_os = "macos"))]
+    fs::fs_watcher::global(|_| {}).unwrap();
+
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    worktree.flush_fs_events(cx).await;
+
+    let abc_dir = dir.path().join("abc");
+
+    std::fs::create_dir_all(&abc_dir.join("abc2")).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc")).is_some());
+    });
+
+    std::fs::remove_dir_all(&abc_dir).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc")).is_none());
+    });
+
+    std::fs::create_dir_all(&abc_dir.join("abc2")).unwrap();
+    worktree.flush_fs_events(cx).await;
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc/abc2")).is_some());
+    });
+
+    std::fs::write(&abc_dir.join("abc2/new_file"), "new file contents")
+        .unwrap_or_else(|e| panic!("Failed to create in {abc_dir:?} a new file: {e}"));
+    worktree.flush_fs_events(cx).await;
+
+    worktree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("abc/abc2/new_file")).is_some());
+    });
+}
