@@ -338,15 +338,14 @@ impl RecentProjects {
 
     pub fn open(
         workspace: &mut Workspace,
-        new_window_by_default: bool,
+        create_new_window: bool,
         window: &mut Window,
         focus_handle: FocusHandle,
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate =
-                RecentProjectsDelegate::new(weak, new_window_by_default, true, focus_handle);
+            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
 
             Self::new(delegate, 34., window, cx)
         })
@@ -407,7 +406,7 @@ pub struct RecentProjectsDelegate {
 impl RecentProjectsDelegate {
     fn new(
         workspace: WeakEntity<Workspace>,
-        new_window_by_default: bool,
+        create_new_window: bool,
         render_paths: bool,
         focus_handle: FocusHandle,
     ) -> Self {
@@ -416,7 +415,7 @@ impl RecentProjectsDelegate {
             workspaces: Vec::new(),
             selected_match_index: 0,
             matches: Default::default(),
-            create_new_window: new_window_by_default,
+            create_new_window,
             render_paths,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
