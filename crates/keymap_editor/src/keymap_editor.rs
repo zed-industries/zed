@@ -428,6 +428,7 @@ struct KeymapEditor {
     humanized_action_names: HumanizedActionNameCache,
     current_widths: Entity<TableColumnWidths<6>>,
     show_hover_menus: bool,
+    actions_with_schemas: HashSet<&'static str>,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
     /// with drop order between the buffer, file, worktree, etc, we create a
@@ -554,6 +555,7 @@ impl KeymapEditor {
             search_query_debounce: None,
             humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
+            actions_with_schemas: HashSet::default(),
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
             current_widths: cx.new(|cx| TableColumnWidths::new(cx)),
@@ -722,7 +724,11 @@ impl KeymapEditor {
         zed_keybind_context_language: Arc<Language>,
         humanized_action_names: &HumanizedActionNameCache,
         cx: &mut App,
-    ) -> (Vec<ProcessedBinding>, Vec<StringMatchCandidate>) {
+    ) -> (
+        Vec<ProcessedBinding>,
+        Vec<StringMatchCandidate>,
+        HashSet<&'static str>,
+    ) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
@@ -799,8 +805,11 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedBinding::Unmapped(action_information));
             string_match_candidates.push(string_match_candidate);
         }
-
-        (processed_bindings, string_match_candidates)
+        (
+            processed_bindings,
+            string_match_candidates,
+            actions_with_schemas,
+        )
     }
 
     fn on_keymap_changed(&mut self, window: &mut Window, cx: &mut Context<KeymapEditor>) {
@@ -811,16 +820,18 @@ impl KeymapEditor {
                 load_keybind_context_language(workspace.clone(), cx).await;
 
             let (action_query, keystroke_query) = this.update(cx, |this, cx| {
-                let (key_bindings, string_match_candidates) = Self::process_bindings(
-                    json_language,
-                    zed_keybind_context_language,
-                    &this.humanized_action_names,
-                    cx,
-                );
+                let (key_bindings, string_match_candidates, actions_with_schemas) =
+                    Self::process_bindings(
+                        json_language,
+                        zed_keybind_context_language,
+                        &this.humanized_action_names,
+                        cx,
+                    );
 
                 this.keybinding_conflict_state = ConflictState::new(&key_bindings);
 
                 this.keybindings = key_bindings;
+                this.actions_with_schemas = actions_with_schemas;
                 this.string_match_candidates = Arc::new(string_match_candidates);
                 this.matches = this
                     .string_match_candidates
@@ -2230,6 +2241,7 @@ struct KeybindingEditorModal {
     action_editor: Option<Entity<InputField>>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     action_name_to_static: HashMap<String, &'static str>,
+    selected_action_name: Option<&'static str>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -2379,11 +2391,82 @@ impl KeybindingEditorModal {
             action_editor,
             action_arguments_editor,
             action_name_to_static,
+            selected_action_name: None,
             error: None,
             keymap_editor,
             workspace,
             focus_state,
         }
+    }
+
+    fn add_action_arguments_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(action_editor) = &self.action_editor else {
+            return;
+        };
+
+        let action_name_str = action_editor.read(cx).editor.read(cx).text(cx);
+        let current_action = self.action_name_to_static.get(&action_name_str).copied();
+
+        if current_action == self.selected_action_name {
+            return;
+        }
+
+        self.selected_action_name = current_action;
+
+        let Some(action_name) = current_action else {
+            if self.action_arguments_editor.is_some() {
+                self.action_arguments_editor = None;
+                self.rebuild_focus_state(cx);
+                cx.notify();
+            }
+            return;
+        };
+
+        let (action_has_schema, temp_dir) = {
+            let keymap_editor = self.keymap_editor.read(cx);
+            let has_schema = keymap_editor.actions_with_schemas.contains(action_name);
+            let temp_dir = keymap_editor
+                .action_args_temp_dir
+                .as_ref()
+                .map(|dir| dir.path().to_path_buf());
+            (has_schema, temp_dir)
+        };
+
+        let currently_has_editor = self.action_arguments_editor.is_some();
+
+        if action_has_schema && !currently_has_editor {
+            let workspace = self.workspace.clone();
+
+            let new_editor = cx.new(|cx| {
+                ActionArgumentsEditor::new(
+                    action_name,
+                    None,
+                    temp_dir.as_deref(),
+                    workspace,
+                    window,
+                    cx,
+                )
+            });
+
+            self.action_arguments_editor = Some(new_editor);
+            self.rebuild_focus_state(cx);
+            cx.notify();
+        } else if !action_has_schema && currently_has_editor {
+            self.action_arguments_editor = None;
+            self.rebuild_focus_state(cx);
+            cx.notify();
+        }
+    }
+
+    fn rebuild_focus_state(&mut self, cx: &App) {
+        self.focus_state = KeybindingEditorModalFocusState::new(
+            self.action_editor.as_ref().map(|e| e.focus_handle(cx)),
+            self.keybind_editor.focus_handle(cx),
+            self.action_arguments_editor
+                .as_ref()
+                .map(|args_editor| args_editor.focus_handle(cx)),
+            self.context_editor.focus_handle(cx),
+        );
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
@@ -2727,6 +2810,8 @@ impl KeybindingEditorModal {
 
 impl Render for KeybindingEditorModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.add_action_arguments_input(window, cx);
+
         let theme = cx.theme().colors();
         let matching_bindings_count = self.get_matching_bindings_count(cx);
         let key_context = self.key_context_internal(window, cx);
@@ -3116,22 +3201,20 @@ impl ActionArgumentsEditor {
 
 impl Render for ActionArgumentsEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let background_color;
-        let border_color;
+        let settings = theme::ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+
+        let border_color = if self.is_loading {
+            colors.border_disabled
+        } else {
+            colors.border_variant
+        };
+
         let text_style = {
-            let colors = cx.theme().colors();
-            let settings = theme::ThemeSettings::get_global(cx);
-            background_color = colors.editor_background;
-            border_color = if self.is_loading {
-                colors.border_disabled
-            } else {
-                colors.border_variant
-            };
             TextStyleRefinement {
                 font_size: Some(rems(0.875).into()),
                 font_weight: Some(settings.buffer_font.weight),
                 line_height: Some(relative(1.2)),
-                font_style: Some(gpui::FontStyle::Normal),
                 color: self.is_loading.then_some(colors.text_disabled),
                 ..Default::default()
             }
@@ -3140,20 +3223,17 @@ impl Render for ActionArgumentsEditor {
         self.editor
             .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
-        v_flex().w_full().child(
-            h_flex()
-                .min_h_8()
-                .min_w_48()
-                .px_2()
-                .py_1p5()
-                .flex_grow()
-                .rounded_lg()
-                .bg(background_color)
-                .border_1()
-                .border_color(border_color)
-                .track_focus(&self.focus_handle)
-                .child(self.editor.clone()),
-        )
+        h_flex()
+            .min_h_8()
+            .min_w_48()
+            .px_2()
+            .flex_grow()
+            .rounded_md()
+            .bg(cx.theme().colors().editor_background)
+            .border_1()
+            .border_color(border_color)
+            .track_focus(&self.focus_handle)
+            .child(self.editor.clone())
     }
 }
 
