@@ -242,6 +242,19 @@ pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
+    pub is_binary: bool,
+    pub image_data: Option<Vec<u8>>,
+    pub file_size: Option<u64>,
+}
+
+fn is_image_extension(path: &std::path::Path) -> bool {
+    const IMAGE_EXTENSIONS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "svg", "avif",
+    ];
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
 }
 
 impl CommitDetails {
@@ -898,13 +911,16 @@ impl GitRepository for RealGitRepository {
                 let len = info_line.trim_end().parse().with_context(|| {
                     format!("invalid object size output from cat-file {info_line}")
                 })?;
-                let mut text = vec![0; len];
-                stdout.read_exact(&mut text).await?;
+                let mut text_bytes = vec![0; len];
+                stdout.read_exact(&mut text_bytes).await?;
                 stdout.read_exact(&mut newline).await?;
-                let text = String::from_utf8_lossy(&text).to_string();
 
                 let mut old_text = None;
                 let mut new_text = None;
+                let mut is_binary = false;
+                let mut image_data = None;
+                let is_image = is_image_extension(rel_path.as_std_path());
+
                 match status_code {
                     StatusCode::Modified => {
                         info_line.clear();
@@ -912,21 +928,56 @@ impl GitRepository for RealGitRepository {
                         let len = info_line.trim_end().parse().with_context(|| {
                             format!("invalid object size output from cat-file {}", info_line)
                         })?;
-                        let mut parent_text = vec![0; len];
-                        stdout.read_exact(&mut parent_text).await?;
+                        let mut parent_text_bytes = vec![0; len];
+                        stdout.read_exact(&mut parent_text_bytes).await?;
                         stdout.read_exact(&mut newline).await?;
-                        old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
-                        new_text = Some(text);
+
+                        match (
+                            String::from_utf8(text_bytes.clone()),
+                            String::from_utf8(parent_text_bytes),
+                        ) {
+                            (Ok(new), Ok(old)) => {
+                                new_text = Some(new);
+                                old_text = Some(old);
+                            }
+                            _ => {
+                                is_binary = true;
+                                if is_image {
+                                    image_data = Some(text_bytes);
+                                }
+                            }
+                        }
                     }
-                    StatusCode::Added => new_text = Some(text),
-                    StatusCode::Deleted => old_text = Some(text),
+                    StatusCode::Added => match String::from_utf8(text_bytes.clone()) {
+                        Ok(text) => new_text = Some(text),
+                        Err(_) => {
+                            is_binary = true;
+                            if is_image {
+                                image_data = Some(text_bytes);
+                            }
+                        }
+                    },
+                    StatusCode::Deleted => match String::from_utf8(text_bytes.clone()) {
+                        Ok(text) => old_text = Some(text),
+                        Err(_) => {
+                            is_binary = true;
+                            if is_image {
+                                image_data = Some(text_bytes);
+                            }
+                        }
+                    },
                     _ => continue,
                 }
+
+                let file_size = if is_binary { Some(len as u64) } else { None };
 
                 files.push(CommitFile {
                     path: RepoPath(Arc::from(rel_path)),
                     old_text,
                     new_text,
+                    is_binary,
+                    image_data,
+                    file_size,
                 })
             }
 

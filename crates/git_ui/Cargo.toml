@@ -31,6 +31,7 @@ futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
+image.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true

@@ -283,6 +283,9 @@ message CommitFile {
     string path = 1;
     optional string old_text = 2;
     optional string new_text = 3;
+    bool is_binary = 4;
+    optional bytes image_data = 5;
+    optional uint64 file_size = 6;
 }
 
 message GitReset {

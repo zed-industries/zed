@@ -9,8 +9,9 @@ use git::{
 };
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    CursorStyle, Element, Entity, EventEmitter, FocusHandle, Focusable, Image, ImageFormat,
+    InteractiveElement, IntoElement, MouseMoveEvent, ParentElement, Pixels, PromptLevel, Render,
+    ScrollHandle, Styled, Task, WeakEntity, Window, actions, img, px,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -24,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ButtonLike, DiffStat, Tooltip, prelude::*};
+use ui::{ButtonLike, DiffStat, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -63,6 +64,18 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    binary_files: Vec<BinaryFileEntry>,
+    binary_scroll_handle: ScrollHandle,
+    binary_section_height: Pixels,
+    resize_drag_start_y: Option<Pixels>,
+}
+
+#[derive(Clone)]
+struct BinaryFileEntry {
+    path: RepoPath,
+    image_data: Option<Arc<Image>>,
+    is_deleted: bool,
+    file_size: Option<u64>,
 }
 
 struct GitBlob {
@@ -225,8 +238,26 @@ impl CommitView {
 
         let repository_clone = repository.clone();
 
+        let mut binary_files = Vec::new();
+        let mut text_files = Vec::new();
+        for file in commit_diff.files {
+            if file.is_binary {
+                let image_data = file.image_data.and_then(|data| {
+                    create_gpui_image(data).ok()
+                });
+                binary_files.push(BinaryFileEntry {
+                    path: file.path,
+                    image_data,
+                    is_deleted: file.new_text.is_none() && file.old_text.is_some(),
+                    file_size: file.file_size,
+                });
+            } else {
+                text_files.push(file);
+            }
+        }
+
         cx.spawn(async move |this, cx| {
-            for file in commit_diff.files {
+            for file in text_files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
                 let old_text = file.old_text;
@@ -311,6 +342,10 @@ impl CommitView {
             stash,
             repository,
             remote,
+            binary_files,
+            binary_scroll_handle: ScrollHandle::new(),
+            binary_section_height: px(200.0),
+            resize_drag_start_y: None,
         }
     }
 
@@ -970,6 +1005,10 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                binary_files: self.binary_files.clone(),
+                binary_scroll_handle: ScrollHandle::new(),
+                binary_section_height: self.binary_section_height,
+                resize_drag_start_y: None,
             }
         })))
     }
@@ -978,15 +1017,170 @@ impl Item for CommitView {
 impl Render for CommitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_stash = self.stash.is_some();
+        let has_binary_files = !self.binary_files.is_empty();
+        let is_resizing = self.resize_drag_start_y.is_some();
 
         v_flex()
+            .id("commit-view-container")
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .when(is_resizing, |this| this.cursor(CursorStyle::ResizeRow))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                if let Some(start_y) = this.resize_drag_start_y {
+                    if event.pressed_button == Some(gpui::MouseButton::Left) {
+                        let delta = start_y - event.position.y;
+                        let new_height = (this.binary_section_height + delta)
+                            .max(px(MIN_BINARY_SECTION_HEIGHT))
+                            .min(px(MAX_BINARY_SECTION_HEIGHT));
+                        this.binary_section_height = new_height;
+                        this.resize_drag_start_y = Some(event.position.y);
+                        window.refresh();
+                        cx.notify();
+                    }
+                }
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, _cx| {
+                    this.resize_drag_start_y = None;
+                }),
+            )
             .child(self.render_header(window, cx))
             .when(!self.editor.read(cx).is_empty(cx), |this| {
-                this.child(div().flex_grow().child(self.editor.clone()))
+                this.child(div().flex_grow().min_h_32().child(self.editor.clone()))
             })
+            .when(has_binary_files, |this| {
+                this.child(self.render_resize_handle(cx))
+                    .child(self.render_binary_files_section(window, cx))
+            })
+    }
+}
+
+const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
+const MIN_BINARY_SECTION_HEIGHT: f32 = 100.0;
+const MAX_BINARY_SECTION_HEIGHT: f32 = 600.0;
+
+fn format_file_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+impl CommitView {
+    fn render_resize_handle(&self, cx: &Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+
+        div()
+            .id("binary-section-resize-handle")
+            .w_full()
+            .h(px(RESIZE_HANDLE_HEIGHT))
+            .bg(cx.theme().colors().editor_background)
+            .border_t_1()
+            .border_color(border_color)
+            .cursor(CursorStyle::ResizeRow)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, _cx| {
+                    this.resize_drag_start_y = Some(event.position.y);
+                }),
+            )
+    }
+
+    fn render_binary_files_section(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+        let binary_section_height = self.binary_section_height;
+
+        let content = v_flex()
+            .id("binary-files-content")
+            .p_4()
+            .gap_3()
+            .w_full()
+            .track_scroll(&self.binary_scroll_handle)
+            .overflow_y_scroll()
+            .child(
+                Label::new("Binary Files")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .children(self.binary_files.iter().map(|file| {
+                let file_name = file
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
+
+                let status_label = if file.is_deleted {
+                    "deleted"
+                } else if file.image_data.is_some() {
+                    "image"
+                } else {
+                    "binary"
+                };
+
+                let size_label = file.file_size.map(format_file_size);
+
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Label::new(file_name).size(LabelSize::Small))
+                            .child(
+                                Label::new(format!("({status_label})"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .when_some(size_label, |this, size| {
+                                this.child(
+                                    Label::new(size)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            }),
+                    )
+                    .when_some(file.image_data.clone(), |this, image| {
+                        this.child(
+                            div()
+                                .max_w_96()
+                                .max_h_64()
+                                .overflow_hidden()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border_color)
+                                .child(
+                                    img(image)
+                                        .max_w_full()
+                                        .max_h_full()
+                                        .object_fit(gpui::ObjectFit::ScaleDown),
+                                ),
+                        )
+                    })
+            }));
+
+        div()
+            .id("binary-files-section")
+            .flex()
+            .flex_col()
+            .w_full()
+            .h(binary_section_height)
+            .min_h(px(MIN_BINARY_SECTION_HEIGHT))
+            .child(content)
+            .vertical_scrollbar_for(&self.binary_scroll_handle, window, cx)
     }
 }
 
@@ -1039,4 +1233,22 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
+}
+
+fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<Image>> {
+    let format = image::guess_format(&content)?;
+
+    Ok(Arc::new(Image::from_bytes(
+        match format {
+            image::ImageFormat::Png => ImageFormat::Png,
+            image::ImageFormat::Jpeg => ImageFormat::Jpeg,
+            image::ImageFormat::WebP => ImageFormat::Webp,
+            image::ImageFormat::Gif => ImageFormat::Gif,
+            image::ImageFormat::Bmp => ImageFormat::Bmp,
+            image::ImageFormat::Tiff => ImageFormat::Tiff,
+            image::ImageFormat::Ico => ImageFormat::Ico,
+            format => anyhow::bail!("Image format {format:?} not supported"),
+        },
+        content,
+    )))
 }
