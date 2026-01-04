@@ -216,9 +216,9 @@ pub struct EditorSettingsContent {
     ///    "never" (default)
     pub completion_menu_scrollbar: Option<ShowScrollbar>,
 
-    /// How to align detail text in the completion menu.
+    /// Whether to align detail text in completions menus left or right.
     ///
-    /// Default: right
+    /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
 }
 
@@ -244,6 +244,7 @@ pub enum RelativeLineNumbers {
 
 #[derive(
     Debug,
+    Default,
     Clone,
     Copy,
     Serialize,
@@ -257,8 +258,9 @@ pub enum RelativeLineNumbers {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionDetailAlignment {
-    Right,
+    #[default]
     Left,
+    Right,
 }
 
 impl RelativeLineNumbers {
