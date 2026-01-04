@@ -96,8 +96,11 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .await
         .unwrap();
 
-    diff.update(cx, |diff, _| {
-        assert_eq!(diff.base_text_string().unwrap(), "fn one() -> usize { 0 }");
+    diff.update(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text_string(cx).unwrap(),
+            "fn one() -> usize { 0 }"
+        );
     });
 
     buffer.update(cx, |buffer, cx| {
@@ -157,9 +160,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[("src/lib2.rs", "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    diff.update(cx, |diff, _| {
+    diff.update(cx, |diff, cx| {
         assert_eq!(
-            diff.base_text_string().unwrap(),
+            diff.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -211,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.recv().await.unwrap();
+        let first_response = receiver.rx.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
@@ -222,7 +225,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.recv().await.is_err());
+        assert!(receiver.rx.recv().await.is_err());
         buffer
     }
 
@@ -1443,12 +1446,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1462,12 +1465,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1482,12 +1485,12 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1588,12 +1591,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
         .unwrap();
 
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_1
         );
@@ -1607,12 +1610,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_1);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_1);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );
@@ -1627,12 +1630,12 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     cx.executor().run_until_parked();
     diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text_string().unwrap(), text_2);
+        assert_eq!(diff.base_text_string(cx).unwrap(), text_2);
         assert_eq!(
             diff.secondary_diff()
                 .unwrap()
                 .read(cx)
-                .base_text_string()
+                .base_text_string(cx)
                 .unwrap(),
             text_2
         );

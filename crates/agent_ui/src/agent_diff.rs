@@ -146,13 +146,13 @@ impl AgentDiffPane {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = diff_handle.read(cx);
 
-            let diff_hunk_ranges = diff
+            let diff_hunk_ranges = diff_handle
+                .read(cx)
+                .snapshot(cx)
                 .hunks_intersecting_range(
                     language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
@@ -1363,7 +1363,8 @@ impl AgentDiff {
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)
-            | AcpThreadEvent::ModeUpdated(_) => {}
+            | AcpThreadEvent::ModeUpdated(_)
+            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
         }
     }
 

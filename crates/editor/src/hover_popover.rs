@@ -24,7 +24,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -106,12 +106,12 @@ pub fn find_hovered_hint_part(
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
     if hovered_offset >= hint_start {
-        let mut hovered_character = hovered_offset - hint_start;
+        let mut offset_in_hint = hovered_offset - hint_start;
         let mut part_start = hint_start;
         for part in label_parts {
-            let part_len = part.value.chars().count();
-            if hovered_character > part_len {
-                hovered_character -= part_len;
+            let part_len = part.value.len();
+            if offset_in_hint >= part_len {
+                offset_in_hint -= part_len;
                 part_start.0 += part_len;
             } else {
                 let part_end = InlayOffset(part_start.0 + part_len);
@@ -994,11 +994,13 @@ impl DiagnosticPopover {
                     .border_color(self.border_color)
                     .rounded_lg()
                     .child(
-                        div()
+                        h_flex()
                             .id("diagnostic-content-container")
-                            .overflow_y_scroll()
+                            .gap_1()
+                            .items_start()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
+                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 MarkdownElement::new(
@@ -1021,7 +1023,11 @@ impl DiagnosticPopover {
                                         }
                                     },
                                 ),
-                            ),
+                            )
+                            .child({
+                                let message = self.local_diagnostic.diagnostic.message.clone();
+                                CopyButton::new(message).tooltip_label("Copy Diagnostic")
+                            }),
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
@@ -1900,5 +1906,99 @@ mod tests {
                 "Rendered markdown element should remove backticks from text"
             );
         });
+    }
+
+    #[test]
+    fn test_find_hovered_hint_part_with_multibyte_characters() {
+        use crate::display_map::InlayOffset;
+        use multi_buffer::MultiBufferOffset;
+        use project::InlayHintLabelPart;
+
+        // Test with multi-byte UTF-8 character "→" (3 bytes, 1 character)
+        let label = "→ app/Livewire/UserProfile.php";
+        let label_parts = vec![InlayHintLabelPart {
+            value: label.to_string(),
+            tooltip: None,
+            location: None,
+        }];
+
+        let hint_start = InlayOffset(MultiBufferOffset(100));
+
+        // Verify the label has more bytes than characters (due to "→")
+        assert_eq!(label.len(), 32); // bytes
+        assert_eq!(label.chars().count(), 30); // characters
+
+        // Test hovering at the last byte (should find the part)
+        let last_byte_offset = InlayOffset(MultiBufferOffset(100 + label.len() - 1));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, last_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at last byte"
+        );
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, label);
+        assert_eq!(range.start, hint_start);
+        assert_eq!(range.end, InlayOffset(MultiBufferOffset(100 + label.len())));
+
+        // Test hovering at the first byte of "→" (byte 0)
+        let first_byte_offset = InlayOffset(MultiBufferOffset(100));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, first_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at first byte"
+        );
+
+        // Test hovering in the middle of "→" (byte 1, still part of the arrow character)
+        let mid_arrow_offset = InlayOffset(MultiBufferOffset(101));
+        let result = find_hovered_hint_part(label_parts, hint_start, mid_arrow_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering in middle of multi-byte char"
+        );
+
+        // Test with multiple parts containing multi-byte characters
+        // Part ranges are [start, end) - start inclusive, end exclusive
+        // "→ " occupies bytes [0, 4), "path" occupies bytes [4, 8)
+        let parts = vec![
+            InlayHintLabelPart {
+                value: "→ ".to_string(), // 4 bytes (3 + 1)
+                tooltip: None,
+                location: None,
+            },
+            InlayHintLabelPart {
+                value: "path".to_string(), // 4 bytes
+                tooltip: None,
+                location: None,
+            },
+        ];
+
+        // Hover at byte 3 (last byte of "→ ", the space character)
+        let arrow_last_byte = InlayOffset(MultiBufferOffset(100 + 3));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, arrow_last_byte);
+        assert!(result.is_some(), "Should find first part at its last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "→ ");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(100))..InlayOffset(MultiBufferOffset(104))
+        );
+
+        // Hover at byte 4 (first byte of "path", at the boundary)
+        let path_start_offset = InlayOffset(MultiBufferOffset(100 + 4));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, path_start_offset);
+        assert!(result.is_some(), "Should find second part at boundary");
+        let (part, _) = result.unwrap();
+        assert_eq!(part.value, "path");
+
+        // Hover at byte 7 (last byte of "path")
+        let path_end_offset = InlayOffset(MultiBufferOffset(100 + 7));
+        let result = find_hovered_hint_part(parts, hint_start, path_end_offset);
+        assert!(result.is_some(), "Should find second part at last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "path");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
+        );
     }
 }

@@ -1072,6 +1072,7 @@ pub struct Editor {
     minimap_visibility: MinimapVisibility,
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
+    delegate_expand_excerpts: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1203,6 +1204,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
+    number_deleted_lines: bool,
 
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
@@ -1215,7 +1217,6 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
-    use_base_text_line_numbers: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1256,6 +1257,7 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     offset_content: bool,
     show_line_numbers: Option<bool>,
+    number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
@@ -2237,6 +2239,7 @@ impl Editor {
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
+            delegate_expand_excerpts: false,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -2405,7 +2408,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
-            use_base_text_line_numbers: false,
+            number_deleted_lines: false,
         };
 
         if is_minimap {
@@ -2677,7 +2680,7 @@ impl Editor {
                     file.full_path(cx)
                         .extension()?
                         .to_string_lossy()
-                        .into_owned(),
+                        .to_lowercase(),
                 )
             }) {
                 key_context.set("extension", extension);
@@ -2940,6 +2943,7 @@ impl Editor {
             show_gutter: self.show_gutter,
             offset_content: self.offset_content,
             show_line_numbers: self.show_line_numbers,
+            number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
@@ -3352,7 +3356,12 @@ impl Editor {
             {
                 let start_offset = selection_start.to_offset(buffer);
                 let position_matches = start_offset == completion_position.to_offset(buffer);
-                let continue_showing = if position_matches {
+                let continue_showing = if let Some((snap, ..)) =
+                    buffer.point_to_buffer_offset(completion_position)
+                    && !snap.capability.editable()
+                {
+                    false
+                } else if position_matches {
                     if self.snippet_stack.is_empty() {
                         buffer.char_kind_before(start_offset, Some(CharScopeContext::Completion))
                             == Some(CharKind::Word)
@@ -4311,10 +4320,26 @@ impl Editor {
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
+        let mut all_selections_read_only = true;
 
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
         {
+            if snapshot
+                .point_to_buffer_point(selection.head())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                continue;
+            }
+            if snapshot
+                .point_to_buffer_point(selection.tail())
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
+            {
+                // note, ideally we'd clip the tail to the closest writeable region towards the head
+                continue;
+            }
+            all_selections_read_only = false;
+
             if let Some(scope) = snapshot.language_scope_at(selection.head()) {
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
@@ -4592,6 +4617,10 @@ impl Editor {
 
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
+        }
+
+        if all_selections_read_only {
+            return;
         }
 
         drop(snapshot);
@@ -11063,6 +11092,26 @@ impl Editor {
         });
     }
 
+    pub fn toggle_read_only(
+        &mut self,
+        _: &workspace::ToggleReadOnlyFile,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(
+                    match buffer.capability() {
+                        Capability::ReadWrite => Capability::Read,
+                        Capability::Read => Capability::ReadWrite,
+                        Capability::ReadOnly => Capability::ReadOnly,
+                    },
+                    cx,
+                );
+            })
+        }
+    }
+
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
@@ -11496,7 +11545,7 @@ impl Editor {
         let buffer = buffer.read(cx);
         let original_text = diff
             .read(cx)
-            .base_text()
+            .base_text(cx)
             .as_rope()
             .slice(hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0);
         let buffer_snapshot = buffer.snapshot();
@@ -16590,7 +16639,6 @@ impl Editor {
         &mut self,
         lines: u32,
         direction: ExpandExcerptDirection,
-
         cx: &mut Context<Self>,
     ) {
         let selections = self.selections.disjoint_anchors_arc();
@@ -16601,14 +16649,24 @@ impl Editor {
             lines
         };
 
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut excerpt_ids = selections
+            .iter()
+            .flat_map(|selection| snapshot.excerpt_ids_for_range(selection.range()))
+            .collect::<Vec<_>>();
+        excerpt_ids.sort();
+        excerpt_ids.dedup();
+
+        if self.delegate_expand_excerpts {
+            cx.emit(EditorEvent::ExpandExcerptsRequested {
+                excerpt_ids,
+                lines,
+                direction,
+            });
+            return;
+        }
+
         self.buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
-            let mut excerpt_ids = selections
-                .iter()
-                .flat_map(|selection| snapshot.excerpt_ids_for_range(selection.range()))
-                .collect::<Vec<_>>();
-            excerpt_ids.sort();
-            excerpt_ids.dedup();
             buffer.expand_excerpts(excerpt_ids, lines, direction, cx)
         })
     }
@@ -16620,8 +16678,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current_scroll_position = self.scroll_position(cx);
         let lines_to_expand = EditorSettings::get_global(cx).expand_excerpt_lines;
+
+        if self.delegate_expand_excerpts {
+            cx.emit(EditorEvent::ExpandExcerptsRequested {
+                excerpt_ids: vec![excerpt],
+                lines: lines_to_expand,
+                direction,
+            });
+            return;
+        }
+
+        let current_scroll_position = self.scroll_position(cx);
         let mut scroll = None;
 
         if direction == ExpandExcerptDirection::Down {
@@ -19698,10 +19766,6 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
-    pub fn set_use_base_text_line_numbers(&mut self, show: bool, _cx: &mut Context<Self>) {
-        self.use_base_text_line_numbers = show;
-    }
-
     pub fn set_expand_all_diff_hunks(&mut self, cx: &mut App) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_expanded(cx);
@@ -19943,7 +20007,7 @@ impl Editor {
                         buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
-                        secondary_status: hunk.secondary_status,
+                        secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
                     })
                     .collect::<Vec<_>>(),
@@ -20256,6 +20320,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Entity<Self> {
         const MINIMAP_FONT_WEIGHT: gpui::FontWeight = gpui::FontWeight::BLACK;
+        const MINIMAP_FONT_FAMILY: SharedString = SharedString::new_static(".ZedMono");
 
         let mut minimap = Editor::new_internal(
             EditorMode::Minimap {
@@ -20271,6 +20336,7 @@ impl Editor {
         minimap.set_text_style_refinement(TextStyleRefinement {
             font_size: Some(MINIMAP_FONT_SIZE),
             font_weight: Some(MINIMAP_FONT_WEIGHT),
+            font_family: Some(MINIMAP_FONT_FAMILY),
             ..Default::default()
         });
         minimap.update_minimap_configuration(minimap_settings, cx);
@@ -20570,6 +20636,10 @@ impl Editor {
     pub fn disable_expand_excerpt_buttons(&mut self, cx: &mut Context<Self>) {
         self.disable_expand_excerpt_buttons = true;
         cx.notify();
+    }
+
+    pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
+        self.delegate_expand_excerpts = delegate;
     }
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
@@ -20983,8 +21053,12 @@ impl Editor {
 
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, buffer)
-                    ..buffer_diff_snapshot.row_to_base_text_row(end_row_in_buffer, buffer),
+                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, Bias::Left, buffer)
+                    ..buffer_diff_snapshot.row_to_base_text_row(
+                        end_row_in_buffer,
+                        Bias::Left,
+                        buffer,
+                    ),
             ))
         });
 
@@ -25298,36 +25372,34 @@ impl EditorSnapshot {
     /// Returns the line delta from `base` to `line` in the multibuffer, ignoring wrapped lines.
     ///
     /// This is positive if `base` is before `line`.
-    fn relative_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
+    fn relative_line_delta(
+        &self,
+        base: DisplayRow,
+        line: DisplayRow,
+        consider_wrapped_lines: bool,
+    ) -> i64 {
         let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_line_delta_to_point(base, point)
+        self.relative_line_delta_to_point(base, point, consider_wrapped_lines)
     }
 
-    /// Returns the line delta from `base` to `point` in the multibuffer, ignoring wrapped lines.
+    /// Returns the line delta from `base` to `point` in the multibuffer.
     ///
     /// This is positive if `base` is before `point`.
-    pub fn relative_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
+    pub fn relative_line_delta_to_point(
+        &self,
+        base: DisplayRow,
+        point: Point,
+        consider_wrapped_lines: bool,
+    ) -> i64 {
         let base_point = DisplayPoint::new(base, 0).to_point(self);
-        point.row as i64 - base_point.row as i64
-    }
-
-    /// Returns the line delta from `base` to `line` in the multibuffer, counting wrapped lines.
-    ///
-    /// This is positive if `base` is before `line`.
-    fn relative_wrapped_line_delta(&self, base: DisplayRow, line: DisplayRow) -> i64 {
-        let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_wrapped_line_delta_to_point(base, point)
-    }
-
-    /// Returns the line delta from `base` to `point` in the multibuffer, counting wrapped lines.
-    ///
-    /// This is positive if `base` is before `point`.
-    pub fn relative_wrapped_line_delta_to_point(&self, base: DisplayRow, point: Point) -> i64 {
-        let base_point = DisplayPoint::new(base, 0).to_point(self);
-        let wrap_snapshot = self.wrap_snapshot();
-        let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
-        let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
-        wrap_row.0 as i64 - base_wrap_row.0 as i64
+        if consider_wrapped_lines {
+            let wrap_snapshot = self.wrap_snapshot();
+            let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
+            let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+            wrap_row.0 as i64 - base_wrap_row.0 as i64
+        } else {
+            point.row as i64 - base_point.row as i64
+        }
     }
 
     /// Returns the unsigned relative line number to display for each row in `rows`.
@@ -25339,23 +25411,21 @@ impl EditorSnapshot {
         relative_to: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset = if count_wrapped_lines {
-            self.relative_wrapped_line_delta(relative_to, rows.start)
-        } else {
-            self.relative_line_delta(relative_to, rows.start)
-        };
-        let display_row_infos = self
-            .row_infos(rows.start)
+        let initial_offset = self.relative_line_delta(relative_to, rows.start, count_wrapped_lines);
+
+        self.row_infos(rows.start)
             .take(rows.len())
             .enumerate()
-            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info));
-        display_row_infos
+            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info))
             .filter(|(_row, row_info)| {
                 row_info.buffer_row.is_some()
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .map(|(i, (row, _row_info))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .flat_map(|(i, (row, _row_info))| {
+                (row != relative_to)
+                    .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+            })
             .collect()
     }
 }
@@ -25412,6 +25482,11 @@ pub enum EditorEvent {
     },
     ExcerptsExpanded {
         ids: Vec<ExcerptId>,
+    },
+    ExpandExcerptsRequested {
+        excerpt_ids: Vec<ExcerptId>,
+        lines: u32,
+        direction: ExpandExcerptDirection,
     },
     BufferEdited,
     Edited {

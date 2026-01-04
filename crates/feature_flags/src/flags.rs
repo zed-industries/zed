@@ -23,3 +23,9 @@ pub struct AgentV2FeatureFlag;
 impl FeatureFlag for AgentV2FeatureFlag {
     const NAME: &'static str = "agent-v2";
 }
+
+pub struct AcpBetaFeatureFlag;
+
+impl FeatureFlag for AcpBetaFeatureFlag {
+    const NAME: &'static str = "acp-beta";
+}
