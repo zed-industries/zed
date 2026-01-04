@@ -4649,7 +4649,6 @@ impl Editor {
             if clear_linked_edit_ranges {
                 this.linked_edit_ranges.clear();
             }
-
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
@@ -4663,7 +4662,6 @@ impl Editor {
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
-
                     let edits = edits
                         .into_iter()
                         .map(|(range, text)| {
@@ -4673,14 +4671,12 @@ impl Editor {
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
-
                     buffer.edit(edits, None, cx);
                 })
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-
             let new_selections = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
                 new_anchor_selections,
                 &map,
