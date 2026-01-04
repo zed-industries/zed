@@ -1459,6 +1459,28 @@ impl PlatformWindow for X11Window {
         state.renderer.update_transparency(transparent);
     }
 
+    fn is_subpixel_rendering_enabled(&self) -> bool {
+        if self.0.state.borrow().background_appearance != WindowBackgroundAppearance::Opaque {
+            return false;
+        }
+
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| {
+                let state = ref_cell.borrow();
+                state
+                    .common
+                    .subpixel_render_enabled
+                    .get()
+                    .unwrap_or_else(|| state.gpu_context.supports_dual_source_blending())
+            })
+            .unwrap_or_default()
+    }
+
     fn minimize(&self) {
         let state = self.0.state.borrow();
         const WINDOW_ICONIC_STATE: u32 = 3;
@@ -1547,7 +1569,8 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        let opaque = inner.background_appearance == WindowBackgroundAppearance::Opaque;
+        inner.renderer.draw(scene, opaque);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
