@@ -41,7 +41,10 @@ use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{
+    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME, LanguageModelSelection, Settings as _,
+    SettingsStore,
+};
 use std::any::TypeId;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -281,6 +284,7 @@ fn update_command_palette_filter(cx: &mut App) {
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("agents");
+            filter.hide_namespace("amp-tab");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
             filter.hide_namespace("supermaven");
@@ -302,18 +306,30 @@ fn update_command_palette_filter(cx: &mut App) {
 
             match edit_prediction_provider {
                 EditPredictionProvider::None => {
+                    filter.hide_namespace("amp-tab");
+                    filter.hide_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.hide_action_types(&edit_prediction_actions);
+                }
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_AMP_TAB_EDIT_PREDICTION_PROVIDER_NAME,
+                ) => {
+                    filter.show_namespace("amp-tab");
                     filter.hide_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.hide_namespace("supermaven");
                     filter.hide_action_types(&edit_prediction_actions);
                 }
                 EditPredictionProvider::Copilot => {
+                    filter.hide_namespace("amp-tab");
                     filter.show_namespace("edit_prediction");
                     filter.show_namespace("copilot");
                     filter.hide_namespace("supermaven");
                     filter.show_action_types(edit_prediction_actions.iter());
                 }
                 EditPredictionProvider::Supermaven => {
+                    filter.hide_namespace("amp-tab");
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.show_namespace("supermaven");
@@ -322,6 +338,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 EditPredictionProvider::Zed
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Experimental(_) => {
+                    filter.hide_namespace("amp-tab");
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.hide_namespace("supermaven");

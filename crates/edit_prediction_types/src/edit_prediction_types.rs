@@ -2,6 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
 // TODO: Find a better home for `Direction`.
@@ -71,6 +72,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
     fn supports_jump_to_edit() -> bool {
         true
     }
+    fn icon(&self, cx: &App) -> IconName;
 
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
@@ -109,6 +111,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
 pub trait EditPredictionDelegateHandle {
     fn name(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
+    fn icon(&self, cx: &App) -> IconName;
     fn is_enabled(
         &self,
         buffer: &Entity<Buffer>,
@@ -150,6 +153,10 @@ where
 
     fn display_name(&self) -> &'static str {
         T::display_name()
+    }
+
+    fn icon(&self, cx: &App) -> IconName {
+        self.read(cx).icon(cx)
     }
 
     fn show_predictions_in_menu(&self) -> bool {

@@ -19,6 +19,7 @@ collections.workspace = true
 edit_prediction_types.workspace = true
 futures.workspace = true
 gpui.workspace = true
+icons.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true

@@ -3,6 +3,7 @@ use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
+use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -123,6 +124,10 @@ impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
 
     fn supports_jump_to_edit() -> bool {
         false
+    }
+
+    fn icon(&self, _cx: &App) -> IconName {
+        IconName::Supermaven
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {

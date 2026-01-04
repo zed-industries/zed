@@ -15,6 +15,7 @@ use std::{
 };
 use util::{RangeExt as _, ResultExt};
 
+pub mod amp_tab;
 mod assemble_excerpts;
 #[cfg(test)]
 mod edit_prediction_context_tests;
@@ -22,6 +23,10 @@ mod excerpt;
 #[cfg(test)]
 mod fake_definition_lsp;
 
+pub use amp_tab::{
+    AmpTabEditPredictionDelegate, AMP_TAB_CREDENTIALS_URL, AMP_TAB_CREDENTIALS_USERNAME,
+    amp_tab_api_token, load_amp_tab_api_token, try_amp_tab_api_token,
+};
 pub use cloud_llm_client::predict_edits_v3::Line;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
 pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
