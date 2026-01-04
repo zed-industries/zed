@@ -643,9 +643,9 @@ impl Table {
         self
     }
 
-    pub fn column_widths(mut self, widths: TableRow<impl Into<DefiniteLength>>) -> Self {
+    pub fn column_widths(mut self, widths: UncheckedTableRow<impl Into<DefiniteLength>>) -> Self {
         if self.col_widths.is_none() {
-            self.col_widths = Some(TableWidths::new(widths));
+            self.col_widths = Some(TableWidths::new(widths.into_table_row(self.cols)));
         }
         self
     }
