@@ -151,7 +151,6 @@ fn create_highlight_endpoints(
             });
         }
     }
-    // todo lw we need to fix sorting between semantic tokens and textual highlights, right now it can be arbitrary
     highlight_endpoints.sort();
     highlight_endpoints.into_iter().peekable()
 }
@@ -220,9 +219,15 @@ impl PartialOrd for HighlightEndpoint {
 
 impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
+        const SEMANTIC_HIGHLIGHT_KEY_TYPE: HighlightKey =
+            HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighlight>());
         self.offset
             .cmp(&other.offset)
             .then_with(|| self.style.is_some().cmp(&other.style.is_some()))
+            .then_with(|| {
+                (self.tag == SEMANTIC_HIGHLIGHT_KEY_TYPE)
+                    .cmp(&(other.tag == SEMANTIC_HIGHLIGHT_KEY_TYPE))
+            })
     }
 }
 
