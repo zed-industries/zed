@@ -1644,10 +1644,7 @@ impl EditPredictionStore {
             .is_some_and(|file| self.can_collect_file(&project, file, cx))
             && self.can_collect_events(&inputs.events);
 
-        if can_collect_example
-            && cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
-            && should_sample_edit_prediction_example_capture()
-        {
+        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
             if let Some(example_task) = capture_example::capture_example(
                 project.clone(),
                 active_buffer.clone(),
