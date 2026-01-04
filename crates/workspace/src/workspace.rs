@@ -5225,9 +5225,7 @@ impl Workspace {
                         });
 
                         is_project_item = item.is_project_item(window, cx);
-                        update = proto::UpdateActiveView {
-                            view,
-                        };
+                        update = proto::UpdateActiveView { view };
                     };
                 }
             }
