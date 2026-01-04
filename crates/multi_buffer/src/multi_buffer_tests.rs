@@ -5,7 +5,7 @@ use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
-use settings::SettingsStore;
+use settings::{DiffStrategy, SettingsStore};
 use std::env;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
@@ -4757,7 +4757,7 @@ async fn test_word_diff_disabled(cx: &mut TestAppContext) {
     let settings_store = cx.update(|cx| {
         let mut settings_store = SettingsStore::test(cx);
         settings_store.update_user_settings(cx, |settings| {
-            settings.project.all_languages.defaults.word_diff_enabled = Some(false);
+            settings.project.all_languages.defaults.diff_strategy = Some(DiffStrategy::Line);
         });
         settings_store
     });

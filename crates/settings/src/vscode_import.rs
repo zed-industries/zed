@@ -493,7 +493,7 @@ impl VsCodeSettings {
                         .flat_map(|n| n.as_u64().map(|n| n as usize))
                         .collect()
                 }),
-            word_diff_enabled: None,
+            diff_strategy: None,
         }
     }
 

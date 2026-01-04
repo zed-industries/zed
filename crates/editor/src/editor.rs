@@ -312,6 +312,7 @@ enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         word_diffs: Vec<Range<MultiBufferOffset>>,
+        syntax_diffs: Vec<Range<MultiBufferOffset>>,
     },
 }
 
@@ -19964,6 +19965,7 @@ impl Editor {
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
+                        syntax_diff: None,
                     })
                     .collect::<Vec<_>>(),
                 &buffer_snapshot,
@@ -25111,6 +25113,7 @@ impl EditorSnapshot {
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         word_diffs: hunk.word_diffs,
+                        syntax_diffs: hunk.syntax_diffs,
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range: Anchor::range_in_buffer(
                             hunk.excerpt_id,

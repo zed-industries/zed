@@ -3,7 +3,8 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
     BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    language_settings::{DiffStrategy, language_settings},
+    word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -13,6 +14,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use sum_tree::SumTree;
+use syntax_diff::SyntaxDiff;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
@@ -94,10 +96,11 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
-    // Anchors representing the word diff locations in the active buffer
+    /// Anchors representing the word diff locations in the active buffer
     pub buffer_word_diffs: Vec<Range<Anchor>>,
-    // Offsets relative to the start of the deleted diff that represent word diff locations
+    /// Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
+    pub syntax_diff: Option<SyntaxDiff>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -107,6 +110,7 @@ struct InternalDiffHunk {
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
+    syntax_diff: Option<SyntaxDiff>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -667,6 +671,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
 
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
+                let syntax_diff = hunk.syntax_diff.clone();
 
                 if !start_anchor.is_valid(buffer) {
                     continue;
@@ -739,6 +744,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
+                    syntax_diff,
                 });
             }
         })
@@ -765,6 +771,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                syntax_diff: hunk.syntax_diff.clone(),
             })
         })
     }
@@ -787,13 +794,14 @@ fn build_diff_options(
         }
     }
 
-    language_settings(language, file, cx)
-        .word_diff_enabled
-        .then_some(DiffOptions {
+    match language_settings(language, file, cx).diff_strategy {
+        DiffStrategy::Line => None,
+        DiffStrategy::Word | DiffStrategy::Syntax => Some(DiffOptions {
             language_scope,
             max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
             ..Default::default()
-        })
+        }),
+    }
 }
 
 fn compute_hunks(
@@ -827,6 +835,7 @@ fn compute_hunks(
                     diff_base_byte_range: 0..diff_base.len() - 1,
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
+                    syntax_diff: None,
                 },
                 &buffer,
             );
@@ -854,6 +863,7 @@ fn compute_hunks(
                 diff_base_byte_range: 0..0,
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
+                syntax_diff: None,
             },
             &buffer,
         );
@@ -1068,6 +1078,7 @@ fn process_patch_hunk(
         diff_base_byte_range,
         base_word_diffs,
         buffer_word_diffs,
+        syntax_diff: None,
     }
 }
 
