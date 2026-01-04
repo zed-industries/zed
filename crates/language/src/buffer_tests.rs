@@ -665,6 +665,16 @@ fn test_ensure_final_newline_preserves_whitespace(cx: &mut gpui::App) {
         buffer.ensure_final_newline(cx);
         assert_eq!(buffer.text(), "");
     });
+
+    // Case 7: CRLF buffers keep their line ending style. Buffer text is
+    // normalized internally; the line ending is reapplied when saved.
+    let buffer = cx.new(|cx| Buffer::local("one\r\ntwo", cx));
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "one\ntwo\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
 }
 
 #[gpui::test]
@@ -711,6 +721,31 @@ fn test_trim_final_newlines(cx: &mut gpui::App) {
     buffer.update(cx, |buffer, cx| {
         buffer.trim_final_newlines(cx);
         assert_eq!(buffer.text(), "");
+    });
+
+    // Case 7: CRLF buffers keep their line ending style. Buffer text is
+    // normalized internally; the line ending is reapplied when saved.
+    let buffer = cx.new(|cx| Buffer::local("one\r\ntwo\r\n\r\n", cx));
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer.trim_final_newlines(cx);
+        assert_eq!(buffer.text(), "one\ntwo\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+}
+
+#[gpui::test]
+async fn test_save_whitespace_pipeline(cx: &mut gpui::TestAppContext) {
+    let buffer = cx.new(|cx| Buffer::local("code  \n  \n\n", cx));
+
+    let diff = buffer
+        .update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        buffer.trim_final_newlines(cx);
+        buffer.ensure_final_newline(cx);
+        assert_eq!(buffer.text(), "code\n");
     });
 }
 

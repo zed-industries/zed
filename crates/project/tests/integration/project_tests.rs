@@ -6740,6 +6740,119 @@ async fn assert_line_endings_after_format(
 }
 
 #[gpui::test]
+async fn test_trim_final_newlines_on_save_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "trim_disabled.rs": "one\n\n\n",
+            "trim_enabled_lf.rs": "one\n\n\n",
+            "trim_enabled_crlf.rs": "one\r\ntwo\r\n\r\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let cases = [
+        (
+            "disabled",
+            false,
+            "trim_disabled.rs",
+            LineEnding::Unix,
+            "one\n\n\n",
+        ),
+        (
+            "enabled_lf",
+            true,
+            "trim_enabled_lf.rs",
+            LineEnding::Unix,
+            "one\n",
+        ),
+        (
+            "enabled_crlf",
+            true,
+            "trim_enabled_crlf.rs",
+            LineEnding::Windows,
+            "one\r\ntwo\r\n",
+        ),
+    ];
+
+    for (case_name, trim_final_newlines_on_save, path, expected_line_ending, expected_contents) in
+        cases
+    {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .trim_final_newlines_on_save = Some(trim_final_newlines_on_save);
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                expected_line_ending,
+                "unexpected initial line ending for {case_name}"
+            );
+        });
+
+        let mut buffers = HashSet::default();
+        buffers.insert(buffer.clone());
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    buffers,
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                expected_line_ending,
+                "formatting changed line ending for {case_name}"
+            );
+        });
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+
+        let saved_path = PathBuf::from(path!("/dir")).join(path);
+        assert_eq!(
+            fs.load(&saved_path).await.unwrap(),
+            expected_contents,
+            "unexpected saved contents for {case_name}",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
