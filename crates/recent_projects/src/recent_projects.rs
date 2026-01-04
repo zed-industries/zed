@@ -353,14 +353,14 @@ impl RecentProjects {
 
     pub fn popover(
         workspace: WeakEntity<Workspace>,
-        new_window_by_default: bool,
+        create_new_window: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let delegate =
-                RecentProjectsDelegate::new(workspace, new_window_by_default, false, focus_handle);
+                RecentProjectsDelegate::new(workspace, create_new_window, true, focus_handle);
             let list = Self::new(delegate, 34., window, cx);
             list.picker.focus_handle(cx).focus(window, cx);
             list
