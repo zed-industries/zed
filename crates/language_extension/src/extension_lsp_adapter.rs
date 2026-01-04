@@ -349,6 +349,23 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        language_server_binary: &LanguageServerBinary,
+    ) -> Option<serde_json::Value> {
+        let schema_json = self
+            .extension
+            .language_server_initialization_options_schema(language_server_binary.path.clone())
+            .await?;
+        serde_json::from_str(&schema_json)
+            .with_context(|| {
+                format!(
+                    "failed to parse initialization_options_schema from extension: {schema_json}"
+                )
+            })
+            .log_err()
+    }
+
     async fn additional_initialization_options(
         self: Arc<Self>,
         target_language_server_id: LanguageServerName,

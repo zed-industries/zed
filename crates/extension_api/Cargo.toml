@@ -17,6 +17,7 @@ workspace = true
 path = "src/extension_api.rs"
 
 [dependencies]
+async-trait.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wit-bindgen = "0.41"

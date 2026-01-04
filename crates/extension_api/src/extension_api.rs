@@ -5,7 +5,9 @@ pub mod process;
 pub mod settings;
 
 use core::fmt;
+use std::path::PathBuf;
 
+use async_trait::async_trait;
 use wit::*;
 
 pub use serde_json;
@@ -66,6 +68,7 @@ pub fn set_language_server_installation_status(
 }
 
 /// A Zed extension.
+#[async_trait]
 pub trait Extension: Send + Sync {
     /// Returns a new instance of the extension.
     fn new() -> Self
@@ -89,6 +92,14 @@ pub trait Extension: Send + Sync {
         _worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
         Ok(None)
+    }
+
+    /// Returns the JSON schema of the initialization_options for the language server.
+    fn language_server_initialization_options_schema(
+        &self,
+        _binary_path: String,
+    ) -> Option<String> {
+        None
     }
 
     /// Returns the workspace configuration options to pass to the language server.
@@ -358,6 +369,10 @@ impl wit::Guest for Component {
         Ok(extension()
             .language_server_initialization_options(&language_server_id, worktree)?
             .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_initialization_options_schema(binary_path: String) -> Option<String> {
+        extension().language_server_initialization_options_schema(binary_path)
     }
 
     fn language_server_workspace_configuration(

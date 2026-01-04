@@ -21105,6 +21105,7 @@ dependencies = [
 name = "zed_extension_api"
 version = "0.8.0"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "wit-bindgen 0.41.0",

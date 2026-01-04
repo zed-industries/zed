@@ -14,6 +14,7 @@ pub struct LspSettings {
     /// The settings for the language server binary.
     pub binary: Option<CommandSettings>,
     /// The initialization options to pass to the language server.
+    // TODO: Adjust this
     pub initialization_options: Option<serde_json::Value>,
     /// The settings to pass to language server.
     pub settings: Option<serde_json::Value>,

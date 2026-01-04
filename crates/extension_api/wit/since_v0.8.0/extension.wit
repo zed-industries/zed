@@ -96,6 +96,9 @@ world extension {
     /// The initialization options are represented as a JSON string.
     export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
+    /// Returns the JSON schema for the initialization_options.
+    export language-server-initialization-options-schema: func(binary-path: string) -> option<string>;
+
     /// Returns the workspace configuration options to pass to the language server.
     export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 

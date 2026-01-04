@@ -40,6 +40,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use util::ResultExt;
 use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
@@ -137,6 +138,23 @@ impl extension::Extension for WasmExtension {
             .boxed()
         })
         .await?
+    }
+
+    async fn language_server_initialization_options_schema(
+        &self,
+        lsp_binary_path: PathBuf,
+    ) -> Option<String> {
+        let binary_path = lsp_binary_path.to_string_lossy().to_string();
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_language_server_initialization_options_schema(store, binary_path)
+                    .await
+            }
+            .boxed()
+        })
+        .await
+        .log_err()?
     }
 
     async fn language_server_workspace_configuration(

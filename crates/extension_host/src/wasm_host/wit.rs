@@ -390,6 +390,28 @@ impl Extension {
         }
     }
 
+    pub async fn call_language_server_initialization_options_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        binary_path: String,
+    ) -> Option<String> {
+        match self {
+            Extension::V0_8_0(ext) => ext
+                .call_language_server_initialization_options_schema(store, &binary_path)
+                .await
+                .ok()?,
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => None,
+        }
+    }
+
     pub async fn call_language_server_workspace_configuration(
         &self,
         store: &mut Store<WasmState>,
