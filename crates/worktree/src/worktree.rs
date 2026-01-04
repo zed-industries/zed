@@ -4045,11 +4045,11 @@ impl BackgroundScanner {
         let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
-        let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
+        let mut relative_paths = Vec::with_capacity(abs_paths.len());
         {
             let snapshot = &self.state.lock().await.snapshot;
 
@@ -4662,9 +4662,10 @@ impl BackgroundScanner {
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
-        for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
+        for ((path, metadata), abs_path) in relative_paths.iter().zip(metadata.iter()).zip(abs_paths) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
                 state.remove_path(path);
+                self.watcher.remove(&abs_path).log_err();
             }
         }
 
