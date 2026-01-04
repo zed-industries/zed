@@ -1808,16 +1808,25 @@ impl Render for KeymapEditor {
                                                         },
                                                     ),
                                             )
-                                            .child(
+                                            .child({
+                                                let focus_handle = focus_handle.clone();
                                                 Button::new("edit-in-json", "Edit in keymap.json")
                                                     .style(ButtonStyle::Outlined)
+                                                    .tooltip(move |_window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Edit in keymap.json",
+                                                            &zed_actions::OpenKeymapFile,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    })
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
                                                             zed_actions::OpenKeymapFile.boxed_clone(),
                                                             cx,
                                                         );
                                                     })
-                                            ),
+                                            }),
                                     )
                             ),
                     )

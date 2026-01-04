@@ -1233,6 +1233,7 @@
       "ctrl-c": "keymap_editor::CopyAction",
       "ctrl-shift-c": "keymap_editor::CopyContext",
       "ctrl-t": "keymap_editor::ShowMatchingKeybinds",
+      "ctrl-k ctrl-s": "zed::OpenKeymapFile",
     },
   },
   {
