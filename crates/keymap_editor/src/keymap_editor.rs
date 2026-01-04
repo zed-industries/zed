@@ -2242,6 +2242,9 @@ impl EventEmitter<DismissEvent> for KeybindingEditorModal {}
 
 impl Focusable for KeybindingEditorModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(action_editor) = &self.action_editor {
+            return action_editor.focus_handle(cx);
+        }
         self.keybind_editor.focus_handle(cx)
     }
 }
@@ -2364,6 +2367,7 @@ impl KeybindingEditorModal {
         });
 
         let focus_state = KeybindingEditorModalFocusState::new(
+            action_editor.as_ref().map(|e| e.focus_handle(cx)),
             keybind_editor.focus_handle(cx),
             action_arguments_editor
                 .as_ref()
@@ -2873,15 +2877,21 @@ struct KeybindingEditorModalFocusState {
 
 impl KeybindingEditorModalFocusState {
     fn new(
+        action_editor: Option<FocusHandle>,
         keystrokes: FocusHandle,
-        action_input: Option<FocusHandle>,
+        action_arguments: Option<FocusHandle>,
         context: FocusHandle,
     ) -> Self {
         Self {
             handles: Vec::from_iter(
-                [Some(keystrokes), action_input, Some(context)]
-                    .into_iter()
-                    .flatten(),
+                [
+                    action_editor,
+                    Some(keystrokes),
+                    action_arguments,
+                    Some(context),
+                ]
+                .into_iter()
+                .flatten(),
             ),
         }
     }
