@@ -6976,7 +6976,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Completion Detail Alignment",
-            description: "Whether to align detail text in completions menus left or right.",
+            description: "Whether to align detail text in code completions context menus left or right.",
             field: Box::new(SettingField {
                 json_path: Some("editor.completion_detail_alignment"),
                 pick: |settings_content| {

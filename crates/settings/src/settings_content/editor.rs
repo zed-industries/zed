@@ -216,7 +216,7 @@ pub struct EditorSettingsContent {
     ///    "never" (default)
     pub completion_menu_scrollbar: Option<ShowScrollbar>,
 
-    /// Whether to align detail text in completions menus left or right.
+    /// Whether to align detail text in code completions context menus left or right.
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,

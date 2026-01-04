@@ -284,7 +284,7 @@
   // 4. Never show the scrollbar:
   //    "never" (default)
   "completion_menu_scrollbar": "never",
-  // Whether to align detail text in completions menus left or right.
+  // Whether to align detail text in code completions context menus left or right.
   "completion_detail_alignment": "left",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
