@@ -87,9 +87,12 @@ pub struct LanguageSettings {
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.
     pub remove_trailing_whitespace_on_save: bool,
-    /// Whether or not to ensure there's a single newline at the end of a buffer
+    /// Whether or not to ensure there's a newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// Whether or not to trim newline characters at the end of a buffer
+    /// when saving it.
+    pub trim_final_newlines_on_save: bool,
     /// How to perform a buffer format.
     pub formatter: settings::FormatterList,
     /// Zed's Prettier integration settings.
@@ -553,6 +556,7 @@ impl settings::Settings for AllLanguageSettings {
                     .remove_trailing_whitespace_on_save
                     .unwrap(),
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
+                trim_final_newlines_on_save: settings.trim_final_newlines_on_save.unwrap(),
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),

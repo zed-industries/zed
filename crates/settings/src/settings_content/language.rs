@@ -306,11 +306,16 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub remove_trailing_whitespace_on_save: Option<bool>,
-    /// Whether or not to ensure there's a single newline at the end of a buffer
+    /// Whether or not to ensure there's a newline at the end of a buffer
     /// when saving it.
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// Whether or not to trim newline characters at the end of a buffer
+    /// when saving it.
+    ///
+    /// Default: false
+    pub trim_final_newlines_on_save: Option<bool>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
