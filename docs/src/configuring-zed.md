@@ -1547,9 +1547,19 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Ensure Final Newline On Save
 
-- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
+- Description: Ensures there's a newline at the end of the file when saving.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Trim Final Newlines On Save
+
+- Description: Removes trailing newline characters at the end of the file when saving. When combined with `ensure_final_newline_on_save`, this collapses multiple trailing blank lines to a single newline.
+- Setting: `trim_final_newlines_on_save`
+- Default: `false`
 
 **Options**
 
@@ -2668,6 +2678,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
+- [`trim_final_newlines_on_save`](#trim-final-newlines-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)

@@ -6659,7 +6659,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
-            description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it.",
+            description: "Whether or not to ensure there's a newline at the end of a buffer when saving it.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).ensure_final_newline_on_save"),
                 pick: |settings_content| {
@@ -6670,6 +6670,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.ensure_final_newline_on_save = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Trim Final Newlines On Save",
+            description: "Whether or not to trim newline characters at the end of a buffer when saving it.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).trim_final_newlines_on_save"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.trim_final_newlines_on_save.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.trim_final_newlines_on_save = value;
                     })
                 },
             }),
