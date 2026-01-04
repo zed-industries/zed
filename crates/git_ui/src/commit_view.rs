@@ -735,7 +735,14 @@ impl language::File for GitBlob {
     }
 
     fn to_proto(&self, _cx: &App) -> language::proto::File {
-        unimplemented!()
+        language::proto::File {
+            worktree_id: usize::from(self.worktree_id) as u64,
+            entry_id: None,
+            path: self.path.to_proto(),
+            mtime: None,
+            is_deleted: self.is_deleted,
+            is_historic: true,
+        }
     }
 
     fn is_private(&self) -> bool {
