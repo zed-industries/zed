@@ -122,7 +122,6 @@ message Envelope {
         PerformRenameResponse perform_rename_response = 86;
 
         UpdateContacts update_contacts = 89;
-        UpdateInviteInfo update_invite_info = 90;
         ShowContacts show_contacts = 91;
 
         GetUsers get_users = 92;
@@ -452,6 +451,7 @@ message Envelope {
     }
 
     reserved 87 to 88, 396;
+    reserved 90;
     reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;

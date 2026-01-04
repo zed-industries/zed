@@ -274,7 +274,6 @@ messages!(
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateGitBranch, Background),
-    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),

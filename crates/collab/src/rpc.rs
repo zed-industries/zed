@@ -982,57 +982,6 @@ impl Server {
         Ok(())
     }
 
-    pub async fn invite_code_redeemed(
-        self: &Arc<Self>,
-        inviter_id: UserId,
-        invitee_id: UserId,
-    ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
-            && let Some(code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            let invitee_contact = contact_for_user(invitee_id, false, &pool);
-            for connection_id in pool.user_connection_ids(inviter_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateContacts {
-                        contacts: vec![invitee_contact.clone()],
-                        ..Default::default()
-                    },
-                )?;
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
-            && let Some(invite_code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            for connection_id in pool.user_connection_ids(user_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!(
-                            "{}{}",
-                            self.app_state.config.invite_link_prefix, invite_code
-                        ),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
-        Ok(())
-    }
-
     pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
