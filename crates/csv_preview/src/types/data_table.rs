@@ -517,21 +517,36 @@ impl TableColumnsWidths {
     }
 }
 
+pub enum TableWidth {
+    /// Automatically adjust the table width based on available size
+    Unset,
+    /// Set the table width to a specific value
+    Fixed(Length),
+    /// Adjust the table width based on the width of the columns
+    ColumnDriven,
+}
+
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table {
+    ///// Config /////
+    /// Controls alternating row colors
     striped: bool,
-    width: Option<Length>,
+    use_ui_font: bool,
+    /// Manages the table width behavior
+    width: TableWidth,
+    col_widths: Option<TableColumnsWidths>,
+    /// Whether to apply default paddings, etc to cells
+    disable_base_cell_style: bool,
+    ///// Content /////
     headers: Option<TableRow<AnyElement>>,
     rows: TableContents,
-    interaction_state: Option<WeakEntity<TableInteractionState>>,
-    col_widths: Option<TableColumnsWidths>,
-    map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
-    use_ui_font: bool,
-    empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
-    disable_base_cell_style: bool,
+    ///// Metadata /////
     /// The number of columns in the table. Used to assert column numbers in `TableRow` collections
     cols: usize,
+    interaction_state: Option<WeakEntity<TableInteractionState>>,
+    map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
 impl Table {
@@ -540,7 +555,7 @@ impl Table {
         Self {
             cols,
             striped: false,
-            width: None,
+            width: TableWidth::Unset,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
@@ -606,8 +621,13 @@ impl Table {
 
     /// Sets the width of the table.
     /// Will enable horizontal scrolling if [`Self::interactable`] is also called.
-    pub fn width(mut self, width: impl Into<Length>) -> Self {
-        self.width = Some(width.into());
+    pub fn fixed_width(mut self, width: impl Into<Length>) -> Self {
+        self.width = TableWidth::Fixed(width.into());
+        self
+    }
+
+    pub fn column_driven_width(mut self) -> Self {
+        self.width = TableWidth::ColumnDriven;
         self
     }
 
@@ -898,7 +918,11 @@ impl RenderOnce for Table {
         let no_rows_rendered = self.rows.is_empty();
 
         let table = div()
-            .when_some(width, |this, width| this.w(width))
+            .map(|this| match width {
+                TableWidth::Unset => this,
+                TableWidth::Fixed(length) => this.w(length),
+                TableWidth::ColumnDriven => todo!(),
+            })
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
@@ -992,11 +1016,13 @@ impl RenderOnce for Table {
                             .size_full()
                             .flex_grow()
                             .with_sizing_behavior(ListSizingBehavior::Auto)
-                            .with_horizontal_sizing_behavior(if width.is_some() {
-                                ListHorizontalSizingBehavior::Unconstrained
-                            } else {
-                                ListHorizontalSizingBehavior::FitList
-                            })
+                            .with_horizontal_sizing_behavior(
+                                if matches!(width, TableWidth::Fixed(_)) {
+                                    ListHorizontalSizingBehavior::Unconstrained
+                                } else {
+                                    ListHorizontalSizingBehavior::FitList
+                                },
+                            )
                             .when_some(
                                 interaction_state.as_ref(),
                                 |this, state| {
@@ -1110,7 +1136,7 @@ impl Component for Table {
                             single_example(
                                 "Simple Table",
                                 Table::new(3)
-                                    .width(px(400.))
+                                    .fixed_width(px(400.))
                                     .header(["Name", "Age", "City"].into())
                                     .row(["Alice", "28", "New York"].into())
                                     .row(["Bob", "32", "San Francisco"].into())
@@ -1121,7 +1147,7 @@ impl Component for Table {
                                 "Two Column Table",
                                 Table::new(3)
                                     .header(["Category", "Value"].into())
-                                    .width(px(300.))
+                                    .fixed_width(px(300.))
                                     .row(["Revenue", "$100,000"].into())
                                     .row(["Expenses", "$75,000"].into())
                                     .row(["Profit", "$25,000"].into())
@@ -1135,7 +1161,7 @@ impl Component for Table {
                             single_example(
                                 "Default",
                                 Table::new(3)
-                                    .width(px(400.))
+                                    .fixed_width(px(400.))
                                     .header(["Product", "Price", "Stock"].into())
                                     .row(["Laptop", "$999", "In Stock"].into())
                                     .row(["Phone", "$599", "Low Stock"].into())
@@ -1145,7 +1171,7 @@ impl Component for Table {
                             single_example(
                                 "Striped",
                                 Table::new(3)
-                                    .width(px(400.))
+                                    .fixed_width(px(400.))
                                     .striped()
                                     .header(["Product", "Price", "Stock"].into())
                                     .row(["Laptop", "$999", "In Stock"].into())
@@ -1161,7 +1187,7 @@ impl Component for Table {
                         vec![single_example(
                             "Table with Elements",
                             Table::new(3)
-                                .width(px(840.))
+                                .fixed_width(px(840.))
                                 .header(["Status", "Name", "Priority", "Deadline", "Action"].into())
                                 .row(
                                     [

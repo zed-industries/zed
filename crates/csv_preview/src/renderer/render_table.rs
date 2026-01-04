@@ -81,11 +81,11 @@ impl CsvPreviewView {
             // .width(Length::Definite(DefiniteLength::Absolute( // Uncomment to apply width bigger than the parent
             //     AbsoluteLength::Pixels(3000u32.into()),
             // )))
-            .width(DefiniteLength::Fraction(1.))
+            .fixed_width(DefiniteLength::Fraction(1.))
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
-            .header(headers.into_table_row(cols))
+            .header(headers)
             .disable_base_style()
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
