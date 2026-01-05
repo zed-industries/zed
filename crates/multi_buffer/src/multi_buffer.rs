@@ -2349,6 +2349,8 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
+        dbg!("BUFFER DIFF CHANGED");
+
         self.sync_mut(cx);
 
         let diff = diff.read(cx);
@@ -2395,6 +2397,8 @@ impl MultiBuffer {
         main_buffer: WeakEntity<Buffer>,
         cx: &mut Context<Self>,
     ) {
+        dbg!("INVERTED BUFFER DIFF CHANGED");
+
         self.sync_mut(cx);
 
         let diff = diff.read(cx);

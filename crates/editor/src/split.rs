@@ -429,6 +429,7 @@ impl SplittableEditor {
                             .diff_for(buffer.read(cx).remote_id())
                             .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                     {
+                        dbg!("PRIMARY ADD DIFF");
                         primary_multibuffer.add_diff(diff.clone(), cx);
                     }
                     (anchors, added_a_new_excerpt)
@@ -902,6 +903,7 @@ impl SecondaryEditor {
                         .diff_for(base_text_buffer.read(cx).remote_id())
                         .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
+                    dbg!("SECONDARY ADD DIFF");
                     buffer.add_inverted_diff(diff, main_buffer, cx);
                 }
             })
@@ -979,7 +981,6 @@ mod tests {
         });
     }
 
-    #[ignore]
     #[gpui::test(iterations = 100)]
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
@@ -1005,42 +1006,48 @@ mod tests {
             .unwrap_or(20);
         let rng = &mut rng;
         for _ in 0..operations {
-            editor.update(cx, |editor, cx| {
-                let buffers = editor
+            let buffers = editor.update(cx, |editor, cx| {
+                editor
                     .primary_editor
                     .read(cx)
                     .buffer()
                     .read(cx)
-                    .all_buffers();
+                    .all_buffers()
+            });
 
-                if buffers.is_empty() {
+            if buffers.is_empty() {
+                editor.update(cx, |editor, cx| {
                     editor.randomly_edit_excerpts(rng, 2, cx);
                     editor.check_invariants(true, cx);
-                    return;
-                }
+                });
+                continue;
+            }
 
-                let quiesced = match rng.random_range(0..100) {
-                    0..=69 if !buffers.is_empty() => {
-                        let buffer = buffers.iter().choose(rng).unwrap();
-                        buffer.update(cx, |buffer, cx| {
-                            if rng.random() {
-                                log::info!("randomly editing single buffer");
-                                buffer.randomly_edit(rng, 5, cx);
-                            } else {
-                                log::info!("randomly undoing/redoing in single buffer");
-                                buffer.randomly_undo_redo(rng, cx);
-                            }
-                        });
-                        false
-                    }
-                    70..=79 => {
-                        log::info!("mutating excerpts");
+            let mut quiesced = false;
+
+            match rng.random_range(0..100) {
+                0..=69 if !buffers.is_empty() => {
+                    let buffer = buffers.iter().choose(rng).unwrap();
+                    buffer.update(cx, |buffer, cx| {
+                        if rng.random() {
+                            log::info!("randomly editing single buffer");
+                            buffer.randomly_edit(rng, 5, cx);
+                        } else {
+                            log::info!("randomly undoing/redoing in single buffer");
+                            buffer.randomly_undo_redo(rng, cx);
+                        }
+                    });
+                }
+                70..=79 => {
+                    log::info!("mutating excerpts");
+                    editor.update(cx, |editor, cx| {
                         editor.randomly_edit_excerpts(rng, 2, cx);
-                        false
-                    }
-                    80..=89 if !buffers.is_empty() => {
-                        log::info!("recalculating buffer diff");
-                        let buffer = buffers.iter().choose(rng).unwrap();
+                    });
+                }
+                80..=89 if !buffers.is_empty() => {
+                    log::info!("recalculating buffer diff");
+                    let buffer = buffers.iter().choose(rng).unwrap();
+                    editor.update(cx, |editor, cx| {
                         let diff = editor
                             .primary_multibuffer
                             .read(cx)
@@ -1050,32 +1057,39 @@ mod tests {
                         diff.update(cx, |diff, cx| {
                             diff.recalculate_diff_sync(&buffer_snapshot, cx);
                         });
-                        false
-                    }
-                    _ => {
-                        log::info!("quiescing");
-                        for buffer in buffers {
-                            let buffer_snapshot = buffer.read(cx).text_snapshot();
-                            let diff = editor
+                    });
+                }
+                _ => {
+                    log::info!("quiescing");
+                    for buffer in buffers {
+                        let buffer_snapshot =
+                            buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                        let diff = editor.update(cx, |editor, cx| {
+                            editor
                                 .primary_multibuffer
                                 .read(cx)
                                 .diff_for(buffer.read(cx).remote_id())
-                                .unwrap();
-                            diff.update(cx, |diff, cx| {
-                                diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                            });
-                            let diff_snapshot = diff.read(cx).snapshot(cx);
-                            let ranges = diff_snapshot
-                                .hunks(&buffer_snapshot)
-                                .map(|hunk| hunk.range)
-                                .collect::<Vec<_>>();
+                                .unwrap()
+                        });
+                        diff.update(cx, |diff, cx| {
+                            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                        });
+                        cx.run_until_parked();
+                        let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                        let ranges = diff_snapshot
+                            .hunks(&buffer_snapshot)
+                            .map(|hunk| hunk.range)
+                            .collect::<Vec<_>>();
+                        editor.update(cx, |editor, cx| {
                             let path = PathKey::for_buffer(&buffer, cx);
                             editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-                        }
-                        true
+                        });
+                        quiesced = true;
                     }
-                };
+                }
+            }
 
+            editor.update(cx, |editor, cx| {
                 editor.check_invariants(quiesced, cx);
             });
         }
