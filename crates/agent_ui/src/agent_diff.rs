@@ -1682,7 +1682,7 @@ impl AgentDiff {
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys().cycle();
+            let mut keys = changed_buffers.keys();
             keys.find(|k| *k == &curr_buffer);
             let next_project_path = keys
                 .next()
