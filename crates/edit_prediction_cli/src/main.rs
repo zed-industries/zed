@@ -423,7 +423,7 @@ fn main() {
 
                                 let msg = format!(
                                     indoc::indoc! {"
-                                        While processing {}:
+                                        While processing \"{}\":
 
                                         {:?}
 
