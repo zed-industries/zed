@@ -1310,23 +1310,14 @@ impl BufferDiff {
         .detach();
     }
 
-    pub fn set_snapshot(
-        &mut self,
-        new_state: BufferDiffUpdate,
-        buffer: &text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<Range<Anchor>>> {
-        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
-    }
-
-    pub fn set_snapshot_with_secondary(
+    fn set_snapshot_with_secondary_inner(
         &mut self,
         update: BufferDiffUpdate,
         buffer: &text::BufferSnapshot,
         secondary_diff_change: Option<Range<Anchor>>,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Range<Anchor>>> {
+    ) -> impl Future<Output = (Option<Range<Anchor>>, Option<Range<usize>>)> + use<> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
         let old_snapshot = self.snapshot(cx);
@@ -1398,10 +1389,41 @@ impl BufferDiff {
             state.pending_hunks = SumTree::new(buffer);
         }
 
-        cx.spawn(async move |this, cx| {
+        async move {
             if let Some(parsing_idle) = parsing_idle {
                 parsing_idle.await;
             }
+            (changed_range, base_text_changed_range)
+        }
+    }
+
+    pub fn set_snapshot(
+        &mut self,
+        new_state: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
+    }
+
+    pub fn set_snapshot_with_secondary(
+        &mut self,
+        update: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        secondary_diff_change: Option<Range<Anchor>>,
+        clear_pending_hunks: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        let fut = self.set_snapshot_with_secondary_inner(
+            update,
+            buffer,
+            secondary_diff_change,
+            clear_pending_hunks,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let (changed_range, base_text_changed_range) = fut.await;
             this.update(cx, |_, cx| {
                 cx.emit(BufferDiffEvent::DiffChanged {
                     changed_range: changed_range.clone(),
@@ -1483,7 +1505,12 @@ impl BufferDiff {
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
         let executor = cx.background_executor().clone();
         let snapshot = executor.block(fut);
-        self.set_snapshot(snapshot, &buffer, cx).detach();
+        let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
+        let (changed_range, base_text_changed_range) = executor.block(fut);
+        cx.emit(BufferDiffEvent::DiffChanged {
+            changed_range,
+            base_text_changed_range,
+        })
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
