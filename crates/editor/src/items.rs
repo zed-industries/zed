@@ -805,8 +805,8 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
-    fn is_read_only(&self, cx: &App) -> bool {
-        self.read_only(cx)
+    fn capability(&self, cx: &App) -> Capability {
+        self.capability(cx)
     }
 
     // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
