@@ -244,7 +244,6 @@ message Envelope {
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
 
         FindSearchCandidates find_search_candidates = 243;
-        FindSearchCandidatesResponse find_search_candidates_response = 244;
 
         CloseBuffer close_buffer = 245;
 
@@ -449,7 +448,8 @@ message Envelope {
         TrustWorktrees trust_worktrees = 404;
         RestrictWorktrees restrict_worktrees = 405;
 
-        FindSearchCandidatesChunk find_search_candidates_chunk = 406; // current max
+        FindSearchCandidatesChunk find_search_candidates_chunk = 406;
+        FindSearchCandidatesChunkResponse find_search_candidates_chunk_response = 407; // current max
     }
 
     reserved 87 to 88;
@@ -467,6 +467,7 @@ message Envelope {
     reserved 224 to 231;
     reserved 234 to 236;
     reserved 239 to 240;
+    reserved 244;
     reserved 246 to 256;
     reserved 259;
     reserved 270;

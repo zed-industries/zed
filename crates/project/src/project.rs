@@ -4934,7 +4934,7 @@ impl Project {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::FindSearchCandidatesChunkResponse> {
         let buffer_store = this.read_with(&mut cx, |this, _| this.buffer_store.clone())?;
         BufferStore::handle_find_search_candidates_chunk(buffer_store, envelope, cx).await
     }
@@ -5045,8 +5045,8 @@ impl Project {
     async fn handle_search_candidate_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::FindSearchCandidatesResponse> {
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
         let project_id = message.project_id;
@@ -5054,15 +5054,8 @@ impl Project {
         let query =
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
 
-        let next_project_search_id = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |this, _| {
-                util::post_inc(&mut this.next_project_search_id)
-            })
-        })?;
+        let handle = message.handle;
 
-        let response = proto::FindSearchCandidatesResponse {
-            handle: next_project_search_id,
-        };
         let client = this.read_with(&cx, |this, _| this.client())?;
         cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
@@ -5074,31 +5067,45 @@ impl Project {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 })?;
                 if let Some(buffer_ids) = batcher.push(buffer_id) {
-                    let _ = client
+                    let response = client
                         .request(proto::FindSearchCandidatesChunk {
-                            handle: next_project_search_id,
+                            handle,
                             project_id,
                             variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                                 proto::FindSearchCandidatesMatches { buffer_ids },
                             )),
                         })
                         .await?;
+                    match response.variant {
+                        Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(
+                            _,
+                        )) => {
+                            return anyhow::Ok(());
+                        }
+                        _ => {}
+                    }
                 }
             }
             if let Some(buffer_ids) = batcher.flush() {
-                let _ = client
+                let response = client
                     .request(proto::FindSearchCandidatesChunk {
-                        handle: next_project_search_id,
+                        handle,
                         project_id,
                         variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                             proto::FindSearchCandidatesMatches { buffer_ids },
                         )),
                     })
                     .await?;
+                match response.variant {
+                    Some(proto::find_search_candidates_chunk_response::Variant::Cancelled(_)) => {
+                        return anyhow::Ok(());
+                    }
+                    _ => {}
+                }
             }
             let _ = client
                 .request(proto::FindSearchCandidatesChunk {
-                    handle: next_project_search_id,
+                    handle,
                     project_id,
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},
@@ -5109,7 +5116,7 @@ impl Project {
         })
         .detach();
 
-        Ok(response)
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_buffer_by_id(

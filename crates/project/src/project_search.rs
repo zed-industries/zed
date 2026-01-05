@@ -251,12 +251,19 @@ impl Search {
                         remote_id,
                         models,
                     } => {
+                        let Ok((handle, rx)) = self
+                            .buffer_store
+                            .update(cx, |this, _| this.register_project_search_result_handle())
+                        else {
+                            return;
+                        };
                         let request = client.request(proto::FindSearchCandidates {
                             project_id: remote_id,
                             query: Some(query.to_proto()),
                             limit: self.limit as _,
+                            handle,
                         });
-                        let weak_buffer_store = self.buffer_store.downgrade();
+
                         let buffer_store = self.buffer_store;
                         let Ok(guard) = cx.update(|cx| {
                             Project::retain_remotely_created_models_impl(
@@ -272,14 +279,7 @@ impl Search {
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
-                                    let response = request.await?;
-                                    let (tx, rx) = unbounded();
-                                    weak_buffer_store.update(cx, |this, _| {
-                                        this.register_project_search_result_handle(
-                                            response.handle,
-                                            tx,
-                                        );
-                                    })?;
+                                    request.await?;
 
                                     let (buffer_tx, buffer_rx) = bounded(24);
 

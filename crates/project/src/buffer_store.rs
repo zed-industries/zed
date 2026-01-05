@@ -1696,17 +1696,19 @@ impl BufferStore {
 
     pub(crate) fn register_project_search_result_handle(
         &mut self,
-        handle: u64,
-        sender: smol::channel::Sender<BufferId>,
-    ) {
-        self.project_search_chunks.insert(handle, sender);
+    ) -> (u64, smol::channel::Receiver<BufferId>) {
+        let (tx, rx) = smol::channel::unbounded();
+        let handle = util::post_inc(&mut self.next_project_search_id);
+        let _old_entry = self.project_search_chunks.insert(handle, tx);
+        debug_assert!(_old_entry.is_none());
+        (handle, rx)
     }
 
     pub(crate) async fn handle_find_search_candidates_chunk(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::FindSearchCandidatesChunkResponse> {
         use proto::find_search_candidates_chunk::Variant;
         let handle = envelope.payload.handle;
 
@@ -1724,14 +1726,26 @@ impl BufferStore {
                 this.update(&mut cx, |this, _| {
                     this.project_search_chunks.remove(&handle)
                 })?;
-                return Ok(proto::Ack {});
+                return Ok(proto::FindSearchCandidatesChunkResponse {
+                    variant: Some(
+                        proto::find_search_candidates_chunk_response::Variant::Cancelled(
+                            proto::SearchChunkPayload {},
+                        ),
+                    ),
+                });
             }
         };
         let Some(sender) = this.read_with(&mut cx, |this, _| {
             this.project_search_chunks.get(&handle).cloned()
         })?
         else {
-            return Ok(proto::Ack {});
+            return Ok(proto::FindSearchCandidatesChunkResponse {
+                variant: Some(
+                    proto::find_search_candidates_chunk_response::Variant::Cancelled(
+                        proto::SearchChunkPayload {},
+                    ),
+                ),
+            });
         };
 
         for buffer_id in buffer_ids {
@@ -1739,10 +1753,20 @@ impl BufferStore {
                 this.update(&mut cx, |this, _| {
                     this.project_search_chunks.remove(&handle)
                 })?;
-                return Ok(proto::Ack {});
+                return Ok(proto::FindSearchCandidatesChunkResponse {
+                    variant: Some(
+                        proto::find_search_candidates_chunk_response::Variant::Cancelled(
+                            proto::SearchChunkPayload {},
+                        ),
+                    ),
+                });
             };
         }
-        Ok(proto::Ack {})
+        Ok(proto::FindSearchCandidatesChunkResponse {
+            variant: Some(proto::find_search_candidates_chunk_response::Variant::Ack(
+                proto::SearchChunkPayload {},
+            )),
+        })
     }
 }
 

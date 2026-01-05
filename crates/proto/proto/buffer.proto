@@ -308,17 +308,16 @@ message FindSearchCandidates {
     uint64 project_id = 1;
     SearchQuery query = 2;
     uint64 limit = 3;
+    uint64 handle = 4;
 }
 
-message FindSearchCandidatesResponse {
-  uint64 handle = 1;
-}
 
 message FindSearchCandidatesDone {}
 
 message FindSearchCandidatesMatches {
   repeated uint64 buffer_ids = 1;
 }
+
 message FindSearchCandidatesChunk {
   uint64 project_id = 1;
   uint64 handle = 2;
@@ -328,3 +327,13 @@ message FindSearchCandidatesChunk {
     FindSearchCandidatesDone done = 4;
   }
 }
+
+message FindSearchCandidatesChunkResponse {
+    oneof variant {
+      SearchChunkPayload ack = 1;
+      SearchChunkPayload cancelled = 2;
+    }
+}
+
+
+message SearchChunkPayload {}
