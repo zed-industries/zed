@@ -825,6 +825,19 @@ impl ForegroundExecutor {
     }
 
     #[track_caller]
+    pub(crate) fn spawn_context_with_priority<R>(
+        &self,
+        app: std::sync::Weak<()>,
+        priority: Priority,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        self.inner_spawn(Some(app), priority, future)
+    }
+
+    #[track_caller]
     pub(crate) fn inner_spawn<R>(
         &self,
         app: std::sync::Weak<()>,
