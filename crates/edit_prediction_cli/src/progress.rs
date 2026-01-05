@@ -148,7 +148,14 @@ impl Progress {
 
         Self::clear_status_lines(&mut inner);
 
-        inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
+        let max_name_width = inner
+            .terminal_width
+            .saturating_sub(MARGIN * 2)
+            .saturating_div(3)
+            .max(1);
+        inner.max_example_name_len = inner
+            .max_example_name_len
+            .max(example_name.len().min(max_name_width));
         inner.in_progress.insert(
             example_name.to_string(),
             InProgressTask {
@@ -202,7 +209,9 @@ impl Progress {
 
             Self::clear_status_lines(&mut inner);
             Self::print_logging_closing_divider(&mut inner);
-            Self::print_completed(&inner, inner.completed.last().unwrap());
+            if let Some(last_completed) = inner.completed.last() {
+                Self::print_completed(&inner, last_completed);
+            }
             Self::print_status_lines(&mut inner);
         } else {
             inner.in_progress.insert(example_name.to_string(), task);
@@ -233,6 +242,7 @@ impl Progress {
     fn print_completed(inner: &ProgressInner, task: &CompletedTask) {
         let duration = format_duration(task.duration);
         let name_width = inner.max_example_name_len;
+        let truncated_name = truncate_with_ellipsis(&task.example_name, name_width);
 
         if inner.is_tty {
             let reset = "\x1b[0m";
@@ -256,7 +266,7 @@ impl Progress {
                 "{bold}{color}{label:>12}{reset} {name:<name_width$} {dim}│{reset} {info_part}",
                 color = task.step.color_code(),
                 label = task.step.label(),
-                name = task.example_name,
+                name = truncated_name,
             );
 
             let duration_with_margin = format!("{duration} ");
@@ -278,7 +288,7 @@ impl Progress {
             eprintln!(
                 "{label:>12} {name:<name_width$}{info_part} {duration}",
                 label = task.step.label(),
-                name = task.example_name,
+                name = truncate_with_ellipsis(&task.example_name, name_width),
             );
         }
     }
@@ -341,10 +351,11 @@ impl Progress {
             let step_label = task.step.label();
             let step_color = task.step.color_code();
             let name_width = inner.max_example_name_len;
+            let truncated_name = truncate_with_ellipsis(name, name_width);
 
             let prefix = format!(
                 "{bold}{step_color}{step_label:>12}{reset} {name:<name_width$} {dim}│{reset} {substatus_part}",
-                name = name,
+                name = truncated_name,
             );
 
             let duration_with_margin = format!("{elapsed} ");
