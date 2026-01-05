@@ -215,14 +215,8 @@ impl AgentTool for SubagentTool {
                 })?;
             }
 
-            let result = run_subagent(
-                &subagent_thread,
-                allowed_tools,
-                task_prompt,
-                timeout_ms,
-                cx,
-            )
-            .await;
+            let result =
+                run_subagent(&subagent_thread, allowed_tools, task_prompt, timeout_ms, cx).await;
 
             if let Some(parent) = parent_thread.upgrade() {
                 let _ = parent.update(cx, |thread, _cx| {
@@ -248,16 +242,12 @@ async fn run_subagent(
         })?;
     }
 
-    let mut events_rx = subagent_thread
-        .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
+    let mut events_rx =
+        subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))??;
 
     let timed_out = if let Some(timeout) = timeout_ms {
-        wait_for_turn_completion_with_timeout(
-            &mut events_rx,
-            Duration::from_millis(timeout),
-            cx,
-        )
-        .await
+        wait_for_turn_completion_with_timeout(&mut events_rx, Duration::from_millis(timeout), cx)
+            .await
     } else {
         wait_for_turn_completion(&mut events_rx).await;
         false

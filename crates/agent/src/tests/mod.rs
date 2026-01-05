@@ -3203,9 +3203,7 @@ async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
 
     let task_prompt = "Find all TODO comments in the codebase";
     subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message(task_prompt, cx)
-        })
+        .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))
         .unwrap();
     cx.run_until_parked();
 
@@ -3269,9 +3267,8 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("I did the work");
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
-        StopReason::EndTurn,
-    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -3281,7 +3278,10 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let pending = fake_model.pending_completions();
-    assert!(!pending.is_empty(), "should have pending completion for summary");
+    assert!(
+        !pending.is_empty(),
+        "should have pending completion for summary"
+    );
 
     let messages = &pending.last().unwrap().messages;
     let user_messages: Vec<_> = messages
@@ -3291,10 +3291,7 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
 
     let last_user = user_messages.last().unwrap();
     assert!(
-        last_user.content[0]
-            .to_str()
-            .unwrap()
-            .contains("summarize"),
+        last_user.content[0].to_str().unwrap().contains("summarize"),
         "summary prompt should be sent"
     );
 }
@@ -3422,17 +3419,12 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
     });
 
     subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Do work", cx)
-        })
+        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
         .unwrap();
     cx.run_until_parked();
 
     subagent.read_with(cx, |thread, _| {
-        assert!(
-            !thread.is_turn_complete(),
-            "subagent should be running"
-        );
+        assert!(!thread.is_turn_complete(), "subagent should be running");
     });
 
     parent.update(cx, |thread, cx| {
