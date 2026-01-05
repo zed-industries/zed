@@ -99,6 +99,9 @@ type: (primitive_type) @type.builtin
 ((identifier) @constant.builtin
  (#match? @constant.builtin "^_*[A-Z][A-Z\\d_]*$"))
 
+(enumerator
+  name: (identifier) @constant)
+
 (statement_identifier) @label
 (this) @variable.builtin
 ("static_assert") @function.builtin
