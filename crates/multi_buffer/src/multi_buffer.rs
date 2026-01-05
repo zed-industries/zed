@@ -2367,7 +2367,6 @@ impl MultiBuffer {
             .get(&buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(buffer_id, new_diff);
-        self.buffer_changed_since_sync.replace(true);
 
         let buffer = buffer_state.buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);

@@ -995,16 +995,19 @@ fn compare_hunks(
             (Some(new_hunk), None) => {
                 start.get_or_insert(new_hunk.buffer_range.start);
                 base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
-                // TODO(cole) it seems like this could move end backward?
-                end.replace(new_hunk.buffer_range.end);
+                if end.is_none_or(|end| end.cmp(&new_hunk.buffer_range.end, &new_snapshot).is_le()) {
+                    end.replace(new_hunk.buffer_range.end);
+                }
                 base_text_end = base_text_end.max(Some(new_hunk.diff_base_byte_range.end));
                 new_cursor.next();
             }
             (None, Some(old_hunk)) => {
                 start.get_or_insert(old_hunk.buffer_range.start);
                 base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
-                // TODO(cole) it seems like this could move end backward?
-                end.replace(old_hunk.buffer_range.end);
+                if end.is_none_or(|end| end.cmp(&old_hunk.buffer_range.end, &new_snapshot).is_le())
+                {
+                    end.replace(old_hunk.buffer_range.end);
+                }
                 base_text_end = base_text_end.max(Some(old_hunk.diff_base_byte_range.end));
                 old_cursor.next();
             }
