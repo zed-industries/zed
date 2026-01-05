@@ -14995,23 +14995,44 @@ impl Editor {
                     let direction = if above { -1 } else { 1 };
 
                     while row != end_row {
-                        if skip_soft_wrap {
-                            row = display_map
-                                .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
-                                .row();
-                        } else if above {
-                            row.0 -= 1;
+                        let new_buffer_row = if skip_soft_wrap {
+                            let new_row = display_map
+                                .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
+                            row = new_row.row();
+                            Some(new_row.to_point(&display_map).row)
                         } else {
-                            row.0 += 1;
-                        }
+                            if above {
+                                row.0 -= 1;
+                            } else {
+                                row.0 += 1;
+                            }
+                            None
+                        };
 
-                        if let Some(new_selection) = self.selections.build_columnar_selection(
-                            &display_map,
-                            row,
-                            &positions,
-                            selection.reversed,
-                            &text_layout_details,
-                        ) {
+                        let new_selection = if let Some(buffer_row) = new_buffer_row {
+                            let start_col = selection.start.column;
+                            let end_col = selection.end.column;
+                            let buffer_columns = start_col.min(end_col)..start_col.max(end_col);
+
+                            self.selections
+                                .build_columnar_selection_from_buffer_columns(
+                                    &display_map,
+                                    buffer_row,
+                                    &buffer_columns,
+                                    selection.reversed,
+                                    &text_layout_details,
+                                )
+                        } else {
+                            self.selections.build_columnar_selection(
+                                &display_map,
+                                row,
+                                &positions,
+                                selection.reversed,
+                                &text_layout_details,
+                            )
+                        };
+
+                        if let Some(new_selection) = new_selection {
                             maybe_new_selection = Some(new_selection);
                             break;
                         }
