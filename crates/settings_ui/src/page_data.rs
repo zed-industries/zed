@@ -6236,20 +6236,16 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             title: "Network",
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Proxy",
                     description: "The proxy to use for network requests.",
-                    field: Box::new(
-                        SettingField {
-                            json_path: Some("proxy"),
-                            pick: |settings_content| settings_content.proxy.as_ref(),
-                            write: |settings_content, value| {
-                                settings_content.proxy = value;
-                            },
-                        }
-                        .unimplemented(),
-                    ),
+                    field: Box::new(SettingField {
+                        json_path: Some("proxy"),
+                        pick: |settings_content| settings_content.proxy.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.proxy = value;
+                        },
+                    }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("socks5h://localhost:10808"),
                         ..Default::default()
