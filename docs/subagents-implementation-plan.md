@@ -980,7 +980,7 @@ impl Thread {
     pub fn wait_for_turn_completion(&self, cx: &mut Context<Self>) -> Task<()> {
         // Implementation: return a task that resolves when running_turn becomes None
         // Could use a channel or observable pattern
-        todo!()
+        unimplemented!("placeholder for implementation")
     }
 
     /// Check if the current turn is complete (no running tasks)
