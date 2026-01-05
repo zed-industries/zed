@@ -646,55 +646,6 @@ impl BlockMap {
             edits = edits.compose(merged_edits);
         }
 
-        // Transform companion edits to our coordinate space and compose them after our edits
-        if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
-            && let Some((companion, display_map_id)) = companion
-        {
-            let excerpt_map = companion.companion_excerpt_to_excerpt(display_map_id);
-            let convert = companion.convert_wrap_row_from_companion(display_map_id);
-            let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
-                .clone()
-                .into_inner()
-                .iter()
-                .map(|edit| {
-                    let my_start = convert(
-                        excerpt_map,
-                        wrap_snapshot,
-                        companion_new_snapshot,
-                        edit.new.start,
-                        Bias::Left,
-                    );
-                    let my_end = convert(
-                        excerpt_map,
-                        wrap_snapshot,
-                        companion_new_snapshot,
-                        edit.new.end,
-                        Bias::Right,
-                    );
-
-                    WrapEdit {
-                        old: my_start..my_end,
-                        new: my_start..my_end,
-                    }
-                })
-                .collect();
-
-            companion_edits_in_my_space.sort_by_key(|edit| edit.old.start);
-            let mut merged_edits: Vec<WrapEdit> = Vec::new();
-            for edit in companion_edits_in_my_space {
-                if let Some(last) = merged_edits.last_mut() {
-                    if edit.old.start <= last.old.end {
-                        last.old.end = last.old.end.max(edit.old.end);
-                        last.new.end = last.new.end.max(edit.new.end);
-                        continue;
-                    }
-                }
-                merged_edits.push(edit);
-            }
-
-            edits = edits.compose(merged_edits);
-        }
-
         let edits = edits.into_inner();
         if edits.is_empty() {
             return;

@@ -251,14 +251,16 @@ impl Companion {
         self.rhs_excerpt_to_lhs_excerpt.insert(rhs_id, lhs_id);
     }
 
-    pub(crate) fn remove_excerpt_mappings(&mut self, ids: impl IntoIterator<Item = ExcerptId>) {
-        for id in ids {
-            if let Some(other) = self.rhs_excerpt_to_lhs_excerpt.remove(&id) {
-                self.lhs_excerpt_to_rhs_excerpt.remove(&other);
-            }
-            if let Some(other) = self.lhs_excerpt_to_rhs_excerpt.remove(&id) {
-                self.rhs_excerpt_to_lhs_excerpt.remove(&other);
-            }
+    pub(crate) fn remove_excerpt_mappings(
+        &mut self,
+        lhs_ids: impl IntoIterator<Item = ExcerptId>,
+        rhs_ids: impl IntoIterator<Item = ExcerptId>,
+    ) {
+        for id in lhs_ids {
+            self.lhs_excerpt_to_rhs_excerpt.remove(&id);
+        }
+        for id in rhs_ids {
+            self.rhs_excerpt_to_lhs_excerpt.remove(&id);
         }
     }
 

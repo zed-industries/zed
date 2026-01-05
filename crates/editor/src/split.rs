@@ -948,9 +948,7 @@ impl SecondaryEditor {
         // Remove mappings from companion - it handles both directions
         if let Some(companion) = primary_display_map.read(cx).companion().cloned() {
             companion.update(cx, |c, _| {
-                c.remove_excerpt_mappings(
-                    primary_excerpt_ids.into_iter().chain(secondary_excerpt_ids),
-                );
+                c.remove_excerpt_mappings(secondary_excerpt_ids, primary_excerpt_ids);
             });
         }
     }
