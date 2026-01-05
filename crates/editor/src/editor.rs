@@ -23121,12 +23121,9 @@ impl Editor {
                 // Helper: search for fingerprint in buffer, return offset if found
                 let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
                     let fp_len = fingerprint.len();
-                    for offset in search_start..snapshot_len.saturating_sub(fp_len) {
-                        if snapshot.contains_str_at(MultiBufferOffset(offset), fingerprint) {
-                            return Some(offset);
-                        }
-                    }
-                    None
+                    (search_start..snapshot_len.saturating_sub(fp_len)).find(|&offset| {
+                        snapshot.contains_str_at(MultiBufferOffset(offset), fingerprint)
+                    })
                 };
 
                 // Track search position to handle duplicate fingerprints correctly.
