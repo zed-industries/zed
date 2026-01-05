@@ -261,7 +261,8 @@ impl ContextServerStore {
                     this.available_context_servers_changed(cx);
                 }),
                 cx.observe_global::<SettingsStore>(|this, cx| {
-                    let settings = Self::resolve_context_server_settings(&this.worktree_store, cx);
+                    let settings =
+                        &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
                     if &this.context_server_settings == settings {
                         return;
                     }
@@ -275,7 +276,8 @@ impl ContextServerStore {
 
         let mut this = Self {
             _subscriptions: subscriptions,
-            context_server_settings: Self::resolve_context_server_settings(&worktree_store, cx)
+            context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
+                .context_servers
                 .clone(),
             worktree_store,
             project: weak_project,
@@ -493,7 +495,8 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Result<Arc<ContextServer>> {
-        let global_timeout = ProjectSettings::get_global(cx).context_server_timeout;
+        let global_timeout =
+            Self::resolve_project_settings(&self.worktree_store, cx).context_server_timeout;
 
         if let Some(factory) = self.context_server_factory.as_ref() {
             return Ok(factory(id, configuration));
@@ -548,10 +551,10 @@ impl ContextServerStore {
         }
     }
 
-    fn resolve_context_server_settings<'a>(
+    fn resolve_project_settings<'a>(
         worktree_store: &'a Entity<WorktreeStore>,
         cx: &'a App,
-    ) -> &'a HashMap<Arc<str>, ContextServerSettings> {
+    ) -> &'a ProjectSettings {
         let location = worktree_store
             .read(cx)
             .visible_worktrees(cx)
@@ -560,7 +563,7 @@ impl ContextServerStore {
                 worktree_id: worktree.read(cx).id(),
                 path: RelPath::empty(),
             });
-        &ProjectSettings::get(location, cx).context_servers
+        ProjectSettings::get(location, cx)
     }
 
     fn update_server_state(
