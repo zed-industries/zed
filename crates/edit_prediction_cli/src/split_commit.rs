@@ -906,6 +906,18 @@ pub fn get_cursor_excerpt(
                         _ => {}
                     }
                 }
+                // If hunk only has deletions (file deletion), include deletion lines
+                if excerpt_lines.is_empty() {
+                    excerpt_first_line = hunk.old_start as usize;
+                    for line in &hunk.lines {
+                        match line {
+                            PatchLine::Deletion(s) => {
+                                excerpt_lines.push(s.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
     }
@@ -958,6 +970,18 @@ pub fn get_cursor_excerpt(
                             excerpt_lines.push(s.clone());
                         }
                         _ => {}
+                    }
+                }
+                // If hunk only has deletions, include deletion lines
+                if excerpt_lines.is_empty() {
+                    excerpt_first_line = hunk.old_start as usize;
+                    for line in &hunk.lines {
+                        match line {
+                            PatchLine::Deletion(s) => {
+                                excerpt_lines.push(s.clone());
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 if !excerpt_lines.is_empty() {
