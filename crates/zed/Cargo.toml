@@ -6,6 +6,7 @@ version = "0.219.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
+default-run = "zed"
 
 [lints]
 workspace = true

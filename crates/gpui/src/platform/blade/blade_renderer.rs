@@ -925,6 +925,7 @@ impl BladeRenderer {
     /// Renders the scene to a texture and returns the pixel data as an RGBA image.
     /// This is not yet implemented for BladeRenderer.
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
     pub fn render_to_image(&mut self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image is not yet implemented for BladeRenderer")
     }
