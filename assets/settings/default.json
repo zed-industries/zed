@@ -2262,6 +2262,17 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
+  // Default timeout in seconds for all context server tool calls.
+  // Individual servers can override this in their configuration.
+  // Examples:
+  // "context_servers": {
+  //   "my-stdio-server": {
+  //     "command": "/path/to/server",
+  //     "timeout": 120  // Override: 2 minutes for this server
+  //   },
+  // }
+  // Default: 60
+  "context_server_timeout": 60,
   // Configures context servers for use by the agent.
   "context_servers": {},
   // Configures agent servers available in the agent panel.

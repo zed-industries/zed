@@ -6193,6 +6193,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
+                    SettingsPageItem::SectionHeader("Context Servers"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Context Server Timeout",
+                        description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
+                        field: Box::new(SettingField {
+                            json_path: Some("context_server_timeout"),
+                            pick: |settings_content| {
+                                settings_content.project.context_server_timeout.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.context_server_timeout = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER | PROJECT,
+                    }),
                 ];
                 items.extend(edit_prediction_language_settings_section());
                 items.extend(
