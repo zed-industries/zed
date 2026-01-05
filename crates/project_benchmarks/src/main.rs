@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::anyhow;
 use askpass::EncryptedPassword;
@@ -16,7 +16,6 @@ use project::{
 use release_channel::ReleaseChannel;
 use remote::{ConnectionIdentifier, RemoteClientDelegate, SshConnectionOptions};
 use semver::Version;
-use util::{ResultExt, maybe};
 
 #[derive(Parser)]
 struct Args {
@@ -49,7 +48,7 @@ impl RemoteClientDelegate for BenchmarkRemoteClient {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
-        cx: &mut gpui::AsyncApp,
+        _cx: &mut gpui::AsyncApp,
     ) {
         eprintln!("SSH asking for password: {}", prompt);
         match rpassword::prompt_password(&prompt) {
@@ -67,20 +66,20 @@ impl RemoteClientDelegate for BenchmarkRemoteClient {
 
     fn get_download_url(
         &self,
-        platform: remote::RemotePlatform,
-        release_channel: ReleaseChannel,
-        version: Option<Version>,
-        cx: &mut gpui::AsyncApp,
+        _platform: remote::RemotePlatform,
+        _release_channel: ReleaseChannel,
+        _version: Option<Version>,
+        _cx: &mut gpui::AsyncApp,
     ) -> gpui::Task<gpui::Result<Option<String>>> {
         unimplemented!()
     }
 
     fn download_server_binary_locally(
         &self,
-        platform: remote::RemotePlatform,
-        release_channel: ReleaseChannel,
-        version: Option<Version>,
-        cx: &mut gpui::AsyncApp,
+        _platform: remote::RemotePlatform,
+        _release_channel: ReleaseChannel,
+        _version: Option<Version>,
+        _cx: &mut gpui::AsyncApp,
     ) -> gpui::Task<gpui::Result<std::path::PathBuf>> {
         unimplemented!()
     }
@@ -142,13 +141,15 @@ fn main() -> Result<(), anyhow::Error> {
             cx.spawn(async move |cx| {
                 let project = if let Some(ssh_target) = args.ssh {
                     println!("Setting up SSH connection for {}", &ssh_target);
-                    let mut  ssh_connection_options = SshConnectionOptions::parse_command_line(&ssh_target)?;
+                    let ssh_connection_options = SshConnectionOptions::parse_command_line(&ssh_target)?;
 
                     let connection_options = remote::RemoteConnectionOptions::from(ssh_connection_options);
                     let delegate = Arc::new(BenchmarkRemoteClient);
                     let remote_connection = remote::connect(connection_options.clone(), delegate.clone(), cx).await.unwrap();
-                    let remote_client = cx.update(|cx| remote::RemoteClient::new(ConnectionIdentifier::setup(), remote_connection, oneshot::channel().1, delegate.clone(), cx ))?.await?.ok_or_else(|| anyhow!("ssh initialization returned None"))?;
-                    println!("Connected to SSH box");
+
+                    let (_tx, rx) = oneshot::channel();
+                    let remote_client =  cx.update(|cx| remote::RemoteClient::new(ConnectionIdentifier::setup(), remote_connection, rx, delegate.clone(), cx ))?.await?.ok_or_else(|| anyhow!("ssh initialization returned None"))?;
+
                     cx.update(|cx| Project::remote(remote_client,  client, node, user_store, registry, fs, false, cx))?
                 } else {
                     println!("Setting up local project");
@@ -177,9 +178,20 @@ fn main() -> Result<(), anyhow::Error> {
                     .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
                 for (worktree, _) in &worktrees {
-                    worktree
-                        .update(cx, |this, _| this.as_local().unwrap().scan_complete())?
-                        .await;
+                    let scan_complete = worktree
+                        .update(cx, |this, _| {
+                            if let Some(local) = this.as_local() {
+                                Some(local.scan_complete())
+                            } else {
+                                None
+                            }
+                        })?;
+                    if let Some(scan_complete) = scan_complete {
+                        scan_complete.await;
+                    } else {
+                        cx.background_executor().timer(Duration::from_secs(10)).await;
+                    }
+
                 }
                 println!("Worktrees loaded");
 
