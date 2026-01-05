@@ -19,7 +19,7 @@ struct ProgressInner {
     terminal_width: usize,
     max_example_name_len: usize,
     status_lines_displayed: usize,
-    total_examples: usize,
+    total_steps: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
 }
@@ -47,6 +47,7 @@ pub enum Step {
     Predict,
     Score,
     Synthesize,
+    PullExamples,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +65,7 @@ impl Step {
             Step::Predict => "Predict",
             Step::Score => "Score",
             Step::Synthesize => "Synthesize",
+            Step::PullExamples => "Pull",
         }
     }
 
@@ -75,6 +77,7 @@ impl Step {
             Step::Predict => "\x1b[32m",
             Step::Score => "\x1b[31m",
             Step::Synthesize => "\x1b[36m",
+            Step::PullExamples => "\x1b[36m",
         }
     }
 }
@@ -98,7 +101,7 @@ impl Progress {
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
-                        total_examples: 0,
+                        total_steps: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
                     }),
@@ -110,9 +113,9 @@ impl Progress {
             .clone()
     }
 
-    pub fn set_total_examples(&self, total: usize) {
+    pub fn set_total_steps(&self, total: usize) {
         let mut inner = self.inner.lock().unwrap();
-        inner.total_examples = total;
+        inner.total_steps = total;
     }
 
     pub fn increment_failed(&self) {
@@ -283,7 +286,7 @@ impl Progress {
 
         let range_label = format!(
             " {}/{}/{} ",
-            done_count, in_progress_count, inner.total_examples
+            done_count, in_progress_count, inner.total_steps
         );
 
         // Print a divider line with failed count on left, range label on right

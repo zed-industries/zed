@@ -125,16 +125,8 @@ impl Example {
     }
 }
 
-pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
+pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
     let mut examples = Vec::new();
-
-    let stdin_path: PathBuf = PathBuf::from("-");
-
-    let inputs = if inputs.is_empty() {
-        &[stdin_path]
-    } else {
-        inputs
-    };
 
     for path in inputs {
         let is_stdin = path.as_path() == Path::new("-");
@@ -201,7 +193,6 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
         }
     }
 
-    sort_examples_by_repo_and_rev(&mut examples);
     examples
 }
 
