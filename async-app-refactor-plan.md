@@ -232,26 +232,26 @@ This ensures foundational crates are fixed before their dependents.
 
 ### Depth 4
 - [x] `git` - Pattern 2 ✅
-- [ ] `feedback`
-- [ ] `fs`
-- [ ] `journal`
-- [ ] `language_model`
+- [ ] `feedback` - BLOCKED by `project` crate errors
+- [x] `fs` - No changes needed ✅
+- [ ] `journal` - BLOCKED by `project` crate errors
+- [x] `language_model` - No changes needed ✅
 - [x] `livekit_client` - Removed ? from Tokio::spawn calls ✅
 - [x] `theme` - Removed Result handling from cx.update ✅
 
 ### Depth 5
-- [ ] `ai_onboarding`
-- [ ] `auto_update`
-- [ ] `codestral`
-- [ ] `debugger_tools`
-- [ ] `language_extension`
-- [ ] `language_onboarding`
-- [ ] `panel`
+- [x] `ai_onboarding` - No changes needed ✅
+- [ ] `auto_update` - BLOCKED by `project` crate errors
+- [ ] `codestral` - BLOCKED by `project` crate errors
+- [ ] `debugger_tools` - BLOCKED by `project` crate errors
+- [ ] `language_extension` - BLOCKED by `project` crate errors
+- [ ] `language_onboarding` - BLOCKED by `project` crate errors
+- [ ] `panel` - BLOCKED by `project` crate errors
 - [x] `prettier` - Removed ? from cx.update calls ✅
-- [ ] `project_benchmarks`
-- [ ] `svg_preview`
-- [ ] `terminal`
-- [ ] `which_key`
+- [ ] `project_benchmarks` - BLOCKED by `project` crate errors
+- [ ] `svg_preview` - BLOCKED by `project` crate errors
+- [x] `terminal` - No changes needed ✅
+- [ ] `which_key` - BLOCKED by `project` crate errors
 
 ### Depth 6
 - [x] `remote` - Removed ? from cx.update, cx.update_global, cx.new ✅
@@ -333,6 +333,19 @@ This ensures foundational crates are fixed before their dependents.
 - [ ] `edit_prediction`
 - [ ] `repl`
 - [ ] `settings_ui`
+
+### BLOCKER: `project` crate (Depth 26-40)
+The `project` crate has ~460 errors remaining that need to be fixed before many depth 4-25 crates can compile.
+Files with most errors:
+- `lsp_store.rs` (~120 errors)
+- `lsp_command.rs` (~87 errors)
+- `git_store.rs` (~77 errors)
+- `project.rs` (~67 errors)
+- `task_store.rs` (~17 errors)
+- `worktree_store.rs` (~23 errors)
+- `project_search.rs` (~13 errors)
+- `image_store.rs` (~11 errors)
+- `toolchain_store.rs` (~10 errors)
 
 ### Depth 26-40
 - [ ] `collab_ui`
