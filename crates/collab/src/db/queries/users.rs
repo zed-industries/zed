@@ -19,7 +19,6 @@ impl Database {
                 github_login: ActiveValue::set(params.github_login.clone()),
                 github_user_id: ActiveValue::set(params.github_user_id),
                 admin: ActiveValue::set(admin),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .on_conflict(
@@ -36,7 +35,6 @@ impl Database {
 
             Ok(NewUserResult {
                 user_id: user.id,
-                metrics_id: user.metrics_id.to_string(),
                 signup_device_id: None,
                 inviting_user_id: None,
             })
@@ -135,7 +133,6 @@ impl Database {
                 github_user_id: ActiveValue::set(github_user_id),
                 github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
                 admin: ActiveValue::set(false),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .exec_with_returning(tx)

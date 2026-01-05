@@ -16,7 +16,6 @@ pub struct Model {
     pub name: Option<String>,
     pub admin: bool,
     pub connected_once: bool,
-    pub metrics_id: Uuid,
     pub created_at: NaiveDateTime,
 }
 
