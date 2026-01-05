@@ -47,10 +47,6 @@ name = "visual_test_runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
-[lib]
-name = "zed"
-path = "src/zed.rs"
-
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
